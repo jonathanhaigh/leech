@@ -1,0 +1,428 @@
+from dataclasses import dataclass
+from difflib import ndiff
+from typing import Optional
+
+from lark import Tree, UnexpectedCharacters, UnexpectedToken
+import pytest
+
+from l0.main import build_parser
+
+
+@dataclass
+class Tok:
+    value: Optional[str]
+
+
+class T(Tree):
+    def __init__(self, data, *descendants):
+        super().__init__(data, [], None)
+        self.leaf = self
+        for d in descendants:
+            assert self.leaf is not None
+            if isinstance(d, Tok):
+                self.leaf.children.append(d.value)
+                self.leaf = None
+            else:
+                new_leaf = T(d)
+                self.leaf.children.append(new_leaf)
+                self.leaf = new_leaf
+
+    def cs(self, *children):
+        assert self.leaf is not None
+        self.leaf.children.extend(children)
+        self.leaf = None
+        return self
+
+
+def check_parse(rule, src, expected):
+    p = build_parser(rule)
+    tree = p.parse(src)
+
+    if tree != expected:
+        got_str = tree.pretty()
+        expected_str = expected.pretty()
+
+        print("GOT:\n")
+        print(got_str)
+
+        print("EXPECTED:\n")
+        print(expected_str)
+
+        print("DIFF:\n")
+        diff = ndiff(
+            got_str.splitlines(keepends=True),
+            expected_str.splitlines(keepends=True),
+        )
+        print("".join(diff))
+
+        assert tree == expected
+
+
+def check_parse_fails(rule, src):
+    p = build_parser(rule)
+    with pytest.raises((UnexpectedToken, UnexpectedCharacters)):
+        tree = p.parse(src)
+        print(tree)
+
+
+INT_LITS = [
+    " 0",
+    "1 ",
+    " 2 ",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "9999999999",
+    "123456789101112131415161718192021222324252627282930",
+]
+NOT_INT_LITS = ["01", "()", "a", "", "!", "1 2", "1_2"]
+STR_LITS = [' ""', '"abc" ', ' "0" ', r'"\""', r'"\\"']
+NOT_STR_LITS = ["0", '"abc', 'abc"', r'"\"']
+IDENTS = ["_", "a", "A", "_0", "abc_0de", " zZ", "v10_ "]
+NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
+
+
+@pytest.mark.parametrize(
+    "rule,src,expected",
+    [("expr", src, T("int_lit", Tok(src.strip()))) for src in INT_LITS]
+    + [("expr", src, T("str_lit", Tok(src.strip()))) for src in STR_LITS]
+    + [("expr", src, T("var_expr", "ident", Tok(src.strip()))) for src in IDENTS]
+    + [
+        ("expr", "(1)", T("int_lit", Tok("1"))),
+        ("expr", '("x")', T("str_lit", Tok('"x"'))),
+        ("expr", "(x)", T("var_expr", "ident", Tok("x"))),
+        (
+            "expr",
+            'abc(123, "xyz", abc_def, f())',
+            T("call_expr").cs(
+                T("var_expr", "ident", Tok("abc")),
+                T("arg_list").cs(
+                    T("int_lit", Tok("123")),
+                    T("str_lit", Tok('"xyz"')),
+                    T("var_expr", "ident", Tok("abc_def")),
+                    T("call_expr").cs(T("var_expr", "ident", Tok("f")), T("arg_list")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "abc()",
+            T("call_expr").cs(T("var_expr", "ident", Tok("abc")), T("arg_list")),
+        ),
+        (
+            "expr",
+            "_(0,)",
+            T("call_expr").cs(
+                T("var_expr", "ident", Tok("_")),
+                T("arg_list", "int_lit", Tok("0")),
+            ),
+        ),
+        (
+            "expr",
+            "1 + 2",
+            T("arith_expr").cs(
+                T("int_lit", Tok("1")), T("add_op", Tok("+")), T("int_lit", Tok("2"))
+            ),
+        ),
+        (
+            "expr",
+            "1 + 2 - 3",
+            T("arith_expr").cs(
+                T("arith_expr").cs(
+                    T("int_lit", Tok("1")),
+                    T("add_op", Tok("+")),
+                    T("int_lit", Tok("2")),
+                ),
+                T("add_op", Tok("-")),
+                T("int_lit", Tok("3")),
+            ),
+        ),
+        (
+            "expr",
+            "1 - 4 * 9 / 2 + (7 - 3)",
+            T("arith_expr").cs(
+                T("arith_expr").cs(
+                    T("int_lit", Tok("1")),
+                    T("add_op", Tok("-")),
+                    T("term").cs(
+                        T("term").cs(
+                            T("int_lit", Tok("4")),
+                            T("mul_op", Tok("*")),
+                            T("int_lit", Tok("9")),
+                        ),
+                        T("mul_op", Tok("/")),
+                        T("int_lit", Tok("2")),
+                    ),
+                ),
+                T("add_op", Tok("+")),
+                T("arith_expr").cs(
+                    T("int_lit", Tok("7")),
+                    T("add_op", Tok("-")),
+                    T("int_lit", Tok("3")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "(a + f())",
+            T("arith_expr").cs(
+                T("var_expr", "ident", Tok("a")),
+                T("add_op", Tok("+")),
+                T("call_expr").cs(T("var_expr", "ident", Tok("f")), T("arg_list")),
+            ),
+        ),
+        (
+            "expr",
+            "a < b",
+            T("cmp_expr").cs(
+                T("var_expr", "ident", Tok("a")),
+                T("cmp_op", Tok("<")),
+                T("var_expr", "ident", Tok("b")),
+            ),
+        ),
+        (
+            "expr",
+            "a <= b + 1",
+            T("cmp_expr").cs(
+                T("var_expr", "ident", Tok("a")),
+                T("cmp_op", Tok("<=")),
+                T("arith_expr").cs(
+                    T("var_expr", "ident", Tok("b")),
+                    T("add_op", Tok("+")),
+                    T("int_lit", Tok("1")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "a + 1 == b",
+            T("cmp_expr").cs(
+                T("arith_expr").cs(
+                    T("var_expr", "ident", Tok("a")),
+                    T("add_op", Tok("+")),
+                    T("int_lit", Tok("1")),
+                ),
+                T("cmp_op", Tok("==")),
+                T("var_expr", "ident", Tok("b")),
+            ),
+        ),
+        (
+            "expr",
+            "a * 1 - 2 >= b",
+            T("cmp_expr").cs(
+                T("arith_expr").cs(
+                    T("term").cs(
+                        T("var_expr", "ident", Tok("a")),
+                        T("mul_op", Tok("*")),
+                        T("int_lit", Tok("1")),
+                    ),
+                    T("add_op", Tok("-")),
+                    T("int_lit", Tok("2")),
+                ),
+                T("cmp_op", Tok(">=")),
+                T("var_expr", "ident", Tok("b")),
+            ),
+        ),
+        (
+            "expr",
+            "1 > 2",
+            T("cmp_expr").cs(
+                T("int_lit", Tok("1")),
+                T("cmp_op", Tok(">")),
+                T("int_lit", Tok("2")),
+            ),
+        ),
+        (
+            "stmt",
+            "let x = 1;",
+            T("stmt", "let_stmt").cs(
+                T("mut", Tok(None)), T("ident", Tok("x")), T("int_lit", Tok("1"))
+            ),
+        ),
+        (
+            "stmt",
+            "let mut x = 10;",
+            T("stmt", "let_stmt").cs(
+                T("mut", Tok("mut")), T("ident", Tok("x")), T("int_lit", Tok("10"))
+            ),
+        ),
+        ("stmt", "return;", T("stmt", "ret_stmt", Tok(None))),
+        (
+            "stmt",
+            'return "abc";',
+            T("stmt", "ret_stmt", "str_lit", Tok('"abc"')),
+        ),
+        (
+            "stmt",
+            "x = y;",
+            T("stmt", "assignment_stmt").cs(
+                T("ident", Tok("x")), T("var_expr", "ident", Tok("y"))
+            ),
+        ),
+        (
+            "stmt",
+            "abc();",
+            T("stmt", "expr_stmt", "call_expr").cs(
+                T("var_expr", "ident", Tok("abc")), T("arg_list")
+            ),
+        ),
+        (
+            "expr",
+            "{ f(0); return 1; }",
+            T("block_expr").cs(
+                T("stmt", "expr_stmt", "call_expr").cs(
+                    T("var_expr", "ident", Tok("f")),
+                    T("arg_list", "int_lit", Tok("0")),
+                ),
+                T("stmt", "ret_stmt", "int_lit", Tok("1")),
+            ),
+        ),
+        ("expr", "{}", T("block_expr")),
+        ("typ", "i32", T("basic_typ", "ident", Tok("i32"))),
+        ("typ", "x", T("basic_typ", "ident", Tok("x"))),
+        ("typ", "_", T("basic_typ", "ident", Tok("_"))),
+        ("typ", "*u8", T("ptr_typ", "basic_typ", "ident", Tok("u8"))),
+        (
+            "param",
+            "x: i32",
+            T("param").cs(T("ident", Tok("x")), T("basic_typ", "ident", Tok("i32"))),
+        ),
+        (
+            "param",
+            "x :i32",
+            T("param").cs(T("ident", Tok("x")), T("basic_typ", "ident", Tok("i32"))),
+        ),
+        (
+            "param",
+            "x : i32",
+            T("param").cs(T("ident", Tok("x")), T("basic_typ", "ident", Tok("i32"))),
+        ),
+        (
+            "defn",
+            "fn f() {}",
+            T("defn", "fn_defn").cs(
+                T("access", Tok(None)),
+                T("ident", Tok("f")),
+                T("param_list"),
+                None,
+                T("block_expr"),
+            ),
+        ),
+        (
+            "defn",
+            "fn f() i32 {}",
+            T("defn", "fn_defn").cs(
+                T("access", Tok(None)),
+                T("ident", Tok("f")),
+                T("param_list"),
+                T("basic_typ", "ident", Tok("i32")),
+                T("block_expr"),
+            ),
+        ),
+        (
+            "defn",
+            "pub fn ab_cd(x: a, y: b,) _rt { return 9; }",
+            T("defn", "fn_defn").cs(
+                T("access", Tok("pub")),
+                T("ident", Tok("ab_cd")),
+                T("param_list").cs(
+                    T("param").cs(
+                        T("ident", Tok("x")), T("basic_typ", "ident", Tok("a"))
+                    ),
+                    T("param").cs(
+                        T("ident", Tok("y")), T("basic_typ", "ident", Tok("b"))
+                    ),
+                ),
+                T("basic_typ", "ident", Tok("_rt")),
+                T("block_expr", "stmt", "ret_stmt", "int_lit", Tok("9")),
+            ),
+        ),
+        ("mod", "", T("mod")),
+        ("mod", "", T("mod")),
+        (
+            "mod",
+            "fn ab_cd(x: a, y: b) _rt { return 9; } fn x() y {}",
+            T("mod").cs(
+                T("defn", "fn_defn").cs(
+                    T("access", Tok(None)),
+                    T("ident", Tok("ab_cd")),
+                    T("param_list").cs(
+                        T("param").cs(
+                            T("ident", Tok("x")), T("basic_typ", "ident", Tok("a"))
+                        ),
+                        T("param").cs(
+                            T("ident", Tok("y")), T("basic_typ", "ident", Tok("b"))
+                        ),
+                    ),
+                    T("basic_typ", "ident", Tok("_rt")),
+                    T("block_expr", "stmt", "ret_stmt", "int_lit", Tok("9")),
+                ),
+                T("defn", "fn_defn").cs(
+                    T("access", Tok(None)),
+                    T("ident", Tok("x")),
+                    T("param_list"),
+                    T("basic_typ", "ident", Tok("y")),
+                    T("block_expr"),
+                ),
+            ),
+        ),
+    ],
+)
+def test_parse(rule, src, expected):
+    check_parse(rule, src, expected)
+
+
+@pytest.mark.parametrize(
+    "rule,src",
+    [("int_lit", src) for src in NOT_INT_LITS]
+    + [("str_lit", src) for src in NOT_STR_LITS]
+    + [("ident", src) for src in NOT_IDENTS]
+    + [
+        ("var_expr", ""),
+        ("var_expr", "a b"),
+        ("var_expr", "0a"),
+        ("var_expr", "a 0"),
+        ("expr", ""),
+        ("expr", "f(0"),
+        ("expr", "f 0)"),
+        ("expr", "f(,0)"),
+        ("expr", "f(,)"),
+        ("expr", "1+"),
+        ("expr", "*a"),
+        ("expr", "a < b < c"),
+        ("block_expr", ""),
+        ("block_expr", "{"),
+        ("block_expr", "}"),
+        ("block_expr", "{()}"),
+        ("stmt", ""),
+        ("stmt", "let 0 = 1;"),
+        ("stmt", "let x = 1"),
+        ("stmt", "return"),
+        ("stmt", "return ();"),
+        ("typ", ""),
+        ("typ", "0"),
+        ("typ", '"abc"'),
+        ("typ", "a b"),
+        ("param", ""),
+        ("param", "x"),
+        ("param", "x:"),
+        ("param", ":x"),
+        ("param", "x:0"),
+        ("param", "0:x"),
+        ("fn_defn", ""),
+        ("fn_defn", "fn f(,) a {}"),
+        ("fn_defn", "fn () a {}"),
+        ("fn_defn", "f() a {}"),
+        ("fn_defn", "f();"),
+        ("mod", "1"),
+        ("mod", "{}"),
+        ("mod", "f(0);"),
+    ],
+)
+def test_parse_fails(rule, src):
+    check_parse_fails(rule, src)

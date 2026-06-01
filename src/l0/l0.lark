@@ -1,0 +1,91 @@
+mod: defn*
+
+defn: fn_defn
+  | fn_decl
+  | var_defn
+
+fn_defn: access _fn_prototype block_expr
+_fn_prototype: "fn" ident "(" param_list ")" [typ]
+!access: ["pub"]
+param_list: _param_list?
+_param_list: param ("," param)* ","?
+param: ident ":" typ
+
+fn_decl: "extern" _fn_prototype ";"
+
+var_defn: access let_stmt
+
+?typ: basic_typ
+  | ptr_typ
+
+basic_typ: ident
+ptr_typ: "*" typ
+
+stmt: expr_stmt
+  | ret_stmt
+  | let_stmt
+  | assignment_stmt
+
+expr_stmt: expr ";"
+ret_stmt: "return" [expr] ";"
+let_stmt: "let" mut ident "=" expr ";"
+!mut: ["mut"]
+
+assignment_stmt: ident "=" expr ";"
+
+?expr: block_expr
+  | if_expr
+  | while_expr
+  | cmp_expr
+
+block_expr: "{" stmt* expr? "}"
+
+if_expr: "if" "(" expr ")" block_expr ("else" block_expr)?
+
+while_expr: "while" "(" expr ")" block_expr
+
+# No recursion in cmp_expr: comparisons can't be chained
+?cmp_expr: arith_expr cmp_op arith_expr
+  | arith_expr
+
+!cmp_op: "<" | "<=" | "==" | ">=" | ">"
+
+?arith_expr: arith_expr add_op term
+  | term
+
+!add_op: "+"|"-"
+
+?term: term mul_op atom_expr
+  | atom_expr
+
+!mul_op: "*"|"/"
+
+?atom_expr: call_expr
+  | atom
+
+call_expr: atom_expr "(" arg_list ")"
+
+arg_list: _arg_list?
+_arg_list: expr ("," expr)* ","?
+
+
+?atom: str_lit
+  | int_lit
+  | bool_lit
+  | var_expr
+  | "(" expr ")"
+
+str_lit: STR_LIT
+int_lit: INT_LIT
+!bool_lit: "true" | "false"
+var_expr: ident
+ident: IDENT
+
+INT_LIT: "1".."9" ("0".."9")*
+  | "0"
+
+IDENT: /[_a-zA-Z][_0-9a-zA-Z]*/
+
+%import common.ESCAPED_STRING -> STR_LIT
+%import common.WS
+%ignore WS
