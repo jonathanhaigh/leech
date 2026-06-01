@@ -92,7 +92,7 @@ class Compiler:
 
     def _compile_mod_var(self, var: ir.ModVar) -> None:
         ll_init = self._compile_comptime_value(var.initializer)
-        self._ll_mod_values[var].initializer = ll_init # type: ignore
+        self._ll_mod_values[var].initializer = ll_init  # type: ignore
 
     def _declare_mod_fn(self, fn: ir.FnSpec) -> ll.Value:
         ll_fn = ll.Function(self.ll_mod, self._ll_typ(fn.typ), fn.name)
@@ -134,20 +134,32 @@ class Compiler:
             case ir.ComptimeValueInstr():
                 return self._compile_comptime_value(instr.value)
             case ir.AddInstr():
-                return ctx.ll_builder.add( # type: ignore
+                return ctx.ll_builder.add(  # type: ignore
                     ctx.ll_values[instr.lhs], ctx.ll_values[instr.rhs]
                 )
             case ir.SubInstr():
-                return ctx.ll_builder.sub( # type: ignore
+                return ctx.ll_builder.sub(  # type: ignore
                     ctx.ll_values[instr.lhs], ctx.ll_values[instr.rhs]
                 )
             case ir.MulInstr():
-                return ctx.ll_builder.mul( # type: ignore
+                return ctx.ll_builder.mul(  # type: ignore
                     ctx.ll_values[instr.lhs], ctx.ll_values[instr.rhs]
                 )
             case ir.SdivInstr():
-                return ctx.ll_builder.sdiv( # type: ignore
+                return ctx.ll_builder.sdiv(  # type: ignore
                     ctx.ll_values[instr.lhs], ctx.ll_values[instr.rhs]
+                )
+            case ir.UdivInstr():
+                return ctx.ll_builder.udiv(  # type: ignore
+                    ctx.ll_values[instr.lhs], ctx.ll_values[instr.rhs]
+                )
+            case ir.IcmpSignedInstr():
+                return ctx.ll_builder.icmp_signed(
+                    instr.op, ctx.ll_values[instr.lhs], ctx.ll_values[instr.rhs]
+                )
+            case ir.IcmpUnsignedInstr():
+                return ctx.ll_builder.icmp_unsigned(
+                    instr.op, ctx.ll_values[instr.lhs], ctx.ll_values[instr.rhs]
                 )
             case ir.LoadInstr():
                 return ctx.ll_builder.load(

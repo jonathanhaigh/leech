@@ -346,13 +346,14 @@ class LetStmt(Stmt):
         assert tree.data == "let_stmt"
         super().__init__(tree.meta)
         mut, ident, expr = tree.children
-        self.mut= Mutability(as_tree(mut))
+        self.mut = Mutability(as_tree(mut))
         self.ident = Ident(as_tree(ident))
         self.expr = Expr.from_tree(as_tree(expr))
 
     @override
     def diag_str(self) -> str:
         return "let statement"
+
 
 class AssignmentStmt(Stmt):
     ident: Ident
@@ -368,6 +369,7 @@ class AssignmentStmt(Stmt):
     @override
     def diag_str(self) -> str:
         return "assignment statement"
+
 
 class Typ(Ast):
     def __init__(self, meta: Meta) -> None:
@@ -531,6 +533,7 @@ class Access(Ast):
     @override
     def diag_str(self) -> str:
         return "access specifier"
+
 
 class Mutability(Ast):
     value: Optional[str]

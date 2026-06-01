@@ -38,6 +38,8 @@ from l0.typs import (
     I32,
     MUT,
     NEVER,
+    SIGNED,
+    U32,
     U8,
     VOID,
     CallableTyp,
@@ -45,6 +47,7 @@ from l0.typs import (
     Mutability,
     NeverTyp,
     PtrTyp,
+    Signage,
     Typ,
     VoidTyp,
 )
@@ -153,18 +156,20 @@ class Param(Value[Typ, ast.Param]):
 
 
 class Instr(Value[TypT, AstT], Generic[TypT, AstT]):
-    name: str
     bb: BasicBlock
     ast: AstT
 
     @override
-    def __init__(self, name: str, bb: BasicBlock, ast: Optional[AstT]) -> None:
+    def __init__(self, bb: BasicBlock, ast: Optional[AstT]) -> None:
         super().__init__(ast)
-        self.name = name
         self.bb = bb
 
     def __str__(self) -> str:
         return self.name
+
+    @property
+    def name(self) -> str:
+        return type(self).__name__
 
 
 class ComptimeValueInstr(Instr):
@@ -174,7 +179,7 @@ class ComptimeValueInstr(Instr):
     def __init__(
         self, bb: BasicBlock, value: comptime.Value, ast: Optional[ast.Ast]
     ) -> None:
-        super().__init__("comptime_value", bb, ast)
+        super().__init__(bb, ast)
         self.value = value
 
     @override
@@ -182,7 +187,7 @@ class ComptimeValueInstr(Instr):
         return self.value.typ
 
 
-class AddInstr(Instr):
+class BinOpInstr(Instr):
     lhs: Value
     rhs: Value
 
@@ -190,72 +195,61 @@ class AddInstr(Instr):
     def __init__(
         self, bb: BasicBlock, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
     ) -> None:
-        super().__init__("add", bb, ast)
+        super().__init__(bb, ast)
         self.lhs = lhs
         self.rhs = rhs
 
     @override
     def calculate_typ(self) -> Typ:
-        assert self.lhs.typ == I32
-        assert self.rhs.typ == I32
-        return I32
+        assert self.lhs.typ == self.rhs.typ
+        return self.lhs.typ
 
 
-class SubInstr(Instr):
+class AddInstr(BinOpInstr):
+    pass
+
+
+class SubInstr(BinOpInstr):
+    pass
+
+
+class MulInstr(BinOpInstr):
+    pass
+
+
+class SdivInstr(BinOpInstr):
+    pass
+
+
+class UdivInstr(BinOpInstr):
+    pass
+
+
+class IcmpInstr(Instr):
+    op: str
     lhs: Value
     rhs: Value
 
     @override
     def __init__(
-        self, bb: BasicBlock, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
+        self, bb: BasicBlock, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
     ) -> None:
-        super().__init__("sub", bb, ast)
+        super().__init__(bb, ast)
+        self.op = op
         self.lhs = lhs
         self.rhs = rhs
 
     @override
     def calculate_typ(self) -> Typ:
-        assert self.lhs.typ == I32
-        assert self.rhs.typ == I32
-        return I32
+        return BOOL
 
 
-class MulInstr(Instr):
-    lhs: Value
-    rhs: Value
-
-    @override
-    def __init__(
-        self, bb: BasicBlock, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
-    ) -> None:
-        super().__init__("mul", bb, ast)
-        self.lhs = lhs
-        self.rhs = rhs
-
-    @override
-    def calculate_typ(self) -> Typ:
-        assert self.lhs.typ == I32
-        assert self.rhs.typ == I32
-        return I32
+class IcmpSignedInstr(IcmpInstr):
+    pass
 
 
-class SdivInstr(Instr):
-    lhs: Value
-    rhs: Value
-
-    @override
-    def __init__(
-        self, bb: BasicBlock, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
-    ) -> None:
-        super().__init__("sdiv", bb, ast)
-        self.lhs = lhs
-        self.rhs = rhs
-
-    @override
-    def calculate_typ(self) -> Typ:
-        assert self.lhs.typ == I32
-        assert self.rhs.typ == I32
-        return I32
+class IcmpUnsignedInstr(IcmpInstr):
+    pass
 
 
 class LoadInstr(Instr):
@@ -263,7 +257,7 @@ class LoadInstr(Instr):
 
     @override
     def __init__(self, bb: BasicBlock, src: Value, ast: Optional[ast.VarExpr]) -> None:
-        super().__init__("load", bb, ast)
+        super().__init__(bb, ast)
         self.src = src
 
     @override
@@ -279,7 +273,7 @@ class AllocaInstr(Instr):
     def __init__(
         self, bb: BasicBlock, typ: Typ, count: int, ast: Optional[ast.Ast]
     ) -> None:
-        super().__init__("alloca", bb, ast)
+        super().__init__(bb, ast)
         self._typ = typ
         self.count = count
 
@@ -296,7 +290,7 @@ class StoreInstr(Instr[VoidTyp]):
     def __init__(
         self, bb: BasicBlock, value: Value, dest: Value, ast: Optional[ast.Ast]
     ) -> None:
-        super().__init__("store", bb, ast)
+        super().__init__(bb, ast)
         self.value = value
         self.dest = dest
 
@@ -317,7 +311,7 @@ class CallInstr(Instr[Typ, ast.CallExpr]):
         args: list[Value],
         ast: Optional[ast.CallExpr],
     ) -> None:
-        super().__init__("call", bb, ast)
+        super().__init__(bb, ast)
         self.callee = callee
         self.args = args
 
@@ -331,7 +325,7 @@ class PhiInstr(Instr):
 
     @override
     def __init__(self, bb: BasicBlock, ast: Optional[ast.Ast]) -> None:
-        super().__init__("phi", bb, ast)
+        super().__init__(bb, ast)
         self.incoming = {}
 
     def add_incoming(self, value: Value, bb: BasicBlock) -> None:
@@ -355,7 +349,7 @@ class BranchInstr(Instr[NeverTyp]):
     def __init__(
         self, bb: BasicBlock, target: BasicBlock, ast: Optional[ast.Ast]
     ) -> None:
-        super().__init__("branch", bb, ast)
+        super().__init__(bb, ast)
         self.target = target
 
     @override
@@ -377,7 +371,7 @@ class CbranchInstr(Instr[NeverTyp]):
         false_target: BasicBlock,
         ast: Optional[ast.Ast],
     ) -> None:
-        super().__init__("cbranch", bb, ast)
+        super().__init__(bb, ast)
         self.condition = condition
         self.true_target = true_target
         self.false_target = false_target
@@ -392,7 +386,7 @@ class RetInstr(Instr[NeverTyp]):
 
     @override
     def __init__(self, bb: BasicBlock, value: Value, ast: Optional[ast.Ast]) -> None:
-        super().__init__("ret", bb, ast)
+        super().__init__(bb, ast)
         self.value = value
 
     @override
@@ -403,7 +397,7 @@ class RetInstr(Instr[NeverTyp]):
 class UnreachableInstr(Instr[NeverTyp]):
     @override
     def __init__(self, bb: BasicBlock, ast: Optional[ast.Ast]) -> None:
-        super().__init__("unreachable", bb, ast)
+        super().__init__(bb, ast)
 
     @override
     def calculate_typ(self) -> NeverTyp:
@@ -431,8 +425,12 @@ class BasicBlock:
     def _add_instr[T: Instr](self, instr: T, terminate: bool = False) -> T:
         if self.terminated:
             if not self.warned_unreachable:
-                assert instr.ast is not None, "Shouldn't get unreachable code in builtins"
-                register_error(UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.meta))
+                assert instr.ast is not None, (
+                    "Shouldn't get unreachable code in builtins"
+                )
+                register_error(
+                    UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.meta)
+                )
                 self.warned_unreachable = True
 
             return instr
@@ -457,6 +455,19 @@ class BasicBlock:
 
     def sdiv(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> SdivInstr:
         return self._add_instr(SdivInstr(self, lhs, rhs, ast))
+
+    def udiv(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> UdivInstr:
+        return self._add_instr(UdivInstr(self, lhs, rhs, ast))
+
+    def icmp_signed(
+        self, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
+    ) -> IcmpSignedInstr:
+        return self._add_instr(IcmpSignedInstr(self, op, lhs, rhs, ast))
+
+    def icmp_unsigned(
+        self, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
+    ) -> IcmpUnsignedInstr:
+        return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast))
 
     def phi(self, ast: Optional[ast.Ast]) -> PhiInstr:
         return self._add_instr(PhiInstr(self, ast))
@@ -639,18 +650,16 @@ class CfgBuilder:
                 return res
             if have_els_value:
                 return els
+            self.set_position(end_bb)
             if have_then_value:
-                self.set_position(end_bb)
                 return then
-
-        self.set_position(end_bb)
+            self.curr_bb.unreachable(if_ast)
 
         if have_then_value:
             if then.typ != VOID:
                 raise IfTypNotVoidError(then.typ.name(), if_ast.then.meta)
-        else:
-            self.curr_bb.unreachable(if_ast)
 
+        self.set_position(end_bb)
         return VoidValue(if_ast)
 
     def build_while_expr(self, while_ast: ast.WhileExpr, e: Env) -> Value:
@@ -987,10 +996,17 @@ class Mod(Value[Typ, ast.Mod]):
         self._env.typs["i32"] = I32
         self._env.typs["u8"] = U8
 
-        self._define_arith_fn("+", BasicBlock.add)
-        self._define_arith_fn("-", BasicBlock.sub)
-        self._define_arith_fn("*", BasicBlock.mul)
-        self._define_arith_fn("/", BasicBlock.sdiv)
+        self._define_arith_fn("+", SIGNED, BasicBlock.add)
+        self._define_arith_fn("-", SIGNED, BasicBlock.sub)
+        self._define_arith_fn("*", SIGNED, BasicBlock.mul)
+        self._define_arith_fn("/", SIGNED, BasicBlock.sdiv)
+
+        self._define_cmp_fn("<", SIGNED)
+        self._define_cmp_fn("<=", SIGNED)
+        self._define_cmp_fn("==", SIGNED)
+        self._define_cmp_fn("!=", SIGNED)
+        self._define_cmp_fn(">=", SIGNED)
+        self._define_cmp_fn(">", SIGNED)
 
         for defn_ast in mod_ast.defns:
             self._build_defn(defn_ast)
@@ -998,6 +1014,7 @@ class Mod(Value[Typ, ast.Mod]):
     def _define_arith_fn(
         self,
         name: str,
+        signage: Signage,
         bb_method: Callable[[BasicBlock, Value, Value, Optional[ast.Ast]], Instr],
     ) -> None:
         def build(builder: CfgBuilder, _e: Env):
@@ -1005,8 +1022,22 @@ class Mod(Value[Typ, ast.Mod]):
             res = bb_method(builder.curr_bb, lhs, rhs, None)
             builder.ret(res, None)
 
-        typ = FnTyp(I32, (I32, I32))
-        self._add_item(BuiltinFn(self, PRIVATE, name, typ, build, self._env))
+        param_typ = I32 if signage == SIGNED else U32
+        fn_typ = FnTyp(param_typ, (param_typ, param_typ))
+        self._add_item(BuiltinFn(self, PRIVATE, name, fn_typ, build, self._env))
+
+    def _define_cmp_fn(self, name: str, signage: Signage) -> None:
+        def build(builder: CfgBuilder, _e: Env):
+            lhs, rhs = builder.fn.params
+            if signage == SIGNED:
+                res = builder.curr_bb.icmp_signed(name, lhs, rhs, None)
+            else:
+                res = builder.curr_bb.icmp_unsigned(name, lhs, rhs, None)
+            builder.ret(res, None)
+
+        param_typ = I32 if signage == SIGNED else U32
+        fn_typ = FnTyp(BOOL, (param_typ, param_typ))
+        self._add_item(BuiltinFn(self, PRIVATE, name, fn_typ, build, self._env))
 
     @override
     def calculate_typ(self) -> Typ:

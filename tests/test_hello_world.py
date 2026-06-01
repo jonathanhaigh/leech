@@ -54,6 +54,36 @@ def test_int_arith():
     check_prog_output(src, "", 256 - 4)
 
 
+@pytest.mark.parametrize(
+    "op,lhs,rhs,result",
+    (
+        ("<", 1, 2, True),
+        ("<", 2, 1, False),
+        ("<", 1, 1, False),
+        ("<=", 1, 2, True),
+        ("<=", 2, 1, False),
+        ("<=", 1, 1, True),
+        ("==", 1, 2, False),
+        ("==", 2, 1, False),
+        ("==", 1, 1, True),
+        (">=", 1, 2, False),
+        (">=", 2, 1, True),
+        (">=", 1, 1, True),
+        (">", 1, 2, False),
+        (">", 2, 1, True),
+        (">", 1, 1, False),
+    ),
+)
+def test_cmp(op, lhs, rhs, result):
+    src = f"""
+    pub fn main() i32 {{
+        return if ({lhs} {op} {rhs}) {{ 100 }} else {{ 200 }};
+    }}
+    """
+    expected_status = 100 if result else 200
+    check_prog_output(src, "", expected_status)
+
+
 def test_tail_expr_return():
     src = """
     pub fn main() i32 { 100 }
@@ -207,6 +237,7 @@ def test_if_ret_expr_val():
         if (true) {
             return 1; 
         };
+        return 0;
     }
     """
     check_prog_output(src, "", 1)
@@ -293,6 +324,7 @@ def test_str_mod_var_ref_in_mod():
     """
     check_prog_output(src, "abcd\n", 100)
 
+
 def test_var_not_found_at_mod_scope():
     src = """
     let a = x;
@@ -301,12 +333,14 @@ def test_var_not_found_at_mod_scope():
     with pytest.raises(VarNotFoundError):
         compile(src)
 
+
 def test_var_not_found_at_fn_scope():
     src = """
     pub fn main() i32 { x }
     """
     with pytest.raises(VarNotFoundError):
         compile(src)
+
 
 def test_shadowed_mod_var():
     src = """
@@ -317,6 +351,7 @@ def test_shadowed_mod_var():
     }
     """
     check_prog_output(src, "", 200)
+
 
 def test_unshadowed_mod_var():
     src = """
@@ -330,6 +365,7 @@ def test_unshadowed_mod_var():
     """
     check_prog_output(src, "", 100)
 
+
 def test_shadowed_local_var():
     src = """
     pub fn main() i32 {
@@ -341,6 +377,7 @@ def test_shadowed_local_var():
     }
     """
     check_prog_output(src, "", 200)
+
 
 def test_unshadowed_local_var():
     src = """
@@ -354,6 +391,7 @@ def test_unshadowed_local_var():
     """
     check_prog_output(src, "", 100)
 
+
 def test_cannot_access_inner_scope():
     src = """
     pub fn main() i32 {
@@ -366,6 +404,7 @@ def test_cannot_access_inner_scope():
     with pytest.raises(VarNotFoundError):
         compile(src)
 
+
 def test_duplicate_mod_var():
     src = """
     let x = 100;
@@ -374,6 +413,7 @@ def test_duplicate_mod_var():
     """
     with pytest.raises(DuplicateVarDefnError):
         compile(src)
+
 
 def test_duplicate_local_var():
     src = """
@@ -386,6 +426,7 @@ def test_duplicate_local_var():
     with pytest.raises(DuplicateVarDefnError):
         compile(src)
 
+
 def test_not_callable():
     src = """
     pub fn main() i32 {
@@ -396,6 +437,7 @@ def test_not_callable():
     """
     with pytest.raises(NotCallableError):
         compile(src)
+
 
 def test_invalid_arg_typ():
     src = """
@@ -408,6 +450,7 @@ def test_invalid_arg_typ():
     with pytest.raises(InvalidArgTypError):
         compile(src)
 
+
 def test_too_many_args():
     src = """
     pub fn f(x: i32) i32 { x + x }
@@ -419,6 +462,7 @@ def test_too_many_args():
     with pytest.raises(TooManyArgsError):
         compile(src)
 
+
 def test_not_enough_args():
     src = """
     pub fn f(x: i32) i32 { x + x }
@@ -429,6 +473,7 @@ def test_not_enough_args():
     """
     with pytest.raises(NotEnoughArgsError):
         compile(src)
+
 
 @pytest.mark.xfail
 def test_mod_var_cycle():
@@ -490,3 +535,32 @@ def test_assign_to_const_mod_var():
     """
     with pytest.raises(AssignToConstError):
         compile(src)
+
+
+def test_while():
+    src = """
+    pub fn main() i32 {
+        let mut i = 0;
+        while (i < 10) {
+            i = i + 1;
+        };
+        return i;
+    }
+    """
+    check_prog_output(src, "", 10)
+
+
+def test_if_in_while():
+    src = """
+    pub fn main() i32 {
+        let mut i = 1;
+        while (true) {
+            i = 2 * i;
+            if (i >= 120) {
+                return i;
+            }
+        };
+        return 0;
+    }
+    """
+    check_prog_output(src, "", 128)

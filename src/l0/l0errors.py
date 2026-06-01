@@ -319,18 +319,22 @@ class TextErrorRenderer:
 _errors: list[UserError] = []
 _error_level: Level = NOTE
 
+
 def register_error(err: UserError) -> None:
     global _error_level
     if err.level > _error_level:
         _error_level = err.level
     _errors.append(err)
 
+
 def raise_error(err: UserError) -> None:
     register_error(err)
     raise err
 
+
 def errors() -> list[UserError]:
     return _errors
+
 
 def error_level() -> Level:
     return _error_level

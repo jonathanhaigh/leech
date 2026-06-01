@@ -20,6 +20,7 @@ class Int(Value):
             raise NotImplementedError
         self.value = value
 
+
 class Bool(Value):
     value: bool
 
@@ -36,6 +37,7 @@ class CStr(Value):
         super().__init__(CSTR)
         self.value = bytearray(value.encode() + b"\0")
         self.initializer_typ = ArrayTyp(U8, len(self.value))
+
 
 class Interpreter:
     def eval(self, expr: ast.Expr, e: Env) -> Value:

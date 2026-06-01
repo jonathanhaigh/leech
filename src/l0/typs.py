@@ -158,7 +158,6 @@ class ArrayTyp(Typ):
 
 
 class VoidTyp(Typ):
-
     @override
     def __eq__(self, other: Any) -> bool:
         return type(self) is type(other)
@@ -173,7 +172,6 @@ class VoidTyp(Typ):
 
 
 class NeverTyp(Typ):
-
     @override
     def __eq__(self, other: Any) -> bool:
         return type(self) is type(other)
@@ -188,6 +186,8 @@ class NeverTyp(Typ):
 
 
 U8 = IntTyp(8, UNSIGNED)
+I8 = IntTyp(8, SIGNED)
+U32 = IntTyp(32, UNSIGNED)
 I32 = IntTyp(32, SIGNED)
 CINT = I32
 BOOL = BoolTyp()

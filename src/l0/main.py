@@ -42,6 +42,7 @@ def compile(src: str):
     compiler.compile()
     return str(compiler.ll_mod) + "\n"
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="l0c", description="l0 compiler")
     parser.add_argument("filename", help="source file")
@@ -55,13 +56,16 @@ def parse_args() -> argparse.Namespace:
             if in_path.suffix != ".ll":
                 args.o = str(in_path.with_suffix(".ll"))
             else:
-                print("-o option must be given if source file name ends in '.ll'", file=sys.stderr)
+                print(
+                    "-o option must be given if source file name ends in '.ll'",
+                    file=sys.stderr,
+                )
                 sys.exit(2)
 
     return args
 
 
-def run(src: str):
+def run():
     args = parse_args()
     if args.filename == "-":
         src = sys.stdin.read()
