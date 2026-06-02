@@ -3,6 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import enum
 from functools import cached_property
+import re
 from typing import ChainMap, Generic, Optional, TypeVar, override
 
 from lark.tree import Meta
@@ -16,7 +17,9 @@ from l0.l0errors import (
     IfCondNotBoolError,
     IfElsTypMismatchError,
     IfTypNotVoidError,
+    IncompatibleBinOpArgTypsError,
     InvalidArgTypError,
+    InvalidBinOpArgTypError,
     InvalidRetTypError,
     InvalidVoidRetError,
     MissingRetError,
@@ -35,19 +38,17 @@ from l0.opt_util import opt_map, opt_or_default, opt_unwrap
 from l0.typs import (
     BOOL,
     CONST,
-    I32,
     MUT,
     NEVER,
     SIGNED,
-    U32,
-    U8,
+    UNSIGNED,
     VOID,
     CallableTyp,
     FnTyp,
+    IntTyp,
     Mutability,
     NeverTyp,
     PtrTyp,
-    Signage,
     Typ,
     VoidTyp,
 )
@@ -86,20 +87,40 @@ class Env:
     def new_child(self) -> Env:
         return Env(self.vars.new_child(), self.typs.new_child())
 
+    def get_var(self, name: str) -> Optional[Var]:
+        if name in self.vars:
+            return self.vars[name]
+        return None
+
     def add_var(self, name: str, var: Var) -> None:
         if name in self.vars.maps[0]:
             existing = self.vars[name]
             raise DuplicateVarDefnError(name, var.value.meta, existing.value.meta)
         self.vars[name] = var
 
+    def get_typ(self, name) -> Optional[Typ]:
+        if name in self.typs:
+            return self.typs[name]
+
+        m = re.fullmatch("([iu])([1-9][0-9]*)", name)
+        if m:
+            signage = SIGNED if m[1] == "i" else UNSIGNED
+            width = int(m[2])
+            typ = IntTyp(width, signage)
+            self.typs.maps[-1][name] = typ
+            return typ
+
+        return None
+
 
 def typ_from_ast(typ_ast: ast.Typ, e: Env) -> Typ:
     match typ_ast:
         case ast.BasicTyp():
             name = typ_ast.name.name
-            if name not in e.typs:
+            typ = e.get_typ(name)
+            if typ is None:
                 raise TypNotFoundError(name, typ_ast.meta)
-            return e.typs[name]
+            return typ
         case ast.PtrTyp():
             return PtrTyp(typ_from_ast(typ_ast.pointee_typ, e), CONST)
         case _:
@@ -585,6 +606,8 @@ class CfgBuilder:
                 return self.build_while_expr(expr_ast, e)
             case ast.CallExpr():
                 return self.build_call_expr(expr_ast, e)
+            case ast.BinOpExpr():
+                return self.build_bin_op_expr(expr_ast, e)
             case ast.LitExpr():
                 return self.curr_bb.comptime_value(expr_ast.value, expr_ast)
             case ast.VarExpr():
@@ -698,7 +721,7 @@ class CfgBuilder:
         if not isinstance(callee, FnSpec):
             raise NotImplementedError(callee)
 
-        args = [self.build_expr(arg_ast, e) for arg_ast in call_ast.args]
+        args = [self.build_expr(arg_ast, e) for arg_ast in call_ast.arg_list.args]
 
         num_args = len(args)
         param_typs = callee.typ.param_typs
@@ -711,7 +734,7 @@ class CfgBuilder:
             raise TooManyArgsError(
                 callee_diag_str,
                 call_ast.meta,
-                call_ast.args[-1].meta,
+                call_ast.arg_list.args[-1].meta,
                 num_args,
                 num_params,
             )
@@ -723,16 +746,60 @@ class CfgBuilder:
                     i + 1,
                     arg.typ.name(),
                     param_typs[i].name(),
-                    call_ast.args[i].meta,
+                    call_ast.arg_list.args[i].meta,
                 )
 
         return self.curr_bb.call(callee, args, call_ast)
 
+    def build_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env) -> Value:
+        lhs = self.build_expr(op_ast.lhs, e)
+        if not isinstance(lhs.typ, IntTyp):
+            raise InvalidBinOpArgTypError(
+                op_ast.op.name,
+                op_ast.op.meta,
+                "left",
+                lhs.typ.name(),
+                "an integer type",
+                op_ast.lhs.meta,
+            )
+
+        rhs = self.build_expr(op_ast.rhs, e)
+        if lhs.typ != rhs.typ:
+            raise IncompatibleBinOpArgTypsError(
+                op_ast.op.name,
+                op_ast.op.meta,
+                lhs.typ.name(),
+                op_ast.lhs.meta,
+                rhs.typ.name(),
+                op_ast.rhs.meta,
+            )
+
+        op = op_ast.op.name
+        match op:
+            case "<" | "<=" | "==" | "!=" | ">=" | ">":
+                if lhs.typ.signage == SIGNED:
+                    return self.curr_bb.icmp_signed(op, lhs, rhs, op_ast)
+                else:
+                    return self.curr_bb.icmp_unsigned(op, lhs, rhs, op_ast)
+            case "+":
+                return self.curr_bb.add(lhs, rhs, op_ast)
+            case "-":
+                return self.curr_bb.sub(lhs, rhs, op_ast)
+            case "*":
+                return self.curr_bb.mul(lhs, rhs, op_ast)
+            case "/":
+                if lhs.typ.signage == SIGNED:
+                    return self.curr_bb.sdiv(lhs, rhs, op_ast)
+                else:
+                    return self.curr_bb.udiv(lhs, rhs, op_ast)
+            case _:
+                raise NotImplementedError(op)
+
     def build_var_expr(self, var_ast: ast.VarExpr, e: Env) -> Value:
         name = var_ast.name
-        if name not in e.vars:
+        var = e.get_var(name)
+        if var is None:
             raise VarNotFoundError(name, var_ast.meta)
-        var = e.vars[name]
         if isinstance(var.value, FnSpec):
             return var.value
         return self.curr_bb.load(var.value, var_ast)
@@ -788,9 +855,9 @@ class CfgBuilder:
     def build_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> None:
         expr = self.build_expr(ass_ast.expr, e)
         name = ass_ast.ident.name
-        if name not in e.vars:
+        var = e.get_var(name)
+        if var is None:
             raise VarNotFoundError(name, ass_ast.ident.meta)
-        var = e.vars[name]
         if var.mut == CONST:
             raise AssignToConstError(name, ass_ast.ident.meta)
 
@@ -993,51 +1060,8 @@ class Mod(Value[Typ, ast.Mod]):
         self._env = Env()
         self.items = []
 
-        self._env.typs["i32"] = I32
-        self._env.typs["u8"] = U8
-
-        self._define_arith_fn("+", SIGNED, BasicBlock.add)
-        self._define_arith_fn("-", SIGNED, BasicBlock.sub)
-        self._define_arith_fn("*", SIGNED, BasicBlock.mul)
-        self._define_arith_fn("/", SIGNED, BasicBlock.sdiv)
-
-        self._define_cmp_fn("<", SIGNED)
-        self._define_cmp_fn("<=", SIGNED)
-        self._define_cmp_fn("==", SIGNED)
-        self._define_cmp_fn("!=", SIGNED)
-        self._define_cmp_fn(">=", SIGNED)
-        self._define_cmp_fn(">", SIGNED)
-
         for defn_ast in mod_ast.defns:
             self._build_defn(defn_ast)
-
-    def _define_arith_fn(
-        self,
-        name: str,
-        signage: Signage,
-        bb_method: Callable[[BasicBlock, Value, Value, Optional[ast.Ast]], Instr],
-    ) -> None:
-        def build(builder: CfgBuilder, _e: Env):
-            lhs, rhs = builder.fn.params
-            res = bb_method(builder.curr_bb, lhs, rhs, None)
-            builder.ret(res, None)
-
-        param_typ = I32 if signage == SIGNED else U32
-        fn_typ = FnTyp(param_typ, (param_typ, param_typ))
-        self._add_item(BuiltinFn(self, PRIVATE, name, fn_typ, build, self._env))
-
-    def _define_cmp_fn(self, name: str, signage: Signage) -> None:
-        def build(builder: CfgBuilder, _e: Env):
-            lhs, rhs = builder.fn.params
-            if signage == SIGNED:
-                res = builder.curr_bb.icmp_signed(name, lhs, rhs, None)
-            else:
-                res = builder.curr_bb.icmp_unsigned(name, lhs, rhs, None)
-            builder.ret(res, None)
-
-        param_typ = I32 if signage == SIGNED else U32
-        fn_typ = FnTyp(BOOL, (param_typ, param_typ))
-        self._add_item(BuiltinFn(self, PRIVATE, name, fn_typ, build, self._env))
 
     @override
     def calculate_typ(self) -> Typ:

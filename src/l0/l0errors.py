@@ -95,6 +95,48 @@ class InvalidArgTypError(UserError):
         )
 
 
+class InvalidBinOpArgTypError(UserError):
+    def __init__(
+        self,
+        op: str,
+        op_meta: Optional[Meta],
+        arg_name: str,
+        given_typ: str,
+        expected_typ: str,
+        arg_meta: Optional[Meta],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'{arg_name.capitalize()} operand of binary operation "{op}"'
+                f' has invalid type "{given_typ}",'
+                f' expecting {expected_typ}"'
+            ),
+            arg_meta,
+        )
+        if op_meta is not None:
+            self.add_extra(NOTE, f'For "{op}" operation here', op_meta)
+
+
+class IncompatibleBinOpArgTypsError(UserError):
+    def __init__(
+        self,
+        op: str,
+        op_meta: Optional[Meta],
+        lhs_typ: str,
+        lhs_meta: Optional[Meta],
+        rhs_typ: str,
+        rhs_meta: Optional[Meta],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Left and right operands to binary operation "{op}" have incompatible types',
+            op_meta,
+        )
+        self.add_extra(NOTE, f'Left operand type is "{lhs_typ}"', lhs_meta)
+        self.add_extra(NOTE, f'Right operand type is "{rhs_typ}"', rhs_meta)
+
+
 class TooManyArgsError(UserError):
     def __init__(
         self,

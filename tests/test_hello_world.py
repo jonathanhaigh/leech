@@ -8,7 +8,9 @@ from l0.l0errors import (
     DuplicateVarDefnError,
     IfElsTypMismatchError,
     IfTypNotVoidError,
+    IncompatibleBinOpArgTypsError,
     InvalidArgTypError,
+    InvalidBinOpArgTypError,
     InvalidRetTypError,
     InvalidVoidRetError,
     MissingRetError,
@@ -564,3 +566,33 @@ def test_if_in_while():
     }
     """
     check_prog_output(src, "", 128)
+
+
+@pytest.mark.parametrize(
+    "lhs,rhs",
+    (
+        ("0u8", "0i8"),
+        ("0i10", "0i11"),
+        ("0u10", "0u11"),
+    ),
+)
+def test_incompatible_bin_op_args(lhs, rhs):
+    src = f"""
+    pub fn main() i32 {{
+        x = {lhs} + {rhs};
+        return 0;
+    }}
+    """
+    with pytest.raises(IncompatibleBinOpArgTypsError):
+        compile(src)
+
+
+def test_invalid_bin_op_arg():
+    src = """
+    pub fn main() i32 {
+        x = true + false;
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidBinOpArgTypError):
+        compile(src)

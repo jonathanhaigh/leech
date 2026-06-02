@@ -1,14 +1,16 @@
 from abc import ABC, abstractmethod
 import ast as python_ast
 from collections.abc import Callable
+import re
 from typing import Any, Generic, Optional, TypeVar, override
 
 from lark import Token
 from lark.tree import Branch, Meta, ParseTree, Tree
 
 from l0 import comptime
+from l0 import typs
 from l0.opt_util import opt_map
-from l0.typs import I32
+from l0.typs import SIGNED, UNSIGNED
 
 ComptimeValueT = TypeVar("ComptimeValueT", bound="comptime.Value")
 
@@ -79,14 +81,14 @@ class Expr(Ast):
             "block_expr": BlockExpr,
             "if_expr": IfExpr,
             "while_expr": WhileExpr,
-            "call_expr": PrefixCallExpr,
+            "call_expr": CallExpr,
             "int_lit": IntLit,
             "str_lit": StrLit,
             "bool_lit": BoolLit,
             "var_expr": VarExpr,
-            "cmp_expr": InfixCallExpr,
-            "arith_expr": InfixCallExpr,
-            "term": InfixCallExpr,
+            "cmp_expr": BinOpExpr,
+            "arith_expr": BinOpExpr,
+            "term": BinOpExpr,
         }
 
     @staticmethod
@@ -191,10 +193,23 @@ class StrLit(LitExpr["comptime.CStr"]):
 
 
 class IntLit(LitExpr["comptime.Int"]):
+    token: Token
+
     def __init__(self, tree: ParseTree) -> None:
         assert tree.data == "int_lit"
-        (tok,) = tree.children
-        value = comptime.Int(I32, python_ast.literal_eval(as_token(tok)))
+        (token,) = tree.children
+        m = re.fullmatch("([0-9]+)(?:([iu])([0-9]+))?", as_token(token))
+        assert m is not None
+
+        if m[2] is not None:
+            signage = SIGNED if m[2] == "i" else UNSIGNED
+            width = int(m[3])
+        else:
+            signage = SIGNED
+            width = 32
+
+        value = comptime.Int(typs.IntTyp(width, signage), int(m[1]))
+        self.token = as_token(token)
         super().__init__(tree.meta, value)
 
     @override
@@ -239,42 +254,44 @@ class VarExpr(Expr):
 
 class CallExpr(Expr):
     callee: Expr
-    args: list[Expr]
-
-    def __init__(self, meta: Meta, callee: Expr, args: list[Expr]) -> None:
-        super().__init__(meta)
-        self.callee = callee
-        self.args = args
-
-
-class PrefixCallExpr(CallExpr):
-    callee: Expr
     arg_list: ArgList
 
     def __init__(self, tree: ParseTree) -> None:
         assert tree.data == "call_expr"
+        super().__init__(tree.meta)
         callee, arg_list = tree.children
-        callee = Expr.from_tree(as_tree(callee))
-        arg_list = ArgList(as_tree(arg_list))
-        super().__init__(tree.meta, callee, arg_list.args)
-        self.arg_list = arg_list
+        self.callee = Expr.from_tree(as_tree(callee))
+        self.arg_list = ArgList(as_tree(arg_list))
 
     @override
     def diag_str(self) -> str:
         return "call expression"
 
 
-class InfixCallExpr(CallExpr):
+class BinOp(Ast):
+    name: str
+
+    def __init__(self, tree: ParseTree) -> None:
+        super().__init__(tree.meta)
+        assert len(tree.children) == 1
+        self.name = as_token(tree.children[0])
+
+    @override
+    def diag_str(self) -> str:
+        return f"binary operation ({self.name})"
+
+
+class BinOpExpr(Expr):
     lhs: Expr
-    op: VarExpr
+    op: BinOp
     rhs: Expr
 
     def __init__(self, tree: ParseTree) -> None:
-        (lhs, op, rhs) = tree.children
-        op = VarExpr(as_tree(op))
-        lhs = Expr.from_tree(as_tree(lhs))
-        rhs = Expr.from_tree(as_tree(rhs))
-        super().__init__(tree.meta, op, [lhs, rhs])
+        lhs, op, rhs = map(as_tree, tree.children)
+        self.lhs = Expr.from_tree(lhs)
+        self.op = BinOp(op)
+        self.rhs = Expr.from_tree(rhs)
+        super().__init__(tree.meta)
 
     @override
     def diag_str(self) -> str:
