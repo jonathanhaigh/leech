@@ -1019,7 +1019,6 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
     def cfg(self) -> Cfg:
         builder = CfgBuilder(self)
         builder.build_fn(opt_unwrap(self.ast), self.env)
-        nx.write_graphml(builder.cfg, f"{self.name}.graphml")
         return builder.cfg
 
 
