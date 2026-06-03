@@ -341,16 +341,17 @@ class TextErrorRenderer:
 
         print(f"{message.level.name}: {message.message}", file=sys.stderr)
         if message.span is not None:
-            self._display_line(message.span)
-            self._display_col_pos(message.span)
+            line_num_width = len(str(len(message.span.file.lines)))
+            self._display_line(message.span, line_num_width)
+            self._display_col_pos(message.span, line_num_width)
 
-    def _display_line(self, span: SrcSpan) -> None:
+    def _display_line(self, span: SrcSpan, line_num_width) -> None:
         assert span.start_line > 0
         line = span.file.lines[span.start_line - 1]
-        print(f"{span.start_line}| {line}", file=sys.stderr)
+        print(f"{span.start_line:{line_num_width}d}| {line}", file=sys.stderr)
 
-    def _display_col_pos(self, span: SrcSpan) -> None:
-        prefix = "-" * (span.start_col + 2)
+    def _display_col_pos(self, span: SrcSpan, line_num_width) -> None:
+        prefix = "-" * (span.start_col + line_num_width + 1)
         print(f"{prefix}^", file=sys.stderr)
 
 
