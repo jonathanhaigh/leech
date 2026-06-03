@@ -23,6 +23,7 @@ from l0.l0errors import (
 )
 from l0.src import SrcFile
 
+
 def compile_str(tmp_path: Path, src: str) -> str:
     path = tmp_path / "main.l0"
     with open(path, "w", encoding="utf-8") as f:
@@ -30,7 +31,10 @@ def compile_str(tmp_path: Path, src: str) -> str:
 
     return compile(SrcFile(path))
 
-def check_prog_output(tmp_path: Path, src: str, expected_output, expected_exit_status) -> None:
+
+def check_prog_output(
+    tmp_path: Path, src: str, expected_output, expected_exit_status
+) -> None:
     ir = compile_str(tmp_path, src)
     proc = subprocess.run(
         ["lli"],

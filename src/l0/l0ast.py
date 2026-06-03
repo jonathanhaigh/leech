@@ -557,7 +557,6 @@ class Mutability(Ast):
         else:
             return None
 
-
     @override
     def diag_str(self) -> str:
         return "mut specifier"
