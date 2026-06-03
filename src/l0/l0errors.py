@@ -3,7 +3,7 @@ from enum import IntEnum
 import sys
 from typing import Optional
 
-from lark.tree import Meta
+from l0.src import SrcSpan
 
 
 class Level(IntEnum):
@@ -21,20 +21,20 @@ ERROR = Level.ERROR
 class Message:
     level: Level
     message: str
-    meta: Optional[Meta]
+    span: Optional[SrcSpan]
 
 
 class UserError(Exception):
     message: Message
     extra: list[Message]
 
-    def __init__(self, level: Level, message: str, meta: Optional[Meta]) -> None:
+    def __init__(self, level: Level, message: str, span: Optional[SrcSpan]) -> None:
         super().__init__(message)
-        self.message = Message(level, message, meta)
+        self.message = Message(level, message, span)
         self.extra = []
 
-    def add_extra(self, level: Level, message: str, meta: Optional[Meta]) -> None:
-        self.extra.append(Message(level, message, meta))
+    def add_extra(self, level: Level, message: str, span: Optional[SrcSpan]) -> None:
+        self.extra.append(Message(level, message, span))
 
     @property
     def level(self):
@@ -42,35 +42,35 @@ class UserError(Exception):
 
 
 class TypNotFoundError(UserError):
-    def __init__(self, name: str, meta: Optional[Meta]) -> None:
-        super().__init__(ERROR, f'Type "{name}" not found.', meta)
+    def __init__(self, name: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, f'Type "{name}" not found.', span)
 
 
 class VarNotFoundError(UserError):
-    def __init__(self, name: str, meta: Optional[Meta]) -> None:
-        super().__init__(ERROR, f'Variable "{name}" not found.', meta)
+    def __init__(self, name: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, f'Variable "{name}" not found.', span)
 
 
 class AssignToConstError(UserError):
-    def __init__(self, name: str, meta: Optional[Meta]) -> None:
+    def __init__(self, name: str, span: Optional[SrcSpan]) -> None:
         super().__init__(
-            ERROR, f'Attempt to set value of const variable "{name}"', meta
+            ERROR, f'Attempt to set value of const variable "{name}"', span
         )
 
 
 class DuplicateVarDefnError(UserError):
     def __init__(
-        self, name: str, meta: Optional[Meta], existing_meta: Optional[Meta]
+        self, name: str, span: Optional[SrcSpan], existing_span: Optional[SrcSpan]
     ) -> None:
-        super().__init__(ERROR, f'Duplicate definition of variable "{name}"', meta)
-        if existing_meta is not None:
-            self.add_extra(NOTE, "Previous definition here", existing_meta)
+        super().__init__(ERROR, f'Duplicate definition of variable "{name}"', span)
+        if existing_span is not None:
+            self.add_extra(NOTE, "Previous definition here", existing_span)
 
 
 class NotCallableError(UserError):
-    def __init__(self, callee_diag: str, given_typ: str, meta: Optional[Meta]):
+    def __init__(self, callee_diag: str, given_typ: str, span: Optional[SrcSpan]):
         super().__init__(
-            ERROR, f'{callee_diag} of type "{given_typ}" is not callable', meta
+            ERROR, f'{callee_diag} of type "{given_typ}" is not callable', span
         )
 
 
@@ -78,11 +78,11 @@ class InvalidArgTypError(UserError):
     def __init__(
         self,
         callee_diag: str,
-        _fn_meta: Optional[Meta],
+        _fn_span: Optional[SrcSpan],
         arg_num: int,
         given_typ: str,
         expected_typ: str,
-        arg_meta: Optional[Meta],
+        arg_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -91,7 +91,7 @@ class InvalidArgTypError(UserError):
                 f' has invalid type "{given_typ}",'
                 f' expecting "{expected_typ}"'
             ),
-            arg_meta,
+            arg_span,
         )
 
 
@@ -99,11 +99,11 @@ class InvalidBinOpArgTypError(UserError):
     def __init__(
         self,
         op: str,
-        op_meta: Optional[Meta],
+        op_span: Optional[SrcSpan],
         arg_name: str,
         given_typ: str,
         expected_typ: str,
-        arg_meta: Optional[Meta],
+        arg_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -112,37 +112,37 @@ class InvalidBinOpArgTypError(UserError):
                 f' has invalid type "{given_typ}",'
                 f' expecting {expected_typ}"'
             ),
-            arg_meta,
+            arg_span,
         )
-        if op_meta is not None:
-            self.add_extra(NOTE, f'For "{op}" operation here', op_meta)
+        if op_span is not None:
+            self.add_extra(NOTE, f'For "{op}" operation here', op_span)
 
 
 class IncompatibleBinOpArgTypsError(UserError):
     def __init__(
         self,
         op: str,
-        op_meta: Optional[Meta],
+        op_span: Optional[SrcSpan],
         lhs_typ: str,
-        lhs_meta: Optional[Meta],
+        lhs_span: Optional[SrcSpan],
         rhs_typ: str,
-        rhs_meta: Optional[Meta],
+        rhs_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
             f'Left and right operands to binary operation "{op}" have incompatible types',
-            op_meta,
+            op_span,
         )
-        self.add_extra(NOTE, f'Left operand type is "{lhs_typ}"', lhs_meta)
-        self.add_extra(NOTE, f'Right operand type is "{rhs_typ}"', rhs_meta)
+        self.add_extra(NOTE, f'Left operand type is "{lhs_typ}"', lhs_span)
+        self.add_extra(NOTE, f'Right operand type is "{rhs_typ}"', rhs_span)
 
 
 class TooManyArgsError(UserError):
     def __init__(
         self,
         callee_diag: str,
-        _fn_meta: Optional[Meta],
-        arg_meta: Optional[Meta],
+        _fn_span: Optional[SrcSpan],
+        arg_span: Optional[SrcSpan],
         got: int,
         expected: int,
     ):
@@ -152,7 +152,7 @@ class TooManyArgsError(UserError):
                 f'Too many args in call to callable "{callee_diag}":'
                 f" got {got}, expected {expected}"
             ),
-            arg_meta,
+            arg_span,
         )
 
 
@@ -160,7 +160,7 @@ class NotEnoughArgsError(UserError):
     def __init__(
         self,
         callee_diag: str,
-        fn_meta: Optional[Meta],
+        fn_span: Optional[SrcSpan],
         got: int,
         expected: int,
     ):
@@ -170,7 +170,7 @@ class NotEnoughArgsError(UserError):
                 f'Not enough args in call to callable "{callee_diag}":'
                 f" got {got}, expected {expected}"
             ),
-            fn_meta,
+            fn_span,
         )
 
 
@@ -179,9 +179,9 @@ class InvalidRetTypError(UserError):
         self,
         fn_name: str,
         ret_typ: str,
-        ret_typ_meta: Optional[Meta],
+        ret_typ_span: Optional[SrcSpan],
         ret_expr_typ: str,
-        ret_expr_meta: Optional[Meta],
+        ret_expr_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -189,13 +189,13 @@ class InvalidRetTypError(UserError):
                 f'Return expression has invalid type "{ret_expr_typ}"'
                 f' in function "{fn_name}" that returns "{ret_typ}"'
             ),
-            ret_expr_meta,
+            ret_expr_span,
         )
-        if ret_typ_meta is not None:
+        if ret_typ_span is not None:
             self.add_extra(
                 NOTE,
                 "Return type specified here",
-                ret_typ_meta,
+                ret_typ_span,
             )
 
 
@@ -204,39 +204,39 @@ class InvalidVoidRetError(UserError):
         self,
         fn_name: str,
         ret_typ: str,
-        ret_typ_meta: Optional[Meta],
-        ret_stmt_meta: Optional[Meta],
+        ret_typ_span: Optional[SrcSpan],
+        ret_stmt_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
             f'Cannot return without a value in function "{fn_name}" that returns "{ret_typ}"',
-            ret_stmt_meta,
+            ret_stmt_span,
         )
-        if ret_typ_meta is not None:
+        if ret_typ_span is not None:
             self.add_extra(
                 NOTE,
                 "Return type specified here",
-                ret_typ_meta,
+                ret_typ_span,
             )
 
 
 class RetNotInFnError(UserError):
-    def __init__(self, ret_meta: Optional[Meta]) -> None:
-        super().__init__(ERROR, "Return statement not in function", ret_meta)
+    def __init__(self, ret_span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Return statement not in function", ret_span)
 
 
 class UnreachableCodeWarning(UserError):
-    def __init__(self, code_typ: str, code_meta: Optional[Meta]) -> None:
-        super().__init__(WARNING, f"{code_typ} is unreachable", code_meta)
+    def __init__(self, code_typ: str, code_span: Optional[SrcSpan]) -> None:
+        super().__init__(WARNING, f"{code_typ} is unreachable", code_span)
 
 
 class MissingRetError(UserError):
     def __init__(
         self,
         fn_name: str,
-        fn_meta: Optional[Meta],
+        fn_span: Optional[SrcSpan],
         ret_typ: str,
-        ret_typ_meta: Optional[Meta],
+        ret_typ_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -245,46 +245,46 @@ class MissingRetError(UserError):
                 f' in function "{fn_name}"'
                 f' returning "{ret_typ}"'
             ),
-            fn_meta,
+            fn_span,
         )
-        if ret_typ_meta is not None:
-            self.add_extra(NOTE, "return type specified here", ret_typ_meta)
+        if ret_typ_span is not None:
+            self.add_extra(NOTE, "return type specified here", ret_typ_span)
 
 
 class IfElsTypMismatchError(UserError):
     def __init__(
         self,
         then_typ: str,
-        then_meta: Optional[Meta],
+        then_span: Optional[SrcSpan],
         els_typ: str,
-        els_meta: Optional[Meta],
+        els_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(ERROR, '"if" and "else" have mismatching types"', None)
-        self.add_extra(NOTE, f'"if" type is "{then_typ}"', then_meta)
-        self.add_extra(NOTE, f'"else" type is "{els_typ}"', els_meta)
+        self.add_extra(NOTE, f'"if" type is "{then_typ}"', then_span)
+        self.add_extra(NOTE, f'"else" type is "{els_typ}"', els_span)
 
 
 class IfTypNotVoidError(UserError):
     def __init__(
         self,
         then_typ: str,
-        then_meta: Optional[Meta],
+        then_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
             f'"if" without "else" must have type "void", found "{then_typ}"',
-            then_meta,
+            then_span,
         )
 
 
 class IfCondNotBoolError(UserError):
     def __init__(
-        self, expr_diag: str, expr_typ: str, expr_meta: Optional[Meta]
+        self, expr_diag: str, expr_typ: str, expr_span: Optional[SrcSpan]
     ) -> None:
         super().__init__(
             ERROR,
             f'"if" condition must have type "bool", found {expr_diag} of type "{expr_typ}"',
-            expr_meta,
+            expr_span,
         )
 
 
@@ -292,23 +292,23 @@ class WhileTypNotVoidError(UserError):
     def __init__(
         self,
         block_typ: str,
-        block_meta: Optional[Meta],
+        block_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
             f'block expression for "while" loop must have type "void", found "{block_typ}"',
-            block_meta,
+            block_span,
         )
 
 
 class WhileCondNotBoolError(UserError):
     def __init__(
-        self, expr_diag: str, expr_typ: str, expr_meta: Optional[Meta]
+        self, expr_diag: str, expr_typ: str, expr_span: Optional[SrcSpan]
     ) -> None:
         super().__init__(
             ERROR,
             f'"while" condition must have type "bool", found {expr_diag} of type "{expr_typ}"',
-            expr_meta,
+            expr_span,
         )
 
 
@@ -316,22 +316,17 @@ class VarInitFromVoidError(UserError):
     def __init__(
         self,
         var_name: str,
-        var_meta: Optional[Meta],
+        var_span: Optional[SrcSpan],
         expr_diag: str,
-        expr_meta: Optional[Meta],
+        expr_span: Optional[SrcSpan],
     ) -> None:
         super().__init__(
-            ERROR, f'Variable "{var_name}" cannot have type "void"', var_meta
+            ERROR, f'Variable "{var_name}" cannot have type "void"', var_span
         )
-        self.add_extra(NOTE, f'Initialized by "{expr_diag}" of type "void"', expr_meta)
+        self.add_extra(NOTE, f'Initialized by "{expr_diag}" of type "void"', expr_span)
 
 
 class TextErrorRenderer:
-    src_lines: list[str]
-
-    def __init__(self, src: str) -> None:
-        self.src_lines = src.splitlines()
-
     def display_errors(self, errs: list[UserError]) -> None:
         for err in errs:
             self.display_error(err)
@@ -345,16 +340,17 @@ class TextErrorRenderer:
     def display_message(self, message: Message) -> None:
 
         print(f"{message.level.name}: {message.message}", file=sys.stderr)
-        if message.meta is not None:
-            self._display_line(message.meta.line)
-            self._display_col_pos(message.meta.column)
+        if message.span is not None:
+            self._display_line(message.span)
+            self._display_col_pos(message.span)
 
-    def _display_line(self, num: int) -> None:
-        line = self.src_lines[num - 1]
-        print(f"{num}| {line}", file=sys.stderr)
+    def _display_line(self, span: SrcSpan) -> None:
+        assert span.start_line > 0
+        line = span.file.lines[span.start_line - 1]
+        print(f"{span.start_line}| {line}", file=sys.stderr)
 
-    def _display_col_pos(self, num: int) -> None:
-        prefix = "-" * (num + 2)
+    def _display_col_pos(self, span: SrcSpan) -> None:
+        prefix = "-" * (span.start_col + 2)
         print(f"{prefix}^", file=sys.stderr)
 
 

@@ -1,3 +1,4 @@
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -20,10 +21,17 @@ from l0.l0errors import (
     TypNotFoundError,
     VarNotFoundError,
 )
+from l0.src import SrcFile
 
+def compile_str(tmp_path: Path, src: str) -> str:
+    path = tmp_path / "main.l0"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(src)
 
-def check_prog_output(src, expected_output, expected_exit_status):
-    ir = compile(src)
+    return compile(SrcFile(path))
+
+def check_prog_output(tmp_path: Path, src: str, expected_output, expected_exit_status) -> None:
+    ir = compile_str(tmp_path, src)
     proc = subprocess.run(
         ["lli"],
         input=ir,
@@ -35,7 +43,7 @@ def check_prog_output(src, expected_output, expected_exit_status):
     assert proc.returncode == expected_exit_status
 
 
-def test_hello_world():
+def test_hello_world(tmp_path):
     src = """
     extern fn puts(s: *u8) i32;
 
@@ -44,16 +52,16 @@ def test_hello_world():
         return 0;
     }
     """
-    check_prog_output(src, "hello world\n", 0)
+    check_prog_output(tmp_path, src, "hello world\n", 0)
 
 
-def test_int_arith():
+def test_int_arith(tmp_path):
     src = """
     pub fn main() i32 {
         return 1 - 2 * 3 + 4 - 5 * 6 / 10;
     }
     """
-    check_prog_output(src, "", 256 - 4)
+    check_prog_output(tmp_path, src, "", 256 - 4)
 
 
 @pytest.mark.parametrize(
@@ -76,24 +84,24 @@ def test_int_arith():
         (">", 1, 1, False),
     ),
 )
-def test_cmp(op, lhs, rhs, result):
+def test_cmp(op, lhs, rhs, result, tmp_path):
     src = f"""
     pub fn main() i32 {{
         return if ({lhs} {op} {rhs}) {{ 100 }} else {{ 200 }};
     }}
     """
     expected_status = 100 if result else 200
-    check_prog_output(src, "", expected_status)
+    check_prog_output(tmp_path, src, "", expected_status)
 
 
-def test_tail_expr_return():
+def test_tail_expr_return(tmp_path):
     src = """
     pub fn main() i32 { 100 }
     """
-    check_prog_output(src, "", 100)
+    check_prog_output(tmp_path, src, "", 100)
 
 
-def test_missing_return():
+def test_missing_return(tmp_path):
     src = """
     extern fn puts(s: *u8) i32;
     pub fn main() i32 {
@@ -101,48 +109,48 @@ def test_missing_return():
     }
     """
     with pytest.raises(MissingRetError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_invalid_void_return():
+def test_invalid_void_return(tmp_path):
     src = """
     pub fn main() i32 {
         return;
     }
     """
     with pytest.raises(InvalidVoidRetError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_invalid_return_typ():
+def test_invalid_return_typ(tmp_path):
     src = """
     pub fn main() i32 {
         return "abcd";
     }
     """
     with pytest.raises(InvalidRetTypError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_return_typ_not_defined():
+def test_return_typ_not_defined(tmp_path):
     src = """
     pub fn f() not_a_typ { }
     pub fn main() i32 { 0 }
     """
     with pytest.raises(TypNotFoundError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_param_typ_not_defined():
+def test_param_typ_not_defined(tmp_path):
     src = """
     pub fn f(p: not_a_typ) { }
     pub fn main() i32 { 0 }
     """
     with pytest.raises(TypNotFoundError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_if_false_else_expr_val():
+def test_if_false_else_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         return if (false) {
@@ -152,10 +160,10 @@ def test_if_false_else_expr_val():
         };
     }
     """
-    check_prog_output(src, "", 2)
+    check_prog_output(tmp_path, src, "", 2)
 
 
-def test_if_true_else_expr_val():
+def test_if_true_else_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         return if (true) {
@@ -165,10 +173,10 @@ def test_if_true_else_expr_val():
         };
     }
     """
-    check_prog_output(src, "", 1)
+    check_prog_output(tmp_path, src, "", 1)
 
 
-def test_if_false_ret_else_expr_val():
+def test_if_false_ret_else_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         return if (false) {
@@ -178,10 +186,10 @@ def test_if_false_ret_else_expr_val():
         };
     }
     """
-    check_prog_output(src, "", 2)
+    check_prog_output(tmp_path, src, "", 2)
 
 
-def test_if_true_ret_else_expr_val():
+def test_if_true_ret_else_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         return if (true) {
@@ -191,10 +199,10 @@ def test_if_true_ret_else_expr_val():
         };
     }
     """
-    check_prog_output(src, "", 5)
+    check_prog_output(tmp_path, src, "", 5)
 
 
-def test_if_false_else_ret_expr_val():
+def test_if_false_else_ret_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         return if (false) {
@@ -204,10 +212,10 @@ def test_if_false_else_ret_expr_val():
         };
     }
     """
-    check_prog_output(src, "", 5)
+    check_prog_output(tmp_path, src, "", 5)
 
 
-def test_if_true_else_ret_expr_val():
+def test_if_true_else_ret_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         return if (true) {
@@ -217,10 +225,10 @@ def test_if_true_else_ret_expr_val():
         };
     }
     """
-    check_prog_output(src, "", 1)
+    check_prog_output(tmp_path, src, "", 1)
 
 
-def test_if_ret_else_ret_expr_val():
+def test_if_ret_else_ret_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -230,10 +238,10 @@ def test_if_ret_else_ret_expr_val():
         };
     }
     """
-    check_prog_output(src, "", 1)
+    check_prog_output(tmp_path, src, "", 1)
 
 
-def test_if_ret_expr_val():
+def test_if_ret_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -242,10 +250,10 @@ def test_if_ret_expr_val():
         return 0;
     }
     """
-    check_prog_output(src, "", 1)
+    check_prog_output(tmp_path, src, "", 1)
 
 
-def test_if_with_tail_expr():
+def test_if_with_tail_expr(tmp_path):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -255,10 +263,10 @@ def test_if_with_tail_expr():
     }
     """
     with pytest.raises(IfTypNotVoidError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_if_els_with_mismatching_typs():
+def test_if_els_with_mismatching_typs(tmp_path):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -271,20 +279,20 @@ def test_if_els_with_mismatching_typs():
     }
     """
     with pytest.raises(IfElsTypMismatchError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_int_mod_var_ref_in_fn():
+def test_int_mod_var_ref_in_fn(tmp_path):
     src = """
     let a = 100;
     pub fn main() i32 {
         return a;
     }
     """
-    check_prog_output(src, "", 100)
+    check_prog_output(tmp_path, src, "", 100)
 
 
-def test_str_mod_var_ref_in_fn():
+def test_str_mod_var_ref_in_fn(tmp_path):
     src = """
     let s = "abcd";
 
@@ -295,10 +303,10 @@ def test_str_mod_var_ref_in_fn():
         return 100;
     }
     """
-    check_prog_output(src, "abcd\n", 100)
+    check_prog_output(tmp_path, src, "abcd\n", 100)
 
 
-def test_int_mod_var_ref_in_mod():
+def test_int_mod_var_ref_in_mod(tmp_path):
     src = """
     let a = 100;
     let b = a;
@@ -309,10 +317,10 @@ def test_int_mod_var_ref_in_mod():
         return b;
     }
     """
-    check_prog_output(src, "", 100)
+    check_prog_output(tmp_path, src, "", 100)
 
 
-def test_str_mod_var_ref_in_mod():
+def test_str_mod_var_ref_in_mod(tmp_path):
     src = """
     let b = a;
     let a = "abcd";
@@ -324,27 +332,27 @@ def test_str_mod_var_ref_in_mod():
         return 100;
     }
     """
-    check_prog_output(src, "abcd\n", 100)
+    check_prog_output(tmp_path, src, "abcd\n", 100)
 
 
-def test_var_not_found_at_mod_scope():
+def test_var_not_found_at_mod_scope(tmp_path):
     src = """
     let a = x;
     pub fn main() i32 { 0 }
     """
     with pytest.raises(VarNotFoundError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_var_not_found_at_fn_scope():
+def test_var_not_found_at_fn_scope(tmp_path):
     src = """
     pub fn main() i32 { x }
     """
     with pytest.raises(VarNotFoundError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_shadowed_mod_var():
+def test_shadowed_mod_var(tmp_path):
     src = """
     let x = 100;
     pub fn main() i32 {
@@ -352,10 +360,10 @@ def test_shadowed_mod_var():
         return x;
     }
     """
-    check_prog_output(src, "", 200)
+    check_prog_output(tmp_path, src, "", 200)
 
 
-def test_unshadowed_mod_var():
+def test_unshadowed_mod_var(tmp_path):
     src = """
     let x = 100;
     pub fn main() i32 {
@@ -365,10 +373,10 @@ def test_unshadowed_mod_var():
         return x;
     }
     """
-    check_prog_output(src, "", 100)
+    check_prog_output(tmp_path, src, "", 100)
 
 
-def test_shadowed_local_var():
+def test_shadowed_local_var(tmp_path):
     src = """
     pub fn main() i32 {
         let x = 100;
@@ -378,10 +386,10 @@ def test_shadowed_local_var():
         };
     }
     """
-    check_prog_output(src, "", 200)
+    check_prog_output(tmp_path, src, "", 200)
 
 
-def test_unshadowed_local_var():
+def test_unshadowed_local_var(tmp_path):
     src = """
     pub fn main() i32 {
         let x = 100;
@@ -391,10 +399,10 @@ def test_unshadowed_local_var():
         return x;
     }
     """
-    check_prog_output(src, "", 100)
+    check_prog_output(tmp_path, src, "", 100)
 
 
-def test_cannot_access_inner_scope():
+def test_cannot_access_inner_scope(tmp_path):
     src = """
     pub fn main() i32 {
         {
@@ -404,20 +412,20 @@ def test_cannot_access_inner_scope():
     }
     """
     with pytest.raises(VarNotFoundError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_duplicate_mod_var():
+def test_duplicate_mod_var(tmp_path):
     src = """
     let x = 100;
     let x = 200;
     pub fn main() i32 { 0 }
     """
     with pytest.raises(DuplicateVarDefnError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_duplicate_local_var():
+def test_duplicate_local_var(tmp_path):
     src = """
     pub fn main() i32 {
         let x = 100;
@@ -426,10 +434,10 @@ def test_duplicate_local_var():
     }
     """
     with pytest.raises(DuplicateVarDefnError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_not_callable():
+def test_not_callable(tmp_path):
     src = """
     pub fn main() i32 {
         let x = 100;
@@ -438,10 +446,10 @@ def test_not_callable():
     }
     """
     with pytest.raises(NotCallableError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_invalid_arg_typ():
+def test_invalid_arg_typ(tmp_path):
     src = """
     pub fn f(x: i32) i32 { x + x }
     pub fn main() i32 {
@@ -450,10 +458,10 @@ def test_invalid_arg_typ():
     }
     """
     with pytest.raises(InvalidArgTypError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_too_many_args():
+def test_too_many_args(tmp_path):
     src = """
     pub fn f(x: i32) i32 { x + x }
     pub fn main() i32 {
@@ -462,10 +470,10 @@ def test_too_many_args():
     }
     """
     with pytest.raises(TooManyArgsError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_not_enough_args():
+def test_not_enough_args(tmp_path):
     src = """
     pub fn f(x: i32) i32 { x + x }
     pub fn main() i32 {
@@ -474,11 +482,11 @@ def test_not_enough_args():
     }
     """
     with pytest.raises(NotEnoughArgsError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
 @pytest.mark.xfail
-def test_mod_var_cycle():
+def test_mod_var_cycle(tmp_path):
     src = """
     let b = a;
     let a = b;
@@ -490,10 +498,10 @@ def test_mod_var_cycle():
         return 100;
     }
     """
-    check_prog_output(src, "abcd\n", 100)
+    check_prog_output(tmp_path, src, "abcd\n", 100)
 
 
-def test_assign_to_local_var():
+def test_assign_to_local_var(tmp_path):
     src = """
     pub fn main() i32 {
         let mut a = 1;
@@ -501,10 +509,10 @@ def test_assign_to_local_var():
         return a;
     }
     """
-    check_prog_output(src, "", 2)
+    check_prog_output(tmp_path, src, "", 2)
 
 
-def test_assign_to_mod_var():
+def test_assign_to_mod_var(tmp_path):
     src = """
     let mut a = 1;
     pub fn main() i32 {
@@ -512,10 +520,10 @@ def test_assign_to_mod_var():
         return a;
     }
     """
-    check_prog_output(src, "", 2)
+    check_prog_output(tmp_path, src, "", 2)
 
 
-def test_assign_to_const_local_var():
+def test_assign_to_const_local_var(tmp_path):
     src = """
     pub fn main() i32 {
         let a = 1;
@@ -524,10 +532,10 @@ def test_assign_to_const_local_var():
     }
     """
     with pytest.raises(AssignToConstError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_assign_to_const_mod_var():
+def test_assign_to_const_mod_var(tmp_path):
     src = """
     let a = 1;
     pub fn main() i32 {
@@ -536,10 +544,10 @@ def test_assign_to_const_mod_var():
     }
     """
     with pytest.raises(AssignToConstError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_while():
+def test_while(tmp_path):
     src = """
     pub fn main() i32 {
         let mut i = 0;
@@ -549,10 +557,10 @@ def test_while():
         return i;
     }
     """
-    check_prog_output(src, "", 10)
+    check_prog_output(tmp_path, src, "", 10)
 
 
-def test_if_in_while():
+def test_if_in_while(tmp_path):
     src = """
     pub fn main() i32 {
         let mut i = 1;
@@ -565,7 +573,7 @@ def test_if_in_while():
         return 0;
     }
     """
-    check_prog_output(src, "", 128)
+    check_prog_output(tmp_path, src, "", 128)
 
 
 @pytest.mark.parametrize(
@@ -576,7 +584,7 @@ def test_if_in_while():
         ("0u10", "0u11"),
     ),
 )
-def test_incompatible_bin_op_args(lhs, rhs):
+def test_incompatible_bin_op_args(lhs, rhs, tmp_path):
     src = f"""
     pub fn main() i32 {{
         x = {lhs} + {rhs};
@@ -584,10 +592,10 @@ def test_incompatible_bin_op_args(lhs, rhs):
     }}
     """
     with pytest.raises(IncompatibleBinOpArgTypsError):
-        compile(src)
+        compile_str(tmp_path, src)
 
 
-def test_invalid_bin_op_arg():
+def test_invalid_bin_op_arg(tmp_path):
     src = """
     pub fn main() i32 {
         x = true + false;
@@ -595,4 +603,4 @@ def test_invalid_bin_op_arg():
     }
     """
     with pytest.raises(InvalidBinOpArgTypError):
-        compile(src)
+        compile_str(tmp_path, src)

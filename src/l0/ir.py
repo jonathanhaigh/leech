@@ -6,7 +6,6 @@ from functools import cached_property
 import re
 from typing import ChainMap, Generic, Optional, TypeVar, override
 
-from lark.tree import Meta
 import networkx as nx
 
 from l0 import comptime
@@ -35,6 +34,7 @@ from l0.l0errors import (
 )
 from l0.naming import VarNamer
 from l0.opt_util import opt_map, opt_or_default, opt_unwrap
+from l0.src import SrcSpan
 from l0.typs import (
     BOOL,
     CONST,
@@ -95,7 +95,7 @@ class Env:
     def add_var(self, name: str, var: Var) -> None:
         if name in self.vars.maps[0]:
             existing = self.vars[name]
-            raise DuplicateVarDefnError(name, var.value.meta, existing.value.meta)
+            raise DuplicateVarDefnError(name, var.value.span, existing.value.span)
         self.vars[name] = var
 
     def get_typ(self, name) -> Optional[Typ]:
@@ -119,7 +119,7 @@ def typ_from_ast(typ_ast: ast.Typ, e: Env) -> Typ:
             name = typ_ast.name.name
             typ = e.get_typ(name)
             if typ is None:
-                raise TypNotFoundError(name, typ_ast.meta)
+                raise TypNotFoundError(name, typ_ast.span)
             return typ
         case ast.PtrTyp():
             return PtrTyp(typ_from_ast(typ_ast.pointee_typ, e), CONST)
@@ -127,8 +127,8 @@ def typ_from_ast(typ_ast: ast.Typ, e: Env) -> Typ:
             raise NotImplementedError(ast)
 
 
-def mut_from_ast(mut_ast: ast.Mutability) -> Mutability:
-    if mut_ast.value is None:
+def mut_from_ast(mut_ast: Optional[ast.Mutability]) -> Mutability:
+    if mut_ast is None:
         return CONST
     assert mut_ast.value == "mut"
     return MUT
@@ -145,8 +145,8 @@ class Value(ABC, Generic[TypT, AstT]):
         return self.calculate_typ()
 
     @property
-    def meta(self) -> Optional[Meta]:
-        return opt_map(self.ast, lambda x: x.meta)
+    def span(self) -> Optional[SrcSpan]:
+        return opt_map(self.ast, lambda x: x.span)
 
     @abstractmethod
     def calculate_typ(self) -> TypT:
@@ -450,7 +450,7 @@ class BasicBlock:
                     "Shouldn't get unreachable code in builtins"
                 )
                 register_error(
-                    UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.meta)
+                    UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.span)
                 )
                 self.warned_unreachable = True
 
@@ -567,7 +567,7 @@ class CfgBuilder:
 
         block = self.build_expr(fn_ast.block, e)
         ret_typ = self.fn.typ.ret_typ
-        ret_typ_meta = opt_map(fn_ast.ret_typ, lambda x: x.meta)
+        ret_typ_span = opt_map(fn_ast.ret_typ, lambda x: x.span)
         ret_ast = opt_or_default(fn_ast.block.expr, fn_ast.block)
 
         if block.typ != VOID:
@@ -579,9 +579,9 @@ class CfgBuilder:
                 raise InvalidRetTypError(
                     self.fn.name,
                     ret_typ.name(),
-                    ret_typ_meta,
+                    ret_typ_span,
                     block.typ.name(),
-                    ret_ast.meta,
+                    ret_ast.span,
                 )
             self.ret(block, ret_ast)
             return
@@ -591,7 +591,7 @@ class CfgBuilder:
 
         if ret_typ != VOID:
             raise MissingRetError(
-                self.fn.name, fn_ast.meta, ret_typ.name(), ret_typ_meta
+                self.fn.name, fn_ast.span, ret_typ.name(), ret_typ_span
             )
 
         self.ret(VoidValue(ret_ast), ret_ast)
@@ -628,7 +628,7 @@ class CfgBuilder:
         cond = self.build_expr(if_ast.condition, e)
         if cond.typ != BOOL:
             raise IfCondNotBoolError(
-                if_ast.condition.diag_str(), cond.typ.name(), if_ast.condition.meta
+                if_ast.condition.diag_str(), cond.typ.name(), if_ast.condition.span
             )
         then_bb = self.add_bb("if")
         end_bb = self.add_bb("endif")
@@ -663,9 +663,9 @@ class CfgBuilder:
                 if then.typ != els.typ:
                     raise IfElsTypMismatchError(
                         then.typ.name(),
-                        if_ast.then.meta,
+                        if_ast.then.span,
                         els.typ.name(),
-                        if_ast.els.meta,
+                        if_ast.els.span,
                     )
                 res = self.curr_bb.phi(if_ast)
                 res.add_incoming(els, els_last_bb)
@@ -680,7 +680,7 @@ class CfgBuilder:
 
         if have_then_value:
             if then.typ != VOID:
-                raise IfTypNotVoidError(then.typ.name(), if_ast.then.meta)
+                raise IfTypNotVoidError(then.typ.name(), if_ast.then.span)
 
         self.set_position(end_bb)
         return VoidValue(if_ast)
@@ -696,14 +696,14 @@ class CfgBuilder:
             raise WhileCondNotBoolError(
                 while_ast.condition.diag_str(),
                 cond.typ.name(),
-                while_ast.condition.meta,
+                while_ast.condition.span,
             )
 
         self.cbranch(cond, loop_bb, end_bb, while_ast)
         self.set_position(loop_bb)
         block = self.build_expr(while_ast.block, e)
         if block.typ not in (NEVER, VOID):
-            raise WhileTypNotVoidError(block.typ.name(), while_ast.block.meta)
+            raise WhileTypNotVoidError(block.typ.name(), while_ast.block.span)
 
         if not self.curr_bb.terminated:
             self.branch(cond_bb, while_ast.block)
@@ -716,25 +716,25 @@ class CfgBuilder:
         callee_diag_str = call_ast.callee.diag_str()
         if not isinstance(callee.typ, CallableTyp):
             raise NotCallableError(
-                callee_diag_str, callee.typ.name(), call_ast.callee.meta
+                callee_diag_str, callee.typ.name(), call_ast.callee.span
             )
         if not isinstance(callee, FnSpec):
             raise NotImplementedError(callee)
 
-        args = [self.build_expr(arg_ast, e) for arg_ast in call_ast.arg_list.args]
+        args = [self.build_expr(arg_ast, e) for arg_ast in call_ast.args]
 
         num_args = len(args)
         param_typs = callee.typ.param_typs
         num_params = len(param_typs)
         if num_args < num_params:
             raise NotEnoughArgsError(
-                callee_diag_str, call_ast.meta, num_args, num_params
+                callee_diag_str, call_ast.span, num_args, num_params
             )
         if num_args > num_params:
             raise TooManyArgsError(
                 callee_diag_str,
-                call_ast.meta,
-                call_ast.arg_list.args[-1].meta,
+                call_ast.span,
+                call_ast.args[-1].span,
                 num_args,
                 num_params,
             )
@@ -742,11 +742,11 @@ class CfgBuilder:
             if arg.typ != param_typs[i]:
                 raise InvalidArgTypError(
                     callee_diag_str,
-                    call_ast.meta,
+                    call_ast.span,
                     i + 1,
                     arg.typ.name(),
                     param_typs[i].name(),
-                    call_ast.arg_list.args[i].meta,
+                    call_ast.args[i].span,
                 )
 
         return self.curr_bb.call(callee, args, call_ast)
@@ -756,22 +756,22 @@ class CfgBuilder:
         if not isinstance(lhs.typ, IntTyp):
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
-                op_ast.op.meta,
+                op_ast.op.span,
                 "left",
                 lhs.typ.name(),
                 "an integer type",
-                op_ast.lhs.meta,
+                op_ast.lhs.span,
             )
 
         rhs = self.build_expr(op_ast.rhs, e)
         if lhs.typ != rhs.typ:
             raise IncompatibleBinOpArgTypsError(
                 op_ast.op.name,
-                op_ast.op.meta,
+                op_ast.op.span,
                 lhs.typ.name(),
-                op_ast.lhs.meta,
+                op_ast.lhs.span,
                 rhs.typ.name(),
-                op_ast.rhs.meta,
+                op_ast.rhs.span,
             )
 
         op = op_ast.op.name
@@ -799,7 +799,7 @@ class CfgBuilder:
         name = var_ast.name
         var = e.get_var(name)
         if var is None:
-            raise VarNotFoundError(name, var_ast.meta)
+            raise VarNotFoundError(name, var_ast.span)
         if isinstance(var.value, FnSpec):
             return var.value
         return self.curr_bb.load(var.value, var_ast)
@@ -817,9 +817,9 @@ class CfgBuilder:
 
     def build_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
         ret_typ = self.fn.typ.ret_typ
-        ret_typ_meta = None
-        if self.fn.ast is not None and self.fn.ast.meta is not None:
-            ret_typ_meta = self.fn.ast.meta
+        ret_typ_span = None
+        if self.fn.ast is not None and self.fn.ast.span is not None:
+            ret_typ_span = self.fn.ast.span
 
         if ret_ast.expr is not None:
             expr = self.build_expr(ret_ast.expr, e)
@@ -831,16 +831,16 @@ class CfgBuilder:
                 raise InvalidRetTypError(
                     self.fn.name,
                     ret_typ.name(),
-                    ret_typ_meta,
+                    ret_typ_span,
                     expr.typ.name(),
-                    ret_ast.expr.meta,
+                    ret_ast.expr.span,
                 )
             self.ret(expr, ret_ast)
             return
 
         if ret_typ != VOID:
             raise InvalidVoidRetError(
-                self.fn.name, ret_typ.name(), ret_typ_meta, ret_ast.meta
+                self.fn.name, ret_typ.name(), ret_typ_span, ret_ast.span
             )
 
         self.ret(VoidValue(ret_ast), ret_ast)
@@ -857,9 +857,9 @@ class CfgBuilder:
         name = ass_ast.ident.name
         var = e.get_var(name)
         if var is None:
-            raise VarNotFoundError(name, ass_ast.ident.meta)
+            raise VarNotFoundError(name, ass_ast.ident.span)
         if var.mut == CONST:
-            raise AssignToConstError(name, ass_ast.ident.meta)
+            raise AssignToConstError(name, ass_ast.ident.span)
 
         assert not isinstance(var, FnSpec), "Function variables should always be const"
 
@@ -911,8 +911,8 @@ class Access(enum.Enum):
     PUBLIC = 1
 
     @staticmethod
-    def from_ast(ast: ast.Access) -> Access:
-        if ast.value is None:
+    def from_ast(ast: Optional[ast.Access]) -> Access:
+        if ast is None:
             return PRIVATE
         assert ast.value == "pub"
         return PUBLIC
@@ -998,8 +998,7 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
             ret_typ = typ_from_ast(self.ast.ret_typ, self.env)
 
         param_typs = [
-            typ_from_ast(param_ast.typ, self.env)
-            for param_ast in self.ast.param_list.params
+            typ_from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
         ]
         return FnTyp(ret_typ, tuple(param_typs))
 
@@ -1007,8 +1006,7 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
     def calculate_params(self) -> tuple[Param, ...]:
         assert self.ast is not None
         return tuple(
-            Param(self, pos, param_ast)
-            for pos, param_ast in enumerate(self.ast.param_list.params)
+            Param(self, pos, param_ast) for pos, param_ast in enumerate(self.ast.params)
         )
 
 

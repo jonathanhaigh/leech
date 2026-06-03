@@ -17,13 +17,14 @@ from l0.l0errors import (
 )
 from l0 import ir, l0ast as ast
 from l0 import naming
+from l0.src import SrcFile
 
 GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "l0.lark")
 
 var_name = naming.VarNamer()
 
 
-def build_parser(start_rule: str):
+def build_parser(start_rule: str) -> Lark:
     return Lark.open(
         GRAMMAR_PATH,
         start=start_rule,
@@ -33,10 +34,10 @@ def build_parser(start_rule: str):
     )
 
 
-def compile(src: str):
+def compile(file: SrcFile) -> str:
     parser = build_parser("mod")
-    tree = parser.parse(src)
-    mod_ast = ast.Mod(tree)
+    tree = parser.parse(file.src)
+    mod_ast = ast.Mod(file, tree)
     mod = ir.Mod(mod_ast)
     compiler = Compiler(mod)
     compiler.compile()
@@ -45,48 +46,37 @@ def compile(src: str):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="l0c", description="l0 compiler")
-    parser.add_argument("filename", help="source file")
-    parser.add_argument("-o", help="output file", metavar="FILENAME")
+    parser.add_argument("filename", help="source file", type=pathlib.Path)
+    parser.add_argument("-o", help="output file", metavar="FILENAME", type=pathlib.Path)
     args = parser.parse_args()
     if args.o is None:
-        if args.filename == "-":
-            args.o = "-"
+        if args.filename.suffix != ".ll":
+            args.o = str(args.filename.with_suffix(".ll"))
         else:
-            in_path = pathlib.Path(args.filename)
-            if in_path.suffix != ".ll":
-                args.o = str(in_path.with_suffix(".ll"))
-            else:
-                print(
-                    "-o option must be given if source file name ends in '.ll'",
-                    file=sys.stderr,
-                )
-                sys.exit(2)
+            print(
+                "-o option must be given if source file name ends in '.ll'",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
     return args
 
 
-def run():
+def run() -> None:
     args = parse_args()
-    if args.filename == "-":
-        src = sys.stdin.read()
-    else:
-        with open(args.filename) as f:
-            src = f.read()
+    file = SrcFile(args.filename)
 
     try:
-        output = compile(src)
+        output = compile(file)
     except UserError as err:
         register_error(err)
 
     if errors():
-        renderer = TextErrorRenderer(src)
+        renderer = TextErrorRenderer()
         renderer.display_errors(errors())
 
     if error_level() < ERROR:
-        if args.o == "-":
-            sys.stdout.write(output)
-        else:
-            with open(args.o, "w") as f:
-                f.write(output)
+        with open(args.o, "w", encoding="utf-8") as f:
+            f.write(output)
 
     sys.exit(error_level())

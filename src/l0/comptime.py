@@ -50,7 +50,7 @@ class Interpreter:
                 return expr.value
             case ast.VarExpr():
                 if expr.name not in e.vars:
-                    raise VarNotFoundError(expr.name, expr.meta)
+                    raise VarNotFoundError(expr.name, expr.span)
                 var = e.vars[expr.name]
                 assert isinstance(var.value, ModVar)
                 return var.value.initializer
