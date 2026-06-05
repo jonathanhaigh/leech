@@ -10,8 +10,11 @@ from l0.l0errors import (
     IfElsTypMismatchError,
     IfTypNotVoidError,
     IncompatibleBinOpArgTypsError,
+    IncompatibleTypInArrayExpr,
+    IndexIntoInvalidTypError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
+    InvalidIndexTypError,
     InvalidRetTypError,
     InvalidVoidRetError,
     MissingRetError,
@@ -622,6 +625,59 @@ def test_mod_array(tmp_path):
     check_prog_output(tmp_path, src, "", 19)
 
 
+def test_comptime_array_access(tmp_path):
+    src = """
+    let arr = [1, 2, 3, 4];
+    let x = arr[2usize];
+    let idx = 3usize;
+    let y = arr[idx];
+    let z = [10, 20, 30][1usize];
+
+    pub fn main() i32 {
+        return x + y + z;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 27)
+
+
+def test_comptime_array_incompatible_typs(tmp_path):
+    src = """
+    let arr = [1, 2usize];
+
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleTypInArrayExpr):
+        compile_str(tmp_path, src)
+
+
+def test_comptime_array_invalid_index(tmp_path):
+    src = """
+    let arr = [1, 2];
+    let x = arr[true];
+
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidIndexTypError):
+        compile_str(tmp_path, src)
+
+
+def test_comptime_index_into_non_array(tmp_path):
+    src = """
+    let not_an_arr = 1;
+    let x = not_an_arr[0usize];
+
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(IndexIntoInvalidTypError):
+        compile_str(tmp_path, src)
+
+
 def test_local_array(tmp_path):
     src = """
     pub fn main() i32 {
@@ -632,6 +688,46 @@ def test_local_array(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 5)
+
+
+def test_local_array_incompatible_typs(tmp_path):
+    src = """
+
+    pub fn main() i32 {
+        let x = 1i32;
+        let arr = [x, 2usize];
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleTypInArrayExpr):
+        compile_str(tmp_path, src)
+
+
+def test_local_array_invalid_index(tmp_path):
+    src = """
+
+    pub fn main() i32 {
+        let arr = [1, 2];
+        let idx = true;
+        let x = arr[idx];
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidIndexTypError):
+        compile_str(tmp_path, src)
+
+
+def test_local_index_into_non_array(tmp_path):
+    src = """
+
+    pub fn main() i32 {
+        let not_an_arr = 1;
+        let x = not_an_arr[0usize];
+        return 0;
+    }
+    """
+    with pytest.raises(IndexIntoInvalidTypError):
+        compile_str(tmp_path, src)
 
 
 @pytest.mark.parametrize(

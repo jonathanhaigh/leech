@@ -1,7 +1,13 @@
 from l0 import ir
-from l0.l0errors import IncompatibleTypInArrayExpr, VarNotFoundError
+from l0.l0errors import (
+    ArrayIndexOutOfBoundsError,
+    IncompatibleTypInArrayExpr,
+    IndexIntoInvalidTypError,
+    InvalidIndexTypError,
+    VarNotFoundError,
+)
 from . import l0ast as ast
-from .typs import ArrayTyp
+from .typs import USIZE, ArrayTyp
 
 
 class Interpreter:
@@ -20,11 +26,13 @@ class Interpreter:
                 assert isinstance(var.value, ir.ModVar)
                 return var.value.initializer
             case ast.ArrayExpr():
-                return self.eval_array_expr(expr, e)
+                return self.eval_array(expr, e)
+            case ast.ArrayAccessExpr():
+                return self.eval_array_access(expr, e)
             case _:
                 raise NotImplementedError
 
-    def eval_array_expr(self, expr: ast.ArrayExpr, e: ir.Env) -> ir.ComptimeArray:
+    def eval_array(self, expr: ast.ArrayExpr, e: ir.Env) -> ir.ComptimeArray:
         elts = [self.eval(elt, e) for elt in expr.elements]
         if not elts:
             raise NotImplementedError("empty array expression")
@@ -36,3 +44,23 @@ class Interpreter:
                     elt.typ.name(), i, expr.elements[i].span, arr_typ.name()
                 )
         return ir.ComptimeArray(arr_typ, elts, expr)
+
+    def eval_array_access(
+        self, expr: ast.ArrayAccessExpr, e: ir.Env
+    ) -> ir.ComptimeValue:
+
+        array = self.eval(expr.array, e)
+        if not isinstance(array, ir.ComptimeArray):
+            raise IndexIntoInvalidTypError(array.typ.name(), expr.array.span)
+
+        index = self.eval(expr.index, e)
+        if not isinstance(index, ir.ComptimeInt) or index.typ != USIZE:
+            raise InvalidIndexTypError(index.typ.name(), expr.index.span)
+
+        if index.value >= array.typ.length:
+            raise ArrayIndexOutOfBoundsError(
+                index.value, expr.index.span, array.typ.name()
+            )
+
+        assert len(array.elements) > index.value
+        return array.elements[index.value]

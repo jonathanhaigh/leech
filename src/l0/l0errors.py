@@ -363,6 +363,15 @@ class InvalidIndexTypError(UserError):
         super().__init__(ERROR, f'Invalid index typ "{typ}"', span)
 
 
+class ArrayIndexOutOfBoundsError(UserError):
+    def __init__(self, index: int, index_span: SrcSpan, array_typ: str) -> None:
+        super().__init__(
+            ERROR,
+            f'Index {index} out of bounds for array of type "{array_typ}"',
+            index_span,
+        )
+
+
 class TextErrorRenderer:
     def display_errors(self, errs: list[UserError]) -> None:
         for err in errs:
