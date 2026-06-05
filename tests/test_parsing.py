@@ -124,6 +124,36 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         ),
         (
             "expr",
+            "[1, 2, a, b]",
+            T("array_expr", "arg_list").cs(
+                T("int_lit", Tok("1")),
+                T("int_lit", Tok("2")),
+                T("var_expr", "ident", Tok("a")),
+                T("var_expr", "ident", Tok("b")),
+            ),
+        ),
+        ("expr", "[]", T("array_expr", "arg_list")),
+        (
+            "expr",
+            "a[0]",
+            T("array_access_expr").cs(
+                T("var_expr", "ident", Tok("a")),
+                T("int_lit", Tok("0")),
+            ),
+        ),
+        (
+            "expr",
+            "f()[x]",
+            T("array_access_expr").cs(
+                T("call_expr").cs(
+                    T("var_expr", "ident", Tok("f")),
+                    T("arg_list"),
+                ),
+                T("var_expr", "ident", Tok("x")),
+            ),
+        ),
+        (
+            "expr",
             "1 + 2",
             T("arith_expr").cs(
                 T("int_lit", Tok("1")), T("add_op", Tok("+")), T("int_lit", Tok("2"))
@@ -288,6 +318,41 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         ("typ", "_", T("basic_typ", "ident", Tok("_"))),
         ("typ", "*u8", T("ptr_typ", "basic_typ", "ident", Tok("u8"))),
         (
+            "typ",
+            "[a; 10]",
+            T("array_typ").cs(
+                T("basic_typ", "ident", Tok("a")),
+                T("array_length", Tok("10")),
+            ),
+        ),
+        (
+            "typ",
+            "[**u8; 0]",
+            T("array_typ").cs(
+                T("ptr_typ", "ptr_typ", "basic_typ", "ident", Tok("u8")),
+                T("array_length", Tok("0")),
+            ),
+        ),
+        (
+            "typ",
+            "[[u8; 10]; 5]",
+            T("array_typ").cs(
+                T("array_typ").cs(
+                    T("basic_typ", "ident", Tok("u8")),
+                    T("array_length", Tok("10")),
+                ),
+                T("array_length", Tok("5")),
+            ),
+        ),
+        (
+            "typ",
+            "*[u8; 1]",
+            T("ptr_typ", "array_typ").cs(
+                T("basic_typ", "ident", Tok("u8")),
+                T("array_length", Tok("1")),
+            ),
+        ),
+        (
             "param",
             "x: i32",
             T("param").cs(T("ident", Tok("x")), T("basic_typ", "ident", Tok("i32"))),
@@ -408,6 +473,9 @@ def test_parse(rule, src, expected):
         ("typ", "0"),
         ("typ", '"abc"'),
         ("typ", "a b"),
+        ("typ", "a*"),
+        ("typ", "[x: -10]"),
+        ("typ", "[x: N]"),
         ("param", ""),
         ("param", "x"),
         ("param", "x:"),

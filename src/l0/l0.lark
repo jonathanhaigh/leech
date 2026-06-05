@@ -17,9 +17,12 @@ var_defn: access let_stmt
 
 ?typ: basic_typ
   | ptr_typ
+  | array_typ
 
 basic_typ: ident
 ptr_typ: "*" typ
+array_typ: "[" typ ";" array_length "]"
+array_length: NONNEG_INT
 
 stmt: expr_stmt
   | ret_stmt
@@ -61,9 +64,12 @@ while_expr: "while" "(" expr ")" block_expr
 !mul_op: "*"|"/"
 
 ?atom_expr: call_expr
+  | array_access_expr
   | atom
 
 call_expr: atom_expr "(" arg_list ")"
+
+array_access_expr: atom_expr "[" expr "]"
 
 arg_list: _arg_list?
 _arg_list: expr ("," expr)* ","?
@@ -73,6 +79,7 @@ _arg_list: expr ("," expr)* ","?
   | int_lit
   | bool_lit
   | var_expr
+  | array_expr
   | "(" expr ")"
 
 str_lit: STR_LIT
@@ -80,9 +87,10 @@ int_lit: INT_LIT
 !bool_lit: "true" | "false"
 var_expr: ident
 ident: IDENT
+array_expr: "[" arg_list "]"
 
-INT_LIT: INT (("i"|"u") POS_INT)?
-INT: POS_INT | "0"
+INT_LIT: NONNEG_INT (("i"|"u") (POS_INT | "size"))?
+NONNEG_INT: POS_INT | "0"
 POS_INT: "1".."9" ("0".."9")*
 
 IDENT: /[_a-zA-Z][_0-9a-zA-Z]*/

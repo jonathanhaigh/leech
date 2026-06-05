@@ -608,3 +608,50 @@ def test_invalid_bin_op_arg(tmp_path):
     """
     with pytest.raises(InvalidBinOpArgTypError):
         compile_str(tmp_path, src)
+
+
+def test_mod_array(tmp_path):
+    src = """
+    let a = 9;
+    let arr = [a, 10, 11, 12];
+    pub fn main() i32 {
+        let idx = 0usize;
+        return arr[idx] + arr[1usize];
+    }
+    """
+    check_prog_output(tmp_path, src, "", 19)
+
+
+def test_local_array(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let a = 5;
+        let arr = [1, 2, 3, 4, a];
+        let idx = 3usize;
+        return arr[idx + 1usize];
+    }
+    """
+    check_prog_output(tmp_path, src, "", 5)
+
+
+@pytest.mark.parametrize(
+    "typ,value",
+    (
+        ("bool", "true"),
+        ("i32", "1"),
+        ("i32", "1i32"),
+        ("u17", "10u17"),
+        ("usize", "99usize"),
+        ("isize", "54isize"),
+    ),
+)
+def test_builtin_typ_lookup(tmp_path, typ, value):
+    src = f"""
+    fn f() {typ} {{ {value} }}
+
+    pub fn main() i32 {{
+        f();
+        return 0;
+    }}
+    """
+    check_prog_output(tmp_path, src, "", 0)

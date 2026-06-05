@@ -2,18 +2,15 @@ from abc import ABC, abstractmethod
 import ast as python_ast
 from collections.abc import Callable
 import re
-from typing import Any, Generic, Optional, TypeVar, override
+from typing import Any, Optional, override
 
 from lark import Token
 from lark.tree import Branch, ParseTree, Tree
 
-from l0 import comptime
 from l0 import typs
 from l0.opt_util import opt_map
 from l0.src import SrcFile, SrcSpan
-from l0.typs import SIGNED, UNSIGNED
-
-ComptimeValueT = TypeVar("ComptimeValueT", bound="comptime.Value")
+from l0.typs import ADDR_SIZE, SIGNED, UNSIGNED
 
 
 def as_token(branch: Branch[Token]) -> Token:
@@ -87,6 +84,8 @@ class Expr(Ast):
             "str_lit": StrLit,
             "bool_lit": BoolLit,
             "var_expr": VarExpr,
+            "array_access_expr": ArrayAccessExpr,
+            "array_expr": ArrayExpr,
             "cmp_expr": BinOpExpr,
             "arith_expr": BinOpExpr,
             "term": BinOpExpr,
@@ -170,64 +169,82 @@ class WhileExpr(Expr):
         return "while expression"
 
 
-class LitExpr(Expr, Generic[ComptimeValueT]):
-    value: ComptimeValueT
+class StrLit(Expr):
+    value: str
 
-    def __init__(self, span: SrcSpan, value: ComptimeValueT) -> None:
-        super().__init__(span)
-        self.value = value
-
-
-class StrLit(LitExpr["comptime.CStr"]):
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert tree.data == "str_lit"
+        super().__init__(SrcSpan(file, tree.meta))
         (tok,) = tree.children
-        value = comptime.CStr(python_ast.literal_eval(as_token(tok)))
-        super().__init__(SrcSpan(file, tree.meta), value)
+        self.value = python_ast.literal_eval(as_token(tok))
 
     @override
     def diag_str(self) -> str:
         return "string literal"
 
 
-class IntLit(LitExpr["comptime.Int"]):
+class IntLit(Expr):
     token: Token
+    value: int
+    typ: typs.IntTyp
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert tree.data == "int_lit"
+        super().__init__(SrcSpan(file, tree.meta))
         (token,) = tree.children
-        m = re.fullmatch("([0-9]+)(?:([iu])([0-9]+))?", as_token(token))
+        self.token = as_token(token)
+        m = re.fullmatch("([0-9]+)(?:([iu])((?:[0-9]+)|size))?", self.token)
         assert m is not None
 
         if m[2] is not None:
             signage = SIGNED if m[2] == "i" else UNSIGNED
-            width = int(m[3])
+            if m[3] == "size":
+                width = ADDR_SIZE
+            else:
+                width = int(m[3])
         else:
             signage = SIGNED
             width = 32
 
-        value = comptime.Int(typs.IntTyp(width, signage), int(m[1]))
-        self.token = as_token(token)
-        super().__init__(SrcSpan(file, tree.meta), value)
+        self.typ = typs.IntTyp(width, signage)
+        self.value = int(m[1])
 
     @override
     def diag_str(self) -> str:
-        return f'int literal "{self.value.value}"'
+        return f'int literal "{self.token}"'
 
 
-class BoolLit(LitExpr["comptime.Bool"]):
-    _tok: Token
+class ArrayLength(Expr):
+    token: Token
+    value: int
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "array_length"
+        super().__init__(SrcSpan(file, tree.meta))
+        (token,) = tree.children
+        self.token = as_token(token)
+        self.value = int(self.token)
+
+    @override
+    def diag_str(self) -> str:
+        return f'array length "{self.token}"'
+
+
+class BoolLit(Expr):
+    token: Token
+    value: bool
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert tree.data == "bool_lit"
-        (tok,) = tree.children
-        assert tok == "true" or tok == "false"
-        value = comptime.Bool(True if tok == "true" else False)
-        super().__init__(SrcSpan(file, tree.meta), value)
+        super().__init__(SrcSpan(file, tree.meta))
+        (token,) = tree.children
+        self.token = as_token(token)
+        assert token == "true" or token == "false"
+        self.value = True if token == "true" else False
 
     @override
     def diag_str(self) -> str:
-        return f'bool literal "{self._tok}"'
+        return f'bool literal "{self.token}"'
 
 
 class VarExpr(Expr):
@@ -248,6 +265,40 @@ class VarExpr(Expr):
     @override
     def diag_str(self) -> str:
         return f'variable "{self.name}"'
+
+
+class ArrayAccessExpr(Expr):
+    array: Expr
+    index: Expr
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "array_access_expr"
+        super().__init__(SrcSpan(file, tree.meta))
+        array, index = map(as_tree, tree.children)
+        self.array = Expr.from_tree(file, array)
+        self.index = Expr.from_tree(file, index)
+
+    @override
+    def diag_str(self) -> str:
+        return "array access expression"
+
+
+class ArrayExpr(Expr):
+    elements: list[Expr]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "array_expr"
+        super().__init__(SrcSpan(file, tree.meta))
+        (arg_list,) = tree.children
+        assert isinstance(arg_list, Tree)
+        assert arg_list.data == "arg_list"
+        self.elements = [
+            Expr.from_tree(file, as_tree(child)) for child in arg_list.children
+        ]
+
+    @override
+    def diag_str(self) -> str:
+        return "array expression"
 
 
 class CallExpr(Expr):
@@ -387,6 +438,7 @@ class Typ(Ast):
         child_classes = {
             "basic_typ": BasicTyp,
             "ptr_typ": PtrTyp,
+            "array_typ": ArrayTyp,
         }
         return child_classes[tree.data](file, tree)
 
@@ -416,7 +468,23 @@ class PtrTyp(Typ):
 
     @override
     def diag_str(self) -> str:
-        return "type specifier"
+        return "pointer type specifier"
+
+
+class ArrayTyp(Typ):
+    element_typ: Typ
+    length: ArrayLength
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "array_typ"
+        super().__init__(SrcSpan(file, tree.meta))
+        typ, length = tree.children
+        self.element_typ = Typ.from_tree(file, as_tree(typ))
+        self.length = ArrayLength(file, as_tree(length))
+
+    @override
+    def diag_str(self) -> str:
+        return "array type specifier"
 
 
 class Param(Ast):

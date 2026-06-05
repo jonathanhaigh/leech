@@ -12,13 +12,17 @@ from l0 import comptime
 from l0 import l0ast as ast
 from l0.l0errors import (
     AssignToConstError,
+    DuplicateTypDefnError,
     DuplicateVarDefnError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
     IfTypNotVoidError,
     IncompatibleBinOpArgTypsError,
+    IncompatibleTypInArrayExpr,
+    IndexIntoInvalidTypError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
+    InvalidIndexTypError,
     InvalidRetTypError,
     InvalidVoidRetError,
     MissingRetError,
@@ -38,11 +42,17 @@ from l0.src import SrcSpan
 from l0.typs import (
     BOOL,
     CONST,
+    CSTR,
+    ISIZE,
     MUT,
     NEVER,
     SIGNED,
+    U8,
     UNSIGNED,
+    USIZE,
     VOID,
+    ArrayTyp,
+    BoolTyp,
     CallableTyp,
     FnTyp,
     IntTyp,
@@ -64,9 +74,22 @@ class Var:
     mut: Mutability
 
 
+class TypDefn:
+    typ: Typ
+    ast: Optional[ast.Ast]
+
+    def __init__(self, typ, ast: Optional[ast.Ast]) -> None:
+        self.typ = typ
+        self.ast = ast
+
+    @property
+    def span(self) -> Optional[SrcSpan]:
+        return opt_map(self.ast, lambda x: x.span)
+
+
 class Env:
-    Vars = ChainMap[str, "Var"]
-    Typs = ChainMap[str, Typ]
+    Vars = ChainMap[str, Var]
+    Typs = ChainMap[str, TypDefn]
 
     vars: Env.Vars
     typs: Env.Typs
@@ -98,7 +121,13 @@ class Env:
             raise DuplicateVarDefnError(name, var.value.span, existing.value.span)
         self.vars[name] = var
 
-    def get_typ(self, name) -> Optional[Typ]:
+    def add_typ_defn(self, name: str, typ_defn: TypDefn):
+        if name in self.typs.maps[0]:
+            existing = self.typs[name]
+            raise DuplicateTypDefnError(name, typ_defn.span, existing.span)
+        self.typs[name] = typ_defn
+
+    def get_typ_defn(self, name: str) -> Optional[TypDefn]:
         if name in self.typs:
             return self.typs[name]
 
@@ -106,11 +135,14 @@ class Env:
         if m:
             signage = SIGNED if m[1] == "i" else UNSIGNED
             width = int(m[2])
-            typ = IntTyp(width, signage)
-            self.typs.maps[-1][name] = typ
-            return typ
+            typ_defn = TypDefn(IntTyp(width, signage), None)
+            self.typs.maps[-1][name] = typ_defn
+            return typ_defn
 
         return None
+
+    def get_typ(self, name) -> Optional[Typ]:
+        return opt_map(self.get_typ_defn(name), lambda x: x.typ)
 
 
 def typ_from_ast(typ_ast: ast.Typ, e: Env) -> Typ:
@@ -153,10 +185,68 @@ class Value(ABC, Generic[TypT, AstT]):
         pass
 
 
-class VoidValue(Value[VoidTyp]):
+class ComptimeValue(Generic[TypT, AstT], Value[TypT, AstT]):
+    _typ: TypT
+
     @override
-    def calculate_typ(self) -> VoidTyp:
-        return VOID
+    def __init__(self, typ: TypT, ast: Optional[AstT]) -> None:
+        super().__init__(ast)
+        self._typ = typ
+
+    @override
+    def calculate_typ(self) -> TypT:
+        return self._typ
+
+
+class ComptimeInt(ComptimeValue[IntTyp]):
+    value: int
+
+    def __init__(self, typ: IntTyp, value: int, ast: Optional[ast.Ast]) -> None:
+        super().__init__(typ, ast)
+        if value.bit_length() > typ.width:
+            raise NotImplementedError
+        self.value = value
+
+
+class ComptimeBool(ComptimeValue[BoolTyp]):
+    value: bool
+
+    def __init__(self, value: bool, ast: Optional[ast.Ast]) -> None:
+        super().__init__(BOOL, ast)
+        self.value = value
+
+
+class ComptimeCStr(ComptimeValue[PtrTyp]):
+    value: bytearray
+    initializer_type: ArrayTyp
+
+    def __init__(self, value: str, ast: Optional[ast.Ast]) -> None:
+        super().__init__(CSTR, ast)
+        self.value = bytearray(value.encode() + b"\0")
+        self.initializer_typ = ArrayTyp(U8, len(self.value))
+
+
+class ComptimeArray(ComptimeValue[ArrayTyp]):
+    elements: list[ComptimeValue]
+
+    @override
+    def __init__(
+        self, typ: ArrayTyp, elements: list[ComptimeValue], ast: Optional[ast.Ast]
+    ) -> None:
+        super().__init__(typ, ast)
+        self.elements = elements
+
+
+class VoidValue(ComptimeValue[VoidTyp]):
+    @override
+    def __init__(self, ast: Optional[ast.Ast]):
+        super().__init__(VOID, ast)
+
+
+class UndefValue(ComptimeValue):
+    @override
+    def __init__(self, typ: Typ, ast: Optional[ast.Ast]) -> None:
+        super().__init__(typ, ast)
 
 
 class Param(Value[Typ, ast.Param]):
@@ -191,21 +281,6 @@ class Instr(Value[TypT, AstT], Generic[TypT, AstT]):
     @property
     def name(self) -> str:
         return type(self).__name__
-
-
-class ComptimeValueInstr(Instr):
-    value: comptime.Value
-
-    @override
-    def __init__(
-        self, bb: BasicBlock, value: comptime.Value, ast: Optional[ast.Ast]
-    ) -> None:
-        super().__init__(bb, ast)
-        self.value = value
-
-    @override
-    def calculate_typ(self) -> Typ:
-        return self.value.typ
 
 
 class BinOpInstr(Instr):
@@ -277,7 +352,7 @@ class LoadInstr(Instr):
     src: Value
 
     @override
-    def __init__(self, bb: BasicBlock, src: Value, ast: Optional[ast.VarExpr]) -> None:
+    def __init__(self, bb: BasicBlock, src: Value, ast: Optional[ast.Ast]) -> None:
         super().__init__(bb, ast)
         self.src = src
 
@@ -318,6 +393,53 @@ class StoreInstr(Instr[VoidTyp]):
     @override
     def calculate_typ(self) -> VoidTyp:
         return VOID
+
+
+class GepInstr(Instr):
+    base: Value
+    indeces: list[Value]
+
+    @override
+    def __init__(
+        self, bb: BasicBlock, base: Value, indeces: list[Value], ast: Optional[ast.Ast]
+    ) -> None:
+        super().__init__(bb, ast)
+        self.base = base
+        self.indeces = indeces
+
+    @override
+    def calculate_typ(self) -> Typ:
+        typ = self.base.typ
+        for _ in self.indeces:
+            if isinstance(typ, PtrTyp):
+                typ = typ.pointee_typ
+            elif isinstance(typ, ArrayTyp):
+                typ = typ.element_typ
+        return typ
+
+
+class InsertValueInstr(Instr):
+    aggregate: Value
+    value: Value
+    indeces: list[ComptimeInt]
+
+    @override
+    def __init__(
+        self,
+        bb: BasicBlock,
+        aggregate: Value,
+        value: Value,
+        indeces: list[ComptimeInt],
+        ast: Optional[ast.Ast],
+    ) -> None:
+        super().__init__(bb, ast)
+        self.aggregate = aggregate
+        self.value = value
+        self.indeces = indeces
+
+    @override
+    def calculate_typ(self) -> Typ:
+        return self.aggregate.typ
 
 
 class CallInstr(Instr[Typ, ast.CallExpr]):
@@ -460,11 +582,6 @@ class BasicBlock:
             self.terminated = True
         return instr
 
-    def comptime_value(
-        self, value: comptime.Value, ast: Optional[ast.Ast]
-    ) -> ComptimeValueInstr:
-        return self._add_instr(ComptimeValueInstr(self, value, ast))
-
     def add(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> AddInstr:
         return self._add_instr(AddInstr(self, lhs, rhs, ast))
 
@@ -493,7 +610,7 @@ class BasicBlock:
     def phi(self, ast: Optional[ast.Ast]) -> PhiInstr:
         return self._add_instr(PhiInstr(self, ast))
 
-    def load(self, src: Value, ast: Optional[ast.VarExpr]) -> LoadInstr:
+    def load(self, src: Value, ast: Optional[ast.Ast]) -> LoadInstr:
         return self._add_instr(LoadInstr(self, src, ast))
 
     def alloca(self, typ: Typ, count: int, ast: Optional[ast.Ast]) -> AllocaInstr:
@@ -501,6 +618,20 @@ class BasicBlock:
 
     def store(self, value: Value, dest: Value, ast: Optional[ast.Ast]) -> StoreInstr:
         return self._add_instr(StoreInstr(self, value, dest, ast))
+
+    def gep(
+        self, base: Value, indeces: list[Value], ast: Optional[ast.Ast]
+    ) -> GepInstr:
+        return self._add_instr(GepInstr(self, base, indeces, ast))
+
+    def insert_value(
+        self,
+        aggregate: Value,
+        value: Value,
+        indeces: list[ComptimeInt],
+        ast: Optional[ast.Ast],
+    ) -> InsertValueInstr:
+        return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast))
 
     def call(
         self, callee: FnSpec, args: list[Value], ast: Optional[ast.CallExpr]
@@ -608,10 +739,18 @@ class CfgBuilder:
                 return self.build_call_expr(expr_ast, e)
             case ast.BinOpExpr():
                 return self.build_bin_op_expr(expr_ast, e)
-            case ast.LitExpr():
-                return self.curr_bb.comptime_value(expr_ast.value, expr_ast)
+            case ast.StrLit():
+                return ComptimeCStr(expr_ast.value, expr_ast)
+            case ast.IntLit():
+                return ComptimeInt(expr_ast.typ, expr_ast.value, expr_ast)
+            case ast.BoolLit():
+                return ComptimeBool(expr_ast.value, expr_ast)
             case ast.VarExpr():
                 return self.build_var_expr(expr_ast, e)
+            case ast.ArrayExpr():
+                return self.build_array_expr(expr_ast, e)
+            case ast.ArrayAccessExpr():
+                return self.build_array_access_expr(expr_ast, e)
             case _:
                 raise NotImplementedError(expr_ast)
 
@@ -803,6 +942,46 @@ class CfgBuilder:
         if isinstance(var.value, FnSpec):
             return var.value
         return self.curr_bb.load(var.value, var_ast)
+
+    def build_array_expr(self, arr_expr: ast.ArrayExpr, e: Env) -> Value:
+        elts = [self.build_expr(elt, e) for elt in arr_expr.elements]
+        if not elts:
+            raise NotImplementedError("empty array expression")
+
+        elt_typ = elts[0].typ
+        arr_typ = ArrayTyp(elt_typ, len(elts))
+        arr = UndefValue(arr_typ, arr_expr)
+
+        for i, elt in enumerate(elts):
+            elt_ast = arr_expr.elements[i]
+            if elt.typ != elt_typ:
+                raise IncompatibleTypInArrayExpr(
+                    elt.typ.name(), i, elt_ast.span, arr_typ.name()
+                )
+            elt_index = ComptimeInt(USIZE, i, elt_ast)
+            arr = self.curr_bb.insert_value(arr, elt, [elt_index], elt_ast)
+
+        return arr
+
+    def build_array_access_expr(self, aa_expr: ast.ArrayAccessExpr, e: Env) -> Value:
+        arr = self.build_expr(aa_expr.array, e)
+        if isinstance(arr.typ, PtrTyp) and isinstance(arr.typ.pointee_typ, ArrayTyp):
+            arr_ptr = arr
+        elif isinstance(arr.typ, ArrayTyp):
+            arr_ptr = self.curr_bb.alloca(arr.typ, 1, aa_expr)
+            self.curr_bb.store(arr, arr_ptr, aa_expr)
+        else:
+            raise IndexIntoInvalidTypError(arr.typ.name(), aa_expr.array.span)
+
+        index = self.build_expr(aa_expr.index, e)
+        if index.typ != USIZE:
+            raise InvalidIndexTypError(index.typ.name(), aa_expr.index.span)
+
+        # TODO: bounds check
+
+        zero = ComptimeInt(USIZE, 0, aa_expr)
+        elt_ptr = self.curr_bb.gep(arr_ptr, [zero, index], aa_expr)
+        return self.curr_bb.load(elt_ptr, aa_expr)
 
     def build_stmt(self, stmt_ast: ast.Stmt, e: Env) -> None:
         match stmt_ast:
@@ -1034,7 +1213,7 @@ class ModVar(ModItem[Typ, ast.VarDefn]):
         self.env = e.new_child()
 
     @cached_property
-    def initializer(self) -> comptime.Value:
+    def initializer(self) -> ComptimeValue:
         # TODO: detect recursion
         assert self.ast is not None
         return comptime.Interpreter().eval(self.ast.let_stmt.expr, self.env)
@@ -1054,8 +1233,13 @@ class Mod(Value[Typ, ast.Mod]):
     def __init__(self, mod_ast: ast.Mod) -> None:
         super().__init__(mod_ast)
         self._generate_name = VarNamer()
-        self._env = Env()
+        builtin_env = Env()
+        self._env = builtin_env.new_child()
         self.items = []
+
+        builtin_env.add_typ_defn("usize", TypDefn(USIZE, None))
+        builtin_env.add_typ_defn("isize", TypDefn(ISIZE, None))
+        builtin_env.add_typ_defn("bool", TypDefn(BOOL, None))
 
         for defn_ast in mod_ast.defns:
             self._build_defn(defn_ast)

@@ -67,6 +67,15 @@ class DuplicateVarDefnError(UserError):
             self.add_extra(NOTE, "Previous definition here", existing_span)
 
 
+class DuplicateTypDefnError(UserError):
+    def __init__(
+        self, name: str, span: Optional[SrcSpan], existing_span: Optional[SrcSpan]
+    ) -> None:
+        super().__init__(ERROR, f'Duplicate definition of type "{name}"', span)
+        if existing_span is not None:
+            self.add_extra(NOTE, "Previous definition here", existing_span)
+
+
 class NotCallableError(UserError):
     def __init__(self, callee_diag: str, given_typ: str, span: Optional[SrcSpan]):
         super().__init__(
@@ -251,6 +260,24 @@ class MissingRetError(UserError):
             self.add_extra(NOTE, "return type specified here", ret_typ_span)
 
 
+class IncompatibleTypInArrayExpr(UserError):
+    def __init__(
+        self,
+        element_typ: str,
+        element_index: int,
+        element_span: SrcSpan,
+        array_typ: str,
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Array element {element_index} of type "{element_typ}"'
+                f' is incompatible with array type "{array_typ}"'
+            ),
+            element_span,
+        )
+
+
 class IfElsTypMismatchError(UserError):
     def __init__(
         self,
@@ -324,6 +351,16 @@ class VarInitFromVoidError(UserError):
             ERROR, f'Variable "{var_name}" cannot have type "void"', var_span
         )
         self.add_extra(NOTE, f'Initialized by "{expr_diag}" of type "void"', expr_span)
+
+
+class IndexIntoInvalidTypError(UserError):
+    def __init__(self, typ: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, f'Index into invalid type "{typ}"', span)
+
+
+class InvalidIndexTypError(UserError):
+    def __init__(self, typ: str, span: SrcSpan) -> None:
+        super().__init__(ERROR, f'Invalid index typ "{typ}"', span)
 
 
 class TextErrorRenderer:
