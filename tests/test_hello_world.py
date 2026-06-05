@@ -655,3 +655,18 @@ def test_builtin_typ_lookup(tmp_path, typ, value):
     }}
     """
     check_prog_output(tmp_path, src, "", 0)
+
+
+def test_recursive_factorial_fn(tmp_path):
+    src = """
+    fn fact(n: i32) i32 {
+        if (n == 1) {
+            return 1;
+        };
+        return n * fact(n - 1);
+    }
+    pub fn main() i32 {
+        return fact(5);
+    }
+    """
+    check_prog_output(tmp_path, src, "", 120)
