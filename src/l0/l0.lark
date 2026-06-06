@@ -34,7 +34,10 @@ ret_stmt: "return" [expr] ";"
 let_stmt: "let" mut ident "=" expr ";"
 !mut: ["mut"]
 
-assignment_stmt: ident "=" expr ";"
+assignment_stmt: place "=" expr ";"
+
+?place: var_expr
+  | array_access_expr
 
 ?expr: block_expr
   | if_expr

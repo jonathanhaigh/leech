@@ -100,6 +100,14 @@ class Expr(Ast):
         return Expr._child_ctors()[tree.data](file, tree)
 
 
+class PlaceExpr(Expr):
+    @staticmethod
+    def from_tree(file: SrcFile, tree: ParseTree) -> PlaceExpr:
+        expr = Expr.from_tree(file, tree)
+        assert isinstance(expr, PlaceExpr)
+        return expr
+
+
 class BlockExpr(Expr):
     stmts: list[Stmt]
     expr: Optional[Expr]
@@ -247,7 +255,7 @@ class BoolLit(Expr):
         return f'bool literal "{self.token}"'
 
 
-class VarExpr(Expr):
+class VarExpr(PlaceExpr):
     name: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -267,7 +275,7 @@ class VarExpr(Expr):
         return f'variable "{self.name}"'
 
 
-class ArrayAccessExpr(Expr):
+class ArrayAccessExpr(PlaceExpr):
     array: Expr
     index: Expr
 
@@ -413,15 +421,15 @@ class LetStmt(Stmt):
 
 
 class AssignmentStmt(Stmt):
-    ident: Ident
+    place: PlaceExpr
     expr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert tree.data == "assignment_stmt"
         super().__init__(SrcSpan(file, tree.meta))
-        ident, expr = tree.children
-        self.ident = Ident(file, as_tree(ident))
-        self.expr = Expr.from_tree(file, as_tree(expr))
+        place, expr = map(as_tree, tree.children)
+        self.place = PlaceExpr.from_tree(file, place)
+        self.expr = Expr.from_tree(file, expr)
 
     @override
     def diag_str(self) -> str:

@@ -52,10 +52,13 @@ class VarNotFoundError(UserError):
 
 
 class AssignToConstError(UserError):
-    def __init__(self, name: str, span: Optional[SrcSpan]) -> None:
-        super().__init__(
-            ERROR, f'Attempt to set value of const variable "{name}"', span
-        )
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Cannot assign to const place expression", span)
+
+
+class AssignToVoidError(UserError):
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Cannot assign to void place expression", span)
 
 
 class DuplicateVarDefnError(UserError):

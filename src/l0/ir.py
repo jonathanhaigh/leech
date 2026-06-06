@@ -11,6 +11,7 @@ from l0 import comptime
 from l0 import l0ast as ast
 from l0.l0errors import (
     AssignToConstError,
+    AssignToVoidError,
     DuplicateTypDefnError,
     DuplicateVarDefnError,
     IfCondNotBoolError,
@@ -682,6 +683,11 @@ class Cfg(nx.DiGraph):
         return opt_unwrap(self._exit)
 
 
+class ExprContext(enum.Enum):
+    PLACE = 0
+    VALUE = 1
+
+
 class CfgBuilder:
     fn: FnSpec
     cfg: Cfg
@@ -705,7 +711,7 @@ class CfgBuilder:
             self.curr_bb.store(param, alloca, param.ast)
             e.add_var(param.ast.name.name, alloca)
 
-        block = self.build_expr(fn_ast.block, e)
+        block = self.build_expr(fn_ast.block, e, ExprContext.VALUE)
         ret_typ = self.fn.fn_typ.ret_typ
         ret_typ_span = opt_map(fn_ast.ret_typ, lambda x: x.span)
         ret_ast = opt_or_default(fn_ast.block.expr, fn_ast.block)
@@ -736,44 +742,48 @@ class CfgBuilder:
 
         self.ret(VoidValue(ret_ast), ret_ast)
 
-    def build_expr(self, expr_ast: ast.Expr, e: Env) -> Value:
+    def build_expr(self, expr_ast: ast.Expr, e: Env, ctx: ExprContext) -> Value:
         match expr_ast:
             case ast.BlockExpr():
-                return self.build_block_expr(expr_ast, e)
+                return self.build_block_expr(expr_ast, e, ctx)
             case ast.IfExpr():
-                return self.build_if_expr(expr_ast, e)
+                return self.build_if_expr(expr_ast, e, ctx)
             case ast.WhileExpr():
-                return self.build_while_expr(expr_ast, e)
+                return self.build_while_expr(expr_ast, e, ctx)
             case ast.CallExpr():
-                return self.build_call_expr(expr_ast, e)
+                return self.build_call_expr(expr_ast, e, ctx)
             case ast.BinOpExpr():
-                return self.build_bin_op_expr(expr_ast, e)
+                return self.build_bin_op_expr(expr_ast, e, ctx)
             case ast.StrLit():
-                return ComptimeCStr(expr_ast.value, expr_ast)
+                return self._in_context(ComptimeCStr(expr_ast.value, expr_ast), ctx)
             case ast.IntLit():
-                return ComptimeInt(expr_ast.typ, expr_ast.value, expr_ast)
+                return self._in_context(
+                    ComptimeInt(expr_ast.typ, expr_ast.value, expr_ast), ctx
+                )
             case ast.BoolLit():
-                return ComptimeBool(expr_ast.value, expr_ast)
+                return self._in_context(ComptimeBool(expr_ast.value, expr_ast), ctx)
             case ast.VarExpr():
-                return self.build_var_expr(expr_ast, e)
+                return self.build_var_expr(expr_ast, e, ctx)
             case ast.ArrayExpr():
-                return self.build_array_expr(expr_ast, e)
+                return self.build_array_expr(expr_ast, e, ctx)
             case ast.ArrayAccessExpr():
-                return self.build_array_access_expr(expr_ast, e)
+                return self.build_array_access_expr(expr_ast, e, ctx)
             case _:
                 raise NotImplementedError(expr_ast)
 
-    def build_block_expr(self, block_ast: ast.BlockExpr, e: Env) -> Value:
+    def build_block_expr(
+        self, block_ast: ast.BlockExpr, e: Env, ctx: ExprContext
+    ) -> Value:
         e = e.new_child()
         for stmt_ast in block_ast.stmts:
             self.build_stmt(stmt_ast, e)
 
         if block_ast.expr is None:
             return VoidValue(block_ast)
-        return self.build_expr(block_ast.expr, e)
+        return self.build_expr(block_ast.expr, e, ctx)
 
-    def build_if_expr(self, if_ast: ast.IfExpr, e: Env) -> Value:
-        cond = self.build_expr(if_ast.condition, e)
+    def build_if_expr(self, if_ast: ast.IfExpr, e: Env, ctx: ExprContext) -> Value:
+        cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
         if cond.typ != BOOL:
             raise IfCondNotBoolError(
                 if_ast.condition.diag_str(), cond.typ.name(), if_ast.condition.span
@@ -788,7 +798,7 @@ class CfgBuilder:
             self.cbranch(cond, then_bb, end_bb, if_ast)
 
         self.set_position(then_bb)
-        then = self.build_expr(if_ast.then, e)
+        then = self.build_expr(if_ast.then, e, ctx)
         then_last_bb = self.curr_bb
         if then.typ == NEVER and not then_last_bb.terminated:
             then_last_bb.unreachable(if_ast.then)
@@ -799,7 +809,7 @@ class CfgBuilder:
         if els_bb is not None:
             self.set_position(els_bb)
             assert if_ast.els is not None
-            els = self.build_expr(if_ast.els, e)
+            els = self.build_expr(if_ast.els, e, ctx)
             els_last_bb = self.curr_bb
             if els.typ == NEVER and not els_last_bb.terminated:
                 self.curr_bb.unreachable(if_ast.els)
@@ -833,13 +843,15 @@ class CfgBuilder:
         self.set_position(end_bb)
         return VoidValue(if_ast)
 
-    def build_while_expr(self, while_ast: ast.WhileExpr, e: Env) -> Value:
+    def build_while_expr(
+        self, while_ast: ast.WhileExpr, e: Env, _ctx: ExprContext
+    ) -> Value:
         cond_bb = self.add_bb("while_cond")
         loop_bb = self.add_bb("while_loop")
         end_bb = self.add_bb("while_end")
 
         self.branch(cond_bb, while_ast)
-        cond = self.build_expr(while_ast.condition, e)
+        cond = self.build_expr(while_ast.condition, e, ExprContext.VALUE)
         if cond.typ != BOOL:
             raise WhileCondNotBoolError(
                 while_ast.condition.diag_str(),
@@ -849,7 +861,7 @@ class CfgBuilder:
 
         self.cbranch(cond, loop_bb, end_bb, while_ast)
         self.set_position(loop_bb)
-        block = self.build_expr(while_ast.block, e)
+        block = self.build_expr(while_ast.block, e, ExprContext.VALUE)
         if block.typ not in (NEVER, VOID):
             raise WhileTypNotVoidError(block.typ.name(), while_ast.block.span)
 
@@ -859,8 +871,10 @@ class CfgBuilder:
         self.set_position(end_bb)
         return VoidValue(while_ast)
 
-    def build_call_expr(self, call_ast: ast.CallExpr, e: Env) -> Value:
-        callee = self.build_expr(call_ast.callee, e)
+    def build_call_expr(
+        self, call_ast: ast.CallExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        callee = self.build_expr(call_ast.callee, e, ExprContext.VALUE)
         callee_diag_str = call_ast.callee.diag_str()
         if not (
             isinstance(callee.typ, PtrTyp)
@@ -872,7 +886,9 @@ class CfgBuilder:
         if not isinstance(callee, FnSpec):
             raise NotImplementedError(callee)
 
-        args = [self.build_expr(arg_ast, e) for arg_ast in call_ast.args]
+        args = [
+            self.build_expr(arg_ast, e, ExprContext.VALUE) for arg_ast in call_ast.args
+        ]
 
         num_args = len(args)
         param_typs = callee.fn_typ.param_typs
@@ -900,10 +916,12 @@ class CfgBuilder:
                     call_ast.args[i].span,
                 )
 
-        return self.curr_bb.call(callee, args, call_ast)
+        return self._in_context(self.curr_bb.call(callee, args, call_ast), ctx)
 
-    def build_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env) -> Value:
-        lhs = self.build_expr(op_ast.lhs, e)
+    def build_bin_op_expr(
+        self, op_ast: ast.BinOpExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
         if not isinstance(lhs.typ, IntTyp):
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
@@ -914,7 +932,7 @@ class CfgBuilder:
                 op_ast.lhs.span,
             )
 
-        rhs = self.build_expr(op_ast.rhs, e)
+        rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
         if lhs.typ != rhs.typ:
             raise IncompatibleBinOpArgTypsError(
                 op_ast.op.name,
@@ -929,34 +947,41 @@ class CfgBuilder:
         match op:
             case "<" | "<=" | "==" | "!=" | ">=" | ">":
                 if lhs.typ.signage == SIGNED:
-                    return self.curr_bb.icmp_signed(op, lhs, rhs, op_ast)
+                    res = self.curr_bb.icmp_signed(op, lhs, rhs, op_ast)
                 else:
-                    return self.curr_bb.icmp_unsigned(op, lhs, rhs, op_ast)
+                    res = self.curr_bb.icmp_unsigned(op, lhs, rhs, op_ast)
             case "+":
-                return self.curr_bb.add(lhs, rhs, op_ast)
+                res = self.curr_bb.add(lhs, rhs, op_ast)
             case "-":
-                return self.curr_bb.sub(lhs, rhs, op_ast)
+                res = self.curr_bb.sub(lhs, rhs, op_ast)
             case "*":
-                return self.curr_bb.mul(lhs, rhs, op_ast)
+                res = self.curr_bb.mul(lhs, rhs, op_ast)
             case "/":
                 if lhs.typ.signage == SIGNED:
-                    return self.curr_bb.sdiv(lhs, rhs, op_ast)
+                    res = self.curr_bb.sdiv(lhs, rhs, op_ast)
                 else:
-                    return self.curr_bb.udiv(lhs, rhs, op_ast)
+                    res = self.curr_bb.udiv(lhs, rhs, op_ast)
             case _:
                 raise NotImplementedError(op)
 
-    def build_var_expr(self, var_ast: ast.VarExpr, e: Env) -> Value:
+        return self._in_context(res, ctx)
+
+    def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
         name = var_ast.name
         var = e.get_var(name)
         if var is None:
             raise VarNotFoundError(name, var_ast.span)
         if isinstance(var, FnSpec):
             return var
+        if ctx == ExprContext.PLACE:
+            return var
+
         return self.curr_bb.load(var, var_ast)
 
-    def build_array_expr(self, arr_expr: ast.ArrayExpr, e: Env) -> Value:
-        elts = [self.build_expr(elt, e) for elt in arr_expr.elements]
+    def build_array_expr(
+        self, arr_expr: ast.ArrayExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        elts = [self.build_expr(elt, e, ExprContext.VALUE) for elt in arr_expr.elements]
         if not elts:
             raise NotImplementedError("empty array expression")
 
@@ -973,19 +998,19 @@ class CfgBuilder:
             elt_index = ComptimeInt(USIZE, i, elt_ast)
             arr = self.curr_bb.insert_value(arr, elt, [elt_index], elt_ast)
 
-        return arr
+        return self._in_context(arr, ctx)
 
-    def build_array_access_expr(self, aa_expr: ast.ArrayAccessExpr, e: Env) -> Value:
-        arr = self.build_expr(aa_expr.array, e)
-        if isinstance(arr.typ, PtrTyp) and isinstance(arr.typ.pointee_typ, ArrayTyp):
-            arr_ptr = arr
-        elif isinstance(arr.typ, ArrayTyp):
-            arr_ptr = self.curr_bb.alloca(arr.typ, CONST, 1, aa_expr)
-            self.curr_bb.store(arr, arr_ptr, aa_expr)
-        else:
-            raise IndexIntoInvalidTypError(arr.typ.name(), aa_expr.array.span)
+    def build_array_access_expr(
+        self, aa_expr: ast.ArrayAccessExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        arr_ptr = self.build_expr(aa_expr.array, e, ExprContext.PLACE)
+        assert isinstance(arr_ptr.typ, PtrTyp)
+        if not isinstance(arr_ptr.typ.pointee_typ, ArrayTyp):
+            raise IndexIntoInvalidTypError(
+                arr_ptr.typ.pointee_typ.name(), aa_expr.array.span
+            )
 
-        index = self.build_expr(aa_expr.index, e)
+        index = self.build_expr(aa_expr.index, e, ExprContext.VALUE)
         if index.typ != USIZE:
             raise InvalidIndexTypError(index.typ.name(), aa_expr.index.span)
 
@@ -993,12 +1018,15 @@ class CfgBuilder:
 
         zero = ComptimeInt(USIZE, 0, aa_expr)
         elt_ptr = self.curr_bb.gep(arr_ptr, [zero, index], aa_expr)
-        return self.curr_bb.load(elt_ptr, aa_expr)
+        if ctx == ExprContext.PLACE:
+            return elt_ptr
+        else:
+            return self.curr_bb.load(elt_ptr, aa_expr)
 
     def build_stmt(self, stmt_ast: ast.Stmt, e: Env) -> None:
         match stmt_ast:
             case ast.ExprStmt():
-                self.build_expr(stmt_ast.expr, e)
+                self.build_expr(stmt_ast.expr, e, ExprContext.VALUE)
             case ast.RetStmt():
                 self.build_ret_stmt(stmt_ast, e)
             case ast.LetStmt():
@@ -1013,7 +1041,7 @@ class CfgBuilder:
             ret_typ_span = self.fn.ast.span
 
         if ret_ast.expr is not None:
-            expr = self.build_expr(ret_ast.expr, e)
+            expr = self.build_expr(ret_ast.expr, e, ExprContext.VALUE)
             if expr.typ == NEVER:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
@@ -1037,7 +1065,7 @@ class CfgBuilder:
         self.ret(VoidValue(ret_ast), ret_ast)
 
     def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
-        expr = self.build_expr(let_ast.expr, e)
+        expr = self.build_expr(let_ast.expr, e, ExprContext.VALUE)
         name = let_ast.ident.name
         mut = mut_from_ast(let_ast.mut)
         alloca = self.curr_bb.alloca(expr.typ, mut, 1, let_ast)
@@ -1045,17 +1073,27 @@ class CfgBuilder:
         self.curr_bb.store(expr, alloca, let_ast)
 
     def build_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> None:
-        expr = self.build_expr(ass_ast.expr, e)
-        name = ass_ast.ident.name
-        var = e.get_var(name)
-        if var is None:
-            raise VarNotFoundError(name, ass_ast.ident.span)
-        if var.typ.mut == CONST:
-            raise AssignToConstError(name, ass_ast.ident.span)
+        expr = self.build_expr(ass_ast.expr, e, ExprContext.VALUE)
+        place = self.build_expr(ass_ast.place, e, ExprContext.PLACE)
 
-        assert not isinstance(var, FnSpec), "Function variables should always be const"
+        if place.typ == VOID:
+            raise AssignToVoidError(ass_ast.place.span)
+        assert isinstance(place.typ, PtrTyp)
+        if place.typ.mut == CONST:
+            raise AssignToConstError(ass_ast.place.span)
 
-        self.curr_bb.store(expr, var, ass_ast)
+        self.curr_bb.store(expr, place, ass_ast)
+
+    def _value_to_ptr(self, value: Value) -> Value[PtrTyp]:
+        alloca = self.curr_bb.alloca(value.typ, CONST, 1, value.ast)
+        self.curr_bb.store(value, alloca, value.ast)
+        return alloca
+
+    def _in_context(self, value: Value, ctx: ExprContext) -> Value:
+        if ctx == ExprContext.PLACE:
+            return self._value_to_ptr(value)
+        else:
+            return value
 
     def add_bb(self, basename: str) -> BasicBlock:
         bb = BasicBlock(self.fn, self._generate_bb_name(basename))

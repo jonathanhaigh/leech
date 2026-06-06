@@ -291,7 +291,29 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "stmt",
             "x = y;",
             T("stmt", "assignment_stmt").cs(
-                T("ident", Tok("x")), T("var_expr", "ident", Tok("y"))
+                T("var_expr", "ident", Tok("x")), T("var_expr", "ident", Tok("y"))
+            ),
+        ),
+        (
+            "stmt",
+            "x[10] = y;",
+            T("stmt", "assignment_stmt").cs(
+                T("array_access_expr").cs(
+                    T("var_expr", "ident", Tok("x")),
+                    T("int_lit", Tok("10")),
+                ),
+                T("var_expr", "ident", Tok("y")),
+            ),
+        ),
+        (
+            "stmt",
+            "f()[1] = 2;",
+            T("stmt", "assignment_stmt").cs(
+                T("array_access_expr").cs(
+                    T("call_expr").cs(T("var_expr", "ident", Tok("f")), T("arg_list")),
+                    T("int_lit", Tok("1")),
+                ),
+                T("int_lit", Tok("2")),
             ),
         ),
         (
@@ -469,6 +491,9 @@ def test_parse(rule, src, expected):
         ("stmt", "let x = 1"),
         ("stmt", "return"),
         ("stmt", "return ();"),
+        ("stmt", "1 = 2;"),
+        ("stmt", "f() = 2;"),
+        ("stmt", "(1 + 2) = 2;"),
         ("typ", ""),
         ("typ", "0"),
         ("typ", '"abc"'),
