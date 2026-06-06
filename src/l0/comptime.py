@@ -23,8 +23,8 @@ class Interpreter:
                 if expr.name not in e.vars:
                     raise VarNotFoundError(expr.name, expr.span)
                 var = e.vars[expr.name]
-                assert isinstance(var.value, ir.ModVar)
-                return var.value.initializer
+                assert isinstance(var, ir.ModVar)
+                return var.initializer
             case ast.ArrayExpr():
                 return self.eval_array(expr, e)
             case ast.ArrayAccessExpr():

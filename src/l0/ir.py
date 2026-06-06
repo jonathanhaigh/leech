@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
 import enum
 from functools import cached_property
 import re
@@ -68,12 +67,6 @@ AstT = TypeVar("AstT", bound=ast.Ast, covariant=True, default=ast.Ast)
 FnAstT = TypeVar("FnAstT", bound=ast.FnSpec, covariant=True)
 
 
-@dataclass
-class Var:
-    value: Value
-    mut: Mutability
-
-
 class TypDefn:
     typ: Typ
     ast: Optional[ast.Ast]
@@ -88,7 +81,7 @@ class TypDefn:
 
 
 class Env:
-    Vars = ChainMap[str, Var]
+    Vars = ChainMap[str, "Value[PtrTyp]"]
     Typs = ChainMap[str, TypDefn]
 
     vars: Env.Vars
@@ -110,15 +103,15 @@ class Env:
     def new_child(self) -> Env:
         return Env(self.vars.new_child(), self.typs.new_child())
 
-    def get_var(self, name: str) -> Optional[Var]:
+    def get_var(self, name: str) -> Optional[Value[PtrTyp]]:
         if name in self.vars:
             return self.vars[name]
         return None
 
-    def add_var(self, name: str, var: Var) -> None:
+    def add_var(self, name: str, var: Value[PtrTyp]) -> None:
         if name in self.vars.maps[0]:
             existing = self.vars[name]
-            raise DuplicateVarDefnError(name, var.value.span, existing.value.span)
+            raise DuplicateVarDefnError(name, var.span, existing.span)
         self.vars[name] = var
 
     def add_typ_defn(self, name: str, typ_defn: TypDefn):
@@ -261,9 +254,8 @@ class Param(Value[Typ, ast.Param]):
 
     @override
     def calculate_typ(self) -> Typ:
-        fn_typ = self.fn.typ
-        assert len(fn_typ.param_typs) > self.pos
-        return fn_typ.param_typs[self.pos]
+        assert len(self.fn.fn_typ.param_typs) > self.pos
+        return self.fn.fn_typ.param_typs[self.pos]
 
 
 class Instr(Value[TypT, AstT], Generic[TypT, AstT]):
@@ -354,28 +346,37 @@ class LoadInstr(Instr):
     @override
     def __init__(self, bb: BasicBlock, src: Value, ast: Optional[ast.Ast]) -> None:
         super().__init__(bb, ast)
+        assert isinstance(src.typ, PtrTyp)
         self.src = src
 
     @override
     def calculate_typ(self) -> Typ:
-        return self.src.typ
+        assert isinstance(self.src.typ, PtrTyp)
+        return self.src.typ.pointee_typ
 
 
-class AllocaInstr(Instr):
-    _typ: Typ
+class AllocaInstr(Instr[PtrTyp]):
+    allocated_typ: Typ
+    mut: Mutability
     count: int
 
     @override
     def __init__(
-        self, bb: BasicBlock, typ: Typ, count: int, ast: Optional[ast.Ast]
+        self,
+        bb: BasicBlock,
+        typ: Typ,
+        mut: Mutability,
+        count: int,
+        ast: Optional[ast.Ast],
     ) -> None:
         super().__init__(bb, ast)
-        self._typ = typ
+        self.allocated_typ = typ
+        self.mut = mut
         self.count = count
 
     @override
-    def calculate_typ(self) -> Typ:
-        return self._typ
+    def calculate_typ(self) -> PtrTyp:
+        return PtrTyp(self.allocated_typ, self.mut)
 
 
 class StoreInstr(Instr[VoidTyp]):
@@ -387,6 +388,8 @@ class StoreInstr(Instr[VoidTyp]):
         self, bb: BasicBlock, value: Value, dest: Value, ast: Optional[ast.Ast]
     ) -> None:
         super().__init__(bb, ast)
+        assert isinstance(dest.typ, PtrTyp)
+        assert value.typ == dest.typ.pointee_typ
         self.value = value
         self.dest = dest
 
@@ -409,13 +412,15 @@ class GepInstr(Instr):
 
     @override
     def calculate_typ(self) -> Typ:
+        mut = MUT
         typ = self.base.typ
         for _ in self.indeces:
             if isinstance(typ, PtrTyp):
+                mut = typ.mut
                 typ = typ.pointee_typ
             elif isinstance(typ, ArrayTyp):
                 typ = typ.element_typ
-        return typ
+        return PtrTyp(typ, mut)
 
 
 class InsertValueInstr(Instr):
@@ -460,7 +465,7 @@ class CallInstr(Instr[Typ, ast.CallExpr]):
 
     @override
     def calculate_typ(self) -> Typ:
-        return self.callee.typ.ret_typ
+        return self.callee.fn_typ.ret_typ
 
 
 class PhiInstr(Instr):
@@ -613,8 +618,10 @@ class BasicBlock:
     def load(self, src: Value, ast: Optional[ast.Ast]) -> LoadInstr:
         return self._add_instr(LoadInstr(self, src, ast))
 
-    def alloca(self, typ: Typ, count: int, ast: Optional[ast.Ast]) -> AllocaInstr:
-        return self._add_instr(AllocaInstr(self, typ, count, ast))
+    def alloca(
+        self, typ: Typ, mut: Mutability, count: int, ast: Optional[ast.Ast]
+    ) -> AllocaInstr:
+        return self._add_instr(AllocaInstr(self, typ, mut, count, ast))
 
     def store(self, value: Value, dest: Value, ast: Optional[ast.Ast]) -> StoreInstr:
         return self._add_instr(StoreInstr(self, value, dest, ast))
@@ -692,12 +699,12 @@ class CfgBuilder:
 
         for param in self.fn.params:
             assert param.ast is not None
-            alloca = self.curr_bb.alloca(param.typ, 1, param.ast)
+            alloca = self.curr_bb.alloca(param.typ, CONST, 1, param.ast)
             self.curr_bb.store(param, alloca, param.ast)
-            e.add_var(param.ast.name.name, Var(alloca, CONST))
+            e.add_var(param.ast.name.name, alloca)
 
         block = self.build_expr(fn_ast.block, e)
-        ret_typ = self.fn.typ.ret_typ
+        ret_typ = self.fn.fn_typ.ret_typ
         ret_typ_span = opt_map(fn_ast.ret_typ, lambda x: x.span)
         ret_ast = opt_or_default(fn_ast.block.expr, fn_ast.block)
 
@@ -853,7 +860,10 @@ class CfgBuilder:
     def build_call_expr(self, call_ast: ast.CallExpr, e: Env) -> Value:
         callee = self.build_expr(call_ast.callee, e)
         callee_diag_str = call_ast.callee.diag_str()
-        if not isinstance(callee.typ, CallableTyp):
+        if not (
+            isinstance(callee.typ, PtrTyp)
+            and isinstance(callee.typ.pointee_typ, CallableTyp)
+        ):
             raise NotCallableError(
                 callee_diag_str, callee.typ.name(), call_ast.callee.span
             )
@@ -863,7 +873,7 @@ class CfgBuilder:
         args = [self.build_expr(arg_ast, e) for arg_ast in call_ast.args]
 
         num_args = len(args)
-        param_typs = callee.typ.param_typs
+        param_typs = callee.fn_typ.param_typs
         num_params = len(param_typs)
         if num_args < num_params:
             raise NotEnoughArgsError(
@@ -939,9 +949,9 @@ class CfgBuilder:
         var = e.get_var(name)
         if var is None:
             raise VarNotFoundError(name, var_ast.span)
-        if isinstance(var.value, FnSpec):
-            return var.value
-        return self.curr_bb.load(var.value, var_ast)
+        if isinstance(var, FnSpec):
+            return var
+        return self.curr_bb.load(var, var_ast)
 
     def build_array_expr(self, arr_expr: ast.ArrayExpr, e: Env) -> Value:
         elts = [self.build_expr(elt, e) for elt in arr_expr.elements]
@@ -968,7 +978,7 @@ class CfgBuilder:
         if isinstance(arr.typ, PtrTyp) and isinstance(arr.typ.pointee_typ, ArrayTyp):
             arr_ptr = arr
         elif isinstance(arr.typ, ArrayTyp):
-            arr_ptr = self.curr_bb.alloca(arr.typ, 1, aa_expr)
+            arr_ptr = self.curr_bb.alloca(arr.typ, CONST, 1, aa_expr)
             self.curr_bb.store(arr, arr_ptr, aa_expr)
         else:
             raise IndexIntoInvalidTypError(arr.typ.name(), aa_expr.array.span)
@@ -995,7 +1005,7 @@ class CfgBuilder:
                 self.build_assignment_stmt(stmt_ast, e)
 
     def build_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
-        ret_typ = self.fn.typ.ret_typ
+        ret_typ = self.fn.fn_typ.ret_typ
         ret_typ_span = None
         if self.fn.ast is not None and self.fn.ast.span is not None:
             ret_typ_span = self.fn.ast.span
@@ -1027,8 +1037,9 @@ class CfgBuilder:
     def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
         expr = self.build_expr(let_ast.expr, e)
         name = let_ast.ident.name
-        alloca = self.curr_bb.alloca(expr.typ, 1, let_ast)
-        e.add_var(name, Var(alloca, mut_from_ast(let_ast.mut)))
+        mut = mut_from_ast(let_ast.mut)
+        alloca = self.curr_bb.alloca(expr.typ, mut, 1, let_ast)
+        e.add_var(name, alloca)
         self.curr_bb.store(expr, alloca, let_ast)
 
     def build_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> None:
@@ -1037,12 +1048,12 @@ class CfgBuilder:
         var = e.get_var(name)
         if var is None:
             raise VarNotFoundError(name, ass_ast.ident.span)
-        if var.mut == CONST:
+        if var.typ.mut == CONST:
             raise AssignToConstError(name, ass_ast.ident.span)
 
         assert not isinstance(var, FnSpec), "Function variables should always be const"
 
-        self.curr_bb.store(expr, var.value, ass_ast)
+        self.curr_bb.store(expr, var, ass_ast)
 
     def add_bb(self, basename: str) -> BasicBlock:
         bb = BasicBlock(self.fn, self._generate_bb_name(basename))
@@ -1101,26 +1112,22 @@ PRIVATE = Access.PRIVATE
 PUBLIC = Access.PUBLIC
 
 
-class ModItem(Generic[TypT, AstT], Value[TypT, AstT]):
+class ModItem(Generic[AstT], Value[PtrTyp, AstT]):
     mod: Mod
     name: str
     access: Access
-    mut: Mutability
     env: Env
 
     @override
-    def __init__(
-        self, mod: Mod, name: str, access: Access, mut: Mutability, ast: AstT, e: Env
-    ) -> None:
+    def __init__(self, mod: Mod, name: str, access: Access, ast: AstT, e: Env) -> None:
         super().__init__(ast)
         self.mod = mod
         self.name = name
         self.access = access
-        self.mut = mut
         self.env = e
 
 
-class FnSpec(Generic[FnAstT], ModItem[FnTyp, FnAstT]):
+class FnSpec(Generic[FnAstT], ModItem[FnAstT]):
     @cached_property
     def params(self) -> tuple[Param, ...]:
         return self.calculate_params()
@@ -1129,9 +1136,14 @@ class FnSpec(Generic[FnAstT], ModItem[FnTyp, FnAstT]):
     def calculate_params(self) -> tuple[Param, ...]:
         pass
 
+    @property
+    def fn_typ(self) -> FnTyp:
+        assert isinstance(self.typ.pointee_typ, FnTyp)
+        return self.typ.pointee_typ
+
 
 class BuiltinFn(FnSpec):
-    _typ: FnTyp
+    _fn_typ: FnTyp
     _build: Callable[[CfgBuilder, Env], None]
 
     @override
@@ -1144,17 +1156,19 @@ class BuiltinFn(FnSpec):
         build: Callable[[CfgBuilder, Env], None],
         e: Env,
     ) -> None:
-        super().__init__(mod, name, access, CONST, None, e.new_child())
-        self._typ = typ
+        super().__init__(mod, name, access, None, e.new_child())
+        self._fn_typ = typ
         self._build = build
 
     @override
-    def calculate_typ(self) -> FnTyp:
-        return self._typ
+    def calculate_typ(self) -> PtrTyp:
+        return PtrTyp(self._fn_typ, CONST)
 
     @override
     def calculate_params(self) -> tuple[Param, ...]:
-        return tuple(Param(self, pos, None) for pos in range(len(self.typ.param_typs)))
+        return tuple(
+            Param(self, pos, None) for pos in range(len(self._fn_typ.param_typs))
+        )
 
     @cached_property
     def cfg(self) -> Cfg:
@@ -1166,10 +1180,10 @@ class BuiltinFn(FnSpec):
 class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
     @override
     def __init__(self, mod: Mod, access: Access, ast: FnAstT, e: Env) -> None:
-        super().__init__(mod, ast.name.name, access, CONST, ast, e.new_child())
+        super().__init__(mod, ast.name.name, access, ast, e.new_child())
 
     @override
-    def calculate_typ(self) -> FnTyp:
+    def calculate_typ(self) -> PtrTyp:
         assert self.ast is not None
         if self.ast.ret_typ is None:
             ret_typ = VOID
@@ -1179,7 +1193,7 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
         param_typs = [
             typ_from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
         ]
-        return FnTyp(ret_typ, tuple(param_typs))
+        return PtrTyp(FnTyp(ret_typ, tuple(param_typs)), CONST)
 
     @override
     def calculate_params(self) -> tuple[Param, ...]:
@@ -1201,16 +1215,17 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         return builder.cfg
 
 
-class ModVar(ModItem[Typ, ast.VarDefn]):
+class ModVar(ModItem[ast.VarDefn]):
     env: Env
+    mut: Mutability
 
     @override
     def __init__(self, mod: Mod, ast: ast.VarDefn, e: Env) -> None:
         name = ast.let_stmt.ident.name
         access = Access.from_ast(ast.access)
-        mut = mut_from_ast(ast.let_stmt.mut)
-        super().__init__(mod, name, access, mut, ast, e)
+        super().__init__(mod, name, access, ast, e)
         self.env = e.new_child()
+        self.mut = mut_from_ast(ast.let_stmt.mut)
 
     @cached_property
     def initializer(self) -> ComptimeValue:
@@ -1219,9 +1234,8 @@ class ModVar(ModItem[Typ, ast.VarDefn]):
         return comptime.Interpreter().eval(self.ast.let_stmt.expr, self.env)
 
     @override
-    def calculate_typ(self) -> Typ:
-        assert self.ast is not None
-        return self.initializer.typ
+    def calculate_typ(self) -> PtrTyp:
+        return PtrTyp(self.initializer.typ, self.mut)
 
 
 class Mod(Value[Typ, ast.Mod]):
@@ -1263,4 +1277,4 @@ class Mod(Value[Typ, ast.Mod]):
 
     def _add_item(self, item: ModItem) -> None:
         self.items.append(item)
-        self._env.add_var(item.name, Var(item, item.mut))
+        self._env.add_var(item.name, item)

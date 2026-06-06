@@ -114,7 +114,9 @@ class Compiler:
                 raise NotImplementedError(value)
 
     def _declare_mod_var(self, var: ir.ModVar) -> ll.Value:
-        ll_val = ll.GlobalVariable(self.ll_mod, self._ll_typ(var.typ), var.name)
+        ll_val = ll.GlobalVariable(
+            self.ll_mod, self._ll_typ(var.typ.pointee_typ), var.name
+        )
         set_linkage(ll_val, var.access)
         return ll_val
 
@@ -123,7 +125,7 @@ class Compiler:
         self._ll_mod_values.get(var).initializer = ll_init  # type: ignore
 
     def _declare_mod_fn(self, fn: ir.FnSpec) -> ll.Value:
-        ll_fn = ll.Function(self.ll_mod, self._ll_typ(fn.typ), fn.name)
+        ll_fn = ll.Function(self.ll_mod, self._ll_typ(fn.fn_typ), fn.name)
         # TODO: linkage for FnDecls?
         set_linkage(ll_fn, fn.access)
         return ll_fn
@@ -201,7 +203,7 @@ class Compiler:
                     ctx.ll_values.get(instr.src), typ=self._ll_typ(instr.typ)
                 )
             case ir.AllocaInstr():
-                return ctx.ll_builder.alloca(self._ll_typ(instr.typ))
+                return ctx.ll_builder.alloca(self._ll_typ(instr.allocated_typ))
             case ir.StoreInstr():
                 return ctx.ll_builder.store(
                     ctx.ll_values.get(instr.value),
