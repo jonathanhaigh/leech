@@ -730,6 +730,19 @@ def test_local_index_into_non_array(tmp_path):
         compile_str(tmp_path, src)
 
 
+def test_array_ret_typ_and_param_typ(tmp_path):
+    src = """
+    fn f(a: [i32; 4]) [i32; 2] {
+        [a[2usize], a[3usize]]
+    }
+
+    pub fn main() i32 {
+        return f([1, 2, 3, 4])[1usize];
+    }
+    """
+    check_prog_output(tmp_path, src, "", 4)
+
+
 @pytest.mark.parametrize(
     "typ,value",
     (

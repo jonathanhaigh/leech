@@ -154,7 +154,7 @@ class ArrayTyp(Typ):
 
     @override
     def name(self) -> str:
-        return f"array({self.element_typ.name()}, {self.length})"
+        return f"[{self.element_typ.name()}; {self.length}]"
 
 
 class VoidTyp(Typ):

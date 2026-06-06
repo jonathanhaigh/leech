@@ -148,6 +148,8 @@ def typ_from_ast(typ_ast: ast.Typ, e: Env) -> Typ:
             return typ
         case ast.PtrTyp():
             return PtrTyp(typ_from_ast(typ_ast.pointee_typ, e), CONST)
+        case ast.ArrayTyp():
+            return ArrayTyp(typ_from_ast(typ_ast.element_typ, e), typ_ast.length.value)
         case _:
             raise NotImplementedError(ast)
 
