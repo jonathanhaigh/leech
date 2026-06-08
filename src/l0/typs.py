@@ -1,11 +1,27 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Final, override
+from functools import cached_property
+from types import MappingProxyType
+from typing import Any, Final, Generic, Optional, TypeVar, override
+
+from l0 import ir, l0ast as ast
+from l0.l0errors import DuplicateFieldInStructDefnError, TypNotFoundError
+from l0.opt_util import opt_map
+from l0.src import SrcSpan
+
+AstT = TypeVar("AstT", bound="ast.Ast", covariant=True, default="ast.Ast")
 
 
 class Mutability(Enum):
     CONST = 0
     MUT = 1
+
+    @staticmethod
+    def from_ast(mut_ast: Optional[ast.Mutability]) -> Mutability:
+        if mut_ast is None:
+            return CONST
+        assert mut_ast.value == "mut"
+        return MUT
 
 
 CONST = Mutability.CONST
@@ -21,7 +37,12 @@ SIGNED = Signage.SIGNED
 UNSIGNED = Signage.UNSIGNED
 
 
-class Typ(ABC):
+class Typ(ABC, Generic[AstT]):
+    ast: Final[Optional[AstT]]
+
+    def __init__(self, ast: Optional[AstT] = None) -> None:
+        self.ast = ast
+
     @abstractmethod
     def __eq__(self, other: Any) -> bool:
         pass
@@ -34,12 +55,36 @@ class Typ(ABC):
     def name(self) -> str:
         pass
 
+    @property
+    def span(self) -> Optional[SrcSpan]:
+        return opt_map(self.ast, lambda x: x.span)
+
+    @staticmethod
+    def from_ast(typ_ast: ast.Typ, e: ir.Env) -> Typ:
+        match typ_ast:
+            case ast.BasicTyp():
+                name = typ_ast.name.name
+                typ = e.get_typ(name)
+                if typ is None:
+                    raise TypNotFoundError(name, typ_ast.span)
+                return typ
+            case ast.PtrTyp():
+                return PtrTyp(Typ.from_ast(typ_ast.pointee_typ, e), CONST)
+            case ast.ArrayTyp():
+                return ArrayTyp(
+                    Typ.from_ast(typ_ast.element_typ, e), typ_ast.length.value
+                )
+            case _:
+                raise NotImplementedError(ast)
+
 
 class IntTyp(Typ):
     width: Final[int]
     signage: Final[Signage]
 
+    @override
     def __init__(self, width: int, signage: Signage) -> None:
+        super().__init__()
         self.width = width
         self.signage = signage
 
@@ -79,7 +124,9 @@ class CallableTyp(Typ):
     ret_typ: Final[Typ]
     param_typs: Final[tuple[Typ, ...]]
 
+    @override
     def __init__(self, ret_typ: Typ, param_typs: tuple[Typ, ...]) -> None:
+        super().__init__()
         self.ret_typ = ret_typ
         self.param_typs = param_typs
 
@@ -107,7 +154,9 @@ class PtrTyp(Typ):
     pointee_typ: Final[Typ]
     mut: Mutability
 
+    @override
     def __init__(self, pointee_typ: Typ, mut: Mutability) -> None:
+        super().__init__()
         self.pointee_typ = pointee_typ
         self.mut = mut
 
@@ -136,7 +185,9 @@ class ArrayTyp(Typ):
     element_typ: Final[Typ]
     length: Final[int]
 
+    @override
     def __init__(self, element_typ: Typ, length: int) -> None:
+        super().__init__()
         self.element_typ = element_typ
         self.length = length
 
@@ -155,6 +206,66 @@ class ArrayTyp(Typ):
     @override
     def name(self) -> str:
         return f"[{self.element_typ.name()}; {self.length}]"
+
+
+class StructField:
+    index: int
+    ast: Final[ast.StructFieldDefn]
+    env: Final[ir.Env]
+
+    def __init__(self, index: int, ast: ast.StructFieldDefn, e: ir.Env) -> None:
+        self.index = index
+        self.ast = ast
+        self.env = e
+
+    @property
+    def name(self) -> str:
+        return self.ast.ident.name
+
+    @cached_property
+    def typ(self) -> Typ:
+        return Typ.from_ast(self.ast.typ, self.env)
+
+    @cached_property
+    def access(self) -> ir.Access:
+        return ir.Access.from_ast(self.ast.access)
+
+
+class StructTyp(Typ["ast.StructDefn"]):
+    env: Final[ir.Env]
+
+    @override
+    def __init__(self, ast: ast.StructDefn, e: ir.Env) -> None:
+        super().__init__(ast)
+        self.env = e
+
+    @override
+    def __eq__(self, other: Any) -> bool:
+        return self is other
+
+    @override
+    def __hash__(self) -> int:
+        return hash(id(self))
+
+    @override
+    def name(self) -> str:
+        assert self.ast is not None
+        return self.ast.ident.name
+
+    @cached_property
+    def fields(self) -> MappingProxyType[str, StructField]:
+        assert self.ast is not None
+        fields = {}
+        for i, field_ast in enumerate(self.ast.fields):
+            name = field_ast.ident.name
+            if name in fields:
+                raise DuplicateFieldInStructDefnError(
+                    name, field_ast.ident.span, fields[name].ast.ident.span
+                )
+
+            fields[name] = StructField(i, field_ast, self.env)
+
+        return fields.items().mapping
 
 
 class VoidTyp(Typ):

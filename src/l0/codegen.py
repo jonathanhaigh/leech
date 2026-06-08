@@ -6,7 +6,17 @@ from llvmlite import ir as ll
 from networkx import bfs_tree
 from l0 import ir
 from l0.naming import VarNamer
-from l0.typs import VOID, ArrayTyp, BoolTyp, FnTyp, IntTyp, PtrTyp, Typ, VoidTyp
+from l0.typs import (
+    VOID,
+    ArrayTyp,
+    BoolTyp,
+    FnTyp,
+    IntTyp,
+    PtrTyp,
+    StructTyp,
+    Typ,
+    VoidTyp,
+)
 
 
 def set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir.Access) -> None:
@@ -57,7 +67,7 @@ class Compiler:
 
     def __init__(self, mod: ir.Mod) -> None:
         self.mod = mod
-        self.ll_mod = ll.Module()
+        self.ll_mod = ll.Module(context=ll.Context())
         self._ll_mod_values = Compiler.LLValues(self)
         self._tmp_name = VarNamer()
 
@@ -65,10 +75,10 @@ class Compiler:
         self.ll_mod.triple = "x86_64-linux-gnu"
 
         for item in self.mod.items:
-            self._ll_mod_values.set(item, self._declare_mod_value(item))
+            self._declare_mod_item(item)
 
         for item in self.mod.items:
-            self._compile_mod_value(item)
+            self._compile_mod_item(item)
 
     @cache
     def _ll_typ(self, typ: Typ) -> ll.Type:
@@ -88,49 +98,60 @@ class Compiler:
                 return ll.ArrayType(self._ll_typ(typ.element_typ), typ.length)
             case VoidTyp():
                 return ll.VoidType()
+            case StructTyp():
+                return self.ll_mod.context.get_identified_type(typ.name())
             case _:
                 raise NotImplementedError
 
-    def _declare_mod_value(self, value: ir.Value) -> ll.Value:
-        match value:
+    def _declare_mod_item(self, item: ir.ModItem):
+        match item.value:
             case ir.ModVar():
-                return self._declare_mod_var(value)
+                self._declare_mod_var(item.name, item.access, item.value)
             case ir.FnSpec():
-                return self._declare_mod_fn(value)
+                self._declare_mod_fn(item.name, item.access, item.value)
+            case StructTyp():
+                self.ll_mod.context.get_identified_type(item.value.name())
             case _:
-                raise NotImplementedError(value)
+                raise NotImplementedError(item)
 
-    def _compile_mod_value(self, value: ir.Value) -> None:
-        match value:
+    def _compile_mod_item(self, item: ir.ModItem) -> None:
+        match item.value:
             case ir.ModVar():
-                return self._compile_mod_var(value)
+                return self._compile_mod_var(item.name, item.access, item.value)
             case ir.Fn():
-                return self._compile_mod_fn(value)
+                return self._compile_mod_fn(item.name, item.access, item.value)
             case ir.BuiltinFn():
-                return self._compile_mod_fn(value)
+                return self._compile_mod_fn(item.name, item.access, item.value)
             case ir.FnDecl():
                 return
-            case _:
-                raise NotImplementedError(value)
+            case StructTyp():
+                return self._compile_mod_struct(item.name, item.access, item.value)
 
-    def _declare_mod_var(self, var: ir.ModVar) -> ll.Value:
-        ll_val = ll.GlobalVariable(
-            self.ll_mod, self._ll_typ(var.typ.pointee_typ), var.name
-        )
-        set_linkage(ll_val, var.access)
+            case _:
+                raise NotImplementedError(item)
+
+    def _declare_mod_var(
+        self, name: str, access: ir.Access, var: ir.ModVar
+    ) -> ll.Value:
+        ll_val = ll.GlobalVariable(self.ll_mod, self._ll_typ(var.typ.pointee_typ), name)
+        self._ll_mod_values.set(var, ll_val)
+        set_linkage(ll_val, access)
         return ll_val
 
-    def _compile_mod_var(self, var: ir.ModVar) -> None:
+    def _compile_mod_var(self, _name: str, _access: ir.Access, var: ir.ModVar) -> None:
         ll_init = self._compile_comptime_value(var.initializer)
         self._ll_mod_values.get(var).initializer = ll_init  # type: ignore
 
-    def _declare_mod_fn(self, fn: ir.FnSpec) -> ll.Value:
-        ll_fn = ll.Function(self.ll_mod, self._ll_typ(fn.fn_typ), fn.name)
+    def _declare_mod_fn(self, name: str, access: ir.Access, fn: ir.FnSpec) -> ll.Value:
+        ll_fn = ll.Function(self.ll_mod, self._ll_typ(fn.fn_typ), name)
+        self._ll_mod_values.set(fn, ll_fn)
         # TODO: linkage for FnDecls?
-        set_linkage(ll_fn, fn.access)
+        set_linkage(ll_fn, access)
         return ll_fn
 
-    def _compile_mod_fn(self, fn: ir.Fn | ir.BuiltinFn) -> None:
+    def _compile_mod_fn(
+        self, _name: str, _access: ir.Access, fn: ir.Fn | ir.BuiltinFn
+    ) -> None:
         ctx = Compiler._FnBuilderContext(
             ll_builder=ll.IRBuilder(),
             ll_values=self._ll_mod_values.new_child(),
@@ -151,6 +172,10 @@ class Compiler:
         for bb in bb_tree:
             if bb.name != "exit":
                 self._compile_bb(bb, ctx)
+
+    def _compile_mod_struct(self, name: str, _access: ir.Access, typ: StructTyp):
+        ll_typ = self.ll_mod.context.get_identified_type(name)
+        ll_typ.set_body(*(self._ll_typ(field.typ) for field in typ.fields.values()))
 
     def _compile_bb(self, bb: ir.BasicBlock, ctx: Compiler._FnBuilderContext) -> None:
         ctx.ll_builder.position_at_start(ctx.ll_bbs[bb])

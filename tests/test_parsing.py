@@ -154,6 +154,56 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         ),
         (
             "expr",
+            "s { a: 10, b: x, c: f(), }",
+            T("struct_expr").cs(
+                T("basic_typ", "ident", Tok("s")),
+                T("struct_field_expr_list").cs(
+                    T("struct_field_expr").cs(
+                        T("ident", Tok("a")),
+                        T("int_lit", Tok("10")),
+                    ),
+                    T("struct_field_expr").cs(
+                        T("ident", Tok("b")),
+                        T("var_expr", "ident", Tok("x")),
+                    ),
+                    T("struct_field_expr").cs(
+                        T("ident", Tok("c")),
+                        T("call_expr").cs(
+                            T("var_expr", "ident", Tok("f")),
+                            T("arg_list"),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "_empty_struct { }",
+            T("struct_expr").cs(
+                T("basic_typ", "ident", Tok("_empty_struct")), T("struct_field_expr_list")
+            ),
+        ),
+        (
+            "expr",
+            "a.b",
+            T("struct_access_expr").cs(
+                T("var_expr", "ident", Tok("a")),
+                T("ident", Tok("b")),
+            ),
+        ),
+        (
+            "expr",
+            "arr[10].xyz",
+            T("struct_access_expr").cs(
+                T("array_access_expr").cs(
+                    T("var_expr", "ident", Tok("arr")),
+                    T("int_lit", Tok("10")),
+                ),
+                T("ident", Tok("xyz")),
+            ),
+        ),
+        (
+            "expr",
             "1 + 2",
             T("arith_expr").cs(
                 T("int_lit", Tok("1")), T("add_op", Tok("+")), T("int_lit", Tok("2"))
@@ -429,6 +479,40 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                 T("block_expr", "stmt", "ret_stmt", "int_lit", Tok("9")),
             ),
         ),
+        (
+            "defn",
+            "struct AStruct {a: i32, pub b: *u8, c: AnotherStruct}",
+            T("defn", "struct_defn").cs(
+                T("access", Tok(None)),
+                T("ident", Tok("AStruct")),
+                T("struct_field_defn_list").cs(
+                    T("struct_field_defn").cs(
+                        T("access", Tok(None)),
+                        T("ident", Tok("a")),
+                        T("basic_typ", "ident", Tok("i32")),
+                    ),
+                    T("struct_field_defn").cs(
+                        T("access", Tok("pub")),
+                        T("ident", Tok("b")),
+                        T("ptr_typ", "basic_typ", "ident", Tok("u8")),
+                    ),
+                    T("struct_field_defn").cs(
+                        T("access", Tok(None)),
+                        T("ident", Tok("c")),
+                        T("basic_typ", "ident", Tok("AnotherStruct")),
+                    ),
+                ),
+            ),
+        ),
+        (
+            "defn",
+            "pub struct EmptyStruct {}",
+            T("defn", "struct_defn").cs(
+                T("access", Tok("pub")),
+                T("ident", Tok("EmptyStruct")),
+                T("struct_field_defn_list"),
+            ),
+        ),
         ("mod", "", T("mod")),
         ("mod", "", T("mod")),
         (
@@ -482,6 +566,10 @@ def test_parse(rule, src, expected):
         ("expr", "1+"),
         ("expr", "*a"),
         ("expr", "a < b < c"),
+        ("expr", "a.1"),
+        ("expr", "a.[10]"),
+        ("expr", ".a"),
+        ("expr", "a."),
         ("block_expr", ""),
         ("block_expr", "{"),
         ("block_expr", "}"),

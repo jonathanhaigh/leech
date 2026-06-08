@@ -281,6 +281,116 @@ class IncompatibleTypInArrayExpr(UserError):
         )
 
 
+class TypeOfStructExprNotStructError(UserError):
+    def __init__(self, typ: str, span: Optional[SrcSpan]):
+        super().__init__(
+            ERROR,
+            f'Cannot create value of not struct type "{typ}" using struct expression',
+            span,
+        )
+
+
+class InvalidStructFieldError(UserError):
+    def __init__(
+        self,
+        field_name: str,
+        field_span: Optional[SrcSpan],
+        struct_typ: str,
+        struct_span: Optional[SrcSpan],
+    ):
+        super().__init__(
+            ERROR,
+            f'Struct "{struct_typ}" has no field named "{field_name}"',
+            field_span,
+        )
+        if struct_span is not None:
+            self.add_extra(NOTE, f'Struct "{struct_typ}" defined here', struct_span)
+
+
+class IncompatibleStructFieldTypError(UserError):
+    def __init__(
+        self,
+        field_name: str,
+        struct_typ: str,
+        given_typ: str,
+        given_span: Optional[SrcSpan],
+        field_typ: str,
+        field_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Struct "{struct_typ}" field "{field_name}" of type "{field_typ}"'
+                f' cannot be initialized with value of type "{given_typ}"'
+            ),
+            given_span,
+        )
+        if field_span is not None:
+            self.add_extra(NOTE, f'Field "{field_name}" defined here', field_span)
+
+
+class MissingFieldInStructExprError(UserError):
+    def __init__(
+        self,
+        field_name: str,
+        field_span: Optional[SrcSpan],
+        struct_name: str,
+        struct_expr_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Missing field "{field_name}" in struct expression of type "{struct_name}"',
+            struct_expr_span,
+        )
+        if field_span is not None:
+            self.add_extra(NOTE, f'Field "{field_name}" defined here', field_span)
+
+
+class DuplicateFieldInStructExprError(UserError):
+    def __init__(
+        self,
+        field_name: str,
+        duplicate_span: Optional[SrcSpan],
+        previous_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Duplicate field "{field_name}" in struct expression',
+            duplicate_span,
+        )
+        if previous_span is not None:
+            self.add_extra(
+                NOTE,
+                f'Value for field "{field_name}" previously given here',
+                previous_span,
+            )
+
+
+class DuplicateFieldInStructDefnError(UserError):
+    def __init__(
+        self,
+        field_name: str,
+        duplicate_span: Optional[SrcSpan],
+        previous_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Duplicate field "{field_name}" in struct definition',
+            duplicate_span,
+        )
+        if previous_span is not None:
+            self.add_extra(
+                NOTE,
+                f'Definition of field "{field_name}" previously given here',
+                previous_span,
+            )
+
+
+class FieldAccessIntoInvalidTypError(UserError):
+    def __init__(self, typ: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, f'Field access into invalid type "{typ}"', span)
+
+
 class IfElsTypMismatchError(UserError):
     def __init__(
         self,

@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 import enum
 from functools import cached_property
 import re
 from typing import ChainMap, Generic, Optional, TypeVar, override
 
+from more_itertools import nth
 import networkx as nx
 
 from l0 import comptime
@@ -12,24 +14,29 @@ from l0 import l0ast as ast
 from l0.l0errors import (
     AssignToConstError,
     AssignToVoidError,
+    DuplicateFieldInStructExprError,
     DuplicateTypDefnError,
     DuplicateVarDefnError,
+    FieldAccessIntoInvalidTypError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
     IfTypNotVoidError,
     IncompatibleBinOpArgTypsError,
+    IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     InvalidIndexTypError,
     InvalidRetTypError,
+    InvalidStructFieldError,
     InvalidVoidRetError,
+    MissingFieldInStructExprError,
     MissingRetError,
     NotCallableError,
     NotEnoughArgsError,
     TooManyArgsError,
-    TypNotFoundError,
+    TypeOfStructExprNotStructError,
     UnreachableCodeWarning,
     VarNotFoundError,
     WhileCondNotBoolError,
@@ -43,6 +50,7 @@ from l0.typs import (
     BOOL,
     CONST,
     CSTR,
+    I32,
     ISIZE,
     MUT,
     NEVER,
@@ -59,6 +67,7 @@ from l0.typs import (
     Mutability,
     NeverTyp,
     PtrTyp,
+    StructTyp,
     Typ,
     VoidTyp,
 )
@@ -68,22 +77,9 @@ AstT = TypeVar("AstT", bound=ast.Ast, covariant=True, default=ast.Ast)
 FnAstT = TypeVar("FnAstT", bound=ast.FnSpec, covariant=True)
 
 
-class TypDefn:
-    typ: Typ
-    ast: Optional[ast.Ast]
-
-    def __init__(self, typ, ast: Optional[ast.Ast]) -> None:
-        self.typ = typ
-        self.ast = ast
-
-    @property
-    def span(self) -> Optional[SrcSpan]:
-        return opt_map(self.ast, lambda x: x.span)
-
-
 class Env:
     Vars = ChainMap[str, "Value[PtrTyp]"]
-    Typs = ChainMap[str, TypDefn]
+    Typs = ChainMap[str, Typ]
 
     vars: Env.Vars
     typs: Env.Typs
@@ -115,13 +111,13 @@ class Env:
             raise DuplicateVarDefnError(name, var.span, existing.span)
         self.vars[name] = var
 
-    def add_typ_defn(self, name: str, typ_defn: TypDefn):
+    def add_typ(self, name: str, typ: Typ):
         if name in self.typs.maps[0]:
             existing = self.typs[name]
-            raise DuplicateTypDefnError(name, typ_defn.span, existing.span)
-        self.typs[name] = typ_defn
+            raise DuplicateTypDefnError(name, typ.span, existing.span)
+        self.typs[name] = typ
 
-    def get_typ_defn(self, name: str) -> Optional[TypDefn]:
+    def get_typ(self, name: str) -> Optional[Typ]:
         if name in self.typs:
             return self.typs[name]
 
@@ -129,37 +125,11 @@ class Env:
         if m:
             signage = SIGNED if m[1] == "i" else UNSIGNED
             width = int(m[2])
-            typ_defn = TypDefn(IntTyp(width, signage), None)
-            self.typs.maps[-1][name] = typ_defn
-            return typ_defn
+            typ = IntTyp(width, signage)
+            self.typs.maps[-1][name] = typ
+            return typ
 
         return None
-
-    def get_typ(self, name) -> Optional[Typ]:
-        return opt_map(self.get_typ_defn(name), lambda x: x.typ)
-
-
-def typ_from_ast(typ_ast: ast.Typ, e: Env) -> Typ:
-    match typ_ast:
-        case ast.BasicTyp():
-            name = typ_ast.name.name
-            typ = e.get_typ(name)
-            if typ is None:
-                raise TypNotFoundError(name, typ_ast.span)
-            return typ
-        case ast.PtrTyp():
-            return PtrTyp(typ_from_ast(typ_ast.pointee_typ, e), CONST)
-        case ast.ArrayTyp():
-            return ArrayTyp(typ_from_ast(typ_ast.element_typ, e), typ_ast.length.value)
-        case _:
-            raise NotImplementedError(ast)
-
-
-def mut_from_ast(mut_ast: Optional[ast.Mutability]) -> Mutability:
-    if mut_ast is None:
-        return CONST
-    assert mut_ast.value == "mut"
-    return MUT
 
 
 class Value(ABC, Generic[TypT, AstT]):
@@ -417,12 +387,25 @@ class GepInstr(Instr):
     def calculate_typ(self) -> Typ:
         mut = MUT
         typ = self.base.typ
-        for _ in self.indeces:
-            if isinstance(typ, PtrTyp):
-                mut = typ.mut
-                typ = typ.pointee_typ
-            elif isinstance(typ, ArrayTyp):
-                typ = typ.element_typ
+        for index in self.indeces:
+            match typ:
+                case PtrTyp():
+                    mut = typ.mut
+                    typ = typ.pointee_typ
+                case ArrayTyp():
+                    typ = typ.element_typ
+                case StructTyp():
+                    assert isinstance(index, ComptimeInt), (
+                        "struct indeces must be comptime known"
+                    )
+                    field = nth(typ.fields.values(), index.value)
+                    assert field is not None, (
+                        f"invalid field index {index.value} into {typ.name()}"
+                    )
+                    typ = field.typ
+                case _:
+                    raise NotImplementedError(typ)
+
         return PtrTyp(typ, mut)
 
 
@@ -768,6 +751,10 @@ class CfgBuilder:
                 return self.build_array_expr(expr_ast, e, ctx)
             case ast.ArrayAccessExpr():
                 return self.build_array_access_expr(expr_ast, e, ctx)
+            case ast.StructExpr():
+                return self.build_struct_expr(expr_ast, e, ctx)
+            case ast.StructAccessExpr():
+                return self.build_struct_access_expr(expr_ast, e, ctx)
             case _:
                 raise NotImplementedError(expr_ast)
 
@@ -1023,6 +1010,84 @@ class CfgBuilder:
         else:
             return self.curr_bb.load(elt_ptr, aa_expr)
 
+    def build_struct_expr(
+        self, struct_expr: ast.StructExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        struct_typ = Typ.from_ast(struct_expr.typ, e)
+        if not isinstance(struct_typ, StructTyp):
+            raise TypeOfStructExprNotStructError(
+                struct_typ.name(), struct_expr.typ.span
+            )
+
+        struct = UndefValue(struct_typ, struct_expr)
+
+        field_values = {}
+        for field_expr in struct_expr.fields:
+            if field_expr.ident.name not in struct_typ.fields:
+                raise InvalidStructFieldError(
+                    field_expr.ident.name,
+                    field_expr.ident.span,
+                    struct_typ.name(),
+                    struct_typ.span,
+                )
+            if field_expr.ident.name in field_values:
+                raise DuplicateFieldInStructExprError(
+                    field_expr.ident.name,
+                    field_expr.ident.span,
+                    field_values[field_expr.ident.name].span,
+                )
+            field_values[field_expr.ident.name] = self.build_expr(
+                field_expr.value, e, ExprContext.VALUE
+            )
+
+        for i, field in enumerate(struct_typ.fields.values()):
+            if field.name not in field_values:
+                raise MissingFieldInStructExprError(
+                    field.name, field.ast.span, struct_typ.name(), struct_expr.span
+                )
+            field_value = field_values[field.name]
+            if field.typ != field_value.typ:
+                raise IncompatibleStructFieldTypError(
+                    field.name,
+                    struct_typ.name(),
+                    field_value.typ.name(),
+                    field_value.span,
+                    field.typ.name(),
+                    field.ast.span,
+                )
+            field_index = ComptimeInt(I32, i, field_value.ast)
+            struct = self.curr_bb.insert_value(
+                struct, field_value, [field_index], field_value.ast
+            )
+
+            # TODO: check field access specifiers
+
+        return self._in_context(struct, ctx)
+
+    def build_struct_access_expr(
+        self, sa_expr: ast.StructAccessExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        struct_ptr = self.build_expr(sa_expr.struct, e, ExprContext.PLACE)
+        assert isinstance(struct_ptr.typ, PtrTyp)
+        struct_typ = struct_ptr.typ.pointee_typ
+        if not isinstance(struct_typ, StructTyp):
+            raise FieldAccessIntoInvalidTypError(struct_typ.name(), sa_expr.struct.span)
+
+        field_name = sa_expr.field.name
+        if field_name not in struct_typ.fields:
+            raise InvalidStructFieldError(
+                field_name, sa_expr.field.span, struct_typ.name(), struct_typ.span
+            )
+
+        zero = ComptimeInt(USIZE, 0, sa_expr)
+        index = ComptimeInt(I32, struct_typ.fields[field_name].index, sa_expr)
+        field_ptr = self.curr_bb.gep(struct_ptr, [zero, index], sa_expr)
+
+        if ctx == ExprContext.PLACE:
+            return field_ptr
+        else:
+            return self.curr_bb.load(field_ptr, sa_expr)
+
     def build_stmt(self, stmt_ast: ast.Stmt, e: Env) -> None:
         match stmt_ast:
             case ast.ExprStmt():
@@ -1067,7 +1132,7 @@ class CfgBuilder:
     def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
         expr = self.build_expr(let_ast.expr, e, ExprContext.VALUE)
         name = let_ast.ident.name
-        mut = mut_from_ast(let_ast.mut)
+        mut = Mutability.from_ast(let_ast.mut)
         alloca = self.curr_bb.alloca(expr.typ, mut, 1, let_ast)
         e.add_var(name, alloca)
         self.curr_bb.store(expr, alloca, let_ast)
@@ -1152,22 +1217,14 @@ PRIVATE = Access.PRIVATE
 PUBLIC = Access.PUBLIC
 
 
-class ModItem(Generic[AstT], Value[PtrTyp, AstT]):
-    mod: Mod
+@dataclass
+class ModItem:
     name: str
     access: Access
-    env: Env
-
-    @override
-    def __init__(self, mod: Mod, name: str, access: Access, ast: AstT, e: Env) -> None:
-        super().__init__(ast)
-        self.mod = mod
-        self.name = name
-        self.access = access
-        self.env = e
+    value: Value[PtrTyp] | Typ
 
 
-class FnSpec(Generic[FnAstT], ModItem[FnAstT]):
+class FnSpec(Generic[FnAstT], Value[PtrTyp, FnAstT]):
     @cached_property
     def params(self) -> tuple[Param, ...]:
         return self.calculate_params()
@@ -1177,28 +1234,35 @@ class FnSpec(Generic[FnAstT], ModItem[FnAstT]):
         pass
 
     @property
+    @abstractmethod
+    def name(self) -> str:
+        pass
+
+    @property
     def fn_typ(self) -> FnTyp:
         assert isinstance(self.typ.pointee_typ, FnTyp)
         return self.typ.pointee_typ
 
 
 class BuiltinFn(FnSpec):
+    _name: str
     _fn_typ: FnTyp
     _build: Callable[[CfgBuilder, Env], None]
+    env: Env
 
     @override
     def __init__(
         self,
-        mod: Mod,
-        access: Access,
         name: str,
         typ: FnTyp,
         build: Callable[[CfgBuilder, Env], None],
         e: Env,
     ) -> None:
-        super().__init__(mod, name, access, None, e.new_child())
+        super().__init__(ast=None)
+        self._name = name
         self._fn_typ = typ
         self._build = build
+        self.env = e.new_child()
 
     @override
     def calculate_typ(self) -> PtrTyp:
@@ -1210,6 +1274,10 @@ class BuiltinFn(FnSpec):
             Param(self, pos, None) for pos in range(len(self._fn_typ.param_typs))
         )
 
+    @override
+    def name(self) -> str:
+        return self._name
+
     @cached_property
     def cfg(self) -> Cfg:
         builder = CfgBuilder(self)
@@ -1218,9 +1286,12 @@ class BuiltinFn(FnSpec):
 
 
 class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
+    env: Env
+
     @override
-    def __init__(self, mod: Mod, access: Access, ast: FnAstT, e: Env) -> None:
-        super().__init__(mod, ast.name.name, access, ast, e.new_child())
+    def __init__(self, ast: FnAstT, e: Env) -> None:
+        super().__init__(ast)
+        self.env = e.new_child()
 
     @override
     def calculate_typ(self) -> PtrTyp:
@@ -1228,11 +1299,11 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
         if self.ast.ret_typ is None:
             ret_typ = VOID
         else:
-            ret_typ = typ_from_ast(self.ast.ret_typ, self.env)
+            ret_typ = Typ.from_ast(self.ast.ret_typ, self.env)
 
-        param_typs = [
-            typ_from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
-        ]
+        param_typs = (
+            Typ.from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
+        )
         return PtrTyp(FnTyp(ret_typ, tuple(param_typs)), CONST)
 
     @override
@@ -1241,6 +1312,11 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
         return tuple(
             Param(self, pos, param_ast) for pos, param_ast in enumerate(self.ast.params)
         )
+
+    @override
+    def name(self) -> str:
+        assert self.ast is not None
+        return self.ast.name.name
 
 
 class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
@@ -1255,17 +1331,15 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         return builder.cfg
 
 
-class ModVar(ModItem[ast.VarDefn]):
+class ModVar(Value[PtrTyp, ast.VarDefn]):
     env: Env
     mut: Mutability
 
     @override
-    def __init__(self, mod: Mod, ast: ast.VarDefn, e: Env) -> None:
-        name = ast.let_stmt.ident.name
-        access = Access.from_ast(ast.access)
-        super().__init__(mod, name, access, ast, e)
+    def __init__(self, ast: ast.VarDefn, e: Env) -> None:
+        super().__init__(ast)
         self.env = e.new_child()
-        self.mut = mut_from_ast(ast.let_stmt.mut)
+        self.mut = Mutability.from_ast(ast.let_stmt.mut)
 
     @cached_property
     def initializer(self) -> ComptimeValue:
@@ -1279,21 +1353,19 @@ class ModVar(ModItem[ast.VarDefn]):
 
 
 class Mod(Value[Typ, ast.Mod]):
-    _generate_name: VarNamer
     _env: Env
     items: list[ModItem]
 
     @override
     def __init__(self, mod_ast: ast.Mod) -> None:
         super().__init__(mod_ast)
-        self._generate_name = VarNamer()
         builtin_env = Env()
         self._env = builtin_env.new_child()
         self.items = []
 
-        builtin_env.add_typ_defn("usize", TypDefn(USIZE, None))
-        builtin_env.add_typ_defn("isize", TypDefn(ISIZE, None))
-        builtin_env.add_typ_defn("bool", TypDefn(BOOL, None))
+        builtin_env.add_typ("usize", USIZE)
+        builtin_env.add_typ("isize", ISIZE)
+        builtin_env.add_typ("bool", BOOL)
 
         for defn_ast in mod_ast.defns:
             self._build_defn(defn_ast)
@@ -1305,16 +1377,35 @@ class Mod(Value[Typ, ast.Mod]):
     def _build_defn(self, defn_ast: ast.Defn) -> None:
         match defn_ast:
             case ast.VarDefn():
-                self._add_item(ModVar(self, defn_ast, self._env))
+                self._add_item(
+                    defn_ast.let_stmt.ident.name,
+                    Access.from_ast(defn_ast.access),
+                    ModVar(defn_ast, self._env),
+                )
             case ast.FnDecl():
-                self._add_item(FnDecl(self, Access.PUBLIC, defn_ast, self._env))
+                self._add_item(
+                    defn_ast.name.name, Access.PUBLIC, FnDecl(defn_ast, self._env)
+                )
             case ast.FnDefn():
                 self._add_item(
-                    Fn(self, Access.from_ast(defn_ast.access), defn_ast, self._env)
+                    defn_ast.name.name,
+                    Access.from_ast(defn_ast.access),
+                    Fn(defn_ast, self._env),
+                )
+            case ast.StructDefn():
+                self._add_item(
+                    defn_ast.ident.name,
+                    Access.from_ast(defn_ast.access),
+                    StructTyp(defn_ast, self._env),
                 )
             case _:
                 raise NotImplementedError
 
-    def _add_item(self, item: ModItem) -> None:
-        self.items.append(item)
-        self._env.add_var(item.name, item)
+    def _add_item(self, name: str, access: Access, value: Value[PtrTyp] | Typ) -> None:
+        v = ModItem(name, access, value)
+        self.items.append(v)
+        if isinstance(value, Value):
+            self._env.add_var(name, value)
+        else:
+            assert isinstance(value, Typ)
+            self._env.add_typ(name, value)

@@ -3,6 +3,7 @@ mod: defn*
 defn: fn_defn
   | fn_decl
   | var_defn
+  | struct_defn
 
 fn_defn: access _fn_prototype block_expr
 _fn_prototype: "fn" ident "(" param_list ")" [typ]
@@ -14,6 +15,11 @@ param: ident ":" typ
 fn_decl: "extern" _fn_prototype ";"
 
 var_defn: access let_stmt
+
+struct_defn: access "struct" ident "{" struct_field_defn_list "}"
+struct_field_defn_list: _struct_field_defn_list?
+_struct_field_defn_list: struct_field_defn ("," struct_field_defn)* ","?
+struct_field_defn: access ident ":" typ
 
 ?typ: basic_typ
   | ptr_typ
@@ -38,6 +44,7 @@ assignment_stmt: place "=" expr ";"
 
 ?place: var_expr
   | array_access_expr
+  | struct_access_expr
 
 ?expr: block_expr
   | if_expr
@@ -68,15 +75,22 @@ while_expr: "while" "(" expr ")" block_expr
 
 ?atom_expr: call_expr
   | array_access_expr
+  | struct_expr
+  | struct_access_expr
   | atom
 
 call_expr: atom_expr "(" arg_list ")"
-
-array_access_expr: atom_expr "[" expr "]"
-
 arg_list: _arg_list?
 _arg_list: expr ("," expr)* ","?
 
+array_access_expr: atom_expr "[" expr "]"
+
+struct_expr: basic_typ "{" struct_field_expr_list "}"
+struct_field_expr_list: _struct_field_expr_list?
+_struct_field_expr_list: struct_field_expr ("," struct_field_expr)* ","?
+struct_field_expr: ident ":" expr
+
+struct_access_expr: atom_expr "." ident
 
 ?atom: str_lit
   | int_lit

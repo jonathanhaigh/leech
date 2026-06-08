@@ -86,6 +86,8 @@ class Expr(Ast):
             "var_expr": VarExpr,
             "array_access_expr": ArrayAccessExpr,
             "array_expr": ArrayExpr,
+            "struct_expr": StructExpr,
+            "struct_access_expr": StructAccessExpr,
             "cmp_expr": BinOpExpr,
             "arith_expr": BinOpExpr,
             "term": BinOpExpr,
@@ -309,6 +311,58 @@ class ArrayExpr(Expr):
         return "array expression"
 
 
+class StructExpr(Expr):
+    typ: BasicTyp
+    fields: list[StructFieldExpr]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "struct_expr"
+        super().__init__(SrcSpan(file, tree.meta))
+        typ, field_list = map(as_tree, tree.children)
+        self.typ = BasicTyp(file, typ)
+
+        assert field_list.data == "struct_field_expr_list"
+        self.fields = [
+            StructFieldExpr(file, as_tree(child)) for child in field_list.children
+        ]
+
+    @override
+    def diag_str(self) -> str:
+        return f'struct "{self.typ.name}" expression'
+
+
+class StructFieldExpr(Expr):
+    ident: Ident
+    value: Expr
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "struct_field_expr"
+        super().__init__(SrcSpan(file, tree.meta))
+        ident, value = map(as_tree, tree.children)
+        self.ident = Ident(file, ident)
+        self.value = Expr.from_tree(file, value)
+
+    @override
+    def diag_str(self) -> str:
+        return f'struct field "{self.ident.name}" expression'
+
+
+class StructAccessExpr(PlaceExpr):
+    struct: Expr
+    field: Ident
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "struct_access_expr"
+        super().__init__(SrcSpan(file, tree.meta))
+        struct, field = map(as_tree, tree.children)
+        self.struct = Expr.from_tree(file, struct)
+        self.field = Ident(file, field)
+
+    @override
+    def diag_str(self) -> str:
+        return "struct access expression"
+
+
 class CallExpr(Expr):
     callee: Expr
     args: list[Expr]
@@ -521,6 +575,7 @@ class Defn(Ast):
             "fn_defn": FnDefn,
             "fn_decl": FnDecl,
             "var_defn": VarDefn,
+            "struct_defn": StructDefn,
         }
         return child_classes[child.data](file, child)
 
@@ -591,6 +646,46 @@ class VarDefn(Defn):
     @override
     def diag_str(self) -> str:
         return "variable definition"
+
+
+class StructDefn(Defn):
+    access: Optional[Access]
+    ident: Ident
+    fields: list[StructFieldDefn]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "struct_defn"
+        super().__init__(SrcSpan(file, tree.meta))
+        access, ident, field_defn_list = map(as_tree, tree.children)
+        self.access = Access.from_tree(file, access)
+        self.ident = Ident(file, ident)
+
+        assert field_defn_list.data == "struct_field_defn_list"
+        self.fields = [
+            StructFieldDefn(file, as_tree(child)) for child in field_defn_list.children
+        ]
+
+    @override
+    def diag_str(self) -> str:
+        return f'struct "{self.ident.name}" definition'
+
+
+class StructFieldDefn(Ast):
+    access: Optional[Access]
+    ident: Ident
+    typ: Typ
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "struct_field_defn"
+        super().__init__(SrcSpan(file, tree.meta))
+        access, ident, typ = map(as_tree, tree.children)
+        self.access = Access.from_tree(file, access)
+        self.ident = Ident(file, ident)
+        self.typ = Typ.from_tree(file, typ)
+
+    @override
+    def diag_str(self) -> str:
+        return f'struct field "{self.ident.name}" definition'
 
 
 class Access(Ast):
