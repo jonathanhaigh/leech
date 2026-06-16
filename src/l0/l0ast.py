@@ -703,14 +703,16 @@ class StructDefn(Defn):
 
 class StructFieldDefn(Ast):
     access: Optional[Access]
+    mut: Optional[Mutability]
     ident: Ident
     typ: Typ
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert tree.data == "struct_field_defn"
         super().__init__(SrcSpan(file, tree.meta))
-        access, ident, typ = map(as_tree, tree.children)
+        access, mut, ident, typ = map(as_tree, tree.children)
         self.access = Access.from_tree(file, access)
+        self.mut = Mutability.from_tree(file, mut)
         self.ident = Ident(file, ident)
         self.typ = Typ.from_tree(file, typ)
 

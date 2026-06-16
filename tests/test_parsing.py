@@ -570,23 +570,26 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         ),
         (
             "defn",
-            "struct AStruct {a: i32, pub b: *u8, c: AnotherStruct}",
+            "struct AStruct {a: i32, pub mut b: *u8, c: AnotherStruct}",
             T("defn", "struct_defn").cs(
                 T("access", Tok(None)),
                 T("ident", Tok("AStruct")),
                 T("struct_field_defn_list").cs(
                     T("struct_field_defn").cs(
                         T("access", Tok(None)),
+                        T("mut", Tok(None)),
                         T("ident", Tok("a")),
                         T("basic_typ", "ident", Tok("i32")),
                     ),
                     T("struct_field_defn").cs(
                         T("access", Tok("pub")),
+                        T("mut", Tok("mut")),
                         T("ident", Tok("b")),
                         T("ptr_typ", "basic_typ", "ident", Tok("u8")),
                     ),
                     T("struct_field_defn").cs(
                         T("access", Tok(None)),
+                        T("mut", Tok(None)),
                         T("ident", Tok("c")),
                         T("basic_typ", "ident", Tok("AnotherStruct")),
                     ),

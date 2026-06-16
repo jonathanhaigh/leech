@@ -230,6 +230,10 @@ class StructField:
     def access(self) -> ir.Access:
         return ir.Access.from_ast(self.ast.access)
 
+    @cached_property
+    def mut(self) -> Mutability:
+        return Mutability.from_ast(self.ast.mut)
+
 
 class StructTyp(Typ["ast.StructDefn"]):
     env: Final[ir.Env]

@@ -414,6 +414,8 @@ class GepInstr(Instr):
                     assert field is not None, (
                         f"invalid field index {index.value} into {typ.name()}"
                     )
+                    if field.mut == CONST:
+                        mut = CONST
                     typ = field.typ
                 case _:
                     raise NotImplementedError(typ)

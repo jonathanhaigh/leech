@@ -21,9 +21,9 @@ def test_struct_access(tmp_path):
     let a = [1, 2, 3, 4];
 
     struct T {
-      a: i32,
-      b: *u8,
-      c: [i32; 4],
+      mut a: i32,
+      mut b: *u8,
+      mut c: [i32; 4],
     }
 
     pub fn main() i32 {

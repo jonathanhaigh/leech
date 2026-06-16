@@ -19,7 +19,7 @@ var_defn: access let_stmt
 struct_defn: access "struct" ident "{" struct_field_defn_list "}"
 struct_field_defn_list: _struct_field_defn_list?
 _struct_field_defn_list: struct_field_defn ("," struct_field_defn)* ","?
-struct_field_defn: access ident ":" typ
+struct_field_defn: access mut ident ":" typ
 
 ?typ: basic_typ
   | ptr_typ

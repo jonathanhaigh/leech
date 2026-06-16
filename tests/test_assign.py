@@ -98,7 +98,7 @@ def test_assign_to_const_local_nested_arr_element(tmp_path):
 
 def test_assign_to_local_struct_field(tmp_path):
     src = """
-    struct T {a: i32, b: i32}
+    struct T {mut a: i32, mut b: i32}
 
     pub fn main() i32 {
         let mut x = T {a: 10, b: 11};
@@ -112,9 +112,9 @@ def test_assign_to_local_struct_field(tmp_path):
 
 def test_assign_to_local_nested_struct_field(tmp_path):
     src = """
-    struct T {a: i32}
-    struct U {b: T}
-    struct V {c: U}
+    struct T {mut a: i32}
+    struct U {mut b: T}
+    struct V {mut c: U}
 
     pub fn main() i32 {
         let mut x = V{c: U{b: T{a: 99}}};
@@ -127,7 +127,7 @@ def test_assign_to_local_nested_struct_field(tmp_path):
 
 def test_assign_to_const_local_struct_field(tmp_path):
     src = """
-    struct T {a: i32}
+    struct T {mut a: i32}
 
     pub fn main() i32 {
         let x = T {a: 10};
@@ -139,12 +139,40 @@ def test_assign_to_const_local_struct_field(tmp_path):
         compile_str(tmp_path, src)
 
 
-def test_assign_to_const_local_nested_struct_field(tmp_path):
+def test_assign_to_local_struct_const_field(tmp_path):
     src = """
     struct T {a: i32}
-    struct U {b: T}
+
+    pub fn main() i32 {
+        let mut x = T {a: 10};
+        x.a = 11;
+        return x.a;
+    }
+    """
+    with pytest.raises(AssignToConstError):
+        compile_str(tmp_path, src)
+
+
+def test_assign_to_const_local_nested_struct_field(tmp_path):
+    src = """
+    struct T {mut a: i32}
+    struct U {mut b: T}
     pub fn main() i32 {
         let x = U{b: T{a: 10}};
+        x.b.a = 11;
+        return x.b.a;
+    }
+    """
+    with pytest.raises(AssignToConstError):
+        compile_str(tmp_path, src)
+
+
+def test_assign_to_local_nested_struct_const_field(tmp_path):
+    src = """
+    struct T {a: i32}
+    struct U {mut b: T}
+    pub fn main() i32 {
+        let mut x = U{b: T{a: 10}};
         x.b.a = 11;
         return x.b.a;
     }
