@@ -292,5 +292,11 @@ class Compiler:
             case ir.ComptimeArray():
                 elts = (self._compile_comptime_value(elt) for elt in value.elements)
                 return ll.Constant(self._ll_typ(value.typ), elts)
+            case ir.ComptimeStruct():
+                fields = (
+                    self._compile_comptime_value(value.fields[fname])
+                    for fname in value.typ.fields
+                )
+                return ll.Constant(self._ll_typ(value.typ), fields)
             case _:
                 raise NotImplementedError(value)

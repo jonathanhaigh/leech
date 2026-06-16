@@ -204,6 +204,17 @@ class ComptimeArray(ComptimeValue[ArrayTyp]):
         self.elements = elements
 
 
+class ComptimeStruct(ComptimeValue[StructTyp]):
+    fields: dict[str, ComptimeValue]
+
+    @override
+    def __init__(
+        self, typ: StructTyp, fields: dict[str, ComptimeValue], ast: Optional[ast.Ast]
+    ) -> None:
+        super().__init__(typ, ast)
+        self.fields = fields
+
+
 class VoidValue(ComptimeValue[VoidTyp]):
     @override
     def __init__(self, ast: Optional[ast.Ast]):

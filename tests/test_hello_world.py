@@ -1011,6 +1011,109 @@ def test_field_access_into_non_struct(tmp_path):
         compile_str(tmp_path, src)
 
 
+def test_comptime_struct_access(tmp_path):
+    src = """
+    struct T {
+      a: i32,
+      b: u8,
+      c: bool,
+    }
+
+    let mut t = T { a: 10, b: 100u8, c: false};
+    let x = t.a;
+    let y = t.b;
+    let z = t.c;
+
+    pub fn main() i32 {
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 10)
+
+
+def test_typ_of_comptime_struct_expr_not_struct(tmp_path):
+    src = """
+    let a = i32 {a: 0};
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(TypeOfStructExprNotStructError):
+        compile_str(tmp_path, src)
+
+
+def test_missing_field_in_comptime_struct_expr(tmp_path):
+    src = """
+    struct T {
+        a: i32,
+        b: i32,
+    }
+    let x = T {a: 0};
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(MissingFieldInStructExprError):
+        compile_str(tmp_path, src)
+
+
+def test_invalid_field_in_comptime_struct_expr(tmp_path):
+    src = """
+    struct T {
+        a: i32,
+        b: i32,
+    }
+    let x = T {a: 0, b: 0, c: 0};
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidStructFieldError):
+        compile_str(tmp_path, src)
+
+
+def test_duplicate_field_in_comptime_struct_expr(tmp_path):
+    src = """
+    struct T {
+        a: i32,
+        b: i32,
+    }
+    let x = T {a: 0, b: 0, a: 0};
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(DuplicateFieldInStructExprError):
+        compile_str(tmp_path, src)
+
+
+def test_incompatible_comptime_struct_field_typ(tmp_path):
+    src = """
+    struct T {
+        a: i32,
+    }
+    let x = T {a: "abc"};
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleStructFieldTypError):
+        compile_str(tmp_path, src)
+
+
+def test_comptime_field_access_into_non_struct(tmp_path):
+    src = """
+    let x = [0, 1, 2, 3];
+    let y = x.a;
+    pub fn main() i32 {
+
+        return y;
+    }
+    """
+    with pytest.raises(FieldAccessIntoInvalidTypError):
+        compile_str(tmp_path, src)
+
+
 def test_addr_and_deref(tmp_path):
     src = """
     pub fn main() i32 {
