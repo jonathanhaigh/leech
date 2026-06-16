@@ -1,0 +1,57 @@
+import pytest
+
+from l0.l0errors import (
+    InvalidArgTypError,
+    NotCallableError,
+    NotEnoughArgsError,
+    TooManyArgsError,
+)
+from util import compile_str
+
+
+def test_not_callable(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = 100;
+        x();
+        return 0;
+    }
+    """
+    with pytest.raises(NotCallableError):
+        compile_str(tmp_path, src)
+
+
+def test_invalid_arg_typ(tmp_path):
+    src = """
+    pub fn f(x: i32) i32 { x + x }
+    pub fn main() i32 {
+        f("abc");
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidArgTypError):
+        compile_str(tmp_path, src)
+
+
+def test_too_many_args(tmp_path):
+    src = """
+    pub fn f(x: i32) i32 { x + x }
+    pub fn main() i32 {
+        f(1, 2);
+        return 0;
+    }
+    """
+    with pytest.raises(TooManyArgsError):
+        compile_str(tmp_path, src)
+
+
+def test_not_enough_args(tmp_path):
+    src = """
+    pub fn f(x: i32) i32 { x + x }
+    pub fn main() i32 {
+        f();
+        return 0;
+    }
+    """
+    with pytest.raises(NotEnoughArgsError):
+        compile_str(tmp_path, src)

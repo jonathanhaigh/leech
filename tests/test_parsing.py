@@ -180,7 +180,8 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "expr",
             "_empty_struct { }",
             T("struct_expr").cs(
-                T("basic_typ", "ident", Tok("_empty_struct")), T("struct_field_expr_list")
+                T("basic_typ", "ident", Tok("_empty_struct")),
+                T("struct_field_expr_list"),
             ),
         ),
         (
