@@ -14,6 +14,7 @@ from l0 import l0ast as ast
 from l0.l0errors import (
     AssignToConstError,
     AssignToVoidError,
+    DerefInvalidTypError,
     DuplicateFieldInStructExprError,
     DuplicateTypDefnError,
     DuplicateVarDefnError,
@@ -737,6 +738,8 @@ class CfgBuilder:
                 return self.build_call_expr(expr_ast, e, ctx)
             case ast.BinOpExpr():
                 return self.build_bin_op_expr(expr_ast, e, ctx)
+            case ast.UnaryOpExpr():
+                return self.build_unary_op_expr(expr_ast, e, ctx)
             case ast.StrLit():
                 return self._in_context(ComptimeCStr(expr_ast.value, expr_ast), ctx)
             case ast.IntLit():
@@ -755,6 +758,8 @@ class CfgBuilder:
                 return self.build_struct_expr(expr_ast, e, ctx)
             case ast.StructAccessExpr():
                 return self.build_struct_access_expr(expr_ast, e, ctx)
+            case ast.DerefExpr():
+                return self.build_deref_expr(expr_ast, e, ctx)
             case _:
                 raise NotImplementedError(expr_ast)
 
@@ -953,6 +958,18 @@ class CfgBuilder:
 
         return self._in_context(res, ctx)
 
+    def build_unary_op_expr(
+        self, op_ast: ast.UnaryOpExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        match op_ast.op.name:
+            case "&":
+                return self._in_context(
+                    self.build_expr(op_ast.operand, e, ExprContext.PLACE),
+                    ctx,
+                )
+            case _:
+                raise NotImplementedError(op_ast.op.name)
+
     def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
         name = var_ast.name
         var = e.get_var(name)
@@ -1087,6 +1104,17 @@ class CfgBuilder:
             return field_ptr
         else:
             return self.curr_bb.load(field_ptr, sa_expr)
+
+    def build_deref_expr(
+        self, d_expr: ast.DerefExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        ptr = self.build_expr(d_expr.ptr, e, ExprContext.VALUE)
+        if not isinstance(ptr.typ, PtrTyp):
+            raise DerefInvalidTypError(ptr.typ.name(), d_expr.ptr.span)
+        if ctx == ExprContext.PLACE:
+            return ptr
+        else:
+            return self.curr_bb.load(ptr, d_expr)
 
     def build_stmt(self, stmt_ast: ast.Stmt, e: Env) -> None:
         match stmt_ast:

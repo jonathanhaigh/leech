@@ -193,6 +193,17 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         ),
         (
             "expr",
+            "a.b.c",
+            T("struct_access_expr").cs(
+                T("struct_access_expr").cs(
+                    T("var_expr", "ident", Tok("a")),
+                    T("ident", Tok("b")),
+                ),
+                T("ident", Tok("c")),
+            ),
+        ),
+        (
+            "expr",
             "arr[10].xyz",
             T("struct_access_expr").cs(
                 T("array_access_expr").cs(
@@ -318,6 +329,64 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             ),
         ),
         (
+            "expr",
+            "&a",
+            T("factor").cs(
+                T("unary_op", Tok("&")),
+                T("var_expr", "ident", Tok("a")),
+            ),
+        ),
+        (
+            "expr",
+            "&a * 1",
+            T("term").cs(
+                T("factor").cs(
+                    T("unary_op", Tok("&")),
+                    T("var_expr", "ident", Tok("a")),
+                ),
+                T("mul_op", Tok("*")),
+                T("int_lit", Tok("1")),
+            ),
+        ),
+        (
+            "expr",
+            "&&a",
+            T("factor").cs(
+                T("unary_op", Tok("&")),
+                T("factor").cs(
+                    T("unary_op", Tok("&")),
+                    T("var_expr", "ident", Tok("a")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "&a.b",
+            T("factor").cs(
+                T("unary_op", Tok("&")),
+                T("struct_access_expr").cs(
+                    T("var_expr", "ident", Tok("a")),
+                    T("ident", Tok("b")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "&a.*",
+            T("factor").cs(
+                T("unary_op", Tok("&")),
+                T("deref_expr", "var_expr", "ident", Tok("a")),
+            ),
+        ),
+        (
+            "expr",
+            "a.*.b",
+            T("struct_access_expr").cs(
+                T("deref_expr", "var_expr", "ident", Tok("a")),
+                T("ident", Tok("b")),
+            ),
+        ),
+        (
             "stmt",
             "let x = 1;",
             T("stmt", "let_stmt").cs(
@@ -364,6 +433,25 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                     T("int_lit", Tok("1")),
                 ),
                 T("int_lit", Tok("2")),
+            ),
+        ),
+        (
+            "stmt",
+            "x.y = z;",
+            T("stmt", "assignment_stmt").cs(
+                T("struct_access_expr").cs(
+                    T("var_expr", "ident", Tok("x")),
+                    T("ident", Tok("y")),
+                ),
+                T("var_expr", "ident", Tok("z")),
+            ),
+        ),
+        (
+            "stmt",
+            "x.* = y;",
+            T("stmt", "assignment_stmt").cs(
+                T("deref_expr", "var_expr", "ident", Tok("x")),
+                T("var_expr", "ident", Tok("y")),
             ),
         ),
         (

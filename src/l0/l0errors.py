@@ -485,6 +485,11 @@ class ArrayIndexOutOfBoundsError(UserError):
         )
 
 
+class DerefInvalidTypError(UserError):
+    def __init__(self, typ: str, span: SrcSpan) -> None:
+        super().__init__(ERROR, f'Cannot dereference value of type "{typ}"', span)
+
+
 class TextErrorRenderer:
     def display_errors(self, errs: list[UserError]) -> None:
         for err in errs:

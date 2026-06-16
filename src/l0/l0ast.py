@@ -88,9 +88,11 @@ class Expr(Ast):
             "array_expr": ArrayExpr,
             "struct_expr": StructExpr,
             "struct_access_expr": StructAccessExpr,
+            "deref_expr": DerefExpr,
             "cmp_expr": BinOpExpr,
             "arith_expr": BinOpExpr,
             "term": BinOpExpr,
+            "factor": UnaryOpExpr,
         }
 
     @staticmethod
@@ -363,6 +365,20 @@ class StructAccessExpr(PlaceExpr):
         return "struct access expression"
 
 
+class DerefExpr(PlaceExpr):
+    ptr: Expr
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "deref_expr"
+        super().__init__(SrcSpan(file, tree.meta))
+        (ptr,) = map(as_tree, tree.children)
+        self.ptr = Expr.from_tree(file, ptr)
+
+    @override
+    def diag_str(self) -> str:
+        return "dereference expression"
+
+
 class CallExpr(Expr):
     callee: Expr
     args: list[Expr]
@@ -383,7 +399,7 @@ class CallExpr(Expr):
         return "call expression"
 
 
-class BinOp(Ast):
+class Op(Ast):
     name: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -393,24 +409,39 @@ class BinOp(Ast):
 
     @override
     def diag_str(self) -> str:
-        return f"binary operation ({self.name})"
+        return f"{self.name} operation"
 
 
 class BinOpExpr(Expr):
     lhs: Expr
-    op: BinOp
+    op: Op
     rhs: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         super().__init__(SrcSpan(file, tree.meta))
         lhs, op, rhs = map(as_tree, tree.children)
         self.lhs = Expr.from_tree(file, lhs)
-        self.op = BinOp(file, op)
+        self.op = Op(file, op)
         self.rhs = Expr.from_tree(file, rhs)
 
     @override
     def diag_str(self) -> str:
-        return f"binary operation ({self.op}) expression"
+        return f"binary {self.op} operation expression"
+
+
+class UnaryOpExpr(Expr):
+    op: Op
+    operand: Expr
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        super().__init__(SrcSpan(file, tree.meta))
+        op, operand = map(as_tree, tree.children)
+        self.op = Op(file, op)
+        self.operand = Expr.from_tree(file, operand)
+
+    @override
+    def diag_str(self) -> str:
+        return f"unary {self.op} operation expression"
 
 
 class Stmt(Ast):

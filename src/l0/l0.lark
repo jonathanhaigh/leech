@@ -45,6 +45,7 @@ assignment_stmt: place "=" expr ";"
 ?place: var_expr
   | array_access_expr
   | struct_access_expr
+  | deref_expr
 
 ?expr: block_expr
   | if_expr
@@ -68,15 +69,21 @@ while_expr: "while" "(" expr ")" block_expr
 
 !add_op: "+"|"-"
 
-?term: term mul_op atom_expr
-  | atom_expr
+?term: term mul_op factor
+  | factor
 
 !mul_op: "*"|"/"
+
+?factor: unary_op factor
+  | atom_expr
+
+!unary_op: "&"
 
 ?atom_expr: call_expr
   | array_access_expr
   | struct_expr
   | struct_access_expr
+  | deref_expr
   | atom
 
 call_expr: atom_expr "(" arg_list ")"
@@ -91,6 +98,8 @@ _struct_field_expr_list: struct_field_expr ("," struct_field_expr)* ","?
 struct_field_expr: ident ":" expr
 
 struct_access_expr: atom_expr "." ident
+
+deref_expr: atom_expr ".*"
 
 ?atom: str_lit
   | int_lit
