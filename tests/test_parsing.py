@@ -91,34 +91,55 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
     "rule,src,expected",
     [("expr", src, T("int_lit", Tok(src.strip()))) for src in INT_LITS]
     + [("expr", src, T("str_lit", Tok(src.strip()))) for src in STR_LITS]
-    + [("expr", src, T("var_expr", "ident", Tok(src.strip()))) for src in IDENTS]
     + [
+        ("expr", src, T("var_expr", "path", "ident", Tok(src.strip())))
+        for src in IDENTS
+    ]
+    + [
+        (
+            "expr",
+            "a::b",
+            T("var_expr", "path").cs(T("ident", Tok("a")), T("ident", Tok("b"))),
+        ),
+        (
+            "expr",
+            "_::b10::I",
+            T("var_expr", "path").cs(
+                T("ident", Tok("_")),
+                T("ident", Tok("b10")),
+                T("ident", Tok("I")),
+            ),
+        ),
         ("expr", "(1)", T("int_lit", Tok("1"))),
         ("expr", '("x")', T("str_lit", Tok('"x"'))),
-        ("expr", "(x)", T("var_expr", "ident", Tok("x"))),
+        ("expr", "(x)", T("var_expr", "path", "ident", Tok("x"))),
         (
             "expr",
             'abc(123, "xyz", abc_def, f())',
             T("call_expr").cs(
-                T("var_expr", "ident", Tok("abc")),
+                T("var_expr", "path", "ident", Tok("abc")),
                 T("arg_list").cs(
                     T("int_lit", Tok("123")),
                     T("str_lit", Tok('"xyz"')),
-                    T("var_expr", "ident", Tok("abc_def")),
-                    T("call_expr").cs(T("var_expr", "ident", Tok("f")), T("arg_list")),
+                    T("var_expr", "path", "ident", Tok("abc_def")),
+                    T("call_expr").cs(
+                        T("var_expr", "path", "ident", Tok("f")), T("arg_list")
+                    ),
                 ),
             ),
         ),
         (
             "expr",
             "abc()",
-            T("call_expr").cs(T("var_expr", "ident", Tok("abc")), T("arg_list")),
+            T("call_expr").cs(
+                T("var_expr", "path", "ident", Tok("abc")), T("arg_list")
+            ),
         ),
         (
             "expr",
             "_(0,)",
             T("call_expr").cs(
-                T("var_expr", "ident", Tok("_")),
+                T("var_expr", "path", "ident", Tok("_")),
                 T("arg_list", "int_lit", Tok("0")),
             ),
         ),
@@ -128,8 +149,8 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             T("array_expr", "arg_list").cs(
                 T("int_lit", Tok("1")),
                 T("int_lit", Tok("2")),
-                T("var_expr", "ident", Tok("a")),
-                T("var_expr", "ident", Tok("b")),
+                T("var_expr", "path", "ident", Tok("a")),
+                T("var_expr", "path", "ident", Tok("b")),
             ),
         ),
         ("expr", "[]", T("array_expr", "arg_list")),
@@ -137,7 +158,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "expr",
             "a[0]",
             T("array_access_expr").cs(
-                T("var_expr", "ident", Tok("a")),
+                T("var_expr", "path", "ident", Tok("a")),
                 T("int_lit", Tok("0")),
             ),
         ),
@@ -146,17 +167,17 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "f()[x]",
             T("array_access_expr").cs(
                 T("call_expr").cs(
-                    T("var_expr", "ident", Tok("f")),
+                    T("var_expr", "path", "ident", Tok("f")),
                     T("arg_list"),
                 ),
-                T("var_expr", "ident", Tok("x")),
+                T("var_expr", "path", "ident", Tok("x")),
             ),
         ),
         (
             "expr",
             "s { a: 10, b: x, c: f(), }",
             T("struct_expr").cs(
-                T("basic_typ", "ident", Tok("s")),
+                T("basic_typ", "path", "ident", Tok("s")),
                 T("struct_field_expr_list").cs(
                     T("struct_field_expr").cs(
                         T("ident", Tok("a")),
@@ -164,12 +185,12 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                     ),
                     T("struct_field_expr").cs(
                         T("ident", Tok("b")),
-                        T("var_expr", "ident", Tok("x")),
+                        T("var_expr", "path", "ident", Tok("x")),
                     ),
                     T("struct_field_expr").cs(
                         T("ident", Tok("c")),
                         T("call_expr").cs(
-                            T("var_expr", "ident", Tok("f")),
+                            T("var_expr", "path", "ident", Tok("f")),
                             T("arg_list"),
                         ),
                     ),
@@ -180,7 +201,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "expr",
             "_empty_struct { }",
             T("struct_expr").cs(
-                T("basic_typ", "ident", Tok("_empty_struct")),
+                T("basic_typ", "path", "ident", Tok("_empty_struct")),
                 T("struct_field_expr_list"),
             ),
         ),
@@ -188,7 +209,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "expr",
             "a.b",
             T("struct_access_expr").cs(
-                T("var_expr", "ident", Tok("a")),
+                T("var_expr", "path", "ident", Tok("a")),
                 T("ident", Tok("b")),
             ),
         ),
@@ -197,7 +218,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "a.b.c",
             T("struct_access_expr").cs(
                 T("struct_access_expr").cs(
-                    T("var_expr", "ident", Tok("a")),
+                    T("var_expr", "path", "ident", Tok("a")),
                     T("ident", Tok("b")),
                 ),
                 T("ident", Tok("c")),
@@ -208,7 +229,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "arr[10].xyz",
             T("struct_access_expr").cs(
                 T("array_access_expr").cs(
-                    T("var_expr", "ident", Tok("arr")),
+                    T("var_expr", "path", "ident", Tok("arr")),
                     T("int_lit", Tok("10")),
                 ),
                 T("ident", Tok("xyz")),
@@ -263,28 +284,30 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "expr",
             "(a + f())",
             T("arith_expr").cs(
-                T("var_expr", "ident", Tok("a")),
+                T("var_expr", "path", "ident", Tok("a")),
                 T("add_op", Tok("+")),
-                T("call_expr").cs(T("var_expr", "ident", Tok("f")), T("arg_list")),
+                T("call_expr").cs(
+                    T("var_expr", "path", "ident", Tok("f")), T("arg_list")
+                ),
             ),
         ),
         (
             "expr",
             "a < b",
             T("cmp_expr").cs(
-                T("var_expr", "ident", Tok("a")),
+                T("var_expr", "path", "ident", Tok("a")),
                 T("cmp_op", Tok("<")),
-                T("var_expr", "ident", Tok("b")),
+                T("var_expr", "path", "ident", Tok("b")),
             ),
         ),
         (
             "expr",
             "a <= b + 1",
             T("cmp_expr").cs(
-                T("var_expr", "ident", Tok("a")),
+                T("var_expr", "path", "ident", Tok("a")),
                 T("cmp_op", Tok("<=")),
                 T("arith_expr").cs(
-                    T("var_expr", "ident", Tok("b")),
+                    T("var_expr", "path", "ident", Tok("b")),
                     T("add_op", Tok("+")),
                     T("int_lit", Tok("1")),
                 ),
@@ -295,12 +318,12 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "a + 1 == b",
             T("cmp_expr").cs(
                 T("arith_expr").cs(
-                    T("var_expr", "ident", Tok("a")),
+                    T("var_expr", "path", "ident", Tok("a")),
                     T("add_op", Tok("+")),
                     T("int_lit", Tok("1")),
                 ),
                 T("cmp_op", Tok("==")),
-                T("var_expr", "ident", Tok("b")),
+                T("var_expr", "path", "ident", Tok("b")),
             ),
         ),
         (
@@ -309,7 +332,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             T("cmp_expr").cs(
                 T("arith_expr").cs(
                     T("term").cs(
-                        T("var_expr", "ident", Tok("a")),
+                        T("var_expr", "path", "ident", Tok("a")),
                         T("mul_op", Tok("*")),
                         T("int_lit", Tok("1")),
                     ),
@@ -317,7 +340,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                     T("int_lit", Tok("2")),
                 ),
                 T("cmp_op", Tok(">=")),
-                T("var_expr", "ident", Tok("b")),
+                T("var_expr", "path", "ident", Tok("b")),
             ),
         ),
         (
@@ -334,7 +357,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "&a",
             T("factor").cs(
                 T("unary_op", Tok("&")),
-                T("var_expr", "ident", Tok("a")),
+                T("var_expr", "path", "ident", Tok("a")),
             ),
         ),
         (
@@ -343,7 +366,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             T("term").cs(
                 T("factor").cs(
                     T("unary_op", Tok("&")),
-                    T("var_expr", "ident", Tok("a")),
+                    T("var_expr", "path", "ident", Tok("a")),
                 ),
                 T("mul_op", Tok("*")),
                 T("int_lit", Tok("1")),
@@ -356,7 +379,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                 T("unary_op", Tok("&")),
                 T("factor").cs(
                     T("unary_op", Tok("&")),
-                    T("var_expr", "ident", Tok("a")),
+                    T("var_expr", "path", "ident", Tok("a")),
                 ),
             ),
         ),
@@ -366,7 +389,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             T("factor").cs(
                 T("unary_op", Tok("&")),
                 T("struct_access_expr").cs(
-                    T("var_expr", "ident", Tok("a")),
+                    T("var_expr", "path", "ident", Tok("a")),
                     T("ident", Tok("b")),
                 ),
             ),
@@ -376,14 +399,14 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "&a.*",
             T("factor").cs(
                 T("unary_op", Tok("&")),
-                T("deref_expr", "var_expr", "ident", Tok("a")),
+                T("deref_expr", "var_expr", "path", "ident", Tok("a")),
             ),
         ),
         (
             "expr",
             "a.*.b",
             T("struct_access_expr").cs(
-                T("deref_expr", "var_expr", "ident", Tok("a")),
+                T("deref_expr", "var_expr", "path", "ident", Tok("a")),
                 T("ident", Tok("b")),
             ),
         ),
@@ -411,7 +434,8 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "stmt",
             "x = y;",
             T("stmt", "assignment_stmt").cs(
-                T("var_expr", "ident", Tok("x")), T("var_expr", "ident", Tok("y"))
+                T("var_expr", "path", "ident", Tok("x")),
+                T("var_expr", "path", "ident", Tok("y")),
             ),
         ),
         (
@@ -419,10 +443,10 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "x[10] = y;",
             T("stmt", "assignment_stmt").cs(
                 T("array_access_expr").cs(
-                    T("var_expr", "ident", Tok("x")),
+                    T("var_expr", "path", "ident", Tok("x")),
                     T("int_lit", Tok("10")),
                 ),
-                T("var_expr", "ident", Tok("y")),
+                T("var_expr", "path", "ident", Tok("y")),
             ),
         ),
         (
@@ -430,7 +454,9 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "f()[1] = 2;",
             T("stmt", "assignment_stmt").cs(
                 T("array_access_expr").cs(
-                    T("call_expr").cs(T("var_expr", "ident", Tok("f")), T("arg_list")),
+                    T("call_expr").cs(
+                        T("var_expr", "path", "ident", Tok("f")), T("arg_list")
+                    ),
                     T("int_lit", Tok("1")),
                 ),
                 T("int_lit", Tok("2")),
@@ -441,25 +467,25 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "x.y = z;",
             T("stmt", "assignment_stmt").cs(
                 T("struct_access_expr").cs(
-                    T("var_expr", "ident", Tok("x")),
+                    T("var_expr", "path", "ident", Tok("x")),
                     T("ident", Tok("y")),
                 ),
-                T("var_expr", "ident", Tok("z")),
+                T("var_expr", "path", "ident", Tok("z")),
             ),
         ),
         (
             "stmt",
             "x.* = y;",
             T("stmt", "assignment_stmt").cs(
-                T("deref_expr", "var_expr", "ident", Tok("x")),
-                T("var_expr", "ident", Tok("y")),
+                T("deref_expr", "var_expr", "path", "ident", Tok("x")),
+                T("var_expr", "path", "ident", Tok("y")),
             ),
         ),
         (
             "stmt",
             "abc();",
             T("stmt", "expr_stmt", "call_expr").cs(
-                T("var_expr", "ident", Tok("abc")), T("arg_list")
+                T("var_expr", "path", "ident", Tok("abc")), T("arg_list")
             ),
         ),
         (
@@ -467,22 +493,31 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "{ f(0); return 1; }",
             T("block_expr").cs(
                 T("stmt", "expr_stmt", "call_expr").cs(
-                    T("var_expr", "ident", Tok("f")),
+                    T("var_expr", "path", "ident", Tok("f")),
                     T("arg_list", "int_lit", Tok("0")),
                 ),
                 T("stmt", "ret_stmt", "int_lit", Tok("1")),
             ),
         ),
         ("expr", "{}", T("block_expr")),
-        ("typ", "i32", T("basic_typ", "ident", Tok("i32"))),
-        ("typ", "x", T("basic_typ", "ident", Tok("x"))),
-        ("typ", "_", T("basic_typ", "ident", Tok("_"))),
-        ("typ", "*u8", T("ptr_typ", "basic_typ", "ident", Tok("u8"))),
+        ("typ", "i32", T("basic_typ", "path", "ident", Tok("i32"))),
+        (
+            "typ",
+            "a::b::c",
+            T("basic_typ", "path").cs(
+                T("ident", Tok("a")),
+                T("ident", Tok("b")),
+                T("ident", Tok("c")),
+            )
+        ),
+        ("typ", "x", T("basic_typ", "path", "ident", Tok("x"))),
+        ("typ", "_", T("basic_typ", "path", "ident", Tok("_"))),
+        ("typ", "*u8", T("ptr_typ", "basic_typ", "path", "ident", Tok("u8"))),
         (
             "typ",
             "[a; 10]",
             T("array_typ").cs(
-                T("basic_typ", "ident", Tok("a")),
+                T("basic_typ", "path", "ident", Tok("a")),
                 T("array_length", Tok("10")),
             ),
         ),
@@ -490,7 +525,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "typ",
             "[**u8; 0]",
             T("array_typ").cs(
-                T("ptr_typ", "ptr_typ", "basic_typ", "ident", Tok("u8")),
+                T("ptr_typ", "ptr_typ", "basic_typ", "path", "ident", Tok("u8")),
                 T("array_length", Tok("0")),
             ),
         ),
@@ -499,7 +534,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "[[u8; 10]; 5]",
             T("array_typ").cs(
                 T("array_typ").cs(
-                    T("basic_typ", "ident", Tok("u8")),
+                    T("basic_typ", "path", "ident", Tok("u8")),
                     T("array_length", Tok("10")),
                 ),
                 T("array_length", Tok("5")),
@@ -509,24 +544,30 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "typ",
             "*[u8; 1]",
             T("ptr_typ", "array_typ").cs(
-                T("basic_typ", "ident", Tok("u8")),
+                T("basic_typ", "path", "ident", Tok("u8")),
                 T("array_length", Tok("1")),
             ),
         ),
         (
             "param",
             "x: i32",
-            T("param").cs(T("ident", Tok("x")), T("basic_typ", "ident", Tok("i32"))),
+            T("param").cs(
+                T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
+            ),
         ),
         (
             "param",
             "x :i32",
-            T("param").cs(T("ident", Tok("x")), T("basic_typ", "ident", Tok("i32"))),
+            T("param").cs(
+                T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
+            ),
         ),
         (
             "param",
             "x : i32",
-            T("param").cs(T("ident", Tok("x")), T("basic_typ", "ident", Tok("i32"))),
+            T("param").cs(
+                T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
+            ),
         ),
         (
             "defn",
@@ -546,7 +587,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                 T("access", Tok(None)),
                 T("ident", Tok("f")),
                 T("param_list"),
-                T("basic_typ", "ident", Tok("i32")),
+                T("basic_typ", "path", "ident", Tok("i32")),
                 T("block_expr"),
             ),
         ),
@@ -558,13 +599,13 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                 T("ident", Tok("ab_cd")),
                 T("param_list").cs(
                     T("param").cs(
-                        T("ident", Tok("x")), T("basic_typ", "ident", Tok("a"))
+                        T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("a"))
                     ),
                     T("param").cs(
-                        T("ident", Tok("y")), T("basic_typ", "ident", Tok("b"))
+                        T("ident", Tok("y")), T("basic_typ", "path", "ident", Tok("b"))
                     ),
                 ),
-                T("basic_typ", "ident", Tok("_rt")),
+                T("basic_typ", "path", "ident", Tok("_rt")),
                 T("block_expr", "stmt", "ret_stmt", "int_lit", Tok("9")),
             ),
         ),
@@ -579,19 +620,19 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                         T("access", Tok(None)),
                         T("mut", Tok(None)),
                         T("ident", Tok("a")),
-                        T("basic_typ", "ident", Tok("i32")),
+                        T("basic_typ", "path", "ident", Tok("i32")),
                     ),
                     T("struct_field_defn").cs(
                         T("access", Tok("pub")),
                         T("mut", Tok("mut")),
                         T("ident", Tok("b")),
-                        T("ptr_typ", "basic_typ", "ident", Tok("u8")),
+                        T("ptr_typ", "basic_typ", "path", "ident", Tok("u8")),
                     ),
                     T("struct_field_defn").cs(
                         T("access", Tok(None)),
                         T("mut", Tok(None)),
                         T("ident", Tok("c")),
-                        T("basic_typ", "ident", Tok("AnotherStruct")),
+                        T("basic_typ", "path", "ident", Tok("AnotherStruct")),
                     ),
                 ),
             ),
@@ -605,31 +646,38 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                 T("struct_field_defn_list"),
             ),
         ),
-        ("mod", "", T("mod")),
+        (
+            "defn",
+            "import xyz;",
+            T("defn", "import", "ident", Tok("xyz")),
+        ),
         ("mod", "", T("mod")),
         (
             "mod",
-            "fn ab_cd(x: a, y: b) _rt { return 9; } fn x() y {}",
+            "import a; fn ab_cd(x: a, y: b) _rt { return 9; } fn x() y {}",
             T("mod").cs(
+                T("defn", "import", "ident", Tok("a")),
                 T("defn", "fn_defn").cs(
                     T("access", Tok(None)),
                     T("ident", Tok("ab_cd")),
                     T("param_list").cs(
                         T("param").cs(
-                            T("ident", Tok("x")), T("basic_typ", "ident", Tok("a"))
+                            T("ident", Tok("x")),
+                            T("basic_typ", "path", "ident", Tok("a")),
                         ),
                         T("param").cs(
-                            T("ident", Tok("y")), T("basic_typ", "ident", Tok("b"))
+                            T("ident", Tok("y")),
+                            T("basic_typ", "path", "ident", Tok("b")),
                         ),
                     ),
-                    T("basic_typ", "ident", Tok("_rt")),
+                    T("basic_typ", "path", "ident", Tok("_rt")),
                     T("block_expr", "stmt", "ret_stmt", "int_lit", Tok("9")),
                 ),
                 T("defn", "fn_defn").cs(
                     T("access", Tok(None)),
                     T("ident", Tok("x")),
                     T("param_list"),
-                    T("basic_typ", "ident", Tok("y")),
+                    T("basic_typ", "path", "ident", Tok("y")),
                     T("block_expr"),
                 ),
             ),

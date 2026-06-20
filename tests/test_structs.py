@@ -7,7 +7,7 @@ from l0.l0errors import (
     IncompatibleStructFieldTypError,
     InvalidStructFieldError,
     MissingFieldInStructExprError,
-    TypNotFoundError,
+    ItemNotFoundError,
     TypeOfStructExprNotStructError,
 )
 
@@ -60,7 +60,7 @@ def test_unknown_typ_for_struct_field(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(TypNotFoundError):
+    with pytest.raises(ItemNotFoundError):
         compile_str(tmp_path, src)
 
 

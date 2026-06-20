@@ -4,7 +4,7 @@ from l0.l0errors import (
     InvalidRetTypError,
     InvalidVoidRetError,
     MissingRetError,
-    TypNotFoundError,
+    ItemNotFoundError,
 )
 from util import check_prog_output, compile_str
 
@@ -52,5 +52,5 @@ def test_return_typ_not_defined(tmp_path):
     pub fn f() not_a_typ { }
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(TypNotFoundError):
+    with pytest.raises(ItemNotFoundError):
         compile_str(tmp_path, src)

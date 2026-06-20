@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import DuplicateVarDefnError, VarNotFoundError
+from l0.l0errors import DuplicateItemDefnError, ItemNotFoundError
 from util import check_prog_output, compile_str
 
 
@@ -62,7 +62,7 @@ def test_var_not_found_at_mod_scope(tmp_path):
     let a = x;
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(VarNotFoundError):
+    with pytest.raises(ItemNotFoundError):
         compile_str(tmp_path, src)
 
 
@@ -70,7 +70,7 @@ def test_var_not_found_at_fn_scope(tmp_path):
     src = """
     pub fn main() i32 { x }
     """
-    with pytest.raises(VarNotFoundError):
+    with pytest.raises(ItemNotFoundError):
         compile_str(tmp_path, src)
 
 
@@ -133,7 +133,7 @@ def test_cannot_access_inner_scope(tmp_path):
         return x;
     }
     """
-    with pytest.raises(VarNotFoundError):
+    with pytest.raises(ItemNotFoundError):
         compile_str(tmp_path, src)
 
 
@@ -143,7 +143,7 @@ def test_duplicate_mod_var(tmp_path):
     let x = 200;
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(DuplicateVarDefnError):
+    with pytest.raises(DuplicateItemDefnError):
         compile_str(tmp_path, src)
 
 
@@ -155,7 +155,7 @@ def test_duplicate_local_var(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DuplicateVarDefnError):
+    with pytest.raises(DuplicateItemDefnError):
         compile_str(tmp_path, src)
 
 

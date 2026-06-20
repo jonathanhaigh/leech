@@ -10,7 +10,6 @@ from l0.l0errors import (
     InvalidStructFieldError,
     MissingFieldInStructExprError,
     TypeOfStructExprNotStructError,
-    VarNotFoundError,
 )
 from . import l0ast as ast
 from .typs import USIZE, ArrayTyp, StructTyp, Typ
@@ -26,9 +25,7 @@ class Interpreter:
             case ast.BoolLit():
                 return ir.ComptimeBool(expr.value, expr)
             case ast.VarExpr():
-                if expr.name not in e.vars:
-                    raise VarNotFoundError(expr.name, expr.span)
-                var = e.vars[expr.name]
+                var = e.resolve_var(expr.path)
                 assert isinstance(var, ir.ModVar)
                 return var.initializer
             case ast.ArrayExpr():

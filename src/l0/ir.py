@@ -4,20 +4,19 @@ from dataclasses import dataclass
 import enum
 from functools import cached_property
 import re
-from typing import ChainMap, Generic, Optional, TypeVar, override
+from typing import Any, ChainMap, Generic, Optional, TypeVar, cast, override
 
 from more_itertools import nth
 import networkx as nx
 
-from l0 import comptime
+from l0 import comptime, main
 from l0 import l0ast as ast
 from l0.l0errors import (
     AssignToConstError,
     AssignToVoidError,
     DerefInvalidTypError,
     DuplicateFieldInStructExprError,
-    DuplicateTypDefnError,
-    DuplicateVarDefnError,
+    DuplicateItemDefnError,
     FieldAccessIntoInvalidTypError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
@@ -32,21 +31,22 @@ from l0.l0errors import (
     InvalidRetTypError,
     InvalidStructFieldError,
     InvalidVoidRetError,
+    ItemNotFoundError,
     MissingFieldInStructExprError,
     MissingRetError,
+    ModDoesNotExistError,
     NotCallableError,
     NotEnoughArgsError,
     TooManyArgsError,
     TypeOfStructExprNotStructError,
     UnreachableCodeWarning,
-    VarNotFoundError,
     WhileCondNotBoolError,
     WhileTypNotVoidError,
     register_error,
 )
 from l0.naming import VarNamer
 from l0.opt_util import opt_map, opt_or_default, opt_unwrap
-from l0.src import SrcSpan
+from l0.src import SrcFile, SrcSpan
 from l0.typs import (
     BOOL,
     CONST,
@@ -79,58 +79,100 @@ FnAstT = TypeVar("FnAstT", bound=ast.FnSpec, covariant=True)
 
 
 class Env:
-    Vars = ChainMap[str, "Value[PtrTyp]"]
-    Typs = ChainMap[str, Typ]
+    class Namespace(enum.Enum):
+        VARS = 0
+        TYPS = 1
 
-    vars: Env.Vars
-    typs: Env.Typs
+        def item_kind(self) -> str:
+            match self:
+                case Env.Namespace.VARS:
+                    return "variable"
+                case Env.Namespace.TYPS:
+                    return "type"
 
-    def __init__(
-        self, vars: Optional[Env.Vars] = None, typs: Optional[Env.Typs] = None
-    ) -> None:
-        if vars is None:
-            self.vars = Env.Vars()
+    items: dict[Env.Namespace, ChainMap[str, Typ | Value[PtrTyp]]]
+
+    def __init__(self, parent: Optional[Env] = None) -> None:
+        if parent is None:
+            self.items = {
+                Env.Namespace.VARS: ChainMap(),
+                Env.Namespace.TYPS: ChainMap(),
+            }
         else:
-            self.vars = vars
-
-        if typs is None:
-            self.typs = Env.Typs()
-        else:
-            self.typs = typs
+            self.items = {ns: cm.new_child() for ns, cm in parent.items.items()}
 
     def new_child(self) -> Env:
-        return Env(self.vars.new_child(), self.typs.new_child())
+        return Env(self)
+
+    def get(self, name: str, ns: Env.Namespace) -> Any:
+        if name in self.items[ns]:
+            return self.items[ns][name]
+
+        if ns == Env.Namespace.TYPS:
+            m = re.fullmatch("([iu])([1-9][0-9]*)", name)
+            if m:
+                signage = SIGNED if m[1] == "i" else UNSIGNED
+                width = int(m[2])
+                typ = IntTyp(width, signage)
+                self.items[ns].maps[-1][name] = typ
+                return typ
+
+        return None
+
+    def add(self, name: str, item: Any, ns: Env.Namespace) -> None:
+        if name in self.items[ns].maps[0]:
+            existing = self.items[ns][name]
+            raise DuplicateItemDefnError(ns.item_kind(), name, item.span, existing.span)
+        self.items[ns][name] = item
 
     def get_var(self, name: str) -> Optional[Value[PtrTyp]]:
-        if name in self.vars:
-            return self.vars[name]
-        return None
+        return self.get(name, Env.Namespace.VARS)
 
     def add_var(self, name: str, var: Value[PtrTyp]) -> None:
-        if name in self.vars.maps[0]:
-            existing = self.vars[name]
-            raise DuplicateVarDefnError(name, var.span, existing.span)
-        self.vars[name] = var
-
-    def add_typ(self, name: str, typ: Typ):
-        if name in self.typs.maps[0]:
-            existing = self.typs[name]
-            raise DuplicateTypDefnError(name, typ.span, existing.span)
-        self.typs[name] = typ
+        return self.add(name, var, Env.Namespace.VARS)
 
     def get_typ(self, name: str) -> Optional[Typ]:
-        if name in self.typs:
-            return self.typs[name]
+        return self.get(name, Env.Namespace.TYPS)
 
-        m = re.fullmatch("([iu])([1-9][0-9]*)", name)
-        if m:
-            signage = SIGNED if m[1] == "i" else UNSIGNED
-            width = int(m[2])
-            typ = IntTyp(width, signage)
-            self.typs.maps[-1][name] = typ
-            return typ
+    def add_typ(self, name: str, typ: Typ) -> None:
+        return self.add(name, typ, Env.Namespace.TYPS)
 
-        return None
+    @staticmethod
+    def _resolve_path_segment(
+        container: Env | Mod, ident: ast.Ident, ns: Env.Namespace
+    ) -> Any:
+        match container:
+            case Env():
+                res = container.get(ident.name, ns)
+            case Mod():
+                res = next(
+                    (
+                        item.value
+                        for item in container.items
+                        if item.access == PUBLIC and item.name == ident.name
+                    ),
+                    None,
+                )
+
+        if res is None:
+            raise ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
+
+        return res
+
+    def resolve_var(self, path: ast.Path) -> Value[PtrTyp]:
+        return cast(Value[PtrTyp], self.resolve_path(path, Env.Namespace.VARS))
+
+    def resolve_typ(self, path: ast.Path) -> Typ:
+        return cast(Typ, self.resolve_path(path, Env.Namespace.TYPS))
+
+    def resolve_path(self, path: ast.Path, ns: Env.Namespace) -> Any:
+        assert len(path.idents) >= 1
+
+        container = self
+        for ident in path.idents[:-1]:
+            container = Env._resolve_path_segment(container, ident, Env.Namespace.TYPS)
+
+        return Env._resolve_path_segment(container, path.idents[-1], ns)
 
 
 class Value(ABC, Generic[TypT, AstT]):
@@ -984,10 +1026,7 @@ class CfgBuilder:
                 raise NotImplementedError(op_ast.op.name)
 
     def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
-        name = var_ast.name
-        var = e.get_var(name)
-        if var is None:
-            raise VarNotFoundError(name, var_ast.span)
+        var = e.resolve_path(var_ast.path, Env.Namespace.VARS)
         if isinstance(var, FnSpec):
             return var
         if ctx == ExprContext.PLACE:
@@ -1260,9 +1299,18 @@ PUBLIC = Access.PUBLIC
 
 @dataclass
 class ModItem:
+    mod: Mod
     name: str
     access: Access
     value: Value[PtrTyp] | Typ
+    qualify_name: bool = True
+
+    @property
+    def qualified_name(self) -> str:
+        if self.qualify_name:
+            return f"{self.mod.name()}.{self.name}"
+        else:
+            return self.name
 
 
 class FnSpec(Generic[FnAstT], Value[PtrTyp, FnAstT]):
@@ -1393,16 +1441,18 @@ class ModVar(Value[PtrTyp, ast.VarDefn]):
         return PtrTyp(self.initializer.typ, self.mut)
 
 
-class Mod(Value[Typ, ast.Mod]):
-    _env: Env
+class Mod(Typ):
+    _name: str
     items: list[ModItem]
+    env: Env
 
     @override
-    def __init__(self, mod_ast: ast.Mod) -> None:
+    def __init__(self, name: str, mod_ast: ast.Mod) -> None:
         super().__init__(mod_ast)
         builtin_env = Env()
-        self._env = builtin_env.new_child()
+        self._name = name
         self.items = []
+        self.env = builtin_env.new_child()
 
         builtin_env.add_typ("usize", USIZE)
         builtin_env.add_typ("isize", ISIZE)
@@ -1412,8 +1462,16 @@ class Mod(Value[Typ, ast.Mod]):
             self._build_defn(defn_ast)
 
     @override
-    def calculate_typ(self) -> Typ:
-        raise NotImplementedError
+    def __eq__(self, other: Any) -> bool:
+        return type(self) is type(other) and self._name == other._name
+
+    @override
+    def __hash__(self) -> int:
+        return hash((type(self), self._name))
+
+    @override
+    def name(self) -> str:
+        return self._name
 
     def _build_defn(self, defn_ast: ast.Defn) -> None:
         match defn_ast:
@@ -1421,32 +1479,50 @@ class Mod(Value[Typ, ast.Mod]):
                 self._add_item(
                     defn_ast.let_stmt.ident.name,
                     Access.from_ast(defn_ast.access),
-                    ModVar(defn_ast, self._env),
+                    ModVar(defn_ast, self.env),
                 )
             case ast.FnDecl():
                 self._add_item(
-                    defn_ast.name.name, Access.PUBLIC, FnDecl(defn_ast, self._env)
+                    defn_ast.name.name,
+                    Access.PUBLIC,
+                    FnDecl(defn_ast, self.env),
+                    False,
                 )
             case ast.FnDefn():
+                qualify_name = self.name() != "main" or defn_ast.name.name != "main"
                 self._add_item(
                     defn_ast.name.name,
                     Access.from_ast(defn_ast.access),
-                    Fn(defn_ast, self._env),
+                    Fn(defn_ast, self.env),
+                    qualify_name,
                 )
             case ast.StructDefn():
                 self._add_item(
                     defn_ast.ident.name,
                     Access.from_ast(defn_ast.access),
-                    StructTyp(defn_ast, self._env),
+                    StructTyp(defn_ast, self.env),
                 )
+            case ast.Import():
+                mod_name = defn_ast.ident.name
+                mod_path = defn_ast.span.file.path.with_stem(mod_name)
+                if not mod_path.exists():
+                    raise ModDoesNotExistError(mod_name, defn_ast.ident.span)
+                mod = main.compile_to_ir(SrcFile(mod_path))
+                self._add_item(mod_name, PRIVATE, mod)
             case _:
                 raise NotImplementedError
 
-    def _add_item(self, name: str, access: Access, value: Value[PtrTyp] | Typ) -> None:
-        v = ModItem(name, access, value)
+    def _add_item(
+        self,
+        name: str,
+        access: Access,
+        value: Value[PtrTyp] | Typ,
+        qualify_name: bool = True,
+    ) -> None:
+        v = ModItem(self, name, access, value, qualify_name)
         self.items.append(v)
         if isinstance(value, Value):
-            self._env.add_var(name, value)
+            self.env.add_var(name, value)
         else:
             assert isinstance(value, Typ)
-            self._env.add_typ(name, value)
+            self.env.add_typ(name, value)

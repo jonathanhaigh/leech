@@ -4,6 +4,7 @@ defn: fn_defn
   | fn_decl
   | var_defn
   | struct_defn
+  | import
 
 fn_defn: access _fn_prototype block_expr
 _fn_prototype: "fn" ident "(" param_list ")" [typ]
@@ -21,11 +22,13 @@ struct_field_defn_list: _struct_field_defn_list?
 _struct_field_defn_list: struct_field_defn ("," struct_field_defn)* ","?
 struct_field_defn: access mut ident ":" typ
 
+import: "import" ident ";"
+
 ?typ: basic_typ
   | ptr_typ
   | array_typ
 
-basic_typ: ident
+basic_typ: path
 ptr_typ: "*" typ
 array_typ: "[" typ ";" array_length "]"
 array_length: NONNEG_INT
@@ -111,7 +114,8 @@ deref_expr: atom_expr ".*"
 str_lit: STR_LIT
 int_lit: INT_LIT
 !bool_lit: "true" | "false"
-var_expr: ident
+var_expr: path
+path: ident ("::" ident)*
 ident: IDENT
 array_expr: "[" arg_list "]"
 

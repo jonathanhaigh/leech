@@ -72,6 +72,23 @@ class Ident(Ast):
         return f"identifier {self.name}"
 
 
+class Path(Ast):
+    idents: list[Ident]
+
+    @override
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "path"
+        super().__init__(SrcSpan(file, tree.meta))
+        self.idents = [Ident(file, as_tree(ident)) for ident in tree.children]
+
+    @override
+    def diag_str(self) -> str:
+        return f"path {self.str()}"
+
+    def str(self) -> str:
+        return "::".join(ident.name for ident in self.idents)
+
+
 class Expr(Ast):
     @staticmethod
     def _child_ctors() -> dict["str", Callable[[SrcFile, Tree], Expr]]:
@@ -260,23 +277,16 @@ class BoolLit(Expr):
 
 
 class VarExpr(PlaceExpr):
-    name: str
+    path: Path
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         super().__init__(SrcSpan(file, tree.meta))
-        (child,) = tree.children
-        if isinstance(child, Tree):
-            assert child.data == "ident"
-            assert len(child.children) == 1
-            self.name = as_token(child.children[0])
-        else:
-            self.name = as_token(child)
-
-        self._var = None
+        (path,) = tree.children
+        self.path = Path(file, as_tree(path))
 
     @override
     def diag_str(self) -> str:
-        return f'variable "{self.name}"'
+        return f'variable "{self.path.str()}"'
 
 
 class ArrayAccessExpr(PlaceExpr):
@@ -330,7 +340,7 @@ class StructExpr(Expr):
 
     @override
     def diag_str(self) -> str:
-        return f'struct "{self.typ.name}" expression'
+        return f'struct "{self.typ.path.str()}" expression'
 
 
 class StructFieldExpr(Expr):
@@ -537,17 +547,17 @@ class Typ(Ast):
 
 
 class BasicTyp(Typ):
-    name: Ident
+    path: Path
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert tree.data == "basic_typ"
         super().__init__(SrcSpan(file, tree.meta))
-        (ident,) = tree.children
-        self.name = Ident(file, as_tree(ident))
+        (path,) = tree.children
+        self.path = Path(file, as_tree(path))
 
     @override
     def diag_str(self) -> str:
-        return f'type specifier "{self.name.name}"'
+        return f'type specifier "{self.path.str()}"'
 
 
 class PtrTyp(Typ):
@@ -607,6 +617,7 @@ class Defn(Ast):
             "fn_decl": FnDecl,
             "var_defn": VarDefn,
             "struct_defn": StructDefn,
+            "import": Import,
         }
         return child_classes[child.data](file, child)
 
@@ -719,6 +730,20 @@ class StructFieldDefn(Ast):
     @override
     def diag_str(self) -> str:
         return f'struct field "{self.ident.name}" definition'
+
+
+class Import(Defn):
+    ident: Ident
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert tree.data == "import"
+        super().__init__(SrcSpan(file, tree.meta))
+        (ident,) = map(as_tree, tree.children)
+        self.ident = Ident(file, ident)
+
+    @override
+    def diag_str(self) -> str:
+        return f'import "{self.ident.name}"'
 
 
 class Access(Ast):

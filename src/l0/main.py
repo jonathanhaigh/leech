@@ -34,11 +34,15 @@ def build_parser(start_rule: str) -> Lark:
     )
 
 
-def compile(file: SrcFile) -> str:
+def compile_to_ir(file: SrcFile) -> ir.Mod:
     parser = build_parser("mod")
     tree = parser.parse(file.src)
     mod_ast = ast.Mod(file, tree)
-    mod = ir.Mod(mod_ast)
+    return ir.Mod(file.path.stem, mod_ast)
+
+
+def compile(file: SrcFile) -> str:
+    mod = compile_to_ir(file)
     compiler = Compiler(mod)
     compiler.compile()
     return str(compiler.ll_mod) + "\n"

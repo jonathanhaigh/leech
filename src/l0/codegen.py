@@ -1,6 +1,5 @@
 from collections import ChainMap
 from dataclasses import dataclass
-from functools import cache
 from typing import Optional
 from llvmlite import ir as ll
 from networkx import bfs_tree
@@ -29,46 +28,49 @@ def set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir.Access) -
 class Compiler:
     mod: ir.Mod
     ll_mod: ll.Module
-    _ll_mod_values: Compiler.LLValues
+    _ll_mod_items: Compiler.LLItems
     _tmp_name: VarNamer
 
-    class LLValues:
+    class LLItems:
         compiler: Compiler
-        values: ChainMap[ir.Value, ll.Value]
+        items: ChainMap[ir.Value | Typ, ll.Value | ll.Type]
 
         def __init__(
             self,
             compiler: Compiler,
-            values: Optional[ChainMap[ir.Value, ll.Value]] = None,
+            values: Optional[ChainMap[ir.Value | Typ, ll.Value | ll.Type]] = None,
         ) -> None:
             super().__init__()
             self.compiler = compiler
             if values is not None:
-                self.values = values
+                self.items = values
             else:
-                self.values = ChainMap()
+                self.items = ChainMap()
 
-        def new_child(self) -> Compiler.LLValues:
-            return Compiler.LLValues(self.compiler, self.values.new_child())
+        def new_child(self) -> Compiler.LLItems:
+            return Compiler.LLItems(self.compiler, self.items.new_child())
 
-        def get(self, value: ir.Value) -> ll.Value:
-            if value not in self.values and isinstance(value, ir.ComptimeValue):
-                self.values[value] = self.compiler._compile_comptime_value(value)
-            return self.values[value]
+        def get(self, item: ir.Value | Typ) -> ll.Value | ll.Type:
+            if item not in self.items:
+                if isinstance(item, ir.ComptimeValue):
+                    self.items[item] = self.compiler._compile_comptime_value(item)
+                elif isinstance(item, Typ):
+                    self.items[item] = self.compiler._ll_typ(item)
+            return self.items[item]
 
-        def set(self, value: ir.Value, ll_value: ll.Value) -> None:
-            self.values[value] = ll_value
+        def set(self, item: ir.Value | Typ, ll_item: ll.Value | ll.Type) -> None:
+            self.items[item] = ll_item
 
     @dataclass
     class _FnBuilderContext:
         ll_builder: ll.IRBuilder
-        ll_values: Compiler.LLValues
+        ll_values: Compiler.LLItems
         ll_bbs: ChainMap[ir.BasicBlock, ll.Block]
 
     def __init__(self, mod: ir.Mod) -> None:
         self.mod = mod
         self.ll_mod = ll.Module(context=ll.Context())
-        self._ll_mod_values = Compiler.LLValues(self)
+        self._ll_mod_items = Compiler.LLItems(self)
         self._tmp_name = VarNamer()
 
     def compile(self) -> None:
@@ -80,7 +82,6 @@ class Compiler:
         for item in self.mod.items:
             self._compile_mod_item(item)
 
-    @cache
     def _ll_typ(self, typ: Typ) -> ll.Type:
         match typ:
             case IntTyp():
@@ -89,76 +90,80 @@ class Compiler:
                 return ll.IntType(1)
             case FnTyp():
                 return ll.FunctionType(
-                    self._ll_typ(typ.ret_typ),
-                    (self._ll_typ(param_typ) for param_typ in typ.param_typs),
+                    self._ll_mod_items.get(typ.ret_typ),
+                    (self._ll_mod_items.get(param_typ) for param_typ in typ.param_typs),
                 )
             case PtrTyp():
                 return ll.PointerType()
             case ArrayTyp():
-                return ll.ArrayType(self._ll_typ(typ.element_typ), typ.length)
+                return ll.ArrayType(self._ll_mod_items.get(typ.element_typ), typ.length)
             case VoidTyp():
                 return ll.VoidType()
-            case StructTyp():
-                return self.ll_mod.context.get_identified_type(typ.name())
             case _:
                 raise NotImplementedError
 
     def _declare_mod_item(self, item: ir.ModItem):
         match item.value:
             case ir.ModVar():
-                self._declare_mod_var(item.name, item.access, item.value)
+                self._declare_mod_var(item, item.value)
             case ir.FnSpec():
-                self._declare_mod_fn(item.name, item.access, item.value)
+                self._declare_mod_fn(item, item.value)
             case StructTyp():
-                self.ll_mod.context.get_identified_type(item.value.name())
+                ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
+                self._ll_mod_items.set(item.value, ll_item)
+            case ir.Mod():
+                self._declare_import(item, item.value)
             case _:
                 raise NotImplementedError(item)
 
     def _compile_mod_item(self, item: ir.ModItem) -> None:
         match item.value:
             case ir.ModVar():
-                return self._compile_mod_var(item.name, item.access, item.value)
+                return self._compile_mod_var(item, item.value)
             case ir.Fn():
-                return self._compile_mod_fn(item.name, item.access, item.value)
+                return self._compile_mod_fn(item, item.value)
             case ir.BuiltinFn():
-                return self._compile_mod_fn(item.name, item.access, item.value)
+                return self._compile_mod_fn(item, item.value)
             case ir.FnDecl():
                 return
             case StructTyp():
-                return self._compile_mod_struct(item.name, item.access, item.value)
-
+                return self._compile_mod_struct(item, item.value)
+            case ir.Mod():
+                return self._compile_import(item, item.value)
             case _:
                 raise NotImplementedError(item)
 
-    def _declare_mod_var(
-        self, name: str, access: ir.Access, var: ir.ModVar
-    ) -> ll.Value:
-        ll_val = ll.GlobalVariable(self.ll_mod, self._ll_typ(var.typ.pointee_typ), name)
-        self._ll_mod_values.set(var, ll_val)
-        set_linkage(ll_val, access)
+    def _declare_mod_var(self, item: ir.ModItem, var: ir.ModVar) -> ll.Value:
+        ll_val = ll.GlobalVariable(
+            self.ll_mod,
+            self._ll_mod_items.get(var.typ.pointee_typ),
+            item.qualified_name,
+        )
+        self._ll_mod_items.set(var, ll_val)
+        set_linkage(ll_val, item.access)
         return ll_val
 
-    def _compile_mod_var(self, _name: str, _access: ir.Access, var: ir.ModVar) -> None:
+    def _compile_mod_var(self, _item: ir.ModItem, var: ir.ModVar) -> None:
         ll_init = self._compile_comptime_value(var.initializer)
-        self._ll_mod_values.get(var).initializer = ll_init  # type: ignore
+        self._ll_mod_items.get(var).initializer = ll_init  # type: ignore
 
-    def _declare_mod_fn(self, name: str, access: ir.Access, fn: ir.FnSpec) -> ll.Value:
-        ll_fn = ll.Function(self.ll_mod, self._ll_typ(fn.fn_typ), name)
-        self._ll_mod_values.set(fn, ll_fn)
+    def _declare_mod_fn(self, item: ir.ModItem, fn: ir.FnSpec) -> ll.Value:
+        ll_fn = ll.Function(
+            self.ll_mod, self._ll_mod_items.get(fn.fn_typ), item.qualified_name
+        )
+        self._ll_mod_items.set(fn, ll_fn)
         # TODO: linkage for FnDecls?
-        set_linkage(ll_fn, access)
+        set_linkage(ll_fn, item.access)
         return ll_fn
 
-    def _compile_mod_fn(
-        self, _name: str, _access: ir.Access, fn: ir.Fn | ir.BuiltinFn
-    ) -> None:
+    def _compile_mod_fn(self, _item: ir.ModItem, fn: ir.Fn | ir.BuiltinFn) -> None:
         ctx = Compiler._FnBuilderContext(
             ll_builder=ll.IRBuilder(),
-            ll_values=self._ll_mod_values.new_child(),
+            ll_values=self._ll_mod_items.new_child(),
             ll_bbs=ChainMap(),
         )
 
-        ll_fn = self._ll_mod_values.get(fn)
+        ll_fn = self._ll_mod_items.get(fn)
         assert isinstance(ll_fn, ll.Function)
 
         for param, ll_param in zip(fn.params, ll_fn.args):
@@ -173,9 +178,21 @@ class Compiler:
             if bb.name != "exit":
                 self._compile_bb(bb, ctx)
 
-    def _compile_mod_struct(self, name: str, _access: ir.Access, typ: StructTyp):
-        ll_typ = self.ll_mod.context.get_identified_type(name)
-        ll_typ.set_body(*(self._ll_typ(field.typ) for field in typ.fields.values()))
+    def _compile_mod_struct(self, item: ir.ModItem, typ: StructTyp) -> None:
+        ll_typ = self.ll_mod.context.get_identified_type(item.qualified_name)
+        ll_typ.set_body(
+            *(self._ll_mod_items.get(field.typ) for field in typ.fields.values())
+        )
+
+    def _declare_import(self, _item: ir.ModItem, mod: ir.Mod) -> None:
+        for item in mod.items:
+            if item.access == ir.PUBLIC:
+                self._declare_mod_item(item)
+
+    def _compile_import(self, _item: ir.ModItem, mod: ir.Mod) -> None:
+        for item in mod.items:
+            if item.access == ir.PUBLIC and isinstance(item.value, StructTyp):
+                self._compile_mod_struct(item, item.value)
 
     def _compile_bb(self, bb: ir.BasicBlock, ctx: Compiler._FnBuilderContext) -> None:
         ctx.ll_builder.position_at_start(ctx.ll_bbs[bb])
@@ -225,10 +242,12 @@ class Compiler:
                 )
             case ir.LoadInstr():
                 return ctx.ll_builder.load(
-                    ctx.ll_values.get(instr.src), typ=self._ll_typ(instr.typ)
+                    ctx.ll_values.get(instr.src), typ=self._ll_mod_items.get(instr.typ)
                 )
             case ir.AllocaInstr():
-                return ctx.ll_builder.alloca(self._ll_typ(instr.allocated_typ))
+                return ctx.ll_builder.alloca(
+                    self._ll_mod_items.get(instr.allocated_typ)
+                )
             case ir.StoreInstr():
                 return ctx.ll_builder.store(
                     ctx.ll_values.get(instr.value),
@@ -247,7 +266,7 @@ class Compiler:
                 ll_args = [ctx.ll_values.get(arg) for arg in instr.args]
                 return ctx.ll_builder.call(ctx.ll_values.get(instr.callee), ll_args)
             case ir.PhiInstr():
-                ll_phi = ctx.ll_builder.phi(self._ll_typ(instr.typ))
+                ll_phi = ctx.ll_builder.phi(self._ll_mod_items.get(instr.typ))
                 for bb, value in instr.incoming.items():
                     ll_phi.add_incoming(ctx.ll_values.get(value), ctx.ll_bbs[bb])
                 return ll_phi
@@ -271,32 +290,34 @@ class Compiler:
     def _compile_comptime_value(self, value: ir.ComptimeValue) -> ll.Value:
         match value:
             case ir.UndefValue():
-                return ll.Constant(self._ll_typ(value.typ), ll.Undefined)
+                return ll.Constant(self._ll_mod_items.get(value.typ), ll.Undefined)
             case ir.VoidValue():
                 raise NotImplementedError
             case ir.ComptimeInt():
-                return ll.Constant(self._ll_typ(value.typ), value.value)
+                return ll.Constant(self._ll_mod_items.get(value.typ), value.value)
             case ir.ComptimeBool():
-                return ll.Constant(self._ll_typ(value.typ), 1 if value.value else 0)
+                return ll.Constant(
+                    self._ll_mod_items.get(value.typ), 1 if value.value else 0
+                )
             case ir.ComptimeCStr():
                 ll_val = ll.GlobalVariable(
                     self.ll_mod,
-                    self._ll_typ(value.initializer_typ),
+                    self._ll_mod_items.get(value.initializer_typ),
                     self._tmp_name(".strlit"),
                 )
                 ll_val.initializer = ll.Constant(  # type: ignore
-                    self._ll_typ(value.initializer_typ), value.value
+                    self._ll_mod_items.get(value.initializer_typ), value.value
                 )
                 ll_val.linkage = "private"
                 return ll_val
             case ir.ComptimeArray():
                 elts = (self._compile_comptime_value(elt) for elt in value.elements)
-                return ll.Constant(self._ll_typ(value.typ), elts)
+                return ll.Constant(self._ll_mod_items.get(value.typ), elts)
             case ir.ComptimeStruct():
                 fields = (
                     self._compile_comptime_value(value.fields[fname])
                     for fname in value.typ.fields
                 )
-                return ll.Constant(self._ll_typ(value.typ), fields)
+                return ll.Constant(self._ll_mod_items.get(value.typ), fields)
             case _:
                 raise NotImplementedError(value)

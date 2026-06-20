@@ -41,14 +41,9 @@ class UserError(Exception):
         return self.message.level
 
 
-class TypNotFoundError(UserError):
-    def __init__(self, name: str, span: Optional[SrcSpan]) -> None:
-        super().__init__(ERROR, f'Type "{name}" not found.', span)
-
-
-class VarNotFoundError(UserError):
-    def __init__(self, name: str, span: Optional[SrcSpan]) -> None:
-        super().__init__(ERROR, f'Variable "{name}" not found.', span)
+class ItemNotFoundError(UserError):
+    def __init__(self, item_kind: str, name: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
 
 
 class AssignToConstError(UserError):
@@ -61,20 +56,15 @@ class AssignToVoidError(UserError):
         super().__init__(ERROR, "Cannot assign to void place expression", span)
 
 
-class DuplicateVarDefnError(UserError):
+class DuplicateItemDefnError(UserError):
     def __init__(
-        self, name: str, span: Optional[SrcSpan], existing_span: Optional[SrcSpan]
+        self,
+        item_kind: str,
+        name: str,
+        span: Optional[SrcSpan],
+        existing_span: Optional[SrcSpan],
     ) -> None:
-        super().__init__(ERROR, f'Duplicate definition of variable "{name}"', span)
-        if existing_span is not None:
-            self.add_extra(NOTE, "Previous definition here", existing_span)
-
-
-class DuplicateTypDefnError(UserError):
-    def __init__(
-        self, name: str, span: Optional[SrcSpan], existing_span: Optional[SrcSpan]
-    ) -> None:
-        super().__init__(ERROR, f'Duplicate definition of type "{name}"', span)
+        super().__init__(ERROR, f'Duplicate definition of {item_kind} "{name}"', span)
         if existing_span is not None:
             self.add_extra(NOTE, "Previous definition here", existing_span)
 
@@ -488,6 +478,11 @@ class ArrayIndexOutOfBoundsError(UserError):
 class DerefInvalidTypError(UserError):
     def __init__(self, typ: str, span: SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot dereference value of type "{typ}"', span)
+
+
+class ModDoesNotExistError(UserError):
+    def __init__(self, name: str, span: SrcSpan) -> None:
+        super().__init__(ERROR, f'Cannot find module "{name}"', span)
 
 
 class TextErrorRenderer:

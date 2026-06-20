@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import Any, Final, Generic, Optional, TypeVar, override
 
 from l0 import ir, l0ast as ast
-from l0.l0errors import DuplicateFieldInStructDefnError, TypNotFoundError
+from l0.l0errors import DuplicateFieldInStructDefnError
 from l0.opt_util import opt_map
 from l0.src import SrcSpan
 
@@ -63,10 +63,7 @@ class Typ(ABC, Generic[AstT]):
     def from_ast(typ_ast: ast.Typ, e: ir.Env) -> Typ:
         match typ_ast:
             case ast.BasicTyp():
-                name = typ_ast.name.name
-                typ = e.get_typ(name)
-                if typ is None:
-                    raise TypNotFoundError(name, typ_ast.span)
+                typ = e.resolve_typ(typ_ast.path)
                 return typ
             case ast.PtrTyp():
                 return PtrTyp(Typ.from_ast(typ_ast.pointee_typ, e), CONST)
