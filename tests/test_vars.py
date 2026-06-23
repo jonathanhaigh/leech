@@ -57,6 +57,37 @@ def test_str_mod_var_ref_in_mod(tmp_path):
     check_prog_output(tmp_path, src, "abcd\n", 100)
 
 
+@pytest.mark.xfail
+def test_fn_mod_var(tmp_path):
+    src = """
+    fn f() i32 {
+        return 99;
+    }
+
+    let g = f;
+
+    pub fn main() i32 {
+        return g();
+    }
+    """
+    check_prog_output(tmp_path, src, "", 99)
+
+
+@pytest.mark.xfail
+def test_fn_local_var(tmp_path):
+    src = """
+    fn f() i32 {
+        return 99;
+    }
+
+    pub fn main() i32 {
+        let g = f;
+        return g();
+    }
+    """
+    check_prog_output(tmp_path, src, "", 99)
+
+
 def test_var_not_found_at_mod_scope(tmp_path):
     src = """
     let a = x;
