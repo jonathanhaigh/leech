@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import DerefInvalidTypError
+from l0.l0errors import CannotTakeAddressOfComtimeValue, DerefInvalidTypError
 
 from util import check_prog_output, compile_str
 
@@ -14,6 +14,44 @@ def test_addr_and_deref(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 10)
+
+
+def test_comptime_addr_and_deref(tmp_path):
+    src = """
+    let x = 10;
+    let y = &x;
+    let z = y.*;
+    pub fn main() i32 {
+        return z;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 10)
+
+
+def test_addr_and_deref_fn(tmp_path):
+    src = """
+    fn f() i32 { return 10; }
+    pub fn main() i32 {
+        let x = &f;
+        let y = x.*;
+        return y();
+    }
+    """
+    with pytest.raises(DerefInvalidTypError):
+        compile_str(tmp_path, src)
+
+
+def test_comptime_addr_and_deref_fn(tmp_path):
+    src = """
+    fn f() i32 { return 10; }
+    let x = &f;
+    let y = x.*;
+    pub fn main() i32 {
+        return y();
+    }
+    """
+    with pytest.raises(DerefInvalidTypError):
+        compile_str(tmp_path, src)
 
 
 def test_addr_and_deref_field(tmp_path):
@@ -35,6 +73,27 @@ def test_addr_and_deref_field(tmp_path):
     check_prog_output(tmp_path, src, "", 11)
 
 
+def test_addr_and_deref_comptime_field(tmp_path):
+    src = """
+    struct T {
+        a: i32,
+    }
+
+    struct U {
+        b: *i32,
+    }
+
+    let x = T {a: 11};
+    let y = U {b: &x.a};
+    let z = y.b.*;
+
+    pub fn main() i32 {
+        return z;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 11)
+
+
 def test_addr_and_deref_array_elt(tmp_path):
     src = """
     pub fn main() i32 {
@@ -44,6 +103,62 @@ def test_addr_and_deref_array_elt(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 102)
+
+
+def test_addr_and_deref_comptime_array_elt(tmp_path):
+    src = """
+    let x = [101, 102, 103];
+    let y = [&x[2usize], &x[1usize], &x[0usize]];
+    let z = y[1usize].*;
+
+    pub fn main() i32 {
+        return z;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 102)
+
+
+def test_addr_and_deref_nested(tmp_path):
+    src = """
+
+    struct T {
+        a: [*i32; 3],
+    }
+
+    pub fn main() i32 {
+        let w = [101, 102, 103];
+        let x = T{
+            a: [&w[0usize], &w[1usize], &w[2usize]],
+        };
+        let y = [&x];
+        let z = &y;
+        let ret = z.*[0usize].*.a[2usize].*;
+        return ret;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 103)
+
+
+def test_addr_and_deref_comptime_nested(tmp_path):
+    src = """
+
+    struct T {
+        a: [*i32; 3],
+    }
+
+    let w = [101, 102, 103];
+    let x = T{
+        a: [&w[0usize], &w[1usize], &w[2usize]],
+    };
+    let y = [&x];
+    let z = &y;
+    let ret = z.*[0usize].*.a[2usize].*;
+
+    pub fn main() i32 {
+        return ret;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 103)
 
 
 def test_addr_of_tmp(tmp_path):
@@ -59,11 +174,46 @@ def test_addr_of_tmp(tmp_path):
     check_prog_output(tmp_path, src, "", 100)
 
 
+def test_addr_of_comptime_value(tmp_path):
+    src = """
+    let x = &1;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(CannotTakeAddressOfComtimeValue):
+        compile_str(tmp_path, src)
+
+
+def test_addr_of_comptime_addr_of_deref(tmp_path):
+    src = """
+    let x = 1;
+    let y = &x;
+    let z = &(y.*);
+    pub fn main() i32 {
+        return z.*;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 1)
+
+
 def test_deref_non_ptr(tmp_path):
     src = """
     pub fn main() i32 {
         let x = 10;
         return x.*;
+    }
+    """
+    with pytest.raises(DerefInvalidTypError):
+        compile_str(tmp_path, src)
+
+
+def test_deref_comptime_non_ptr(tmp_path):
+    src = """
+    let x = 10;
+    let y = x.*;
+    pub fn main() i32 {
+        return 0;
     }
     """
     with pytest.raises(DerefInvalidTypError):

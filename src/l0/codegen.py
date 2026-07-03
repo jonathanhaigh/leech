@@ -94,7 +94,10 @@ class Compiler:
                     (self._ll_mod_items.get(param_typ) for param_typ in typ.param_typs),
                 )
             case PtrTyp():
-                return ll.PointerType()
+                # Typed pointers are deprecated in llvmlite (and LLVM IR) but llvmlite seems to
+                # rely on pointer types in a bunch of places (call instruction, gep instruction)
+                # that's a pain to try to work around, so just use typed pointers for now.
+                return ll.PointerType(pointee=self._ll_mod_items.get(typ.pointee_typ))
             case ArrayTyp():
                 return ll.ArrayType(self._ll_mod_items.get(typ.element_typ), typ.length)
             case VoidTyp():
@@ -144,7 +147,7 @@ class Compiler:
         return ll_val
 
     def _compile_mod_var(self, _item: ir.ModItem, var: ir.ModVar) -> None:
-        ll_init = self._compile_comptime_value(var.initializer)
+        ll_init = self._ll_mod_items.get(var.initializer)
         self._ll_mod_items.get(var).initializer = ll_init  # type: ignore
 
     def _declare_mod_fn(self, item: ir.ModItem, fn: ir.FnSpec) -> ll.Value:
@@ -309,15 +312,23 @@ class Compiler:
                     self._ll_mod_items.get(value.initializer_typ), value.value
                 )
                 ll_val.linkage = "private"
-                return ll_val
+                # Cast from *[u8; N] to *u8 for C compatibility
+                return ll_val.bitcast(self._ll_mod_items.get(value.typ))  # type: ignore
             case ir.ComptimeArray():
-                elts = (self._compile_comptime_value(elt) for elt in value.elements)
+                elts = (self._ll_mod_items.get(elt) for elt in value.elements)
                 return ll.Constant(self._ll_mod_items.get(value.typ), elts)
             case ir.ComptimeStruct():
                 fields = (
-                    self._compile_comptime_value(value.fields[fname])
+                    self._ll_mod_items.get(value.fields[fname])
                     for fname in value.typ.fields
                 )
                 return ll.Constant(self._ll_mod_items.get(value.typ), fields)
+            case ir.ComptimeGep():
+                ll_indeces = [self._ll_mod_items.get(i) for i in value.indeces]
+                base = self._ll_mod_items.get(value.base)
+                assert isinstance(base, ll.GlobalValue) or isinstance(
+                    base, ll.Constant
+                ), base
+                return base.gep(ll_indeces)
             case _:
                 raise NotImplementedError(value)

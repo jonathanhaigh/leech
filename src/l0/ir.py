@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 import enum
 from functools import cached_property
@@ -175,6 +175,33 @@ class Env:
         return Env._resolve_path_segment(container, path.idents[-1], ns)
 
 
+def gep_typ(base_typ: PtrTyp, indeces: Sequence[Value]) -> PtrTyp:
+    mut = MUT
+    typ = base_typ
+    for index in indeces:
+        match typ:
+            case PtrTyp():
+                mut = typ.mut
+                typ = typ.pointee_typ
+            case ArrayTyp():
+                typ = typ.element_typ
+            case StructTyp():
+                assert isinstance(index, ComptimeInt), (
+                    "struct indeces must be comptime known"
+                )
+                field = nth(typ.fields.values(), index.value)
+                assert field is not None, (
+                    f"invalid field index {index.value} into {typ.name()}"
+                )
+                if field.mut == CONST:
+                    mut = CONST
+                typ = field.typ
+            case _:
+                raise NotImplementedError(typ)
+
+    return PtrTyp(typ, mut)
+
+
 class Value(ABC, Generic[TypT, AstT]):
     ast: Optional[AstT]
 
@@ -195,34 +222,35 @@ class Value(ABC, Generic[TypT, AstT]):
 
 
 class ComptimeValue(Generic[TypT, AstT], Value[TypT, AstT]):
-    _typ: TypT
-
-    @override
-    def __init__(self, typ: TypT, ast: Optional[AstT]) -> None:
-        super().__init__(ast)
-        self._typ = typ
-
-    @override
-    def calculate_typ(self) -> TypT:
-        return self._typ
+    pass
 
 
 class ComptimeInt(ComptimeValue[IntTyp]):
+    _typ: IntTyp
     value: int
 
     def __init__(self, typ: IntTyp, value: int, ast: Optional[ast.Ast]) -> None:
-        super().__init__(typ, ast)
+        super().__init__(ast)
+        self._typ = typ
         if value.bit_length() > typ.width:
             raise NotImplementedError
         self.value = value
+
+    @override
+    def calculate_typ(self) -> IntTyp:
+        return self._typ
 
 
 class ComptimeBool(ComptimeValue[BoolTyp]):
     value: bool
 
     def __init__(self, value: bool, ast: Optional[ast.Ast]) -> None:
-        super().__init__(BOOL, ast)
+        super().__init__(ast)
         self.value = value
+
+    @override
+    def calculate_typ(self) -> BoolTyp:
+        return BOOL
 
 
 class ComptimeCStr(ComptimeValue[PtrTyp]):
@@ -230,43 +258,91 @@ class ComptimeCStr(ComptimeValue[PtrTyp]):
     initializer_type: ArrayTyp
 
     def __init__(self, value: str, ast: Optional[ast.Ast]) -> None:
-        super().__init__(CSTR, ast)
+        super().__init__(ast)
         self.value = bytearray(value.encode() + b"\0")
         self.initializer_typ = ArrayTyp(U8, len(self.value))
+
+    @override
+    def calculate_typ(self) -> PtrTyp:
+        return CSTR
 
 
 class ComptimeArray(ComptimeValue[ArrayTyp]):
     elements: list[ComptimeValue]
+    _typ: ArrayTyp
 
     @override
     def __init__(
         self, typ: ArrayTyp, elements: list[ComptimeValue], ast: Optional[ast.Ast]
     ) -> None:
-        super().__init__(typ, ast)
+        super().__init__(ast)
+        self._typ = typ
         self.elements = elements
+
+    @override
+    def calculate_typ(self) -> ArrayTyp:
+        return self._typ
 
 
 class ComptimeStruct(ComptimeValue[StructTyp]):
     fields: dict[str, ComptimeValue]
+    _typ: StructTyp
 
     @override
     def __init__(
         self, typ: StructTyp, fields: dict[str, ComptimeValue], ast: Optional[ast.Ast]
     ) -> None:
-        super().__init__(typ, ast)
+        super().__init__(ast)
+        self._typ = typ
         self.fields = fields
+
+    @override
+    def calculate_typ(self) -> StructTyp:
+        return self._typ
+
+
+class ComptimePtr(Generic[AstT], ComptimeValue[PtrTyp, AstT]):
+    pass
+
+
+class ComptimeGep(ComptimePtr):
+    base: ComptimePtr
+    indeces: tuple[ComptimeInt, ...]
+
+    @override
+    def __init__(
+        self, base: ComptimePtr, indeces: Sequence[ComptimeInt], ast: Optional[ast.Ast]
+    ) -> None:
+        super().__init__(ast)
+        self.base = base
+        self.indeces = tuple(indeces)
+
+    @override
+    def calculate_typ(self) -> PtrTyp:
+        return gep_typ(self.base.typ, self.indeces)
 
 
 class VoidValue(ComptimeValue[VoidTyp]):
     @override
     def __init__(self, ast: Optional[ast.Ast]):
-        super().__init__(VOID, ast)
+        super().__init__(ast)
+
+    @override
+    def calculate_typ(self) -> VoidTyp:
+        return VOID
 
 
 class UndefValue(ComptimeValue):
+    _typ: Typ
+
     @override
     def __init__(self, typ: Typ, ast: Optional[ast.Ast]) -> None:
-        super().__init__(typ, ast)
+        super().__init__(ast)
+        self._typ = typ
+
+    @override
+    def calculate_typ(self) -> Typ:
+        return self._typ
 
 
 class Param(Value[Typ, ast.Param]):
@@ -425,44 +501,26 @@ class StoreInstr(Instr[VoidTyp]):
         return VOID
 
 
-class GepInstr(Instr):
+class GepInstr(Instr[PtrTyp]):
     base: Value
-    indeces: list[Value]
+    indeces: tuple[Value, ...]
 
     @override
     def __init__(
-        self, bb: BasicBlock, base: Value, indeces: list[Value], ast: Optional[ast.Ast]
+        self,
+        bb: BasicBlock,
+        base: Value,
+        indeces: Sequence[Value],
+        ast: Optional[ast.Ast],
     ) -> None:
         super().__init__(bb, ast)
         self.base = base
-        self.indeces = indeces
+        self.indeces = tuple(indeces)
 
     @override
-    def calculate_typ(self) -> Typ:
-        mut = MUT
-        typ = self.base.typ
-        for index in self.indeces:
-            match typ:
-                case PtrTyp():
-                    mut = typ.mut
-                    typ = typ.pointee_typ
-                case ArrayTyp():
-                    typ = typ.element_typ
-                case StructTyp():
-                    assert isinstance(index, ComptimeInt), (
-                        "struct indeces must be comptime known"
-                    )
-                    field = nth(typ.fields.values(), index.value)
-                    assert field is not None, (
-                        f"invalid field index {index.value} into {typ.name()}"
-                    )
-                    if field.mut == CONST:
-                        mut = CONST
-                    typ = field.typ
-                case _:
-                    raise NotImplementedError(typ)
-
-        return PtrTyp(typ, mut)
+    def calculate_typ(self) -> PtrTyp:
+        assert isinstance(self.base.typ, PtrTyp)
+        return gep_typ(self.base.typ, self.indeces)
 
 
 class InsertValueInstr(Instr):
@@ -490,14 +548,14 @@ class InsertValueInstr(Instr):
 
 
 class CallInstr(Instr[Typ, ast.CallExpr]):
-    callee: FnSpec
+    callee: Value
     args: list[Value]
 
     @override
     def __init__(
         self,
         bb: BasicBlock,
-        callee: FnSpec,
+        callee: Value,
         args: list[Value],
         ast: Optional[ast.CallExpr],
     ) -> None:
@@ -507,7 +565,11 @@ class CallInstr(Instr[Typ, ast.CallExpr]):
 
     @override
     def calculate_typ(self) -> Typ:
-        return self.callee.fn_typ.ret_typ
+        callee_typ = self.callee.typ
+        assert isinstance(callee_typ, PtrTyp)
+        fn_typ = callee_typ.pointee_typ
+        assert isinstance(fn_typ, FnTyp)
+        return fn_typ.ret_typ
 
 
 class PhiInstr(Instr):
@@ -683,7 +745,7 @@ class BasicBlock:
         return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast))
 
     def call(
-        self, callee: FnSpec, args: list[Value], ast: Optional[ast.CallExpr]
+        self, callee: Value, args: list[Value], ast: Optional[ast.CallExpr]
     ) -> CallInstr:
         return self._add_instr(CallInstr(self, callee, args, ast))
 
@@ -762,7 +824,7 @@ class CfgBuilder:
                 return
             if block.typ != ret_typ:
                 raise InvalidRetTypError(
-                    self.fn.name,
+                    self.fn.name(),
                     ret_typ.name(),
                     ret_typ_span,
                     block.typ.name(),
@@ -930,15 +992,14 @@ class CfgBuilder:
             raise NotCallableError(
                 callee_diag_str, callee.typ.name(), call_ast.callee.span
             )
-        if not isinstance(callee, FnSpec):
-            raise NotImplementedError(callee)
 
         args = [
             self.build_expr(arg_ast, e, ExprContext.VALUE) for arg_ast in call_ast.args
         ]
 
         num_args = len(args)
-        param_typs = callee.fn_typ.param_typs
+        fn_typ = callee.typ.pointee_typ
+        param_typs = fn_typ.param_typs
         num_params = len(param_typs)
         if num_args < num_params:
             raise NotEnoughArgsError(
@@ -1161,7 +1222,7 @@ class CfgBuilder:
         self, d_expr: ast.DerefExpr, e: Env, ctx: ExprContext
     ) -> Value:
         ptr = self.build_expr(d_expr.ptr, e, ExprContext.VALUE)
-        if not isinstance(ptr.typ, PtrTyp):
+        if not isinstance(ptr.typ, PtrTyp) or isinstance(ptr.typ.pointee_typ, FnTyp):
             raise DerefInvalidTypError(ptr.typ.name(), d_expr.ptr.span)
         if ctx == ExprContext.PLACE:
             return ptr
@@ -1193,7 +1254,7 @@ class CfgBuilder:
                 return
             if expr.typ != ret_typ:
                 raise InvalidRetTypError(
-                    self.fn.name,
+                    self.fn.name(),
                     ret_typ.name(),
                     ret_typ_span,
                     expr.typ.name(),
@@ -1313,7 +1374,7 @@ class ModItem:
             return self.name
 
 
-class FnSpec(Generic[FnAstT], Value[PtrTyp, FnAstT]):
+class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
     @cached_property
     def params(self) -> tuple[Param, ...]:
         return self.calculate_params()
@@ -1420,7 +1481,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         return builder.cfg
 
 
-class ModVar(Value[PtrTyp, ast.VarDefn]):
+class ModVar(ComptimePtr[ast.VarDefn]):
     env: Env
     mut: Mutability
 
@@ -1434,7 +1495,9 @@ class ModVar(Value[PtrTyp, ast.VarDefn]):
     def initializer(self) -> ComptimeValue:
         # TODO: detect recursion
         assert self.ast is not None
-        return comptime.Interpreter().eval(self.ast.let_stmt.expr, self.env)
+        return comptime.Interpreter().eval(
+            self.ast.let_stmt.expr, self.env, ExprContext.VALUE
+        )
 
     @override
     def calculate_typ(self) -> PtrTyp:

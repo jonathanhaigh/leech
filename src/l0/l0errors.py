@@ -480,6 +480,11 @@ class DerefInvalidTypError(UserError):
         super().__init__(ERROR, f'Cannot dereference value of type "{typ}"', span)
 
 
+class CannotTakeAddressOfComtimeValue(UserError):
+    def __init__(self, span: SrcSpan) -> None:
+        super().__init__(ERROR, "Cannot take address of comptime value", span)
+
+
 class ModDoesNotExistError(UserError):
     def __init__(self, name: str, span: SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot find module "{name}"', span)

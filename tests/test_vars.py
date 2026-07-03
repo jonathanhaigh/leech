@@ -57,7 +57,6 @@ def test_str_mod_var_ref_in_mod(tmp_path):
     check_prog_output(tmp_path, src, "abcd\n", 100)
 
 
-@pytest.mark.xfail
 def test_fn_mod_var(tmp_path):
     src = """
     fn f() i32 {
@@ -73,7 +72,6 @@ def test_fn_mod_var(tmp_path):
     check_prog_output(tmp_path, src, "", 99)
 
 
-@pytest.mark.xfail
 def test_fn_local_var(tmp_path):
     src = """
     fn f() i32 {

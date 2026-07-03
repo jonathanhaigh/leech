@@ -9,6 +9,9 @@ def write_whole_file(path: Path, content: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
+    print(f"{path}:\n")
+    print(content)
+
 
 def compile_file(path: Path) -> Path:
     llir = compile(SrcFile(path))
