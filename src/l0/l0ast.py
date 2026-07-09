@@ -8,19 +8,18 @@ from lark import Token
 from lark.tree import Branch, ParseTree, Tree
 
 from l0 import typs
+from l0.asserts import assert_eq, assert_in, checked_cast
 from l0.opt_util import opt_map
 from l0.src import SrcFile, SrcSpan
 from l0.typs import ADDR_SIZE, SIGNED, UNSIGNED
 
 
 def as_token(branch: Branch[Token]) -> Token:
-    assert isinstance(branch, Token)
-    return branch
+    return checked_cast(branch, Token)
 
 
 def as_tree(branch: Branch[Token]) -> Tree[Token]:
-    assert isinstance(branch, Tree)
-    return branch
+    return checked_cast(branch, Tree)
 
 
 class Ast(ABC):
@@ -63,7 +62,7 @@ class Ident(Ast):
     name: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "ident"
+        assert_eq(tree.data, "ident")
         super().__init__(SrcSpan(file, tree.meta))
         self.name = as_token(tree.children[0])
 
@@ -77,7 +76,7 @@ class Path(Ast):
 
     @override
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "path"
+        assert_eq(tree.data, "path")
         super().__init__(SrcSpan(file, tree.meta))
         self.idents = [Ident(file, as_tree(ident)) for ident in tree.children]
 
@@ -124,9 +123,7 @@ class Expr(Ast):
 class PlaceExpr(Expr):
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> PlaceExpr:
-        expr = Expr.from_tree(file, tree)
-        assert isinstance(expr, PlaceExpr)
-        return expr
+        return checked_cast(Expr.from_tree(file, tree), PlaceExpr)
 
 
 class BlockExpr(Expr):
@@ -134,7 +131,7 @@ class BlockExpr(Expr):
     expr: Optional[Expr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "block_expr"
+        assert_eq(tree.data, "block_expr")
         super().__init__(SrcSpan(file, tree.meta))
 
         children = list(map(as_tree, tree.children))
@@ -164,7 +161,7 @@ class IfExpr(Expr):
     els: Optional[BlockExpr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "if_expr"
+        assert_eq(tree.data, "if_expr")
         super().__init__(SrcSpan(file, tree.meta))
 
         condition, then, *rest = list(map(as_tree, tree.children))
@@ -187,7 +184,7 @@ class WhileExpr(Expr):
     block: BlockExpr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "while_expr"
+        assert_eq(tree.data, "while_expr")
         super().__init__(SrcSpan(file, tree.meta))
         condition, block = tree.children
         self.condition = Expr.from_tree(file, as_tree(condition))
@@ -202,7 +199,7 @@ class StrLit(Expr):
     value: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "str_lit"
+        assert_eq(tree.data, "str_lit")
         super().__init__(SrcSpan(file, tree.meta))
         (tok,) = tree.children
         self.value = python_ast.literal_eval(as_token(tok))
@@ -218,7 +215,7 @@ class IntLit(Expr):
     typ: typs.IntTyp
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "int_lit"
+        assert_eq(tree.data, "int_lit")
         super().__init__(SrcSpan(file, tree.meta))
         (token,) = tree.children
         self.token = as_token(token)
@@ -248,7 +245,7 @@ class ArrayLength(Expr):
     value: int
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "array_length"
+        assert_eq(tree.data, "array_length")
         super().__init__(SrcSpan(file, tree.meta))
         (token,) = tree.children
         self.token = as_token(token)
@@ -264,11 +261,11 @@ class BoolLit(Expr):
     value: bool
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "bool_lit"
+        assert_eq(tree.data, "bool_lit")
         super().__init__(SrcSpan(file, tree.meta))
         (token,) = tree.children
         self.token = as_token(token)
-        assert token == "true" or token == "false"
+        assert_in(token, {"true", "false"})
         self.value = True if token == "true" else False
 
     @override
@@ -294,7 +291,7 @@ class ArrayAccessExpr(PlaceExpr):
     index: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "array_access_expr"
+        assert_eq(tree.data, "array_access_expr")
         super().__init__(SrcSpan(file, tree.meta))
         array, index = map(as_tree, tree.children)
         self.array = Expr.from_tree(file, array)
@@ -309,11 +306,10 @@ class ArrayExpr(Expr):
     elements: list[Expr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "array_expr"
+        assert_eq(tree.data, "array_expr")
         super().__init__(SrcSpan(file, tree.meta))
-        (arg_list,) = tree.children
-        assert isinstance(arg_list, Tree)
-        assert arg_list.data == "arg_list"
+        (arg_list,) = map(as_tree, tree.children)
+        assert_eq(arg_list.data, "arg_list")
         self.elements = [
             Expr.from_tree(file, as_tree(child)) for child in arg_list.children
         ]
@@ -328,12 +324,12 @@ class StructExpr(Expr):
     fields: list[StructFieldExpr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "struct_expr"
+        assert_eq(tree.data, "struct_expr")
         super().__init__(SrcSpan(file, tree.meta))
         typ, field_list = map(as_tree, tree.children)
         self.typ = BasicTyp(file, typ)
 
-        assert field_list.data == "struct_field_expr_list"
+        assert_eq(field_list.data, "struct_field_expr_list")
         self.fields = [
             StructFieldExpr(file, as_tree(child)) for child in field_list.children
         ]
@@ -348,7 +344,7 @@ class StructFieldExpr(Expr):
     value: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "struct_field_expr"
+        assert_eq(tree.data, "struct_field_expr")
         super().__init__(SrcSpan(file, tree.meta))
         ident, value = map(as_tree, tree.children)
         self.ident = Ident(file, ident)
@@ -364,7 +360,7 @@ class StructAccessExpr(PlaceExpr):
     field: Ident
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "struct_access_expr"
+        assert_eq(tree.data, "struct_access_expr")
         super().__init__(SrcSpan(file, tree.meta))
         struct, field = map(as_tree, tree.children)
         self.struct = Expr.from_tree(file, struct)
@@ -379,7 +375,7 @@ class DerefExpr(PlaceExpr):
     ptr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "deref_expr"
+        assert_eq(tree.data, "deref_expr")
         super().__init__(SrcSpan(file, tree.meta))
         (ptr,) = map(as_tree, tree.children)
         self.ptr = Expr.from_tree(file, ptr)
@@ -394,12 +390,12 @@ class CallExpr(Expr):
     args: list[Expr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "call_expr"
+        assert_eq(tree.data, "call_expr")
         super().__init__(SrcSpan(file, tree.meta))
         callee, arg_list = map(as_tree, tree.children)
         self.callee = Expr.from_tree(file, callee)
 
-        assert arg_list.data == "arg_list"
+        assert_eq(arg_list.data, "arg_list")
         self.args = [
             Expr.from_tree(file, as_tree(child)) for child in arg_list.children
         ]
@@ -414,7 +410,7 @@ class Op(Ast):
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         super().__init__(SrcSpan(file, tree.meta))
-        assert len(tree.children) == 1
+        assert_eq(len(tree.children), 1)
         self.name = as_token(tree.children[0])
 
     @override
@@ -457,9 +453,8 @@ class UnaryOpExpr(Expr):
 class Stmt(Ast):
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> Stmt:
-        assert tree.data == "stmt"
-        (child,) = tree.children
-        assert isinstance(child, Tree)
+        assert_eq(tree.data, "stmt")
+        (child,) = map(as_tree, tree.children)
         child_classes = {
             "expr_stmt": ExprStmt,
             "ret_stmt": RetStmt,
@@ -473,7 +468,7 @@ class ExprStmt(Stmt):
     expr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "expr_stmt"
+        assert_eq(tree.data, "expr_stmt")
         super().__init__(SrcSpan(file, tree.meta))
         (child,) = tree.children
         self.expr = Expr.from_tree(file, as_tree(child))
@@ -487,7 +482,7 @@ class RetStmt(Stmt):
     expr: Optional[Expr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "ret_stmt"
+        assert_eq(tree.data, "ret_stmt")
         super().__init__(SrcSpan(file, tree.meta))
         (expr,) = tree.children
         self.expr = opt_map(expr, lambda x: Expr.from_tree(file, as_tree(x)))
@@ -503,7 +498,7 @@ class LetStmt(Stmt):
     expr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "let_stmt"
+        assert_eq(tree.data, "let_stmt")
         super().__init__(SrcSpan(file, tree.meta))
         mut, ident, expr = tree.children
         self.mut = Mutability.from_tree(file, as_tree(mut))
@@ -520,7 +515,7 @@ class AssignmentStmt(Stmt):
     expr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "assignment_stmt"
+        assert_eq(tree.data, "assignment_stmt")
         super().__init__(SrcSpan(file, tree.meta))
         place, expr = map(as_tree, tree.children)
         self.place = PlaceExpr.from_tree(file, place)
@@ -550,7 +545,7 @@ class BasicTyp(Typ):
     path: Path
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "basic_typ"
+        assert_eq(tree.data, "basic_typ")
         super().__init__(SrcSpan(file, tree.meta))
         (path,) = tree.children
         self.path = Path(file, as_tree(path))
@@ -564,7 +559,7 @@ class PtrTyp(Typ):
     pointee_typ: Typ
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "ptr_typ"
+        assert_eq(tree.data, "ptr_typ")
         super().__init__(SrcSpan(file, tree.meta))
         (typ,) = tree.children
         self.pointee_typ = Typ.from_tree(file, as_tree(typ))
@@ -579,7 +574,7 @@ class ArrayTyp(Typ):
     length: ArrayLength
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "array_typ"
+        assert_eq(tree.data, "array_typ")
         super().__init__(SrcSpan(file, tree.meta))
         typ, length = tree.children
         self.element_typ = Typ.from_tree(file, as_tree(typ))
@@ -595,7 +590,7 @@ class Param(Ast):
     typ: Typ
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "param"
+        assert_eq(tree.data, "param")
         super().__init__(SrcSpan(file, tree.meta))
         ident, typ = tree.children
         self.name = Ident(file, as_tree(ident))
@@ -609,9 +604,8 @@ class Param(Ast):
 class Defn(Ast):
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> Defn:
-        assert tree.data == "defn"
-        (child,) = tree.children
-        assert isinstance(child, Tree)
+        assert_eq(tree.data, "defn")
+        (child,) = map(as_tree, tree.children)
         child_classes = {
             "fn_defn": FnDefn,
             "fn_decl": FnDecl,
@@ -639,13 +633,13 @@ class FnSpec(Defn):
         self.name = Ident(file, ident)
         self.ret_typ = opt_map(ret_typ, lambda x: Typ.from_tree(file, x))
 
-        assert param_list.data == "param_list"
+        assert_eq(param_list.data, "param_list")
         self.params = [Param(file, as_tree(child)) for child in param_list.children]
 
 
 class FnDecl(FnSpec):
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "fn_decl"
+        assert_eq(tree.data, "fn_decl")
         ident, param_list, ret_typ = tree.children
         super().__init__(
             file, tree, as_tree(ident), as_tree(param_list), opt_map(ret_typ, as_tree)
@@ -661,7 +655,7 @@ class FnDefn(FnSpec):
     block: BlockExpr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "fn_defn"
+        assert_eq(tree.data, "fn_defn")
         access, ident, param_list, ret_typ, block = tree.children
         super().__init__(
             file, tree, as_tree(ident), as_tree(param_list), opt_map(ret_typ, as_tree)
@@ -679,7 +673,7 @@ class VarDefn(Defn):
     let_stmt: LetStmt
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "var_defn"
+        assert_eq(tree.data, "var_defn")
         super().__init__(SrcSpan(file, tree.meta))
         access, let_stmt = tree.children
         self.access = Access.from_tree(file, as_tree(access))
@@ -696,13 +690,13 @@ class StructDefn(Defn):
     fields: list[StructFieldDefn]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "struct_defn"
+        assert_eq(tree.data, "struct_defn")
         super().__init__(SrcSpan(file, tree.meta))
         access, ident, field_defn_list = map(as_tree, tree.children)
         self.access = Access.from_tree(file, access)
         self.ident = Ident(file, ident)
 
-        assert field_defn_list.data == "struct_field_defn_list"
+        assert_eq(field_defn_list.data, "struct_field_defn_list")
         self.fields = [
             StructFieldDefn(file, as_tree(child)) for child in field_defn_list.children
         ]
@@ -719,7 +713,7 @@ class StructFieldDefn(Ast):
     typ: Typ
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "struct_field_defn"
+        assert_eq(tree.data, "struct_field_defn")
         super().__init__(SrcSpan(file, tree.meta))
         access, mut, ident, typ = map(as_tree, tree.children)
         self.access = Access.from_tree(file, access)
@@ -736,7 +730,7 @@ class Import(Defn):
     ident: Ident
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "import"
+        assert_eq(tree.data, "import")
         super().__init__(SrcSpan(file, tree.meta))
         (ident,) = map(as_tree, tree.children)
         self.ident = Ident(file, ident)
@@ -750,7 +744,7 @@ class Access(Ast):
     value: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "access"
+        assert_eq(tree.data, "access")
         super().__init__(SrcSpan(file, tree.meta))
         (child,) = tree.children
         assert child is not None
@@ -773,7 +767,7 @@ class Mutability(Ast):
     value: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "mut"
+        assert_eq(tree.data, "mut")
         super().__init__(SrcSpan(file, tree.meta))
         (child,) = tree.children
         self.value = as_token(child)
@@ -795,7 +789,7 @@ class Mod(Ast):
     defns: list[Defn]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert tree.data == "mod"
+        assert_eq(tree.data, "mod")
         super().__init__(SrcSpan(file, tree.meta))
         self.defns = [Defn.from_tree(file, as_tree(child)) for child in tree.children]
 

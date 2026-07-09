@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import Any, Final, Generic, Optional, TypeVar, override
 
 from l0 import ir, l0ast as ast
+from l0.asserts import assert_eq
 from l0.l0errors import DuplicateFieldInStructDefnError
 from l0.opt_util import opt_map
 from l0.src import SrcSpan
@@ -20,7 +21,7 @@ class Mutability(Enum):
     def from_ast(mut_ast: Optional[ast.Mutability]) -> Mutability:
         if mut_ast is None:
             return CONST
-        assert mut_ast.value == "mut"
+        assert_eq(mut_ast.value, "mut")
         return MUT
 
 

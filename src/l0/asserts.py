@@ -40,6 +40,17 @@ def assert_le(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
     _assert_op(operator.le, "<=", lhs, rhs, message)
 
 
+def checked_cast[T](obj: Any, typ: type[T], message: Optional[str] = None) -> T:
+    assert isinstance(obj, typ), (
+        f"not(isinstance(obj, typ))"
+        f"\nobj={pformat(obj)}"
+        f"\n{type(obj)=}"
+        f"\n{typ=}"
+        f"{_message_str(message)}"
+    )
+    return obj
+
+
 def assert_all_eq(
     seq: Sequence[Any], value: Any, message: Optional[str] = None
 ) -> None:
@@ -51,3 +62,21 @@ def assert_all_eq(
             f"\nseq={pformat(seq)}"
             f"{_message_str(message)}"
         )
+
+
+def assert_in(obj: Any, container: Any, message: Optional[str] = None) -> None:
+    assert obj in container, (
+        f"not(obj in container)"
+        f"\nobj={pformat(obj)}"
+        f"\ncontainer={pformat(container)}"
+        f"{_message_str(message)}"
+    )
+
+
+def assert_not_in(obj: Any, container: Any, message: Optional[str] = None) -> None:
+    assert obj not in container, (
+        f"not(obj not in container)"
+        f"\nobj={pformat(obj)}"
+        f"\ncontainer={pformat(container)}"
+        f"{_message_str(message)}"
+    )

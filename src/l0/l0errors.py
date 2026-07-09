@@ -3,6 +3,7 @@ from enum import IntEnum
 import sys
 from typing import Optional
 
+from l0.asserts import assert_gt
 from l0.src import SrcSpan
 
 
@@ -525,7 +526,7 @@ class TextErrorRenderer:
             self._display_col_pos(message.span, line_num_width)
 
     def _display_line(self, span: SrcSpan, line_num_width) -> None:
-        assert span.start_line > 0
+        assert_gt(span.start_line, 0)
         line = span.file.lines[span.start_line - 1]
         print(f"{span.start_line:{line_num_width}d}| {line}", file=sys.stderr)
 

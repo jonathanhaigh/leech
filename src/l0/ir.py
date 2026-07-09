@@ -21,7 +21,15 @@ import networkx as nx
 
 from l0 import comptime, main
 from l0 import l0ast as ast
-from l0.asserts import assert_all_eq, assert_eq, assert_ge, assert_gt, assert_lt
+from l0.asserts import (
+    assert_all_eq,
+    assert_eq,
+    assert_ge,
+    assert_gt,
+    assert_in,
+    assert_lt,
+    checked_cast,
+)
 from l0.l0errors import (
     AssignToConstError,
     AssignToVoidError,
@@ -199,8 +207,8 @@ def gep_typ(base_typ: PtrTyp, indeces: Sequence[Value]) -> PtrTyp:
             case ArrayTyp():
                 typ = typ.element_typ
             case StructTyp():
-                assert isinstance(index, ComptimeInt), (
-                    "struct indeces must be comptime known"
+                index = checked_cast(
+                    index, ComptimeInt, "struct indeces must be comptime known"
                 )
 
                 field = nth(typ.fields.values(), index.value)
@@ -451,7 +459,7 @@ class ComptimeGep(ComptimePtr):
         indeces = [i.value for i in self.indeces]
         value = self.base.load()
         for index in indeces[1:]:
-            assert isinstance(value, ComptimeAggregate)
+            value = checked_cast(value, ComptimeAggregate)
             value = value.get_element(index)
         return value
 
@@ -463,9 +471,9 @@ class ComptimeGep(ComptimePtr):
             return
         agg = self.base.load()
         for index in indeces[1:-1]:
-            assert isinstance(agg, ComptimeAggregate)
+            agg = checked_cast(agg, ComptimeAggregate)
             agg = agg.get_element(index)
-        assert isinstance(agg, ComptimeAggregate)
+        agg = checked_cast(agg, ComptimeAggregate)
         agg.set_element(value, indeces[-1])
 
     @override
@@ -599,13 +607,13 @@ class LoadInstr(Instr):
     @override
     def __init__(self, bb: BasicBlock, src: Value, ast: Optional[ast.Ast]) -> None:
         super().__init__(bb, ast)
-        assert isinstance(src.typ, PtrTyp)
+        checked_cast(src.typ, PtrTyp)
         self.src = src
 
     @override
     def calculate_typ(self) -> Typ:
-        assert isinstance(self.src.typ, PtrTyp)
-        return self.src.typ.pointee_typ
+        src_typ = checked_cast(self.src.typ, PtrTyp)
+        return src_typ.pointee_typ
 
 
 class AllocaInstr(Instr[PtrTyp]):
@@ -641,8 +649,8 @@ class StoreInstr(Instr[VoidTyp]):
         self, bb: BasicBlock, value: Value, dest: Value, ast: Optional[ast.Ast]
     ) -> None:
         super().__init__(bb, ast)
-        assert isinstance(dest.typ, PtrTyp)
-        assert_eq(value.typ, dest.typ.pointee_typ)
+        dest_typ = checked_cast(dest.typ, PtrTyp)
+        assert_eq(value.typ, dest_typ.pointee_typ)
         self.value = value
         self.dest = dest
 
@@ -669,8 +677,8 @@ class GepInstr(Instr[PtrTyp]):
 
     @override
     def calculate_typ(self) -> PtrTyp:
-        assert isinstance(self.base.typ, PtrTyp)
-        return gep_typ(self.base.typ, self.indeces)
+        base_typ = checked_cast(self.base.typ, PtrTyp)
+        return gep_typ(base_typ, self.indeces)
 
 
 class InsertValueInstr(Instr):
@@ -715,10 +723,8 @@ class CallInstr(Instr[Typ, ast.CallExpr]):
 
     @override
     def calculate_typ(self) -> Typ:
-        callee_typ = self.callee.typ
-        assert isinstance(callee_typ, PtrTyp)
-        fn_typ = callee_typ.pointee_typ
-        assert isinstance(fn_typ, FnTyp)
+        callee_typ = checked_cast(self.callee.typ, PtrTyp)
+        fn_typ = checked_cast(callee_typ.pointee_typ, FnTyp)
         return fn_typ.ret_typ
 
 
@@ -731,10 +737,6 @@ class PhiInstr(Instr):
     ) -> None:
         super().__init__(bb, ast)
         self.incoming = incoming
-
-    def add_incoming(self, value: Value, bb: BasicBlock) -> None:
-        assert bb not in self.incoming
-        self.incoming[bb] = value
 
     @override
     def calculate_typ(self) -> Typ:
@@ -1285,10 +1287,10 @@ class CfgBuilder:
         self, aa_expr: ast.ArrayAccessExpr, e: Env, ctx: ExprContext
     ) -> Value:
         arr_ptr = self.build_expr(aa_expr.array, e, ExprContext.PLACE)
-        assert isinstance(arr_ptr.typ, PtrTyp)
-        if not isinstance(arr_ptr.typ.pointee_typ, ArrayTyp):
+        arr_ptr_typ = checked_cast(arr_ptr.typ, PtrTyp)
+        if not isinstance(arr_ptr_typ.pointee_typ, ArrayTyp):
             raise IndexIntoInvalidTypError(
-                arr_ptr.typ.pointee_typ.name(), aa_expr.array.span
+                arr_ptr_typ.pointee_typ.name(), aa_expr.array.span
             )
 
         index = self.build_expr(aa_expr.index, e, ExprContext.VALUE)
@@ -1369,8 +1371,8 @@ class CfgBuilder:
         self, sa_expr: ast.StructAccessExpr, e: Env, ctx: ExprContext
     ) -> Value:
         struct_ptr = self.build_expr(sa_expr.struct, e, ExprContext.PLACE)
-        assert isinstance(struct_ptr.typ, PtrTyp)
-        struct_typ = struct_ptr.typ.pointee_typ
+        struct_ptr_typ = checked_cast(struct_ptr.typ, PtrTyp)
+        struct_typ = struct_ptr_typ.pointee_typ
         if not isinstance(struct_typ, StructTyp):
             raise FieldAccessIntoInvalidTypError(struct_typ.name(), sa_expr.struct.span)
 
@@ -1460,8 +1462,8 @@ class CfgBuilder:
 
         if place.typ == VOID:
             raise AssignToVoidError(ass_ast.place.span)
-        assert isinstance(place.typ, PtrTyp)
-        if place.typ.mut == CONST:
+        place_typ = checked_cast(place.typ, PtrTyp)
+        if place_typ.mut == CONST:
             raise AssignToConstError(ass_ast.place.span)
 
         self.curr_bb.store(expr, place, ass_ast)
@@ -1483,16 +1485,16 @@ class CfgBuilder:
         return bb
 
     def add_edge(self, frm: BasicBlock, to: BasicBlock) -> None:
-        assert frm in self.cfg
-        assert to in self.cfg
+        assert_in(frm, self.cfg)
+        assert_in(to, self.cfg)
         self.cfg.add_edge(frm, to)
 
     def set_position(self, bb: BasicBlock) -> None:
-        assert bb in self.cfg
+        assert_in(bb, self.cfg)
         self.curr_bb = bb
 
     def branch(self, target: BasicBlock, ast: ast.Ast) -> None:
-        assert target in self.cfg
+        assert_in(target, self.cfg)
         self.curr_bb.branch(target, ast)
         self.cfg.add_edge(self.curr_bb, target)
         self.curr_bb = target
@@ -1504,8 +1506,8 @@ class CfgBuilder:
         false_target: BasicBlock,
         ast: ast.Ast,
     ) -> None:
-        assert true_target in self.cfg
-        assert false_target in self.cfg
+        assert_in(true_target, self.cfg)
+        assert_in(false_target, self.cfg)
         self.curr_bb.cbranch(condition, true_target, false_target, ast)
         self.cfg.add_edge(self.curr_bb, true_target)
         self.cfg.add_edge(self.curr_bb, false_target)
@@ -1578,8 +1580,7 @@ class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
 
     @property
     def fn_typ(self) -> FnTyp:
-        assert isinstance(self.typ.pointee_typ, FnTyp)
-        return self.typ.pointee_typ
+        return checked_cast(self.typ.pointee_typ, FnTyp)
 
 
 class BuiltinFn(FnSpec):
@@ -1791,5 +1792,5 @@ class Mod(Typ):
         if isinstance(value, Value):
             self.env.add_var(name, value)
         else:
-            assert isinstance(value, Typ)
+            value = checked_cast(value, Typ)
             self.env.add_typ(name, value)

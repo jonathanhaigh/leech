@@ -4,6 +4,7 @@ from typing import Optional
 from llvmlite import ir as ll
 from networkx import bfs_tree
 from l0 import ir
+from l0.asserts import assert_eq, checked_cast
 from l0.naming import VarNamer
 from l0.typs import (
     VOID,
@@ -22,7 +23,7 @@ def set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir.Access) -
     if access == ir.PRIVATE:
         ll_global.linkage = "private"
     else:
-        assert access == ir.PUBLIC
+        assert_eq(access, ir.PUBLIC)
 
 
 class Compiler:
@@ -166,9 +167,7 @@ class Compiler:
             ll_bbs=ChainMap(),
         )
 
-        ll_fn = self._ll_mod_items.get(fn)
-        assert isinstance(ll_fn, ll.Function)
-
+        ll_fn = checked_cast(self._ll_mod_items.get(fn), ll.Function)
         for param, ll_param in zip(fn.params, ll_fn.args):
             ctx.ll_values.set(param, ll_param)
 
@@ -326,9 +325,7 @@ class Compiler:
             case ir.ComptimeGep():
                 ll_indeces = [self._ll_mod_items.get(i) for i in value.indeces]
                 base = self._ll_mod_items.get(value.base)
-                assert isinstance(base, ll.GlobalValue) or isinstance(
-                    base, ll.Constant
-                ), base
+                assert isinstance(base, (ll.GlobalValue, ll.Constant))
                 return base.gep(ll_indeces)
             case _:
                 raise NotImplementedError(value)

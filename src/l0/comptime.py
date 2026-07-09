@@ -1,6 +1,6 @@
 from typing import Final, Optional
 from l0 import ir
-from l0.asserts import assert_eq, assert_lt
+from l0.asserts import assert_eq, assert_lt, checked_cast
 from l0.l0errors import (
     CallExternFnAtComptimeError,
     CannotTakeAddressOfComptimeValueError,
@@ -54,10 +54,8 @@ class Interpreter:
     def _eval_instr(self, instr: ir.Instr) -> None:
         match instr:
             case ir.BinOpInstr():
-                lhs = self._get_comptime_value(instr.lhs)
-                assert isinstance(lhs, ir.ComptimeInt)
-                rhs = self._get_comptime_value(instr.rhs)
-                assert isinstance(rhs, ir.ComptimeInt)
+                lhs = checked_cast(self._get_comptime_value(instr.lhs), ir.ComptimeInt)
+                rhs = checked_cast(self._get_comptime_value(instr.rhs), ir.ComptimeInt)
                 assert_eq(lhs.typ, rhs.typ)
                 match instr:
                     case ir.AddInstr():
@@ -74,10 +72,8 @@ class Interpreter:
                 self.registers[instr] = ir.ComptimeInt(lhs.typ, ret, instr.ast)
 
             case ir.IcmpSignedInstr() | ir.IcmpUnsignedInstr():
-                lhs = self._get_comptime_value(instr.lhs)
-                assert isinstance(lhs, ir.ComptimeInt)
-                rhs = self._get_comptime_value(instr.rhs)
-                assert isinstance(rhs, ir.ComptimeInt)
+                lhs = checked_cast(self._get_comptime_value(instr.lhs), ir.ComptimeInt)
+                rhs = checked_cast(self._get_comptime_value(instr.rhs), ir.ComptimeInt)
                 assert_eq(lhs.typ, rhs.typ)
                 match instr.op:
                     case "<":
@@ -96,27 +92,29 @@ class Interpreter:
                 self.registers[instr] = ir.ComptimeBool(ret, instr.ast)
 
             case ir.LoadInstr():
-                src = self._get_comptime_value(instr.src)
-                assert isinstance(src, ir.ComptimePtr)
+                src = checked_cast(self._get_comptime_value(instr.src), ir.ComptimePtr)
                 self.registers[instr] = src.load()
             case ir.AllocaInstr():
                 self.registers[instr] = ir.ComptimeAlloc(
                     instr.allocated_typ, instr.mut, instr.ast
                 )
             case ir.StoreInstr():
-                dest = self._get_comptime_value(instr.dest)
-                assert isinstance(dest, ir.ComptimePtr)
+                dest = checked_cast(
+                    self._get_comptime_value(instr.dest), ir.ComptimePtr
+                )
                 if not dest.is_temporary():
                     raise SetNonLocalVarAtComptimeError(instr.span)
                 value = self._get_comptime_value(instr.value)
                 dest.store(value)
             case ir.GepInstr():
-                base = self._get_comptime_value(instr.base)
-                assert isinstance(base, ir.ComptimePtr)
+                base = checked_cast(
+                    self._get_comptime_value(instr.base), ir.ComptimePtr
+                )
                 indeces = []
                 for instr_index in instr.indeces:
-                    index = self._get_comptime_value(instr_index)
-                    assert isinstance(index, ir.ComptimeInt)
+                    index = checked_cast(
+                        self._get_comptime_value(instr_index), ir.ComptimeInt
+                    )
                     indeces.append(index)
                 self.registers[instr] = ir.ComptimeGep(base, indeces, instr.ast)
             case ir.InsertValueInstr():
@@ -124,15 +122,14 @@ class Interpreter:
                 base_agg = self._get_comptime_value(instr.aggregate).copy()
                 agg = base_agg
                 for index in instr.indeces[:-1]:
-                    assert isinstance(agg, ir.ComptimeAggregate), f"{agg=}"
+                    agg = checked_cast(agg, ir.ComptimeAggregate)
                     agg = agg.get_element(index.value)
 
-                assert isinstance(agg, ir.ComptimeAggregate), f"{agg=}"
+                agg = checked_cast(agg, ir.ComptimeAggregate)
                 agg.set_element(value, instr.indeces[-1].value)
                 self.registers[instr] = base_agg
             case ir.CallInstr():
-                callee = self._get_comptime_value(instr.callee)
-                assert isinstance(callee, ir.FnSpec)
+                callee = checked_cast(self._get_comptime_value(instr.callee), ir.FnSpec)
                 cfg = getattr(callee, "cfg", None)
                 if cfg is None:
                     raise CallExternFnAtComptimeError(callee.span)
@@ -148,8 +145,9 @@ class Interpreter:
                 self.curr_bb = instr.target
                 self.curr_instr_index = 0
             case ir.CbranchInstr():
-                cond = self._get_comptime_value(instr.condition)
-                assert isinstance(cond, ir.ComptimeBool)
+                cond = checked_cast(
+                    self._get_comptime_value(instr.condition), ir.ComptimeBool
+                )
                 self.prev_bb = self.curr_bb
                 self.curr_bb = instr.true_target if cond.value else instr.false_target
                 self.curr_instr_index = 0
