@@ -1,245 +1,161 @@
-from more_itertools import nth
+from typing import Final, Optional
 from l0 import ir
+from l0.asserts import assert_eq, assert_lt
 from l0.l0errors import (
-    ArrayIndexOutOfBoundsError,
-    CannotTakeAddressOfComtimeValue,
-    DerefInvalidTypError,
-    DuplicateFieldInStructExprError,
-    FieldAccessIntoInvalidTypError,
-    IncompatibleStructFieldTypError,
-    IncompatibleTypInArrayExpr,
-    IndexIntoInvalidTypError,
-    InvalidIndexTypError,
-    InvalidStructFieldError,
-    MissingFieldInStructExprError,
-    TypeOfStructExprNotStructError,
+    CallExternFnAtComptimeError,
+    CannotTakeAddressOfComptimeValueError,
+    SetNonLocalVarAtComptimeError,
 )
-from . import l0ast as ast
-from .typs import I32, USIZE, ArrayTyp, PtrTyp, StructTyp, Typ
 
 
 class Interpreter:
-    def eval(self, expr: ast.Expr, e: ir.Env, ctx: ir.ExprContext) -> ir.ComptimeValue:
-        match expr:
-            case ast.IntLit():
-                self._check_value_context(expr, ctx)
-                return ir.ComptimeInt(expr.typ, expr.value, expr)
-            case ast.StrLit():
-                self._check_value_context(expr, ctx)
-                return ir.ComptimeCStr(expr.value, expr)
-            case ast.BoolLit():
-                self._check_value_context(expr, ctx)
-                return ir.ComptimeBool(expr.value, expr)
-            case ast.VarExpr():
-                var = e.resolve_var(expr.path)
-                match var:
-                    case ir.ModVar():
-                        if ctx == ir.ExprContext.PLACE:
-                            return var
-                        else:
-                            return var.initializer
-                    case ir.FnSpec():
-                        return var
-                    case _:
-                        raise NotImplementedError(var)
-            case ast.ArrayExpr():
-                self._check_value_context(expr, ctx)
-                return self.eval_array(expr, e)
-            case ast.ArrayAccessExpr():
-                return self.eval_array_access(expr, e, ctx)
-            case ast.StructExpr():
-                self._check_value_context(expr, ctx)
-                return self.eval_struct(expr, e)
-            case ast.StructAccessExpr():
-                return self.eval_struct_access(expr, e, ctx)
-            case ast.UnaryOpExpr():
-                self._check_value_context(expr, ctx)
-                return self.eval_unary_op(expr, e)
-            case ast.DerefExpr():
-                return self.eval_deref(expr, e, ctx)
-            case _:
-                raise NotImplementedError(expr)
+    registers: Final[dict[ir.Value, ir.ComptimeValue]]
+    cfg: Final[ir.Cfg]
+    curr_bb: ir.BasicBlock
+    prev_bb: Optional[ir.BasicBlock]
+    curr_instr: int
+    ret_value: Optional[ir.ComptimeValue]
 
-    def _check_value_context(self, expr: ast.Expr, ctx: ir.ExprContext) -> None:
-        if ctx == ir.ExprContext.PLACE:
-            raise CannotTakeAddressOfComtimeValue(expr.span)
-
-    def eval_array(self, expr: ast.ArrayExpr, e: ir.Env) -> ir.ComptimeArray:
-        elts = [self.eval(elt, e, ir.ExprContext.VALUE) for elt in expr.elements]
-        if not elts:
-            raise NotImplementedError("empty array expression")
-        elt_typ = elts[0].typ
-        arr_typ = ArrayTyp(elt_typ, len(elts))
-        for i, elt in enumerate(elts):
-            if elt.typ != elt_typ:
-                raise IncompatibleTypInArrayExpr(
-                    elt.typ.name(), i, expr.elements[i].span, arr_typ.name()
-                )
-        return ir.ComptimeArray(arr_typ, elts, expr)
-
-    def eval_array_access(
-        self, expr: ast.ArrayAccessExpr, e: ir.Env, ctx: ir.ExprContext
-    ) -> ir.ComptimeValue:
-
-        # We're evaluating the index expression before the array expression
-        # (unlike at runtime), but since this is happening at comptime there
-        # shouldn't be any side effects so the order shouldn't matter.
-        index = self.eval(expr.index, e, ir.ExprContext.VALUE)
-
-        if ctx == ir.ExprContext.PLACE:
-            array_ptr = self.eval(expr.array, e, ctx)
-            assert isinstance(array_ptr, ir.ComptimePtr)
-            array_typ = array_ptr.typ.pointee_typ
-            self._check_array_access(expr, array_typ, index)
-            assert isinstance(index, ir.ComptimeInt)
-            zero = ir.ComptimeInt(USIZE, 0, None)
-            return ir.ComptimeGep(array_ptr, (zero, index), expr)
-        else:
-            array = self.eval(expr.array, e, ir.ExprContext.VALUE)
-            self._check_array_access(expr, array.typ, index)
-            assert isinstance(array, ir.ComptimeArray)
-            assert isinstance(index, ir.ComptimeInt)
-            assert len(array.elements) > index.value
-            return array.elements[index.value]
-
-    def _check_array_access(
-        self, expr: ast.ArrayAccessExpr, array_typ: Typ, index: ir.ComptimeValue
+    def __init__(
+        self,
+        cfg: ir.Cfg,
+        params: tuple[ir.Param, ...],
+        args: tuple[ir.ComptimeValue, ...],
     ) -> None:
-        if not isinstance(array_typ, ArrayTyp):
-            raise IndexIntoInvalidTypError(array_typ.name(), expr.array.span)
+        self.cfg = cfg
+        self.registers = {param: arg for param, arg in zip(params, args, strict=True)}
+        self.curr_bb = self.cfg.entry
+        self.prev_bb = None
+        self.curr_instr_index = 0
+        self.ret_value = None
 
-        if not isinstance(index, ir.ComptimeInt) or index.typ != USIZE:
-            raise InvalidIndexTypError(index.typ.name(), expr.index.span)
+    def eval(self) -> ir.ComptimeValue:
+        while True:
+            if self.ret_value is not None:
+                self._check_not_temporary(self.ret_value)
+                return self.ret_value
+            instr_index = self.curr_instr_index
+            assert_lt(instr_index, len(self.curr_bb.instrs))
+            self.curr_instr_index += 1
+            self._eval_instr(self.curr_bb.instrs[instr_index])
 
-        if index.value >= array_typ.length:
-            raise ArrayIndexOutOfBoundsError(
-                index.value, expr.index.span, array_typ.name()
-            )
+    def _get_comptime_value(self, value: ir.Value) -> ir.ComptimeValue:
+        if isinstance(value, ir.ComptimeValue):
+            return value
+        return self.registers[value]
 
-    def eval_struct(self, expr: ast.StructExpr, e: ir.Env) -> ir.ComptimeStruct:
-        struct_typ = Typ.from_ast(expr.typ, e)
-        if not isinstance(struct_typ, StructTyp):
-            raise TypeOfStructExprNotStructError(struct_typ.name(), expr.typ.span)
+    def _check_not_temporary(self, value: ir.ComptimeValue) -> None:
+        if isinstance(value, ir.ComptimePtr) and value.is_temporary():
+            raise CannotTakeAddressOfComptimeValueError(value.span)
+        elif isinstance(value, ir.ComptimeAggregate):
+            for elt in value.values():
+                self._check_not_temporary(elt)
 
-        field_values = {}
-        for field_expr in expr.fields:
-            if field_expr.ident.name not in struct_typ.fields:
-                raise InvalidStructFieldError(
-                    field_expr.ident.name,
-                    field_expr.ident.span,
-                    struct_typ.name(),
-                    struct_typ.span,
+    def _eval_instr(self, instr: ir.Instr) -> None:
+        match instr:
+            case ir.BinOpInstr():
+                lhs = self._get_comptime_value(instr.lhs)
+                assert isinstance(lhs, ir.ComptimeInt)
+                rhs = self._get_comptime_value(instr.rhs)
+                assert isinstance(rhs, ir.ComptimeInt)
+                assert_eq(lhs.typ, rhs.typ)
+                match instr:
+                    case ir.AddInstr():
+                        ret = lhs.value + rhs.value
+                    case ir.SubInstr():
+                        ret = lhs.value - rhs.value
+                    case ir.MulInstr():
+                        ret = lhs.value * rhs.value
+                    case ir.SdivInstr() | ir.UdivInstr():
+                        ret = lhs.value // rhs.value
+                    case _:
+                        assert False, f"invalid bin op instr {instr}"
+                # TODO: overflow, sdiv vs udiv?
+                self.registers[instr] = ir.ComptimeInt(lhs.typ, ret, instr.ast)
+
+            case ir.IcmpSignedInstr() | ir.IcmpUnsignedInstr():
+                lhs = self._get_comptime_value(instr.lhs)
+                assert isinstance(lhs, ir.ComptimeInt)
+                rhs = self._get_comptime_value(instr.rhs)
+                assert isinstance(rhs, ir.ComptimeInt)
+                assert_eq(lhs.typ, rhs.typ)
+                match instr.op:
+                    case "<":
+                        ret = lhs.value < rhs.value
+                    case "<=":
+                        ret = lhs.value <= rhs.value
+                    case "==":
+                        ret = lhs.value == rhs.value
+                    case "!=":
+                        ret = lhs.value != rhs.value
+                    case ">=":
+                        ret = lhs.value >= rhs.value
+                    case ">":
+                        ret = lhs.value > rhs.value
+                # TODO: signed vs unsigned?
+                self.registers[instr] = ir.ComptimeBool(ret, instr.ast)
+
+            case ir.LoadInstr():
+                src = self._get_comptime_value(instr.src)
+                assert isinstance(src, ir.ComptimePtr)
+                self.registers[instr] = src.load()
+            case ir.AllocaInstr():
+                self.registers[instr] = ir.ComptimeAlloc(
+                    instr.allocated_typ, instr.mut, instr.ast
                 )
-            if field_expr.ident.name in field_values:
-                raise DuplicateFieldInStructExprError(
-                    field_expr.ident.name,
-                    field_expr.ident.span,
-                    field_values[field_expr.ident.name].span,
+            case ir.StoreInstr():
+                dest = self._get_comptime_value(instr.dest)
+                assert isinstance(dest, ir.ComptimePtr)
+                if not dest.is_temporary():
+                    raise SetNonLocalVarAtComptimeError(instr.span)
+                value = self._get_comptime_value(instr.value)
+                dest.store(value)
+            case ir.GepInstr():
+                base = self._get_comptime_value(instr.base)
+                assert isinstance(base, ir.ComptimePtr)
+                indeces = []
+                for instr_index in instr.indeces:
+                    index = self._get_comptime_value(instr_index)
+                    assert isinstance(index, ir.ComptimeInt)
+                    indeces.append(index)
+                self.registers[instr] = ir.ComptimeGep(base, indeces, instr.ast)
+            case ir.InsertValueInstr():
+                value = self._get_comptime_value(instr.value)
+                base_agg = self._get_comptime_value(instr.aggregate).copy()
+                agg = base_agg
+                for index in instr.indeces[:-1]:
+                    assert isinstance(agg, ir.ComptimeAggregate), f"{agg=}"
+                    agg = agg.get_element(index.value)
+
+                assert isinstance(agg, ir.ComptimeAggregate), f"{agg=}"
+                agg.set_element(value, instr.indeces[-1].value)
+                self.registers[instr] = base_agg
+            case ir.CallInstr():
+                callee = self._get_comptime_value(instr.callee)
+                assert isinstance(callee, ir.FnSpec)
+                cfg = getattr(callee, "cfg", None)
+                if cfg is None:
+                    raise CallExternFnAtComptimeError(callee.span)
+                args = tuple(self._get_comptime_value(arg) for arg in instr.args)
+                self.registers[instr] = Interpreter(cfg, callee.params, args).eval()
+            case ir.PhiInstr():
+                assert self.prev_bb is not None
+                self.registers[instr] = self._get_comptime_value(
+                    instr.incoming[self.prev_bb]
                 )
-            field_values[field_expr.ident.name] = self.eval(
-                field_expr.value, e, ir.ExprContext.VALUE
-            )
-
-        for field in struct_typ.fields.values():
-            if field.name not in field_values:
-                raise MissingFieldInStructExprError(
-                    field.name, field.ast.span, struct_typ.name(), expr.span
-                )
-            field_value = field_values[field.name]
-            if field.typ != field_value.typ:
-                raise IncompatibleStructFieldTypError(
-                    field.name,
-                    struct_typ.name(),
-                    field_value.typ.name(),
-                    field_value.span,
-                    field.typ.name(),
-                    field.ast.span,
-                )
-
-        return ir.ComptimeStruct(struct_typ, field_values, expr)
-
-    def _check_struct_access(self, expr: ast.StructAccessExpr, struct_typ: Typ) -> None:
-        if not isinstance(struct_typ, StructTyp):
-            raise FieldAccessIntoInvalidTypError(struct_typ.name(), expr.span)
-
-        if expr.field.name not in struct_typ.fields:
-            raise InvalidStructFieldError(
-                expr.field.name, expr.field.span, struct_typ.name(), struct_typ.span
-            )
-
-    def eval_struct_access(
-        self, expr: ast.StructAccessExpr, e: ir.Env, ctx: ir.ExprContext
-    ) -> ir.ComptimeValue:
-        if ctx == ir.ExprContext.PLACE:
-            struct_ptr = self.eval(expr.struct, e, ir.ExprContext.PLACE)
-            assert isinstance(struct_ptr, ir.ComptimePtr)
-            struct_typ = struct_ptr.typ.pointee_typ
-            self._check_struct_access(expr, struct_typ)
-            assert isinstance(struct_typ, StructTyp)
-            index = ir.ComptimeInt(
-                I32, struct_typ.fields[expr.field.name].index, expr.field
-            )
-            zero = ir.ComptimeInt(USIZE, 0, None)
-            return ir.ComptimeGep(struct_ptr, (zero, index), expr)
-        else:
-            struct = self.eval(expr.struct, e, ir.ExprContext.VALUE)
-            self._check_struct_access(expr, struct.typ)
-            assert isinstance(struct, ir.ComptimeStruct)
-            assert expr.field.name in struct.fields
-            return struct.fields[expr.field.name]
-
-    def eval_unary_op(self, expr: ast.UnaryOpExpr, e: ir.Env) -> ir.ComptimeValue:
-        match expr.op.name:
-            case "&":
-                return self.eval(expr.operand, e, ir.ExprContext.PLACE)
+            case ir.BranchInstr():
+                self.prev_bb = self.curr_bb
+                self.curr_bb = instr.target
+                self.curr_instr_index = 0
+            case ir.CbranchInstr():
+                cond = self._get_comptime_value(instr.condition)
+                assert isinstance(cond, ir.ComptimeBool)
+                self.prev_bb = self.curr_bb
+                self.curr_bb = instr.true_target if cond.value else instr.false_target
+                self.curr_instr_index = 0
+            case ir.RetInstr():
+                self.ret_value = self._get_comptime_value(instr.value)
+            case ir.UnreachableInstr():
+                assert False, "Should never reach unreachable instruction"
             case _:
-                raise NotImplementedError(expr.op.name)
-
-    def eval_deref(
-        self, expr: ast.DerefExpr, e: ir.Env, ctx: ir.ExprContext
-    ) -> ir.ComptimeValue:
-        ptr = self.eval(expr.ptr, e, ir.ExprContext.VALUE)
-        if not isinstance(ptr.typ, PtrTyp):
-            raise DerefInvalidTypError(ptr.typ.name(), expr.ptr.span)
-        assert isinstance(ptr, ir.ComptimePtr)
-
-        if ctx == ir.ExprContext.PLACE:
-            return ptr
-
-        match ptr:
-            case ir.ModVar():
-                return ptr.initializer
-            case ir.FnSpec():
-                raise DerefInvalidTypError(ptr.typ.name(), expr.ptr.span)
-            case ir.ComptimeGep():
-                return self.eval_deref_gep(ptr, e)
-            case _:
-                raise NotImplementedError(ptr)
-
-    def eval_deref_gep(self, gep: ir.ComptimeGep, e: ir.Env) -> ir.ComptimeValue:
-        value = gep.base
-        for index in gep.indeces:
-            match value:
-                case ir.ModVar():
-                    assert index.value == 0
-                    value = value.initializer
-                case ir.ComptimeGep():
-                    assert index.value == 0
-                    value = self.eval_deref_gep(value, e)
-                case ir.ComptimeArray():
-                    assert index.value < value.typ.length, (
-                        f"invalid index {index.value} into array of length {value.typ.length}"
-                    )
-                    assert index.value < len(value.elements)
-                    value = value.elements[index.value]
-                case ir.ComptimeStruct():
-                    field = nth(value.typ.fields.values(), index.value)
-                    assert field is not None, (
-                        f"invalid field index {index.value} into {value.typ.name()}"
-                    )
-                    assert field.name in value.fields
-                    value = value.fields[field.name]
-                case _:
-                    raise NotImplementedError(value)
-
-        return value
+                assert False, f"Invalid instruction {instr}"

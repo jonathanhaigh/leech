@@ -26,3 +26,19 @@ def test_recursive_factorial_fn(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 120)
+
+
+def test_comptime_recursive_factorial_fn(tmp_path):
+    src = """
+    fn fact(n: i32) i32 {
+        if (n == 1) {
+            return 1;
+        };
+        return n * fact(n - 1);
+    }
+    let x = fact(5);
+    pub fn main() i32 {
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 120)

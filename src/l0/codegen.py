@@ -282,7 +282,7 @@ class Compiler:
                     ctx.ll_bbs[instr.false_target],
                 )
             case ir.RetInstr():
-                if instr.typ == VOID:
+                if instr.value.typ == VOID:
                     return ctx.ll_builder.ret_void()
                 return ctx.ll_builder.ret(ctx.ll_values.get(instr.value))
             case ir.UnreachableInstr():

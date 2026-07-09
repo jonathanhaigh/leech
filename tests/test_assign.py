@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import AssignToConstError
+from l0.l0errors import AssignToConstError, SetNonLocalVarAtComptimeError
 from util import check_prog_output, compile_str
 
 
@@ -24,6 +24,22 @@ def test_assign_to_mod_var(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 2)
+
+
+def test_comptime_assign_to_mod_var(tmp_path):
+    src = """
+    let mut a = 1;
+    fn f() i32 {
+        a = 2;
+        return 0;
+    }
+    let x = f();
+    pub fn main() i32 {
+        return a;
+    }
+    """
+    with pytest.raises(SetNonLocalVarAtComptimeError):
+        compile_str(tmp_path, src)
 
 
 def test_assign_to_const_local_var(tmp_path):

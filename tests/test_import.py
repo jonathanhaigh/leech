@@ -21,6 +21,22 @@ def test_import_fn(tmp_path):
     check_prog_output(tmp_path, main_src, "abc\n", 101, a=a_src)
 
 
+def test_comptime_import_fn(tmp_path):
+    main_src = """
+    import a;
+    let x = a::f();
+    pub fn main() i32 {
+        return x;
+    }
+    """
+    a_src = """
+    pub fn f() i32 {
+        return 101;
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 101, a=a_src)
+
+
 def test_import_private_fn(tmp_path):
     main_src = """
     import a;

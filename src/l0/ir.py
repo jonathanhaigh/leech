@@ -4,13 +4,24 @@ from dataclasses import dataclass
 import enum
 from functools import cached_property
 import re
-from typing import Any, ChainMap, Generic, Optional, TypeVar, cast, override
+from typing import (
+    Any,
+    ChainMap,
+    Final,
+    Generic,
+    Optional,
+    Self,
+    TypeVar,
+    cast,
+    override,
+)
 
 from more_itertools import nth
 import networkx as nx
 
 from l0 import comptime, main
 from l0 import l0ast as ast
+from l0.asserts import assert_all_eq, assert_eq, assert_ge, assert_gt, assert_lt
 from l0.l0errors import (
     AssignToConstError,
     AssignToVoidError,
@@ -37,9 +48,11 @@ from l0.l0errors import (
     ModDoesNotExistError,
     NotCallableError,
     NotEnoughArgsError,
+    RetNotInFnError,
     TooManyArgsError,
     TypeOfStructExprNotStructError,
     UnreachableCodeWarning,
+    VoidVarInitializerError,
     WhileCondNotBoolError,
     WhileTypNotVoidError,
     register_error,
@@ -166,7 +179,7 @@ class Env:
         return cast(Typ, self.resolve_path(path, Env.Namespace.TYPS))
 
     def resolve_path(self, path: ast.Path, ns: Env.Namespace) -> Any:
-        assert len(path.idents) >= 1
+        assert_ge(len(path.idents), 1)
 
         container = self
         for ident in path.idents[:-1]:
@@ -189,6 +202,7 @@ def gep_typ(base_typ: PtrTyp, indeces: Sequence[Value]) -> PtrTyp:
                 assert isinstance(index, ComptimeInt), (
                     "struct indeces must be comptime known"
                 )
+
                 field = nth(typ.fields.values(), index.value)
                 assert field is not None, (
                     f"invalid field index {index.value} into {typ.name()}"
@@ -203,7 +217,7 @@ def gep_typ(base_typ: PtrTyp, indeces: Sequence[Value]) -> PtrTyp:
 
 
 class Value(ABC, Generic[TypT, AstT]):
-    ast: Optional[AstT]
+    ast: Final[Optional[AstT]]
 
     def __init__(self, ast: Optional[AstT]) -> None:
         self.ast = ast
@@ -222,13 +236,16 @@ class Value(ABC, Generic[TypT, AstT]):
 
 
 class ComptimeValue(Generic[TypT, AstT], Value[TypT, AstT]):
-    pass
+    def copy(self) -> Self:
+        # Most ComptimeValues are immutable so real copying is not required
+        return self
 
 
 class ComptimeInt(ComptimeValue[IntTyp]):
-    _typ: IntTyp
-    value: int
+    _typ: Final[IntTyp]
+    value: Final[int]
 
+    @override
     def __init__(self, typ: IntTyp, value: int, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
         self._typ = typ
@@ -242,7 +259,7 @@ class ComptimeInt(ComptimeValue[IntTyp]):
 
 
 class ComptimeBool(ComptimeValue[BoolTyp]):
-    value: bool
+    value: Final[bool]
 
     def __init__(self, value: bool, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
@@ -254,8 +271,8 @@ class ComptimeBool(ComptimeValue[BoolTyp]):
 
 
 class ComptimeCStr(ComptimeValue[PtrTyp]):
-    value: bytearray
-    initializer_type: ArrayTyp
+    value: Final[bytearray]
+    initializer_typ: Final[ArrayTyp]
 
     def __init__(self, value: str, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
@@ -267,52 +284,160 @@ class ComptimeCStr(ComptimeValue[PtrTyp]):
         return CSTR
 
 
-class ComptimeArray(ComptimeValue[ArrayTyp]):
+class ComptimeAggregate(Generic[TypT, AstT], ComptimeValue[TypT, AstT]):
+    @abstractmethod
+    def __len__(self) -> int:
+        pass
+
+    @abstractmethod
+    def get_element(self, index: int) -> ComptimeValue:
+        pass
+
+    @abstractmethod
+    def set_element(self, value: ComptimeValue, index: int) -> None:
+        pass
+
+    def values(self) -> Sequence[ComptimeValue]:
+        return [self.get_element(i) for i in range(len(self))]
+
+    def check_index(self, index: int) -> None:
+        assert_ge(index, 0)
+        assert_lt(index, len(self))
+
+
+class ComptimeArray(ComptimeAggregate[ArrayTyp]):
     elements: list[ComptimeValue]
-    _typ: ArrayTyp
+    _typ: Final[ArrayTyp]
 
     @override
     def __init__(
         self, typ: ArrayTyp, elements: list[ComptimeValue], ast: Optional[ast.Ast]
     ) -> None:
+        assert_eq(typ.length, len(elements))
+        assert_all_eq(list(map(lambda x: x.typ, elements)), typ.element_typ)
         super().__init__(ast)
         self._typ = typ
         self.elements = elements
 
     @override
+    def __len__(self) -> int:
+        return len(self.elements)
+
+    @override
     def calculate_typ(self) -> ArrayTyp:
         return self._typ
 
+    @override
+    def get_element(self, index: int) -> ComptimeValue:
+        self.check_index(index)
+        return self.elements[index]
 
-class ComptimeStruct(ComptimeValue[StructTyp]):
+    @override
+    def set_element(self, value: ComptimeValue, index: int) -> None:
+        self.check_index(index)
+        self.elements[index] = value
+
+    @override
+    def copy(self) -> ComptimeArray:
+        return ComptimeArray(self._typ, [elt.copy() for elt in self.elements], self.ast)
+
+
+class ComptimeStruct(ComptimeAggregate[StructTyp]):
     fields: dict[str, ComptimeValue]
-    _typ: StructTyp
+    _typ: Final[StructTyp]
 
     @override
     def __init__(
         self, typ: StructTyp, fields: dict[str, ComptimeValue], ast: Optional[ast.Ast]
     ) -> None:
+        assert_eq(
+            {k: v.typ for k, v in typ.fields.items()},
+            {k: v.typ for k, v in fields.items()},
+        )
         super().__init__(ast)
         self._typ = typ
         self.fields = fields
 
     @override
+    def __len__(self) -> int:
+        return len(self.fields)
+
+    @override
     def calculate_typ(self) -> StructTyp:
         return self._typ
 
+    @override
+    def get_element(self, index: int) -> ComptimeValue:
+        self.check_index(index)
+        field_spec = nth(self._typ.fields.values(), index)
+        assert field_spec is not None
+        return self.fields[field_spec.name]
+
+    @override
+    def set_element(self, value: ComptimeValue, index: int) -> None:
+        self.check_index(index)
+        field_spec = nth(self._typ.fields.values(), index)
+        assert field_spec is not None
+        self.fields[field_spec.name] = value
+
+    @override
+    def copy(self) -> ComptimeStruct:
+        return ComptimeStruct(
+            self._typ, {k: v.copy() for k, v in self.fields.items()}, self.ast
+        )
+
 
 class ComptimePtr(Generic[AstT], ComptimeValue[PtrTyp, AstT]):
-    pass
+    @abstractmethod
+    def load(self) -> ComptimeValue:
+        pass
+
+    @abstractmethod
+    def store(self, value: ComptimeValue) -> None:
+        pass
+
+    @abstractmethod
+    def is_temporary(self) -> bool:
+        pass
+
+
+class ComptimeAlloc(ComptimePtr):
+    value: ComptimeValue
+    mut: Final[Mutability]
+
+    @override
+    def __init__(self, typ: Typ, mut: Mutability, ast: Optional[ast.Ast]) -> None:
+        super().__init__(ast)
+        self.mut = mut
+        self.value = UndefValue(typ, ast)
+
+    @override
+    def calculate_typ(self) -> PtrTyp:
+        return PtrTyp(self.value.typ, self.mut)
+
+    @override
+    def load(self) -> ComptimeValue:
+        return self.value
+
+    @override
+    def store(self, value: ComptimeValue) -> None:
+        self.value = value
+
+    @override
+    def is_temporary(self) -> bool:
+        return True
 
 
 class ComptimeGep(ComptimePtr):
-    base: ComptimePtr
-    indeces: tuple[ComptimeInt, ...]
+    base: Final[ComptimePtr]
+    indeces: Final[tuple[ComptimeInt, ...]]
 
     @override
     def __init__(
         self, base: ComptimePtr, indeces: Sequence[ComptimeInt], ast: Optional[ast.Ast]
     ) -> None:
+        assert_gt(len(indeces), 0)
+        assert_eq(indeces[0].value, 0)
         super().__init__(ast)
         self.base = base
         self.indeces = tuple(indeces)
@@ -320,6 +445,32 @@ class ComptimeGep(ComptimePtr):
     @override
     def calculate_typ(self) -> PtrTyp:
         return gep_typ(self.base.typ, self.indeces)
+
+    @override
+    def load(self) -> ComptimeValue:
+        indeces = [i.value for i in self.indeces]
+        value = self.base.load()
+        for index in indeces[1:]:
+            assert isinstance(value, ComptimeAggregate)
+            value = value.get_element(index)
+        return value
+
+    @override
+    def store(self, value: ComptimeValue) -> None:
+        indeces = [i.value for i in self.indeces]
+        if len(indeces) == 1:
+            self.base.store(value)
+            return
+        agg = self.base.load()
+        for index in indeces[1:-1]:
+            assert isinstance(agg, ComptimeAggregate)
+            agg = agg.get_element(index)
+        assert isinstance(agg, ComptimeAggregate)
+        agg.set_element(value, indeces[-1])
+
+    @override
+    def is_temporary(self) -> bool:
+        return self.base.is_temporary()
 
 
 class VoidValue(ComptimeValue[VoidTyp]):
@@ -333,7 +484,7 @@ class VoidValue(ComptimeValue[VoidTyp]):
 
 
 class UndefValue(ComptimeValue):
-    _typ: Typ
+    _typ: Final[Typ]
 
     @override
     def __init__(self, typ: Typ, ast: Optional[ast.Ast]) -> None:
@@ -346,8 +497,8 @@ class UndefValue(ComptimeValue):
 
 
 class Param(Value[Typ, ast.Param]):
-    fn: FnSpec
-    pos: int
+    fn: Final[FnSpec]
+    pos: Final[int]
 
     @override
     def __init__(self, fn: FnSpec, pos: int, ast: Optional[ast.Param]) -> None:
@@ -357,13 +508,12 @@ class Param(Value[Typ, ast.Param]):
 
     @override
     def calculate_typ(self) -> Typ:
-        assert len(self.fn.fn_typ.param_typs) > self.pos
+        assert_gt(len(self.fn.fn_typ.param_typs), self.pos)
         return self.fn.fn_typ.param_typs[self.pos]
 
 
 class Instr(Value[TypT, AstT], Generic[TypT, AstT]):
-    bb: BasicBlock
-    ast: AstT
+    bb: Final[BasicBlock]
 
     @override
     def __init__(self, bb: BasicBlock, ast: Optional[AstT]) -> None:
@@ -379,8 +529,8 @@ class Instr(Value[TypT, AstT], Generic[TypT, AstT]):
 
 
 class BinOpInstr(Instr):
-    lhs: Value
-    rhs: Value
+    lhs: Final[Value]
+    rhs: Final[Value]
 
     @override
     def __init__(
@@ -392,7 +542,7 @@ class BinOpInstr(Instr):
 
     @override
     def calculate_typ(self) -> Typ:
-        assert self.lhs.typ == self.rhs.typ
+        assert_eq(self.lhs.typ, self.rhs.typ)
         return self.lhs.typ
 
 
@@ -417,9 +567,9 @@ class UdivInstr(BinOpInstr):
 
 
 class IcmpInstr(Instr):
-    op: str
-    lhs: Value
-    rhs: Value
+    op: Final[str]
+    lhs: Final[Value]
+    rhs: Final[Value]
 
     @override
     def __init__(
@@ -444,7 +594,7 @@ class IcmpUnsignedInstr(IcmpInstr):
 
 
 class LoadInstr(Instr):
-    src: Value
+    src: Final[Value]
 
     @override
     def __init__(self, bb: BasicBlock, src: Value, ast: Optional[ast.Ast]) -> None:
@@ -459,9 +609,9 @@ class LoadInstr(Instr):
 
 
 class AllocaInstr(Instr[PtrTyp]):
-    allocated_typ: Typ
-    mut: Mutability
-    count: int
+    allocated_typ: Final[Typ]
+    mut: Final[Mutability]
+    count: Final[int]
 
     @override
     def __init__(
@@ -483,8 +633,8 @@ class AllocaInstr(Instr[PtrTyp]):
 
 
 class StoreInstr(Instr[VoidTyp]):
-    value: Value
-    dest: Value
+    value: Final[Value]
+    dest: Final[Value]
 
     @override
     def __init__(
@@ -492,7 +642,7 @@ class StoreInstr(Instr[VoidTyp]):
     ) -> None:
         super().__init__(bb, ast)
         assert isinstance(dest.typ, PtrTyp)
-        assert value.typ == dest.typ.pointee_typ
+        assert_eq(value.typ, dest.typ.pointee_typ)
         self.value = value
         self.dest = dest
 
@@ -502,7 +652,7 @@ class StoreInstr(Instr[VoidTyp]):
 
 
 class GepInstr(Instr[PtrTyp]):
-    base: Value
+    base: Final[Value]
     indeces: tuple[Value, ...]
 
     @override
@@ -524,9 +674,9 @@ class GepInstr(Instr[PtrTyp]):
 
 
 class InsertValueInstr(Instr):
-    aggregate: Value
-    value: Value
-    indeces: list[ComptimeInt]
+    aggregate: Final[Value]
+    value: Final[Value]
+    indeces: tuple[ComptimeInt, ...]
 
     @override
     def __init__(
@@ -534,7 +684,7 @@ class InsertValueInstr(Instr):
         bb: BasicBlock,
         aggregate: Value,
         value: Value,
-        indeces: list[ComptimeInt],
+        indeces: tuple[ComptimeInt, ...],
         ast: Optional[ast.Ast],
     ) -> None:
         super().__init__(bb, ast)
@@ -548,15 +698,15 @@ class InsertValueInstr(Instr):
 
 
 class CallInstr(Instr[Typ, ast.CallExpr]):
-    callee: Value
-    args: list[Value]
+    callee: Final[Value]
+    args: tuple[Value, ...]
 
     @override
     def __init__(
         self,
         bb: BasicBlock,
         callee: Value,
-        args: list[Value],
+        args: tuple[Value, ...],
         ast: Optional[ast.CallExpr],
     ) -> None:
         super().__init__(bb, ast)
@@ -573,12 +723,14 @@ class CallInstr(Instr[Typ, ast.CallExpr]):
 
 
 class PhiInstr(Instr):
-    incoming: dict["BasicBlock", Value]
+    incoming: Final[dict["BasicBlock", Value]]
 
     @override
-    def __init__(self, bb: BasicBlock, ast: Optional[ast.Ast]) -> None:
+    def __init__(
+        self, bb: BasicBlock, incoming: dict[BasicBlock, Value], ast: Optional[ast.Ast]
+    ) -> None:
         super().__init__(bb, ast)
-        self.incoming = {}
+        self.incoming = incoming
 
     def add_incoming(self, value: Value, bb: BasicBlock) -> None:
         assert bb not in self.incoming
@@ -587,15 +739,15 @@ class PhiInstr(Instr):
     @override
     def calculate_typ(self) -> Typ:
         values = list(self.incoming.values())
-        assert len(values) > 0
+        assert_gt(len(values), 0)
         first_typ = values[0].typ
         for value in values:
-            assert value.typ == first_typ
+            assert_eq(value.typ, first_typ)
         return first_typ
 
 
 class BranchInstr(Instr[NeverTyp]):
-    target: BasicBlock
+    target: Final[BasicBlock]
 
     @override
     def __init__(
@@ -610,9 +762,9 @@ class BranchInstr(Instr[NeverTyp]):
 
 
 class CbranchInstr(Instr[NeverTyp]):
-    condition: Value
-    true_target: BasicBlock
-    false_target: BasicBlock
+    condition: Final[Value]
+    true_target: Final[BasicBlock]
+    false_target: Final[BasicBlock]
 
     @override
     def __init__(
@@ -634,7 +786,7 @@ class CbranchInstr(Instr[NeverTyp]):
 
 
 class RetInstr(Instr[NeverTyp]):
-    value: Value
+    value: Final[Value]
 
     @override
     def __init__(self, bb: BasicBlock, value: Value, ast: Optional[ast.Ast]) -> None:
@@ -657,14 +809,12 @@ class UnreachableInstr(Instr[NeverTyp]):
 
 
 class BasicBlock:
-    fn: FnSpec
-    name: str
-    instrs: list[Instr]
+    name: Final[str]
+    instrs: Final[list[Instr]]
     terminated: bool
     warned_unreachable: bool
 
-    def __init__(self, fn: FnSpec, name: str) -> None:
-        self.fn = fn
+    def __init__(self, name: str) -> None:
         self.name = name
         self.instrs = []
         self.terminated = False
@@ -716,8 +866,10 @@ class BasicBlock:
     ) -> IcmpUnsignedInstr:
         return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast))
 
-    def phi(self, ast: Optional[ast.Ast]) -> PhiInstr:
-        return self._add_instr(PhiInstr(self, ast))
+    def phi(
+        self, incoming: dict[BasicBlock, Value], ast: Optional[ast.Ast]
+    ) -> PhiInstr:
+        return self._add_instr(PhiInstr(self, incoming, ast))
 
     def load(self, src: Value, ast: Optional[ast.Ast]) -> LoadInstr:
         return self._add_instr(LoadInstr(self, src, ast))
@@ -739,13 +891,13 @@ class BasicBlock:
         self,
         aggregate: Value,
         value: Value,
-        indeces: list[ComptimeInt],
+        indeces: tuple[ComptimeInt, ...],
         ast: Optional[ast.Ast],
     ) -> InsertValueInstr:
         return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast))
 
     def call(
-        self, callee: Value, args: list[Value], ast: Optional[ast.CallExpr]
+        self, callee: Value, args: tuple[Value, ...], ast: Optional[ast.CallExpr]
     ) -> CallInstr:
         return self._add_instr(CallInstr(self, callee, args, ast))
 
@@ -790,12 +942,12 @@ class ExprContext(enum.Enum):
 
 
 class CfgBuilder:
-    fn: FnSpec
-    cfg: Cfg
+    fn: Optional[FnSpec]
+    cfg: Final[Cfg]
     curr_bb: BasicBlock
-    _generate_bb_name: VarNamer
+    _generate_bb_name: Final[VarNamer]
 
-    def __init__(self, fn: FnSpec) -> None:
+    def __init__(self, fn: Optional[FnSpec] = None) -> None:
         self.fn = fn
         self.cfg = Cfg()
         self._generate_bb_name = VarNamer()
@@ -803,7 +955,16 @@ class CfgBuilder:
         self.cfg._exit = self.add_bb("exit")
         self.curr_bb = self.cfg.entry
 
+    def build_var_initializer(self, defn_ast: ast.VarDefn, e: Env) -> None:
+        assert self.fn is None
+        e = e.new_child()
+        initializer = self.build_expr(defn_ast.let_stmt.expr, e, ExprContext.VALUE)
+        if initializer.typ == VOID:
+            raise VoidVarInitializerError(initializer.span)
+        self.ret(initializer, defn_ast.let_stmt.expr)
+
     def build_fn(self, fn_ast: ast.FnDefn, e: Env) -> None:
+        assert self.fn is not None
         e = e.new_child()
 
         for param in self.fn.params:
@@ -824,7 +985,7 @@ class CfgBuilder:
                 return
             if block.typ != ret_typ:
                 raise InvalidRetTypError(
-                    self.fn.name(),
+                    self.fn.name,
                     ret_typ.name(),
                     ret_typ_span,
                     block.typ.name(),
@@ -934,9 +1095,8 @@ class CfgBuilder:
                         els.typ.name(),
                         if_ast.els.span,
                     )
-                res = self.curr_bb.phi(if_ast)
-                res.add_incoming(els, els_last_bb)
-                res.add_incoming(then, then_last_bb)
+                phi_incoming = {els_last_bb: els, then_last_bb: then}
+                res = self.curr_bb.phi(phi_incoming, if_ast)
                 return res
             if have_els_value:
                 return els
@@ -993,9 +1153,9 @@ class CfgBuilder:
                 callee_diag_str, callee.typ.name(), call_ast.callee.span
             )
 
-        args = [
+        args = tuple(
             self.build_expr(arg_ast, e, ExprContext.VALUE) for arg_ast in call_ast.args
-        ]
+        )
 
         num_args = len(args)
         fn_typ = callee.typ.pointee_typ
@@ -1104,7 +1264,11 @@ class CfgBuilder:
 
         elt_typ = elts[0].typ
         arr_typ = ArrayTyp(elt_typ, len(elts))
-        arr = UndefValue(arr_typ, arr_expr)
+        arr = ComptimeArray(
+            arr_typ,
+            [UndefValue(arr_typ.element_typ, arr_expr)] * len(elts),
+            arr_expr,
+        )
 
         for i, elt in enumerate(elts):
             elt_ast = arr_expr.elements[i]
@@ -1113,7 +1277,7 @@ class CfgBuilder:
                     elt.typ.name(), i, elt_ast.span, arr_typ.name()
                 )
             elt_index = ComptimeInt(USIZE, i, elt_ast)
-            arr = self.curr_bb.insert_value(arr, elt, [elt_index], elt_ast)
+            arr = self.curr_bb.insert_value(arr, elt, (elt_index,), elt_ast)
 
         return self._in_context(arr, ctx)
 
@@ -1149,7 +1313,14 @@ class CfgBuilder:
                 struct_typ.name(), struct_expr.typ.span
             )
 
-        struct = UndefValue(struct_typ, struct_expr)
+        struct = ComptimeStruct(
+            struct_typ,
+            {
+                f.name: UndefValue(f.typ, struct_expr)
+                for f in struct_typ.fields.values()
+            },
+            struct_expr,
+        )
 
         field_values = {}
         for field_expr in struct_expr.fields:
@@ -1187,7 +1358,7 @@ class CfgBuilder:
                 )
             field_index = ComptimeInt(I32, i, field_value.ast)
             struct = self.curr_bb.insert_value(
-                struct, field_value, [field_index], field_value.ast
+                struct, field_value, (field_index,), field_value.ast
             )
 
             # TODO: check field access specifiers
@@ -1241,6 +1412,9 @@ class CfgBuilder:
                 self.build_assignment_stmt(stmt_ast, e)
 
     def build_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
+        if self.fn is None:
+            raise RetNotInFnError(ret_ast.span)
+
         ret_typ = self.fn.fn_typ.ret_typ
         ret_typ_span = None
         if self.fn.ast is not None and self.fn.ast.span is not None:
@@ -1254,7 +1428,7 @@ class CfgBuilder:
                 return
             if expr.typ != ret_typ:
                 raise InvalidRetTypError(
-                    self.fn.name(),
+                    self.fn.name,
                     ret_typ.name(),
                     ret_typ_span,
                     expr.typ.name(),
@@ -1272,6 +1446,8 @@ class CfgBuilder:
 
     def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
         expr = self.build_expr(let_ast.expr, e, ExprContext.VALUE)
+        if expr.typ == VOID:
+            raise VoidVarInitializerError(expr.span)
         name = let_ast.ident.name
         mut = Mutability.from_ast(let_ast.mut)
         alloca = self.curr_bb.alloca(expr.typ, mut, 1, let_ast)
@@ -1302,7 +1478,7 @@ class CfgBuilder:
             return value
 
     def add_bb(self, basename: str) -> BasicBlock:
-        bb = BasicBlock(self.fn, self._generate_bb_name(basename))
+        bb = BasicBlock(self._generate_bb_name(basename))
         self.cfg.add_node(bb)
         return bb
 
@@ -1350,7 +1526,7 @@ class Access(enum.Enum):
     def from_ast(ast: Optional[ast.Access]) -> Access:
         if ast is None:
             return PRIVATE
-        assert ast.value == "pub"
+        assert_eq(ast.value, "pub")
         return PUBLIC
 
 
@@ -1360,11 +1536,11 @@ PUBLIC = Access.PUBLIC
 
 @dataclass
 class ModItem:
-    mod: Mod
-    name: str
-    access: Access
-    value: Value[PtrTyp] | Typ
-    qualify_name: bool = True
+    mod: Final[Mod]
+    name: Final[str]
+    access: Final[Access]
+    value: Final[Value[PtrTyp] | Typ]
+    qualify_name: Final[bool] = True
 
     @property
     def qualified_name(self) -> str:
@@ -1375,6 +1551,18 @@ class ModItem:
 
 
 class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
+    @override
+    def load(self) -> ComptimeValue:
+        assert False, "Can't dereference a function pointer"
+
+    @override
+    def store(self, value: ComptimeValue) -> None:
+        assert False, "Can't dereference a function pointer"
+
+    @override
+    def is_temporary(self) -> bool:
+        return False
+
     @cached_property
     def params(self) -> tuple[Param, ...]:
         return self.calculate_params()
@@ -1395,10 +1583,10 @@ class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
 
 
 class BuiltinFn(FnSpec):
-    _name: str
-    _fn_typ: FnTyp
-    _build: Callable[[CfgBuilder, Env], None]
-    env: Env
+    _name: Final[str]
+    _fn_typ: Final[FnTyp]
+    _build: Final[Callable[[CfgBuilder, Env], None]]
+    env: Final[Env]
 
     @override
     def __init__(
@@ -1436,7 +1624,7 @@ class BuiltinFn(FnSpec):
 
 
 class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
-    env: Env
+    env: Final[Env]
 
     @override
     def __init__(self, ast: FnAstT, e: Env) -> None:
@@ -1482,8 +1670,8 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
 
 
 class ModVar(ComptimePtr[ast.VarDefn]):
-    env: Env
-    mut: Mutability
+    env: Final[Env]
+    mut: Final[Mutability]
 
     @override
     def __init__(self, ast: ast.VarDefn, e: Env) -> None:
@@ -1491,13 +1679,29 @@ class ModVar(ComptimePtr[ast.VarDefn]):
         self.env = e.new_child()
         self.mut = Mutability.from_ast(ast.let_stmt.mut)
 
+    @override
+    def load(self) -> ComptimeValue:
+        return self.initializer
+
+    @override
+    def store(self, value: ComptimeValue) -> None:
+        assert False, "Cannot set mod var at comptime"
+
+    @override
+    def is_temporary(self) -> bool:
+        return False
+
     @cached_property
     def initializer(self) -> ComptimeValue:
         # TODO: detect recursion
         assert self.ast is not None
-        return comptime.Interpreter().eval(
-            self.ast.let_stmt.expr, self.env, ExprContext.VALUE
-        )
+        return comptime.Interpreter(self.cfg, (), ()).eval()
+
+    @cached_property
+    def cfg(self) -> Cfg:
+        builder = CfgBuilder()
+        builder.build_var_initializer(opt_unwrap(self.ast), self.env)
+        return builder.cfg
 
     @override
     def calculate_typ(self) -> PtrTyp:
@@ -1505,9 +1709,9 @@ class ModVar(ComptimePtr[ast.VarDefn]):
 
 
 class Mod(Typ):
-    _name: str
-    items: list[ModItem]
-    env: Env
+    _name: Final[str]
+    items: Final[list[ModItem]]
+    env: Final[Env]
 
     @override
     def __init__(self, name: str, mod_ast: ast.Mod) -> None:

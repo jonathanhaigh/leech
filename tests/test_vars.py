@@ -1,6 +1,10 @@
 import pytest
 
-from l0.l0errors import DuplicateItemDefnError, ItemNotFoundError
+from l0.l0errors import (
+    DuplicateItemDefnError,
+    ItemNotFoundError,
+    VoidVarInitializerError,
+)
 from util import check_prog_output, compile_str
 
 
@@ -185,6 +189,30 @@ def test_duplicate_local_var(tmp_path):
     }
     """
     with pytest.raises(DuplicateItemDefnError):
+        compile_str(tmp_path, src)
+
+
+def test_void_local_var(tmp_path):
+    src = """
+    fn f() { }
+    pub fn main() i32 {
+        let x = f();
+        return 0;
+    }
+    """
+    with pytest.raises(VoidVarInitializerError):
+        compile_str(tmp_path, src)
+
+
+def test_void_mod_var(tmp_path):
+    src = """
+    fn f() { }
+    let x = f();
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(VoidVarInitializerError):
         compile_str(tmp_path, src)
 
 

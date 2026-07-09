@@ -480,9 +480,24 @@ class DerefInvalidTypError(UserError):
         super().__init__(ERROR, f'Cannot dereference value of type "{typ}"', span)
 
 
-class CannotTakeAddressOfComtimeValue(UserError):
-    def __init__(self, span: SrcSpan) -> None:
+class VoidVarInitializerError(UserError):
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Module variable initializer cannot be void", span)
+
+
+class CannotTakeAddressOfComptimeValueError(UserError):
+    def __init__(self, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot take address of comptime value", span)
+
+
+class CallExternFnAtComptimeError(UserError):
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Cannot call extern function at comptime", span)
+
+
+class SetNonLocalVarAtComptimeError(UserError):
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Cannot set non-local variable at comptime", span)
 
 
 class ModDoesNotExistError(UserError):

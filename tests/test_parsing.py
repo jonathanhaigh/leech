@@ -508,7 +508,7 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                 T("ident", Tok("a")),
                 T("ident", Tok("b")),
                 T("ident", Tok("c")),
-            )
+            ),
         ),
         ("typ", "x", T("basic_typ", "path", "ident", Tok("x"))),
         ("typ", "_", T("basic_typ", "path", "ident", Tok("_"))),

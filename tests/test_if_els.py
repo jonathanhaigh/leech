@@ -17,6 +17,20 @@ def test_if_false_else_expr_val(tmp_path):
     check_prog_output(tmp_path, src, "", 2)
 
 
+def test_comptime_if_false_else_expr_val(tmp_path):
+    src = """
+    let x = if (false) {
+        1
+    } else {
+        2
+    };
+    pub fn main() i32 {
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 2)
+
+
 def test_if_true_else_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
@@ -25,6 +39,20 @@ def test_if_true_else_expr_val(tmp_path):
         } else {
             2
         };
+    }
+    """
+    check_prog_output(tmp_path, src, "", 1)
+
+
+def test_comptime_if_true_else_expr_val(tmp_path):
+    src = """
+    let x = if (true) {
+        1
+    } else {
+        2
+    };
+    pub fn main() i32 {
+        return x;
     }
     """
     check_prog_output(tmp_path, src, "", 1)

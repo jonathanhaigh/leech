@@ -5,6 +5,7 @@ from l0.l0errors import (
     InvalidVoidRetError,
     MissingRetError,
     ItemNotFoundError,
+    RetNotInFnError,
 )
 from util import check_prog_output, compile_str
 
@@ -53,4 +54,15 @@ def test_return_typ_not_defined(tmp_path):
     pub fn main() i32 { 0 }
     """
     with pytest.raises(ItemNotFoundError):
+        compile_str(tmp_path, src)
+
+
+def test_comptime_return(tmp_path):
+    src = """
+    let x = {
+        return 1;
+    };
+    pub fn main() i32 { 0 }
+    """
+    with pytest.raises(RetNotInFnError):
         compile_str(tmp_path, src)

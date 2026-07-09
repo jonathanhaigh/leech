@@ -12,6 +12,16 @@ def test_int_arith(tmp_path):
     check_prog_output(tmp_path, src, "", 256 - 4)
 
 
+def test_comptime_int_arith(tmp_path):
+    src = """
+    let x = 1 - 2 * 3 + 4 - 5 * 6 / 10;
+    pub fn main() i32 {
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 256 - 4)
+
+
 @pytest.mark.parametrize(
     "lhs,rhs",
     (
