@@ -16,12 +16,9 @@ from l0.l0errors import (
     register_error,
 )
 from l0 import ir, l0ast as ast
-from l0 import naming
 from l0.src import SrcFile
 
 GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "l0.lark")
-
-var_name = naming.VarNamer()
 
 
 def build_parser(start_rule: str) -> Lark:
