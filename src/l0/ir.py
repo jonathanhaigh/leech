@@ -134,7 +134,7 @@ class Env:
             if m:
                 signage = SIGNED if m[1] == "i" else UNSIGNED
                 width = int(m[2])
-                typ = IntTyp(width, signage)
+                typ = IntTyp.get_or_create(width, signage)
                 self.items[ns].maps[-1][name] = typ
                 return typ
 
@@ -143,7 +143,9 @@ class Env:
     def add(self, name: str, item: Any, ns: Env.Namespace) -> None:
         if name in self.items[ns].maps[0]:
             existing = self.items[ns][name]
-            raise DuplicateItemDefnError(ns.item_kind(), name, item.span, existing.span)
+            raise DuplicateItemDefnError(
+                ns.item_kind(), name, item.span, ast.opt_span(existing)
+            )
         self.items[ns][name] = item
 
     def get_var(self, name: str) -> Optional[Value[PtrTyp]]:
@@ -213,7 +215,7 @@ def gep_typ(base_typ: PtrTyp, indeces: Sequence[Value]) -> PtrTyp:
 
                 field = nth(typ.fields.values(), index.value)
                 assert field is not None, (
-                    f"invalid field index {index.value} into {typ.name()}"
+                    f"invalid field index {index.value} into {typ.name}"
                 )
                 if field.mut == CONST:
                     mut = CONST
@@ -221,7 +223,7 @@ def gep_typ(base_typ: PtrTyp, indeces: Sequence[Value]) -> PtrTyp:
             case _:
                 raise NotImplementedError(typ)
 
-    return PtrTyp(typ, mut)
+    return PtrTyp.get_or_create(typ, mut)
 
 
 class Value(ABC, Generic[TypT, AstT]):
@@ -285,7 +287,7 @@ class ComptimeCStr(ComptimeValue[PtrTyp]):
     def __init__(self, value: str, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
         self.value = bytearray(value.encode() + b"\0")
-        self.initializer_typ = ArrayTyp(U8, len(self.value))
+        self.initializer_typ = ArrayTyp.get_or_create(U8, len(self.value))
 
     @override
     def calculate_typ(self) -> PtrTyp:
@@ -421,7 +423,7 @@ class ComptimeAlloc(ComptimePtr):
 
     @override
     def calculate_typ(self) -> PtrTyp:
-        return PtrTyp(self.value.typ, self.mut)
+        return PtrTyp.get_or_create(self.value.typ, self.mut)
 
     @override
     def load(self) -> ComptimeValue:
@@ -637,7 +639,7 @@ class AllocaInstr(Instr[PtrTyp]):
 
     @override
     def calculate_typ(self) -> PtrTyp:
-        return PtrTyp(self.allocated_typ, self.mut)
+        return PtrTyp.get_or_create(self.allocated_typ, self.mut)
 
 
 class StoreInstr(Instr[VoidTyp]):
@@ -988,9 +990,9 @@ class CfgBuilder:
             if block.typ != ret_typ:
                 raise InvalidRetTypError(
                     self.fn.name,
-                    ret_typ.name(),
+                    ret_typ.name,
                     ret_typ_span,
-                    block.typ.name(),
+                    block.typ.name,
                     ret_ast.span,
                 )
             self.ret(block, ret_ast)
@@ -1000,9 +1002,7 @@ class CfgBuilder:
             return
 
         if ret_typ != VOID:
-            raise MissingRetError(
-                self.fn.name, fn_ast.span, ret_typ.name(), ret_typ_span
-            )
+            raise MissingRetError(self.fn.name, fn_ast.span, ret_typ.name, ret_typ_span)
 
         self.ret(VoidValue(ret_ast), ret_ast)
 
@@ -1058,7 +1058,7 @@ class CfgBuilder:
         cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
         if cond.typ != BOOL:
             raise IfCondNotBoolError(
-                if_ast.condition.diag_str(), cond.typ.name(), if_ast.condition.span
+                if_ast.condition.diag_str(), cond.typ.name, if_ast.condition.span
             )
         then_bb = self.add_bb("if")
         end_bb = self.add_bb("endif")
@@ -1092,9 +1092,9 @@ class CfgBuilder:
             if have_then_value and have_els_value:
                 if then.typ != els.typ:
                     raise IfElsTypMismatchError(
-                        then.typ.name(),
+                        then.typ.name,
                         if_ast.then.span,
-                        els.typ.name(),
+                        els.typ.name,
                         if_ast.els.span,
                     )
                 phi_incoming = {els_last_bb: els, then_last_bb: then}
@@ -1109,7 +1109,7 @@ class CfgBuilder:
 
         if have_then_value:
             if then.typ != VOID:
-                raise IfTypNotVoidError(then.typ.name(), if_ast.then.span)
+                raise IfTypNotVoidError(then.typ.name, if_ast.then.span)
 
         self.set_position(end_bb)
         return VoidValue(if_ast)
@@ -1126,7 +1126,7 @@ class CfgBuilder:
         if cond.typ != BOOL:
             raise WhileCondNotBoolError(
                 while_ast.condition.diag_str(),
-                cond.typ.name(),
+                cond.typ.name,
                 while_ast.condition.span,
             )
 
@@ -1134,7 +1134,7 @@ class CfgBuilder:
         self.set_position(loop_bb)
         block = self.build_expr(while_ast.block, e, ExprContext.VALUE)
         if block.typ not in (NEVER, VOID):
-            raise WhileTypNotVoidError(block.typ.name(), while_ast.block.span)
+            raise WhileTypNotVoidError(block.typ.name, while_ast.block.span)
 
         if not self.curr_bb.terminated:
             self.branch(cond_bb, while_ast.block)
@@ -1152,7 +1152,7 @@ class CfgBuilder:
             and isinstance(callee.typ.pointee_typ, CallableTyp)
         ):
             raise NotCallableError(
-                callee_diag_str, callee.typ.name(), call_ast.callee.span
+                callee_diag_str, callee.typ.name, call_ast.callee.span
             )
 
         args = tuple(
@@ -1181,8 +1181,8 @@ class CfgBuilder:
                     callee_diag_str,
                     call_ast.span,
                     i + 1,
-                    arg.typ.name(),
-                    param_typs[i].name(),
+                    arg.typ.name,
+                    param_typs[i].name,
                     call_ast.args[i].span,
                 )
 
@@ -1197,7 +1197,7 @@ class CfgBuilder:
                 op_ast.op.name,
                 op_ast.op.span,
                 "left",
-                lhs.typ.name(),
+                lhs.typ.name,
                 "an integer type",
                 op_ast.lhs.span,
             )
@@ -1207,9 +1207,9 @@ class CfgBuilder:
             raise IncompatibleBinOpArgTypsError(
                 op_ast.op.name,
                 op_ast.op.span,
-                lhs.typ.name(),
+                lhs.typ.name,
                 op_ast.lhs.span,
-                rhs.typ.name(),
+                rhs.typ.name,
                 op_ast.rhs.span,
             )
 
@@ -1265,7 +1265,7 @@ class CfgBuilder:
             raise NotImplementedError("empty array expression")
 
         elt_typ = elts[0].typ
-        arr_typ = ArrayTyp(elt_typ, len(elts))
+        arr_typ = ArrayTyp.get_or_create(elt_typ, len(elts))
         arr = ComptimeArray(
             arr_typ,
             [UndefValue(arr_typ.element_typ, arr_expr)] * len(elts),
@@ -1276,7 +1276,7 @@ class CfgBuilder:
             elt_ast = arr_expr.elements[i]
             if elt.typ != elt_typ:
                 raise IncompatibleTypInArrayExpr(
-                    elt.typ.name(), i, elt_ast.span, arr_typ.name()
+                    elt.typ.name, i, elt_ast.span, arr_typ.name
                 )
             elt_index = ComptimeInt(USIZE, i, elt_ast)
             arr = self.curr_bb.insert_value(arr, elt, (elt_index,), elt_ast)
@@ -1290,12 +1290,12 @@ class CfgBuilder:
         arr_ptr_typ = checked_cast(arr_ptr.typ, PtrTyp)
         if not isinstance(arr_ptr_typ.pointee_typ, ArrayTyp):
             raise IndexIntoInvalidTypError(
-                arr_ptr_typ.pointee_typ.name(), aa_expr.array.span
+                arr_ptr_typ.pointee_typ.name, aa_expr.array.span
             )
 
         index = self.build_expr(aa_expr.index, e, ExprContext.VALUE)
         if index.typ != USIZE:
-            raise InvalidIndexTypError(index.typ.name(), aa_expr.index.span)
+            raise InvalidIndexTypError(index.typ.name, aa_expr.index.span)
 
         # TODO: bounds check
 
@@ -1311,9 +1311,7 @@ class CfgBuilder:
     ) -> Value:
         struct_typ = Typ.from_ast(struct_expr.typ, e)
         if not isinstance(struct_typ, StructTyp):
-            raise TypeOfStructExprNotStructError(
-                struct_typ.name(), struct_expr.typ.span
-            )
+            raise TypeOfStructExprNotStructError(struct_typ.name, struct_expr.typ.span)
 
         struct = ComptimeStruct(
             struct_typ,
@@ -1330,7 +1328,7 @@ class CfgBuilder:
                 raise InvalidStructFieldError(
                     field_expr.ident.name,
                     field_expr.ident.span,
-                    struct_typ.name(),
+                    struct_typ.name,
                     struct_typ.span,
                 )
             if field_expr.ident.name in field_values:
@@ -1346,16 +1344,16 @@ class CfgBuilder:
         for i, field in enumerate(struct_typ.fields.values()):
             if field.name not in field_values:
                 raise MissingFieldInStructExprError(
-                    field.name, field.ast.span, struct_typ.name(), struct_expr.span
+                    field.name, field.ast.span, struct_typ.name, struct_expr.span
                 )
             field_value = field_values[field.name]
             if field.typ != field_value.typ:
                 raise IncompatibleStructFieldTypError(
                     field.name,
-                    struct_typ.name(),
-                    field_value.typ.name(),
+                    struct_typ.name,
+                    field_value.typ.name,
                     field_value.span,
-                    field.typ.name(),
+                    field.typ.name,
                     field.ast.span,
                 )
             field_index = ComptimeInt(I32, i, field_value.ast)
@@ -1374,12 +1372,12 @@ class CfgBuilder:
         struct_ptr_typ = checked_cast(struct_ptr.typ, PtrTyp)
         struct_typ = struct_ptr_typ.pointee_typ
         if not isinstance(struct_typ, StructTyp):
-            raise FieldAccessIntoInvalidTypError(struct_typ.name(), sa_expr.struct.span)
+            raise FieldAccessIntoInvalidTypError(struct_typ.name, sa_expr.struct.span)
 
         field_name = sa_expr.field.name
         if field_name not in struct_typ.fields:
             raise InvalidStructFieldError(
-                field_name, sa_expr.field.span, struct_typ.name(), struct_typ.span
+                field_name, sa_expr.field.span, struct_typ.name, struct_typ.span
             )
 
         zero = ComptimeInt(USIZE, 0, sa_expr)
@@ -1396,7 +1394,7 @@ class CfgBuilder:
     ) -> Value:
         ptr = self.build_expr(d_expr.ptr, e, ExprContext.VALUE)
         if not isinstance(ptr.typ, PtrTyp) or isinstance(ptr.typ.pointee_typ, FnTyp):
-            raise DerefInvalidTypError(ptr.typ.name(), d_expr.ptr.span)
+            raise DerefInvalidTypError(ptr.typ.name, d_expr.ptr.span)
         if ctx == ExprContext.PLACE:
             return ptr
         else:
@@ -1431,9 +1429,9 @@ class CfgBuilder:
             if expr.typ != ret_typ:
                 raise InvalidRetTypError(
                     self.fn.name,
-                    ret_typ.name(),
+                    ret_typ.name,
                     ret_typ_span,
-                    expr.typ.name(),
+                    expr.typ.name,
                     ret_ast.expr.span,
                 )
             self.ret(expr, ret_ast)
@@ -1441,7 +1439,7 @@ class CfgBuilder:
 
         if ret_typ != VOID:
             raise InvalidVoidRetError(
-                self.fn.name, ret_typ.name(), ret_typ_span, ret_ast.span
+                self.fn.name, ret_typ.name, ret_typ_span, ret_ast.span
             )
 
         self.ret(VoidValue(ret_ast), ret_ast)
@@ -1547,7 +1545,7 @@ class ModItem:
     @property
     def qualified_name(self) -> str:
         if self.qualify_name:
-            return f"{self.mod.name()}.{self.name}"
+            return f"{self.mod.name}.{self.name}"
         else:
             return self.name
 
@@ -1605,7 +1603,7 @@ class BuiltinFn(FnSpec):
 
     @override
     def calculate_typ(self) -> PtrTyp:
-        return PtrTyp(self._fn_typ, CONST)
+        return PtrTyp.get_or_create(self._fn_typ, CONST)
 
     @override
     def calculate_params(self) -> tuple[Param, ...]:
@@ -1643,7 +1641,9 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
         param_typs = (
             Typ.from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
         )
-        return PtrTyp(FnTyp(ret_typ, tuple(param_typs)), CONST)
+        return PtrTyp.get_or_create(
+            FnTyp.get_or_create(ret_typ, tuple(param_typs)), CONST
+        )
 
     @override
     def calculate_params(self) -> tuple[Param, ...]:
@@ -1706,19 +1706,20 @@ class ModVar(ComptimePtr[ast.VarDefn]):
 
     @override
     def calculate_typ(self) -> PtrTyp:
-        return PtrTyp(self.initializer.typ, self.mut)
+        return PtrTyp.get_or_create(self.initializer.typ, self.mut)
 
 
 class Mod(Typ):
     _name: Final[str]
+    ast: Final[ast.Mod]
     items: Final[list[ModItem]]
     env: Final[Env]
 
     @override
     def __init__(self, name: str, mod_ast: ast.Mod) -> None:
-        super().__init__(mod_ast)
         builtin_env = Env()
         self._name = name
+        self.ast = mod_ast
         self.items = []
         self.env = builtin_env.new_child()
 
@@ -1729,14 +1730,7 @@ class Mod(Typ):
         for defn_ast in mod_ast.defns:
             self._build_defn(defn_ast)
 
-    @override
-    def __eq__(self, other: Any) -> bool:
-        return type(self) is type(other) and self._name == other._name
-
-    @override
-    def __hash__(self) -> int:
-        return hash((type(self), self._name))
-
+    @property
     @override
     def name(self) -> str:
         return self._name
@@ -1757,7 +1751,7 @@ class Mod(Typ):
                     False,
                 )
             case ast.FnDefn():
-                qualify_name = self.name() != "main" or defn_ast.name.name != "main"
+                qualify_name = self.name != "main" or defn_ast.name.name != "main"
                 self._add_item(
                     defn_ast.name.name,
                     Access.from_ast(defn_ast.access),
@@ -1768,7 +1762,7 @@ class Mod(Typ):
                 self._add_item(
                     defn_ast.ident.name,
                     Access.from_ast(defn_ast.access),
-                    StructTyp(defn_ast, self.env),
+                    StructTyp.create(defn_ast, self.env),
                 )
             case ast.Import():
                 mod_name = defn_ast.ident.name

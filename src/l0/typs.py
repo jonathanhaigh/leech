@@ -1,16 +1,15 @@
 from abc import ABC, abstractmethod
+from collections.abc import Hashable
 from enum import Enum
 from functools import cached_property
 from types import MappingProxyType
-from typing import Any, Final, Generic, Optional, TypeVar, override
+from typing import ClassVar, Final, Optional, Self, override
+from weakref import WeakValueDictionary
 
 from l0 import ir, l0ast as ast
-from l0.asserts import assert_eq
+from l0.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
 from l0.l0errors import DuplicateFieldInStructDefnError
-from l0.opt_util import opt_map
 from l0.src import SrcSpan
-
-AstT = TypeVar("AstT", bound="ast.Ast", covariant=True, default="ast.Ast")
 
 
 class Mutability(Enum):
@@ -38,27 +37,38 @@ SIGNED = Signage.SIGNED
 UNSIGNED = Signage.UNSIGNED
 
 
-class Typ(ABC, Generic[AstT]):
-    ast: Final[Optional[AstT]]
+class Typ(ABC):
+    _cache: ClassVar[WeakValueDictionary[Hashable, Typ]] = WeakValueDictionary()
 
-    def __init__(self, ast: Optional[AstT] = None) -> None:
-        self.ast = ast
+    @classmethod
+    def create(cls, *args: Hashable) -> Self:
+        key = cls.cache_key(*args)
+        assert_not_in(key, Typ._cache)
+        obj = cls(*args)
+        Typ._cache[key] = obj
+        return obj
 
-    @abstractmethod
-    def __eq__(self, other: Any) -> bool:
-        pass
+    @classmethod
+    def get(cls, *args: Hashable) -> Self:
+        return checked_cast(Typ._cache[cls.cache_key(*args)], cls)
 
-    @abstractmethod
-    def __hash__(self) -> int:
-        pass
+    @classmethod
+    def get_or_create(cls, *args: Hashable) -> Self:
+        key = cls.cache_key(*args)
+        obj = Typ._cache.get(key)
+        if obj is None:
+            obj = cls(*args)
+            Typ._cache[key] = obj
+        return checked_cast(obj, cls)
 
+    @classmethod
+    def cache_key(cls, *args: Hashable) -> Hashable:
+        return (cls, *args)
+
+    @property
     @abstractmethod
     def name(self) -> str:
         pass
-
-    @property
-    def span(self) -> Optional[SrcSpan]:
-        return opt_map(self.ast, lambda x: x.span)
 
     @staticmethod
     def from_ast(typ_ast: ast.Typ, e: ir.Env) -> Typ:
@@ -67,9 +77,9 @@ class Typ(ABC, Generic[AstT]):
                 typ = e.resolve_typ(typ_ast.path)
                 return typ
             case ast.PtrTyp():
-                return PtrTyp(Typ.from_ast(typ_ast.pointee_typ, e), CONST)
+                return PtrTyp.get_or_create(Typ.from_ast(typ_ast.pointee_typ, e), CONST)
             case ast.ArrayTyp():
-                return ArrayTyp(
+                return ArrayTyp.get_or_create(
                     Typ.from_ast(typ_ast.element_typ, e), typ_ast.length.value
                 )
             case _:
@@ -80,24 +90,11 @@ class IntTyp(Typ):
     width: Final[int]
     signage: Final[Signage]
 
-    @override
     def __init__(self, width: int, signage: Signage) -> None:
-        super().__init__()
         self.width = width
         self.signage = signage
 
-    @override
-    def __eq__(self, other: Any) -> bool:
-        return (
-            type(self) is type(other)
-            and self.width == other.width
-            and self.signage == other.signage
-        )
-
-    @override
-    def __hash__(self) -> int:
-        return hash((self.width, self.signage))
-
+    @property
     @override
     def name(self) -> str:
         sign_char = "i" if self.signage == SIGNED else "u"
@@ -105,14 +102,7 @@ class IntTyp(Typ):
 
 
 class BoolTyp(Typ):
-    @override
-    def __eq__(self, other: Any) -> bool:
-        return type(self) is type(other)
-
-    @override
-    def __hash__(self) -> int:
-        return hash(type(self))
-
+    @property
     @override
     def name(self) -> str:
         return "bool"
@@ -122,92 +112,53 @@ class CallableTyp(Typ):
     ret_typ: Final[Typ]
     param_typs: Final[tuple[Typ, ...]]
 
-    @override
     def __init__(self, ret_typ: Typ, param_typs: tuple[Typ, ...]) -> None:
-        super().__init__()
         self.ret_typ = ret_typ
         self.param_typs = param_typs
 
 
 class FnTyp(CallableTyp):
-    @override
-    def __eq__(self, other: Any) -> bool:
-        return (
-            type(self) is type(other)
-            and self.ret_typ == other.ret_typ
-            and self.param_typs == other.param_typs
-        )
-
-    @override
-    def __hash__(self) -> int:
-        return hash((self.ret_typ, self.param_typs))
-
+    @property
     @override
     def name(self) -> str:
-        param_strs = ", ".join(typ.name() for typ in self.param_typs)
-        return f"fn({param_strs}) {self.ret_typ.name()}, "
+        param_strs = ", ".join(typ.name for typ in self.param_typs)
+        return f"fn({param_strs}) {self.ret_typ.name}"
 
 
 class PtrTyp(Typ):
     pointee_typ: Final[Typ]
-    mut: Mutability
+    mut: Final[Mutability]
 
-    @override
     def __init__(self, pointee_typ: Typ, mut: Mutability) -> None:
-        super().__init__()
         self.pointee_typ = pointee_typ
         self.mut = mut
 
-    @override
-    def __eq__(self, other: Any) -> bool:
-        return (
-            type(self) is type(other)
-            and self.mut == other.mut
-            and self.pointee_typ == other.pointee_typ
-        )
-
-    @override
-    def __hash__(self) -> int:
-        return hash((self.mut, self.pointee_typ))
-
+    @property
     @override
     def name(self) -> str:
         mut_str = "mut " if self.mut == MUT else ""
-        return f"{mut_str}*{self.pointee_typ.name()}"
+        return f"{mut_str}*{self.pointee_typ.name}"
 
     def new_with_mut(self, mut: Mutability) -> PtrTyp:
-        return PtrTyp(self.pointee_typ, mut)
+        return PtrTyp.get_or_create(self.pointee_typ, mut)
 
 
 class ArrayTyp(Typ):
     element_typ: Final[Typ]
     length: Final[int]
 
-    @override
     def __init__(self, element_typ: Typ, length: int) -> None:
-        super().__init__()
         self.element_typ = element_typ
         self.length = length
 
-    @override
-    def __eq__(self, other: Any) -> bool:
-        return (
-            type(self) is type(other)
-            and self.element_typ == other.element_typ
-            and self.length == other.length
-        )
-
-    @override
-    def __hash__(self) -> int:
-        return hash((self.element_typ, self.length))
-
+    @property
     @override
     def name(self) -> str:
-        return f"[{self.element_typ.name()}; {self.length}]"
+        return f"[{self.element_typ.name}; {self.length}]"
 
 
 class StructField:
-    index: int
+    index: Final[int]
     ast: Final[ast.StructFieldDefn]
     env: Final[ir.Env]
 
@@ -233,30 +184,28 @@ class StructField:
         return Mutability.from_ast(self.ast.mut)
 
 
-class StructTyp(Typ["ast.StructDefn"]):
+class StructTyp(Typ):
+    ast: Final[ast.StructDefn]
     env: Final[ir.Env]
 
-    @override
     def __init__(self, ast: ast.StructDefn, e: ir.Env) -> None:
-        super().__init__(ast)
+        self.ast = ast
         self.env = e
 
     @override
-    def __eq__(self, other: Any) -> bool:
-        return self is other
+    @classmethod
+    def cache_key(cls, *args: Hashable) -> Hashable:
+        assert_gt(len(args), 0)
+        struct_ast = checked_cast(args[0], ast.StructDefn)
+        return (cls, struct_ast)
 
-    @override
-    def __hash__(self) -> int:
-        return hash(id(self))
-
+    @property
     @override
     def name(self) -> str:
-        assert self.ast is not None
         return self.ast.ident.name
 
     @cached_property
     def fields(self) -> MappingProxyType[str, StructField]:
-        assert self.ast is not None
         fields = {}
         for i, field_ast in enumerate(self.ast.fields):
             name = field_ast.ident.name
@@ -269,44 +218,34 @@ class StructTyp(Typ["ast.StructDefn"]):
 
         return fields.items().mapping
 
+    @property
+    def span(self) -> SrcSpan:
+        return self.ast.span
+
 
 class VoidTyp(Typ):
-    @override
-    def __eq__(self, other: Any) -> bool:
-        return type(self) is type(other)
-
-    @override
-    def __hash__(self) -> int:
-        return hash(type(self))
-
+    @property
     @override
     def name(self) -> str:
         return "void"
 
 
 class NeverTyp(Typ):
-    @override
-    def __eq__(self, other: Any) -> bool:
-        return type(self) is type(other)
-
-    @override
-    def __hash__(self) -> int:
-        return hash(type(self))
-
+    @property
     @override
     def name(self) -> str:
         return "never"
 
 
-U8 = IntTyp(8, UNSIGNED)
-I8 = IntTyp(8, SIGNED)
-U32 = IntTyp(32, UNSIGNED)
-I32 = IntTyp(32, SIGNED)
+U8 = IntTyp.get_or_create(8, UNSIGNED)
+I8 = IntTyp.get_or_create(8, SIGNED)
+U32 = IntTyp.get_or_create(32, UNSIGNED)
+I32 = IntTyp.get_or_create(32, SIGNED)
 ADDR_SIZE = 64
-USIZE = IntTyp(ADDR_SIZE, UNSIGNED)
-ISIZE = IntTyp(ADDR_SIZE, SIGNED)
+USIZE = IntTyp.get_or_create(ADDR_SIZE, UNSIGNED)
+ISIZE = IntTyp.get_or_create(ADDR_SIZE, SIGNED)
 CINT = I32
-BOOL = BoolTyp()
-CSTR = PtrTyp(U8, CONST)
-VOID = VoidTyp()
-NEVER = NeverTyp()
+BOOL = BoolTyp.get_or_create()
+CSTR = PtrTyp.get_or_create(U8, CONST)
+VOID = VoidTyp.get_or_create()
+NEVER = NeverTyp.get_or_create()

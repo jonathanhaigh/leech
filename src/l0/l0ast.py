@@ -232,7 +232,7 @@ class IntLit(Expr):
             signage = SIGNED
             width = 32
 
-        self.typ = typs.IntTyp(width, signage)
+        self.typ = typs.IntTyp.get_or_create(width, signage)
         self.value = int(m[1])
 
     @override
@@ -796,3 +796,14 @@ class Mod(Ast):
     @override
     def diag_str(self) -> str:
         return "module"
+
+
+def opt_ast(obj: Any) -> Optional[Ast]:
+    attr = getattr(obj, "ast", None)
+    if isinstance(attr, Ast):
+        return attr
+    return None
+
+
+def opt_span(obj: Any) -> Optional[SrcSpan]:
+    return opt_map(opt_ast(obj), lambda x: x.span)
