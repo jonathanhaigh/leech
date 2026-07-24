@@ -111,23 +111,21 @@ class Env:
                 case Env.Namespace.TYPS:
                     return "type"
 
-    items: dict[Env.Namespace, ChainMap[str, Typ | Value[PtrTyp]]]
+    items: ChainMap[tuple[Env.Namespace, str], Typ | Value[PtrTyp]]
 
     def __init__(self, parent: Optional[Env] = None) -> None:
         if parent is None:
-            self.items = {
-                Env.Namespace.VARS: ChainMap(),
-                Env.Namespace.TYPS: ChainMap(),
-            }
+            self.items = ChainMap()
         else:
-            self.items = {ns: cm.new_child() for ns, cm in parent.items.items()}
+            self.items = parent.items.new_child()
 
     def new_child(self) -> Env:
         return Env(self)
 
-    def get(self, name: str, ns: Env.Namespace) -> Any:
-        if name in self.items[ns]:
-            return self.items[ns][name]
+    def get(self, ns: Env.Namespace, name: str) -> Any:
+        key = (ns, name)
+        if key in self.items:
+            return self.items[key]
 
         if ns == Env.Namespace.TYPS:
             m = re.fullmatch("([iu])([1-9][0-9]*)", name)
@@ -135,38 +133,39 @@ class Env:
                 signage = SIGNED if m[1] == "i" else UNSIGNED
                 width = int(m[2])
                 typ = IntTyp.get_or_create(width, signage)
-                self.items[ns].maps[-1][name] = typ
+                self.items.maps[-1][key] = typ
                 return typ
 
         return None
 
-    def add(self, name: str, item: Any, ns: Env.Namespace) -> None:
-        if name in self.items[ns].maps[0]:
-            existing = self.items[ns][name]
+    def add(self, ns: Env.Namespace, name: str, item: Any) -> None:
+        key = (ns, name)
+        if key in self.items.maps[0]:
+            existing = self.items[key]
             raise DuplicateItemDefnError(
                 ns.item_kind(), name, item.span, ast.opt_span(existing)
             )
-        self.items[ns][name] = item
+        self.items[key] = item
 
     def get_var(self, name: str) -> Optional[Value[PtrTyp]]:
-        return self.get(name, Env.Namespace.VARS)
+        return self.get(Env.Namespace.VARS, name)
 
     def add_var(self, name: str, var: Value[PtrTyp]) -> None:
-        return self.add(name, var, Env.Namespace.VARS)
+        return self.add(Env.Namespace.VARS, name, var)
 
     def get_typ(self, name: str) -> Optional[Typ]:
-        return self.get(name, Env.Namespace.TYPS)
+        return self.get(Env.Namespace.TYPS, name)
 
     def add_typ(self, name: str, typ: Typ) -> None:
-        return self.add(name, typ, Env.Namespace.TYPS)
+        return self.add(Env.Namespace.TYPS, name, typ)
 
     @staticmethod
     def _resolve_path_segment(
-        container: Env | Mod, ident: ast.Ident, ns: Env.Namespace
+        ns: Env.Namespace, container: Env | Mod, ident: ast.Ident
     ) -> Any:
         match container:
             case Env():
-                res = container.get(ident.name, ns)
+                res = container.get(ns, ident.name)
             case Mod():
                 res = next(
                     (
@@ -183,19 +182,19 @@ class Env:
         return res
 
     def resolve_var(self, path: ast.Path) -> Value[PtrTyp]:
-        return cast(Value[PtrTyp], self.resolve_path(path, Env.Namespace.VARS))
+        return cast(Value[PtrTyp], self.resolve_path(Env.Namespace.VARS, path))
 
     def resolve_typ(self, path: ast.Path) -> Typ:
-        return cast(Typ, self.resolve_path(path, Env.Namespace.TYPS))
+        return cast(Typ, self.resolve_path(Env.Namespace.TYPS, path))
 
-    def resolve_path(self, path: ast.Path, ns: Env.Namespace) -> Any:
+    def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:
         assert_ge(len(path.idents), 1)
 
         container = self
         for ident in path.idents[:-1]:
-            container = Env._resolve_path_segment(container, ident, Env.Namespace.TYPS)
+            container = Env._resolve_path_segment(Env.Namespace.TYPS, container, ident)
 
-        return Env._resolve_path_segment(container, path.idents[-1], ns)
+        return Env._resolve_path_segment(ns, container, path.idents[-1])
 
 
 def gep_typ(base_typ: PtrTyp, indeces: Sequence[Value]) -> PtrTyp:
@@ -1249,7 +1248,7 @@ class CfgBuilder:
                 raise NotImplementedError(op_ast.op.name)
 
     def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
-        var = e.resolve_path(var_ast.path, Env.Namespace.VARS)
+        var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
         if isinstance(var, FnSpec):
             return var
         if ctx == ExprContext.PLACE:
