@@ -5,6 +5,15 @@ from l0.main import compile
 from l0.src import SrcFile
 
 
+def find_pos(src: str, substr: str) -> tuple[int, int]:
+    """Return the 1-based (line, column) of the start of substr in src."""
+    idx = src.index(substr)
+    before = src[:idx]
+    line = before.count("\n") + 1
+    col = idx - before.rfind("\n")
+    return line, col
+
+
 def write_whole_file(path: Path, content: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
