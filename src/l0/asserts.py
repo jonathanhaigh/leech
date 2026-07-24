@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 
 def _message_str(message: Optional[str]) -> str:
-    return "" if message is not None else f"\n{message}"
+    return "" if message is None else f"\n{message}"
 
 
 def _assert_op(

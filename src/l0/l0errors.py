@@ -113,7 +113,7 @@ class InvalidBinOpArgTypError(UserError):
             (
                 f'{arg_name.capitalize()} operand of binary operation "{op}"'
                 f' has invalid type "{given_typ}",'
-                f' expecting {expected_typ}"'
+                f' expecting "{expected_typ}"'
             ),
             arg_span,
         )
@@ -390,7 +390,7 @@ class IfElsTypMismatchError(UserError):
         els_typ: str,
         els_span: Optional[SrcSpan],
     ) -> None:
-        super().__init__(ERROR, '"if" and "else" have mismatching types"', None)
+        super().__init__(ERROR, '"if" and "else" have mismatching types', None)
         self.add_extra(NOTE, f'"if" type is "{then_typ}"', then_span)
         self.add_extra(NOTE, f'"else" type is "{els_typ}"', els_span)
 

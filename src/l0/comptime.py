@@ -13,7 +13,7 @@ class Interpreter:
     cfg: Final[ir.Cfg]
     curr_bb: ir.BasicBlock
     prev_bb: Optional[ir.BasicBlock]
-    curr_instr: int
+    curr_instr_index: int
     ret_value: Optional[ir.ComptimeValue]
 
     def __init__(

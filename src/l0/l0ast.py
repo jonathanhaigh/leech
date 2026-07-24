@@ -432,7 +432,7 @@ class BinOpExpr(Expr):
 
     @override
     def diag_str(self) -> str:
-        return f"binary {self.op} operation expression"
+        return f"binary {self.op.name} operation expression"
 
 
 class UnaryOpExpr(Expr):
@@ -447,7 +447,7 @@ class UnaryOpExpr(Expr):
 
     @override
     def diag_str(self) -> str:
-        return f"unary {self.op} operation expression"
+        return f"unary {self.op.name} operation expression"
 
 
 class Stmt(Ast):
