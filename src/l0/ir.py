@@ -32,7 +32,6 @@ from l0.asserts import (
 )
 from l0.l0errors import (
     AssignToConstError,
-    AssignToVoidError,
     DerefInvalidTypError,
     DuplicateFieldInStructExprError,
     DuplicateItemDefnError,
@@ -1439,8 +1438,7 @@ class CfgBuilder:
         place = self.build_expr(ass_ast.place, e, ExprContext.PLACE)
 
         place_typ = checked_cast(place.typ, PtrTyp)
-        if place_typ.pointee_typ == VOID:
-            raise AssignToVoidError(ass_ast.place.span)
+        assert place_typ.pointee_typ != VOID, "assignment place cannot be void"
         if place_typ.mut == CONST:
             raise AssignToConstError(ass_ast.place.span)
 
