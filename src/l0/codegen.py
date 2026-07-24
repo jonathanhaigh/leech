@@ -7,6 +7,7 @@ from l0 import ir
 from l0.asserts import assert_eq, checked_cast
 from l0.naming import VarNamer
 from l0.typs import (
+    USIZE,
     VOID,
     ArrayTyp,
     BoolTyp,
@@ -254,8 +255,11 @@ class Compiler:
                     ctx.ll_values.get(instr.dest),
                 )
             case ir.GepInstr():
-                ll_indeces = [ctx.ll_values.get(i) for i in instr.indeces]
-                return ctx.ll_builder.gep(ctx.ll_values.get(instr.base), ll_indeces)
+                zero = ll.Constant(self._ll_mod_items.get(USIZE), 0)
+                ll_index = ctx.ll_values.get(instr.index)
+                return ctx.ll_builder.gep(
+                    ctx.ll_values.get(instr.base), [zero, ll_index]
+                )
             case ir.InsertValueInstr():
                 return ctx.ll_builder.insert_value(
                     ctx.ll_values.get(instr.aggregate),
@@ -321,9 +325,10 @@ class Compiler:
                 )
                 return ll.Constant(self._ll_mod_items.get(value.typ), fields)
             case ir.ComptimeGep():
-                ll_indeces = [self._ll_mod_items.get(i) for i in value.indeces]
+                zero = ll.Constant(self._ll_mod_items.get(USIZE), 0)
+                ll_index = self._ll_mod_items.get(value.index)
                 base = self._ll_mod_items.get(value.base)
                 assert isinstance(base, (ll.GlobalValue, ll.Constant))
-                return base.gep(ll_indeces)
+                return base.gep([zero, ll_index])
             case _:
                 raise NotImplementedError(value)

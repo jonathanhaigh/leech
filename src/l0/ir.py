@@ -74,7 +74,6 @@ from l0.typs import (
     CSTR,
     I32,
     ISIZE,
-    MUT,
     NEVER,
     SIGNED,
     U8,
@@ -197,30 +196,26 @@ class Env:
         return Env._resolve_path_segment(ns, container, path.idents[-1])
 
 
-def gep_typ(base_typ: PtrTyp, indeces: Sequence[Value]) -> PtrTyp:
-    mut = MUT
-    typ = base_typ
-    for index in indeces:
-        match typ:
-            case PtrTyp():
-                mut = typ.mut
-                typ = typ.pointee_typ
-            case ArrayTyp():
-                typ = typ.element_typ
-            case StructTyp():
-                index = checked_cast(
-                    index, ComptimeInt, "struct indeces must be comptime known"
-                )
+def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
+    mut = base_typ.mut
+    typ = base_typ.pointee_typ
+    match typ:
+        case ArrayTyp():
+            typ = typ.element_typ
+        case StructTyp():
+            index = checked_cast(
+                index, ComptimeInt, "struct indeces must be comptime known"
+            )
 
-                field = nth(typ.fields.values(), index.value)
-                assert field is not None, (
-                    f"invalid field index {index.value} into {typ.name}"
-                )
-                if field.mut == CONST:
-                    mut = CONST
-                typ = field.typ
-            case _:
-                raise NotImplementedError(typ)
+            field = nth(typ.fields.values(), index.value)
+            assert field is not None, (
+                f"invalid field index {index.value} into {typ.name}"
+            )
+            if field.mut == CONST:
+                mut = CONST
+            typ = field.typ
+        case _:
+            raise NotImplementedError(typ)
 
     return PtrTyp.get_or_create(typ, mut)
 
@@ -439,43 +434,29 @@ class ComptimeAlloc(ComptimePtr):
 
 class ComptimeGep(ComptimePtr):
     base: Final[ComptimePtr]
-    indeces: Final[tuple[ComptimeInt, ...]]
+    index: Final[ComptimeInt]
 
     @override
     def __init__(
-        self, base: ComptimePtr, indeces: Sequence[ComptimeInt], ast: Optional[ast.Ast]
+        self, base: ComptimePtr, index: ComptimeInt, ast: Optional[ast.Ast]
     ) -> None:
-        assert_gt(len(indeces), 0)
-        assert_eq(indeces[0].value, 0)
         super().__init__(ast)
         self.base = base
-        self.indeces = tuple(indeces)
+        self.index = index
 
     @override
     def calculate_typ(self) -> PtrTyp:
-        return gep_typ(self.base.typ, self.indeces)
+        return gep_typ(self.base.typ, self.index)
 
     @override
     def load(self) -> ComptimeValue:
-        indeces = [i.value for i in self.indeces]
-        value = self.base.load()
-        for index in indeces[1:]:
-            value = checked_cast(value, ComptimeAggregate)
-            value = value.get_element(index)
-        return value
+        agg = checked_cast(self.base.load(), ComptimeAggregate)
+        return agg.get_element(self.index.value)
 
     @override
     def store(self, value: ComptimeValue) -> None:
-        indeces = [i.value for i in self.indeces]
-        if len(indeces) == 1:
-            self.base.store(value)
-            return
-        agg = self.base.load()
-        for index in indeces[1:-1]:
-            agg = checked_cast(agg, ComptimeAggregate)
-            agg = agg.get_element(index)
-        agg = checked_cast(agg, ComptimeAggregate)
-        agg.set_element(value, indeces[-1])
+        agg = checked_cast(self.base.load(), ComptimeAggregate)
+        agg.set_element(value, self.index.value)
 
     @override
     def is_temporary(self) -> bool:
@@ -662,24 +643,24 @@ class StoreInstr(Instr[VoidTyp]):
 
 class GepInstr(Instr[PtrTyp]):
     base: Final[Value]
-    indeces: tuple[Value, ...]
+    index: Value
 
     @override
     def __init__(
         self,
         bb: BasicBlock,
         base: Value,
-        indeces: Sequence[Value],
+        index: Value,
         ast: Optional[ast.Ast],
     ) -> None:
         super().__init__(bb, ast)
         self.base = base
-        self.indeces = tuple(indeces)
+        self.index = index
 
     @override
     def calculate_typ(self) -> PtrTyp:
         base_typ = checked_cast(self.base.typ, PtrTyp)
-        return gep_typ(base_typ, self.indeces)
+        return gep_typ(base_typ, self.index)
 
 
 class InsertValueInstr(Instr):
@@ -885,10 +866,8 @@ class BasicBlock:
     def store(self, value: Value, dest: Value, ast: Optional[ast.Ast]) -> StoreInstr:
         return self._add_instr(StoreInstr(self, value, dest, ast))
 
-    def gep(
-        self, base: Value, indeces: list[Value], ast: Optional[ast.Ast]
-    ) -> GepInstr:
-        return self._add_instr(GepInstr(self, base, indeces, ast))
+    def gep(self, base: Value, index: Value, ast: Optional[ast.Ast]) -> GepInstr:
+        return self._add_instr(GepInstr(self, base, index, ast))
 
     def insert_value(
         self,
@@ -1298,8 +1277,7 @@ class CfgBuilder:
 
         # TODO: bounds check
 
-        zero = ComptimeInt(USIZE, 0, aa_expr)
-        elt_ptr = self.curr_bb.gep(arr_ptr, [zero, index], aa_expr)
+        elt_ptr = self.curr_bb.gep(arr_ptr, index, aa_expr)
         if ctx == ExprContext.PLACE:
             return elt_ptr
         else:
@@ -1379,9 +1357,8 @@ class CfgBuilder:
                 field_name, sa_expr.field.span, struct_typ.name, struct_typ.span
             )
 
-        zero = ComptimeInt(USIZE, 0, sa_expr)
         index = ComptimeInt(I32, struct_typ.fields[field_name].index, sa_expr)
-        field_ptr = self.curr_bb.gep(struct_ptr, [zero, index], sa_expr)
+        field_ptr = self.curr_bb.gep(struct_ptr, index, sa_expr)
 
         if ctx == ExprContext.PLACE:
             return field_ptr

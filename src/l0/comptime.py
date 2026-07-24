@@ -110,13 +110,10 @@ class Interpreter:
                 base = checked_cast(
                     self._get_comptime_value(instr.base), ir.ComptimePtr
                 )
-                indeces = []
-                for instr_index in instr.indeces:
-                    index = checked_cast(
-                        self._get_comptime_value(instr_index), ir.ComptimeInt
-                    )
-                    indeces.append(index)
-                self.registers[instr] = ir.ComptimeGep(base, indeces, instr.ast)
+                index = checked_cast(
+                    self._get_comptime_value(instr.index), ir.ComptimeInt
+                )
+                self.registers[instr] = ir.ComptimeGep(base, index, instr.ast)
             case ir.InsertValueInstr():
                 value = self._get_comptime_value(instr.value)
                 base_agg = self._get_comptime_value(instr.aggregate).copy()
