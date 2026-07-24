@@ -4,6 +4,7 @@ from l0.l0errors import (
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
     InvalidIndexTypError,
+    VoidArrayElementError,
 )
 
 from util import check_prog_output, compile_str
@@ -158,4 +159,37 @@ def test_comptime_empty_array_expr(tmp_path):
     }
     """
     with pytest.raises(NotImplementedError):
+        compile_str(tmp_path, src)
+
+
+def test_void_array_element(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = [{}];
+        return 0;
+    }
+    """
+    with pytest.raises(VoidArrayElementError):
+        compile_str(tmp_path, src)
+
+
+def test_comptime_void_array_element(tmp_path):
+    src = """
+    let x = [{}];
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(VoidArrayElementError):
+        compile_str(tmp_path, src)
+
+
+def test_void_array_element_from_later_element(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = [1, {}];
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleTypInArrayExpr):
         compile_str(tmp_path, src)

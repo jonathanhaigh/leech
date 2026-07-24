@@ -61,6 +61,7 @@ from l0.l0errors import (
     TooManyArgsError,
     TypeOfStructExprNotStructError,
     UnreachableCodeWarning,
+    VoidArrayElementError,
     VoidVarInitializerError,
     WhileCondNotBoolError,
     WhileTypNotVoidError,
@@ -1244,6 +1245,8 @@ class CfgBuilder:
             raise NotImplementedError("empty array expression")
 
         elt_typ = elts[0].typ
+        if elt_typ == VOID:
+            raise VoidArrayElementError(elts[0].span)
         arr_typ = ArrayTyp.get_or_create(elt_typ, len(elts))
         arr = ComptimeArray(
             arr_typ,
