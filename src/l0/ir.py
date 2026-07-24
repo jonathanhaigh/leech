@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 import enum
 from functools import cached_property
@@ -1481,11 +1481,6 @@ class CfgBuilder:
         self.cfg.add_node(bb)
         return bb
 
-    def add_edge(self, frm: BasicBlock, to: BasicBlock) -> None:
-        assert_in(frm, self.cfg)
-        assert_in(to, self.cfg)
-        self.cfg.add_edge(frm, to)
-
     def set_position(self, bb: BasicBlock) -> None:
         assert_in(bb, self.cfg)
         self.curr_bb = bb
@@ -1512,9 +1507,6 @@ class CfgBuilder:
     def ret(self, value: Value, ast: Optional[ast.Ast]) -> None:
         self.curr_bb.ret(value, ast)
         self.cfg.add_edge(self.curr_bb, self.cfg.exit)
-
-    def at_exit(self) -> bool:
-        return self.curr_bb == self.cfg.exit
 
 
 class Access(enum.Enum):
@@ -1578,47 +1570,6 @@ class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
     @property
     def fn_typ(self) -> FnTyp:
         return checked_cast(self.typ.pointee_typ, FnTyp)
-
-
-class BuiltinFn(FnSpec):
-    _name: Final[str]
-    _fn_typ: Final[FnTyp]
-    _build: Final[Callable[[CfgBuilder, Env], None]]
-    env: Final[Env]
-
-    @override
-    def __init__(
-        self,
-        name: str,
-        typ: FnTyp,
-        build: Callable[[CfgBuilder, Env], None],
-        e: Env,
-    ) -> None:
-        super().__init__(ast=None)
-        self._name = name
-        self._fn_typ = typ
-        self._build = build
-        self.env = e.new_child()
-
-    @override
-    def calculate_typ(self) -> PtrTyp:
-        return PtrTyp.get_or_create(self._fn_typ, CONST)
-
-    @override
-    def calculate_params(self) -> tuple[Param, ...]:
-        return tuple(
-            Param(self, pos, None) for pos in range(len(self._fn_typ.param_typs))
-        )
-
-    @override
-    def name(self) -> str:
-        return self._name
-
-    @cached_property
-    def cfg(self) -> Cfg:
-        builder = CfgBuilder(self)
-        self._build(builder, self.env)
-        return builder.cfg
 
 
 class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):

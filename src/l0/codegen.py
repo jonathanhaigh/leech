@@ -126,8 +126,6 @@ class Compiler:
                 return self._compile_mod_var(item, item.value)
             case ir.Fn():
                 return self._compile_mod_fn(item, item.value)
-            case ir.BuiltinFn():
-                return self._compile_mod_fn(item, item.value)
             case ir.FnDecl():
                 return
             case StructTyp():
@@ -160,7 +158,7 @@ class Compiler:
         set_linkage(ll_fn, item.access)
         return ll_fn
 
-    def _compile_mod_fn(self, _item: ir.ModItem, fn: ir.Fn | ir.BuiltinFn) -> None:
+    def _compile_mod_fn(self, _item: ir.ModItem, fn: ir.Fn) -> None:
         ctx = Compiler._FnBuilderContext(
             ll_builder=ll.IRBuilder(),
             ll_values=self._ll_mod_items.new_child(),
