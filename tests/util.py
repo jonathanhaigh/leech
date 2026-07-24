@@ -1,7 +1,8 @@
 from pathlib import Path
 import subprocess
 
-from l0.main import compile
+from l0 import l0ast as ast
+from l0.main import build_parser, compile
 from l0.src import SrcFile
 
 
@@ -33,6 +34,14 @@ def compile_str(tmp_path: Path, src: str) -> Path:
     path = tmp_path / "main.l0"
     write_whole_file(path, src)
     return compile_file(path)
+
+
+def parse_mod(tmp_path: Path, src: str) -> ast.Mod:
+    path = tmp_path / "main.l0"
+    write_whole_file(path, src)
+    file = SrcFile(path)
+    tree = build_parser("mod").parse(file.src)
+    return ast.Mod(file, tree)
 
 
 def compile_modules(tmp_path: Path, **modules: str) -> list[Path]:

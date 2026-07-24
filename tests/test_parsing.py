@@ -648,6 +648,65 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         ),
         (
             "defn",
+            "impl Foo {}",
+            T("defn", "impl_defn").cs(
+                T("basic_typ", "path", "ident", Tok("Foo")),
+            ),
+        ),
+        (
+            "defn",
+            "impl *Foo {}",
+            T("defn", "impl_defn").cs(
+                T("ptr_typ", "basic_typ", "path", "ident", Tok("Foo")),
+            ),
+        ),
+        (
+            "defn",
+            "impl [Foo; 3] {}",
+            T("defn", "impl_defn").cs(
+                T("array_typ").cs(
+                    T("basic_typ", "path", "ident", Tok("Foo")),
+                    T("array_length", Tok("3")),
+                ),
+            ),
+        ),
+        (
+            "defn",
+            "impl Foo { fn f() i32 { 1 } }",
+            T("defn", "impl_defn").cs(
+                T("basic_typ", "path", "ident", Tok("Foo")),
+                T("fn_defn").cs(
+                    T("access", Tok(None)),
+                    T("ident", Tok("f")),
+                    T("param_list"),
+                    T("basic_typ", "path", "ident", Tok("i32")),
+                    T("block_expr", "int_lit", Tok("1")),
+                ),
+            ),
+        ),
+        (
+            "defn",
+            "impl Foo { pub fn new() Foo { 1 } fn helper() i32 { 2 } }",
+            T("defn", "impl_defn").cs(
+                T("basic_typ", "path", "ident", Tok("Foo")),
+                T("fn_defn").cs(
+                    T("access", Tok("pub")),
+                    T("ident", Tok("new")),
+                    T("param_list"),
+                    T("basic_typ", "path", "ident", Tok("Foo")),
+                    T("block_expr", "int_lit", Tok("1")),
+                ),
+                T("fn_defn").cs(
+                    T("access", Tok(None)),
+                    T("ident", Tok("helper")),
+                    T("param_list"),
+                    T("basic_typ", "path", "ident", Tok("i32")),
+                    T("block_expr", "int_lit", Tok("2")),
+                ),
+            ),
+        ),
+        (
+            "defn",
             "import xyz;",
             T("defn", "import", "ident", Tok("xyz")),
         ),
@@ -679,6 +738,27 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                     T("param_list"),
                     T("basic_typ", "path", "ident", Tok("y")),
                     T("block_expr"),
+                ),
+            ),
+        ),
+        (
+            "mod",
+            "struct Foo {} impl Foo { pub fn new() Foo { 1 } }",
+            T("mod").cs(
+                T("defn", "struct_defn").cs(
+                    T("access", Tok(None)),
+                    T("ident", Tok("Foo")),
+                    T("struct_field_defn_list"),
+                ),
+                T("defn", "impl_defn").cs(
+                    T("basic_typ", "path", "ident", Tok("Foo")),
+                    T("fn_defn").cs(
+                        T("access", Tok("pub")),
+                        T("ident", Tok("new")),
+                        T("param_list"),
+                        T("basic_typ", "path", "ident", Tok("Foo")),
+                        T("block_expr", "int_lit", Tok("1")),
+                    ),
                 ),
             ),
         ),
@@ -740,6 +820,17 @@ def test_parse(rule, src, expected):
         ("fn_defn", "fn () a {}"),
         ("fn_defn", "f() a {}"),
         ("fn_defn", "f();"),
+        ("impl_defn", ""),
+        ("impl_defn", "impl {}"),
+        ("impl_defn", "impl Foo"),
+        ("impl_defn", "impl Foo {"),
+        ("impl_defn", "Foo {}"),
+        ("impl_defn", "impl Foo { extern fn f() i32; }"),
+        ("impl_defn", "impl Foo { struct Bar {} }"),
+        ("impl_defn", "impl Foo { let x = 1; }"),
+        ("impl_defn", "impl Foo { import bar; }"),
+        ("impl_defn", "impl Foo { impl Bar {} }"),
+        ("impl_defn", "pub impl Foo {}"),
         ("mod", "1"),
         ("mod", "{}"),
         ("mod", "f(0);"),

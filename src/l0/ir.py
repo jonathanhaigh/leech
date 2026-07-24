@@ -39,6 +39,8 @@ from l0.l0errors import (
     IfCondNotBoolError,
     IfElsTypMismatchError,
     IfTypNotVoidError,
+    ImplForNonLocalStructTypError,
+    ImplForNonStructTypError,
     IncompatibleBinOpArgTypsError,
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
@@ -161,7 +163,7 @@ class Env:
 
     @staticmethod
     def _resolve_path_segment(
-        ns: Env.Namespace, container: Env | Mod, ident: ast.Ident
+        ns: Env.Namespace, container: Env | Mod | StructTyp, ident: ast.Ident
     ) -> Any:
         match container:
             case Env():
@@ -175,6 +177,10 @@ class Env:
                     ),
                     None,
                 )
+            case StructTyp():
+                # Only the struct's own scope - not its parents' scopes, which
+                # the struct's Env inherits from for resolving field types.
+                res = container.env.items.maps[0].get((ns, ident.name))
 
         if res is None:
             raise ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
@@ -1657,8 +1663,15 @@ class Mod(Typ):
         builtin_env.add_typ("isize", ISIZE)
         builtin_env.add_typ("bool", BOOL)
 
+        impl_defns = []
         for defn_ast in mod_ast.defns:
-            self._build_defn(defn_ast)
+            if isinstance(defn_ast, ast.ImplDefn):
+                impl_defns.append(defn_ast)
+            else:
+                self._build_defn(defn_ast)
+
+        for impl_ast in impl_defns:
+            self._build_impl_defn(impl_ast)
 
     @property
     @override
@@ -1703,6 +1716,27 @@ class Mod(Typ):
                 self._add_item(mod_name, PRIVATE, mod)
             case _:
                 raise NotImplementedError
+
+    def _build_impl_defn(self, impl_ast: ast.ImplDefn) -> None:
+        impl_typ_ast = impl_ast.typ
+        if not isinstance(impl_typ_ast, ast.BasicTyp):
+            raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+
+        typ = Typ.from_ast(impl_typ_ast, self.env)
+        if not isinstance(typ, StructTyp):
+            raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+
+        if len(impl_typ_ast.path.idents) > 1:
+            raise ImplForNonLocalStructTypError(
+                impl_typ_ast.diag_str(), impl_typ_ast.span
+            )
+
+        for fn_ast in impl_ast.fns:
+            fn = Fn(fn_ast, typ.env)
+            typ.env.add_var(fn_ast.name.name, fn)
+            self._add_item(
+                f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn
+            )
 
     def _add_item(
         self,

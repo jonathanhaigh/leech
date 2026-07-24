@@ -611,6 +611,7 @@ class Defn(Ast):
             "fn_decl": FnDecl,
             "var_defn": VarDefn,
             "struct_defn": StructDefn,
+            "impl_defn": ImplDefn,
             "import": Import,
         }
         return child_classes[child.data](file, child)
@@ -724,6 +725,22 @@ class StructFieldDefn(Ast):
     @override
     def diag_str(self) -> str:
         return f'struct field "{self.ident.name}" definition'
+
+
+class ImplDefn(Defn):
+    typ: Typ
+    fns: list[FnDefn]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert_eq(tree.data, "impl_defn")
+        super().__init__(SrcSpan(file, tree.meta))
+        typ, *fn_trees = list(map(as_tree, tree.children))
+        self.typ = Typ.from_tree(file, typ)
+        self.fns = [FnDefn(file, fn_tree) for fn_tree in fn_trees]
+
+    @override
+    def diag_str(self) -> str:
+        return "impl block"
 
 
 class Import(Defn):

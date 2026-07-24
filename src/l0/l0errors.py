@@ -281,6 +281,27 @@ class TypeOfStructExprNotStructError(UserError):
         )
 
 
+class ImplForNonStructTypError(UserError):
+    def __init__(self, typ_diag: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'"impl" blocks are only supported for struct types, found {typ_diag}',
+            span,
+        )
+
+
+class ImplForNonLocalStructTypError(UserError):
+    def __init__(self, typ_diag: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            (
+                '"impl" blocks are only supported for structs defined in the'
+                f" same module, found {typ_diag}"
+            ),
+            span,
+        )
+
+
 class InvalidStructFieldError(UserError):
     def __init__(
         self,

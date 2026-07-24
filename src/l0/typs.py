@@ -190,7 +190,7 @@ class StructTyp(Typ):
 
     def __init__(self, ast: ast.StructDefn, e: ir.Env) -> None:
         self.ast = ast
-        self.env = e
+        self.env = e.new_child()
 
     @override
     @classmethod
