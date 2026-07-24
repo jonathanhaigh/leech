@@ -1435,9 +1435,9 @@ class CfgBuilder:
         expr = self.build_expr(ass_ast.expr, e, ExprContext.VALUE)
         place = self.build_expr(ass_ast.place, e, ExprContext.PLACE)
 
-        if place.typ == VOID:
-            raise AssignToVoidError(ass_ast.place.span)
         place_typ = checked_cast(place.typ, PtrTyp)
+        if place_typ.pointee_typ == VOID:
+            raise AssignToVoidError(ass_ast.place.span)
         if place_typ.mut == CONST:
             raise AssignToConstError(ass_ast.place.span)
 
