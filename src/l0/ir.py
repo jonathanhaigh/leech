@@ -1580,6 +1580,7 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
             Param(self, pos, param_ast) for pos, param_ast in enumerate(self.ast.params)
         )
 
+    @property
     @override
     def name(self) -> str:
         assert self.ast is not None
