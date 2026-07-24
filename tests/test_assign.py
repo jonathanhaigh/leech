@@ -1,6 +1,10 @@
 import pytest
 
-from l0.l0errors import AssignToConstError, SetNonLocalVarAtComptimeError
+from l0.l0errors import (
+    AssignToConstError,
+    AssignToVoidError,
+    SetNonLocalVarAtComptimeError,
+)
 from util import check_prog_output, compile_str
 
 
@@ -194,6 +198,18 @@ def test_assign_to_local_nested_struct_const_field(tmp_path):
     }
     """
     with pytest.raises(AssignToConstError):
+        compile_str(tmp_path, src)
+
+
+def test_assign_to_void_arr_element(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let arr = [{}];
+        arr[0usize] = {};
+        return 0;
+    }
+    """
+    with pytest.raises(AssignToVoidError):
         compile_str(tmp_path, src)
 
 

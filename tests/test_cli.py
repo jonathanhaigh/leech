@@ -102,3 +102,23 @@ def test_cli_warning_still_writes_output(tmp_path):
     ll_path = src_path.with_suffix(".ll")
     assert ll_path.exists()
     assert "ret i32 1" in ll_path.read_text()
+
+
+def test_cli_warning_fires_once_for_multiple_dead_statements(tmp_path):
+    src_path = tmp_path / "main.l0"
+    src_path.write_text("""pub fn main() i32 {
+    return 1;
+    let y = 2;
+    return y;
+}
+""")
+
+    proc = run_cli(src_path)
+
+    assert proc.returncode == WARNING
+    assert proc.stdout == ""
+    assert proc.stderr == (
+        "WARNING: let statement is unreachable\n"
+        "3|     let y = 2;\n"
+        "-------^\n"
+    )

@@ -137,3 +137,25 @@ def test_array_ret_typ_and_param_typ(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 4)
+
+
+def test_empty_array_expr(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = [];
+        return 0;
+    }
+    """
+    with pytest.raises(NotImplementedError):
+        compile_str(tmp_path, src)
+
+
+def test_comptime_empty_array_expr(tmp_path):
+    src = """
+    let x = [];
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(NotImplementedError):
+        compile_str(tmp_path, src)
