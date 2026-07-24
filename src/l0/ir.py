@@ -44,6 +44,7 @@ from l0.l0errors import (
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
+    IntLitOverflowError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     InvalidIndexTypError,
@@ -254,7 +255,7 @@ class ComptimeInt(ComptimeValue[IntTyp]):
         super().__init__(ast)
         self._typ = typ
         if value.bit_length() > typ.width:
-            raise NotImplementedError
+            raise IntLitOverflowError(value, typ.name, self.span)
         self.value = value
 
     @override

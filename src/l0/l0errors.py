@@ -476,6 +476,13 @@ class ArrayIndexOutOfBoundsError(UserError):
         )
 
 
+class IntLitOverflowError(UserError):
+    def __init__(self, value: int, typ: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(
+            ERROR, f'Integer literal {value} does not fit in type "{typ}"', span
+        )
+
+
 class DerefInvalidTypError(UserError):
     def __init__(self, typ: str, span: SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot dereference value of type "{typ}"', span)
