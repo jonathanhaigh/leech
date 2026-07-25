@@ -171,6 +171,28 @@ class IntTyp(Typ):
         sign_char = "i" if self.signage == SIGNED else "u"
         return f"{sign_char}{self.width}"
 
+    @property
+    def min_value(self) -> int:
+        """The smallest value representable by this type."""
+        if self.signage == SIGNED:
+            return -(2 ** (self.width - 1))
+        return 0
+
+    @property
+    def max_value(self) -> int:
+        """The largest value representable by this type."""
+        if self.signage == SIGNED:
+            return 2 ** (self.width - 1) - 1
+        return 2**self.width - 1
+
+    def fits(self, value: int) -> bool:
+        """Whether ``value`` is representable by this type.
+
+        :param value: The value to check.
+        :return: Whether ``min_value <= value <= max_value``.
+        """
+        return self.min_value <= value <= self.max_value
+
 
 class BoolTyp(Typ):
     """The boolean type."""

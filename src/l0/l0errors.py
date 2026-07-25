@@ -600,6 +600,24 @@ class IntLitOverflowError(UserError):
         )
 
 
+class IntOverflowAtComptimeError(UserError):
+    """Raised when a compile-time arithmetic operation's result doesn't fit
+    in its operands' type.
+
+    Unlike :class:`IntLitOverflowError`, this is raised for the *result*
+    of an operation (e.g. ``add``, ``sub``, ``mul``, ``div``) evaluated at
+    compile time, not for an integer literal written in source.
+    """
+
+    def __init__(self, value: int, typ: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'Result of compile-time integer operation ({value}) does not fit'
+            f' in type "{typ}"',
+            span,
+        )
+
+
 class DerefInvalidTypError(UserError):
     """Raised when dereferencing a value whose type isn't a data pointer."""
 
@@ -635,6 +653,13 @@ class SetNonLocalVarAtComptimeError(UserError):
 
     def __init__(self, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot set non-local variable at comptime", span)
+
+
+class DivisionByZeroAtComptimeError(UserError):
+    """Raised when compile-time evaluation divides by a value of zero."""
+
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Division by zero", span)
 
 
 class ModDoesNotExistError(UserError):

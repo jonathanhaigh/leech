@@ -12,6 +12,8 @@ from l0.asserts import assert_eq, assert_lt, checked_cast
 from l0.l0errors import (
     CallExternFnAtComptimeError,
     CannotTakeAddressOfComptimeValueError,
+    DivisionByZeroAtComptimeError,
+    IntOverflowAtComptimeError,
     SetNonLocalVarAtComptimeError,
 )
 
@@ -64,6 +66,11 @@ class Interpreter:
             evaluated).
         :raises CallExternFnAtComptimeError: If a ``call`` instruction
             (directly, or in a nested call) calls a function with no body.
+        :raises DivisionByZeroAtComptimeError: If a ``div`` instruction
+            (directly, or in a nested call) divides by zero.
+        :raises IntOverflowAtComptimeError: If an arithmetic instruction's
+            result (directly, or in a nested call) doesn't fit in its
+            operands' type.
         """
         while True:
             if self.ret_value is not None:
@@ -104,10 +111,14 @@ class Interpreter:
                     case ir_values.MulInstr():
                         ret = lhs.value * rhs.value
                     case ir_values.SdivInstr() | ir_values.UdivInstr():
+                        if rhs.value == 0:
+                            raise DivisionByZeroAtComptimeError(instr.span)
                         ret = lhs.value // rhs.value
                     case _:
                         assert False, f"invalid bin op instr {instr}"
-                # TODO: overflow, sdiv vs udiv?
+                # TODO: sdiv vs udiv?
+                if not lhs.typ.fits(ret):
+                    raise IntOverflowAtComptimeError(ret, lhs.typ.name, instr.span)
                 self.registers[instr] = ir_values.ComptimeInt(lhs.typ, ret, instr.ast)
 
             case ir_values.IcmpSignedInstr() | ir_values.IcmpUnsignedInstr():

@@ -32,6 +32,7 @@ from l0.l0errors import (
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
+    IntLitOverflowError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     InvalidIndexTypError,
@@ -219,6 +220,10 @@ class CfgBuilder:
             case ast.StrLit():
                 return self._in_context(ComptimeCStr(expr_ast.value, expr_ast), ctx)
             case ast.IntLit():
+                if not expr_ast.typ.fits(expr_ast.value):
+                    raise IntLitOverflowError(
+                        expr_ast.value, expr_ast.typ.name, expr_ast.span
+                    )
                 return self._in_context(
                     ComptimeInt(expr_ast.typ, expr_ast.value, expr_ast), ctx
                 )

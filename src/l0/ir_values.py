@@ -17,7 +17,7 @@ from l0.asserts import (
     assert_lt,
     checked_cast,
 )
-from l0.l0errors import IntLitOverflowError, UnreachableCodeWarning, register_error
+from l0.l0errors import UnreachableCodeWarning, register_error
 from l0.opt_util import opt_map, opt_unwrap
 from l0.src import SrcSpan
 from l0.typs import (
@@ -132,11 +132,18 @@ class ComptimeValue(Generic[TypT, AstT], Value[TypT, AstT]):
 class ComptimeInt(ComptimeValue[IntTyp]):
     """A compile-time-known integer value.
 
+    Callers that construct a ``ComptimeInt`` from a value that isn't
+    already known to fit ``typ`` (e.g. from a source-level integer
+    literal, or the result of a compile-time arithmetic operation) are
+    responsible for validating it themselves first, and raising the
+    appropriate diagnostic (:class:`~l0.l0errors.IntLitOverflowError` or
+    :class:`~l0.l0errors.IntOverflowAtComptimeError` respectively) -
+    :meth:`~l0.typs.IntTyp.fits` does the check. This constructor only
+    asserts that ``value`` fits, as a last-resort invariant check.
+
     :param typ: The integer type.
     :param value: The integer value.
     :param ast: The AST node this value was built from, if any.
-    :raises IntLitOverflowError: If ``value`` doesn't fit in ``typ``'s
-        width.
     """
 
     _typ: Final[IntTyp]
@@ -146,8 +153,7 @@ class ComptimeInt(ComptimeValue[IntTyp]):
     def __init__(self, typ: IntTyp, value: int, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
         self._typ = typ
-        if value.bit_length() > typ.width:
-            raise IntLitOverflowError(value, typ.name, self.span)
+        assert typ.fits(value), f"{value} does not fit in type {typ.name}"
         self.value = value
 
     @override
