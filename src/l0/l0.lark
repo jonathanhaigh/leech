@@ -68,7 +68,7 @@ while_expr: "while" "(" expr ")" block_expr
 ?cmp_expr: arith_expr cmp_op arith_expr
   | arith_expr
 
-!cmp_op: "<" | "<=" | "==" | ">=" | ">"
+!cmp_op: "<" | "<=" | "==" | "!=" | ">=" | ">"
 
 ?arith_expr: arith_expr add_op term
   | term

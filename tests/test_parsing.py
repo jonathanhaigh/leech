@@ -328,6 +328,15 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         ),
         (
             "expr",
+            "a != b",
+            T("cmp_expr").cs(
+                T("var_expr", "path", "ident", Tok("a")),
+                T("cmp_op", Tok("!=")),
+                T("var_expr", "path", "ident", Tok("b")),
+            ),
+        ),
+        (
+            "expr",
             "a * 1 - 2 >= b",
             T("cmp_expr").cs(
                 T("arith_expr").cs(
