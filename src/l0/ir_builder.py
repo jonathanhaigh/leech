@@ -665,10 +665,7 @@ class CfgBuilder:
         # TODO: bounds check
 
         elt_ptr = self.curr_bb.gep(arr_ptr, index, aa_expr)
-        if ctx == ExprContext.PLACE:
-            return elt_ptr
-        else:
-            return self.curr_bb.load(elt_ptr, aa_expr)
+        return self._deref_in_context(elt_ptr, ctx, aa_expr)
 
     def build_struct_expr(
         self, struct_expr: ast.StructExpr, e: Env, ctx: ExprContext
@@ -796,11 +793,7 @@ class CfgBuilder:
 
         index = ComptimeInt(I32, field.index, sa_expr)
         field_ptr = self.curr_bb.gep(struct_ptr, index, sa_expr)
-
-        if ctx == ExprContext.PLACE:
-            return field_ptr
-        else:
-            return self.curr_bb.load(field_ptr, sa_expr)
+        return self._deref_in_context(field_ptr, ctx, sa_expr)
 
     def build_deref_expr(
         self, d_expr: ast.DerefExpr, e: Env, ctx: ExprContext
@@ -822,10 +815,7 @@ class CfgBuilder:
         ptr = self.build_expr(d_expr.ptr, e, ExprContext.VALUE)
         if not isinstance(ptr.typ, PtrTyp) or isinstance(ptr.typ.pointee_typ, FnTyp):
             raise DerefInvalidTypError(ptr.typ.name, d_expr.ptr.span)
-        if ctx == ExprContext.PLACE:
-            return ptr
-        else:
-            return self.curr_bb.load(ptr, d_expr)
+        return self._deref_in_context(ptr, ctx, d_expr)
 
     def build_stmt(self, stmt_ast: ast.Stmt, e: Env) -> None:
         """Lower any statement, dispatching to the ``build_*_stmt`` method
@@ -957,6 +947,14 @@ class CfgBuilder:
             return self._value_to_ptr(value)
         else:
             return value
+
+    def _deref_in_context(
+        self, ptr: Value, ctx: ExprContext, ast: Optional[ast.Ast]
+    ) -> Value:
+        if ctx == ExprContext.PLACE:
+            return ptr
+        else:
+            return self.curr_bb.load(ptr, ast)
 
     def add_bb(self, basename: str) -> BasicBlock:
         """Create a new, empty basic block and add it to :attr:`cfg`.
