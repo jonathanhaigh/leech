@@ -200,6 +200,34 @@ def test_assign_to_local_nested_struct_const_field(tmp_path):
         compile_str(tmp_path, src)
 
 
+def test_assign_through_ptr_deref(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let mut x = 1;
+        let p = &x;
+        p.* = 2;
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 2)
+
+
+def test_assign_through_const_ptr_deref(tmp_path):
+    # &x on a const local produces a pointer whose pointee is const too,
+    # so assigning through it is rejected the same way any other const
+    # place is.
+    src = """
+    pub fn main() i32 {
+        let x = 1;
+        let p = &x;
+        p.* = 2;
+        return x;
+    }
+    """
+    with pytest.raises(AssignToConstError):
+        compile_str(tmp_path, src)
+
+
 def test_assign_to_temporary(tmp_path):
     src = """
     fn f() [i32; 4] {
