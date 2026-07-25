@@ -1,6 +1,6 @@
 import pytest
 from l0.l0errors import (
-    ItemNotFoundError,
+    PrivateItemAccessError,
     PrivateStructFieldAccessError,
     UnexpectedTokenError,
 )
@@ -73,7 +73,24 @@ def test_import_private_fn(tmp_path):
         return 101;
     }
     """
-    with pytest.raises(ItemNotFoundError):
+    with pytest.raises(PrivateItemAccessError):
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+def test_import_private_fn_use_comptime(tmp_path):
+    main_src = """
+    import a;
+    let y = a::f();
+    pub fn main() i32 {
+        return y;
+    }
+    """
+    a_src = """
+    fn f() i32 {
+        return 101;
+    }
+    """
+    with pytest.raises(PrivateItemAccessError):
         compile_modules(tmp_path, main=main_src, a=a_src)
 
 
@@ -114,7 +131,7 @@ def test_import_private_var(tmp_path):
     a_src = """
     let x = 11;
     """
-    with pytest.raises(ItemNotFoundError):
+    with pytest.raises(PrivateItemAccessError):
         compile_modules(tmp_path, main=main_src, a=a_src)
 
 
@@ -129,7 +146,7 @@ def test_import_private_var_use_comptime(tmp_path):
     a_src = """
     let x = 11;
     """
-    with pytest.raises(ItemNotFoundError):
+    with pytest.raises(PrivateItemAccessError):
         compile_modules(tmp_path, main=main_src, a=a_src)
 
 
@@ -178,7 +195,7 @@ def test_import_private_typ(tmp_path):
         int: i32,
     }
     """
-    with pytest.raises(ItemNotFoundError):
+    with pytest.raises(PrivateItemAccessError):
         compile_modules(tmp_path, main=main_src, a=a_src)
 
 
@@ -195,7 +212,7 @@ def test_import_private_typ_use_comptime(tmp_path):
         int: i32,
     }
     """
-    with pytest.raises(ItemNotFoundError):
+    with pytest.raises(PrivateItemAccessError):
         compile_modules(tmp_path, main=main_src, a=a_src)
 
 

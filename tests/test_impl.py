@@ -5,6 +5,7 @@ from l0.l0errors import (
     ImplForNonLocalStructTypError,
     ImplForNonStructTypError,
     ItemNotFoundError,
+    PrivateItemAccessError,
 )
 from util import check_prog_output, compile_modules, compile_str
 
@@ -235,7 +236,7 @@ def test_cross_module_private_assoc_fn_call(tmp_path):
         fn new() Foo { Foo { a: 7 } }
     }
     """
-    with pytest.raises(ItemNotFoundError):
+    with pytest.raises(PrivateItemAccessError):
         compile_modules(tmp_path, main=main_src, a=a_src)
 
 
@@ -253,5 +254,5 @@ def test_comptime_cross_module_private_assoc_fn_call(tmp_path):
         fn new() Foo { Foo { a: 7 } }
     }
     """
-    with pytest.raises(ItemNotFoundError):
+    with pytest.raises(PrivateItemAccessError):
         compile_modules(tmp_path, main=main_src, a=a_src)

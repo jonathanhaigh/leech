@@ -8,7 +8,12 @@ from l0 import ir_module, ir_values
 from l0 import l0ast as ast
 from l0 import typs
 from l0.asserts import assert_ge
-from l0.l0errors import DuplicateItemDefnError, ItemNotFoundError
+from l0.l0errors import (
+    DuplicateItemDefnError,
+    ItemNotFoundError,
+    PrivateItemAccessError,
+)
+from l0.src import SrcSpan
 
 
 class Env:
@@ -132,6 +137,28 @@ class Env:
         return self.add(Env.Namespace.TYPS, name, typ)
 
     @staticmethod
+    def _private_item_diag_info(
+        value: ir_values.Value[typs.PtrTyp] | typs.Typ,
+    ) -> Optional[tuple[str, Optional[SrcSpan]]]:
+        """A human-readable kind and definition span for a private-item
+        diagnostic, if one applies.
+
+        :param value: The module item being accessed.
+        :return: A ``(kind, defn_span)`` pair, where ``kind`` is
+            ``"function"``, ``"variable"``, or ``"type"``; or ``None`` if
+            ``value`` has no user-facing privacy concept to report (e.g. an
+            imported module, which can't be marked ``pub`` at all) - in
+            that case callers should fall back to treating it as not found.
+        """
+        if isinstance(value, ir_module.FnSpec):
+            return "function", value.span
+        if isinstance(value, ir_module.ModVar):
+            return "variable", value.span
+        if isinstance(value, typs.StructTyp):
+            return "type", value.span
+        return None
+
+    @staticmethod
     def _resolve_path_segment(
         ns: Env.Namespace,
         container: Env | ir_module.Mod | typs.StructTyp,
@@ -141,14 +168,21 @@ class Env:
             case Env():
                 res = container.get(ns, ident.name)
             case ir_module.Mod():
-                res = next(
-                    (
-                        item.value
-                        for item in container.items
-                        if item.access == ir_module.PUBLIC and item.name == ident.name
-                    ),
+                item = next(
+                    (item for item in container.items if item.name == ident.name),
                     None,
                 )
+                if item is None or item.access == ir_module.PUBLIC:
+                    res = None if item is None else item.value
+                else:
+                    diag_info = Env._private_item_diag_info(item.value)
+                    if diag_info is None:
+                        res = None
+                    else:
+                        item_kind, defn_span = diag_info
+                        raise PrivateItemAccessError(
+                            item_kind, ident.name, ident.span, defn_span
+                        )
             case typs.StructTyp():
                 # Only the struct's own scope - not its parents' scopes, which
                 # the struct's Env inherits from for resolving field types.
@@ -159,7 +193,9 @@ class Env:
                 if isinstance(res, ir_module.Fn) and not res.is_accessible_from(
                     ident.span.file
                 ):
-                    res = None
+                    raise PrivateItemAccessError(
+                        "function", ident.name, ident.span, res.span
+                    )
 
         if res is None:
             raise ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
@@ -173,6 +209,9 @@ class Env:
         :return: The variable the path refers to.
         :raises ItemNotFoundError: If any segment of the path cannot be
             resolved.
+        :raises PrivateItemAccessError: If the path resolves to a private
+            variable or function, accessed from outside the module it (or,
+            for an associated function, its struct) is defined in.
         """
         return cast(
             ir_values.Value[typs.PtrTyp], self.resolve_path(Env.Namespace.VARS, path)
@@ -185,6 +224,8 @@ class Env:
         :return: The type the path refers to.
         :raises ItemNotFoundError: If any segment of the path cannot be
             resolved.
+        :raises PrivateItemAccessError: If the path resolves to a private
+            type, accessed from outside the module it's defined in.
         """
         return cast(typs.Typ, self.resolve_path(Env.Namespace.TYPS, path))
 
@@ -200,6 +241,10 @@ class Env:
         :return: The item the path refers to.
         :raises ItemNotFoundError: If any segment of the path cannot be
             resolved.
+        :raises PrivateItemAccessError: If any segment of the path resolves
+            to a private function, variable, or type, accessed from outside
+            the module it (or, for an associated function, its struct) is
+            defined in.
         """
         assert_ge(len(path.idents), 1)
 

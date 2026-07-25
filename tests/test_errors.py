@@ -6,6 +6,7 @@ from l0.l0errors import (
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     NotCallableError,
+    PrivateItemAccessError,
     PrivateStructFieldAccessError,
     UnexpectedCharacterError,
     UnexpectedTokenError,
@@ -116,6 +117,95 @@ def test_private_struct_field_access_message(tmp_path):
     assert note.message == 'Field "val" defined here'
     assert note.span is not None
     assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "val")
+
+
+def test_private_fn_access_message(tmp_path):
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::f();
+    }
+    """
+    a_src = """
+    fn f() i32 {
+        return 1;
+    }
+    """
+    with pytest.raises(PrivateItemAccessError) as exc_info:
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+    msg = str(exc_info.value)
+    assert '"f"' in msg
+    assert "private" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(main_src, "f()")
+
+    assert len(exc_info.value.extra) == 1
+    note = exc_info.value.extra[0]
+    assert note.message == 'Function "f" defined here'
+    assert note.span is not None
+    assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "fn f()")
+
+
+def test_private_var_access_message(tmp_path):
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::x;
+    }
+    """
+    a_src = """
+    let x = 11;
+    """
+    with pytest.raises(PrivateItemAccessError) as exc_info:
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+    msg = str(exc_info.value)
+    assert '"x"' in msg
+    assert "private" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(main_src, "x")
+
+    assert len(exc_info.value.extra) == 1
+    note = exc_info.value.extra[0]
+    assert note.message == 'Variable "x" defined here'
+    assert note.span is not None
+    assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "let x")
+
+
+def test_private_typ_access_message(tmp_path):
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        let x = a::T{int: 32};
+        return x.int;
+    }
+    """
+    a_src = """
+    struct T {
+        int: i32,
+    }
+    """
+    with pytest.raises(PrivateItemAccessError) as exc_info:
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+    msg = str(exc_info.value)
+    assert '"T"' in msg
+    assert "private" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(main_src, "T{")
+
+    assert len(exc_info.value.extra) == 1
+    note = exc_info.value.extra[0]
+    assert note.message == 'Type "T" defined here'
+    assert note.span is not None
+    assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "struct T")
 
 
 def test_if_cond_not_bool_message(tmp_path):

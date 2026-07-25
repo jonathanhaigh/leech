@@ -109,6 +109,28 @@ class ItemNotFoundError(UserError):
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
 
 
+class PrivateItemAccessError(UserError):
+    """Raised when accessing a private module-level item (function,
+    variable, or type) from outside the module it's defined in (or, for an
+    associated function, from outside the module its struct is defined
+    in)."""
+
+    def __init__(
+        self,
+        item_kind: str,
+        name: str,
+        access_span: Optional[SrcSpan],
+        defn_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR, f'{item_kind.capitalize()} "{name}" is private', access_span
+        )
+        if defn_span is not None:
+            self.add_extra(
+                NOTE, f'{item_kind.capitalize()} "{name}" defined here', defn_span
+            )
+
+
 class AssignToConstError(UserError):
     """Raised when assigning through a const pointer or to a const place."""
 
