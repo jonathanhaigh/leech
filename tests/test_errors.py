@@ -1,6 +1,7 @@
 import pytest
 
 from l0.l0errors import (
+    CircularVarInitializerError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
     InfiniteSizeStructError,
@@ -275,6 +276,35 @@ def test_infinite_size_struct_message(tmp_path):
     assert second.message == 'Field "a" of struct "B" contains "A" by value'
     assert second.span is not None
     assert (second.span.start_line, second.span.start_col) == find_pos(src, "a: A")
+
+
+def test_circular_var_initializer_message(tmp_path):
+    src = """
+    let b = a;
+    let a = b;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(CircularVarInitializerError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"b"' in msg
+    assert "depends on itself" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "let b")
+
+    assert len(exc_info.value.extra) == 2
+    first, second = exc_info.value.extra
+    assert first.message == 'Variable "b" defined here'
+    assert first.span is not None
+    assert (first.span.start_line, first.span.start_col) == find_pos(src, "let b")
+    assert second.message == 'Variable "a" defined here'
+    assert second.span is not None
+    assert (second.span.start_line, second.span.start_col) == find_pos(src, "let a")
 
 
 def test_if_cond_not_bool_message(tmp_path):

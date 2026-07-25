@@ -4,13 +4,14 @@ from abc import abstractmethod
 from dataclasses import dataclass
 import enum
 from functools import cached_property
-from typing import Final, Generic, Optional, TypeVar, override
+from typing import ClassVar, Final, Generic, Optional, TypeVar, override
 
 from l0 import comptime, ir_builder, ir_env, ir_loader
 from l0 import l0ast as ast
 from l0.asserts import assert_eq, checked_cast
 from l0.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
 from l0.l0errors import (
+    CircularVarInitializerError,
     ImplForNonLocalStructTypError,
     ImplForNonStructTypError,
     ModDoesNotExistError,
@@ -224,11 +225,24 @@ class ModVar(ComptimePtr[ast.VarDefn]):
     env: Final[ir_env.Env]
     mut: Final[Mutability]
 
+    #: Module variables whose initializer is currently being evaluated,
+    #: innermost last. Shared across every ``ModVar`` (and, since imports
+    #: can now be circular, every module) in this compilation, so a cycle
+    #: is caught regardless of which variable it's first reached from or
+    #: how many modules it passes through.
+    _resolving: ClassVar[list[ModVar]] = []
+
     @override
     def __init__(self, ast: ast.VarDefn, e: ir_env.Env) -> None:
         super().__init__(ast)
         self.env = e.new_child()
         self.mut = Mutability.from_ast(ast.let_stmt.mut)
+
+    @property
+    def name(self) -> str:
+        """This variable's name."""
+        assert self.ast is not None
+        return self.ast.let_stmt.ident.name
 
     @override
     def load(self) -> ComptimeValue:
@@ -247,10 +261,24 @@ class ModVar(ComptimePtr[ast.VarDefn]):
         """This variable's initial value, evaluated at compile time.
 
         Computed lazily, on first access.
+
+        :raises CircularVarInitializerError: If evaluating this
+            variable's initializer requires (directly or transitively,
+            possibly through other modules) evaluating this same
+            variable's initializer again.
         """
-        # TODO: detect recursion
         assert self.ast is not None
-        return comptime.Interpreter(self.cfg, (), ()).eval()
+        if self in ModVar._resolving:
+            cycle = ModVar._resolving[ModVar._resolving.index(self) :]
+            raise CircularVarInitializerError(
+                self.name, self.span, [(v.name, v.span) for v in cycle]
+            )
+
+        ModVar._resolving.append(self)
+        try:
+            return comptime.Interpreter(self.cfg, (), ()).eval()
+        finally:
+            ModVar._resolving.pop()
 
     @cached_property
     def cfg(self) -> Cfg:

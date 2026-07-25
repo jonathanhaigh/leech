@@ -1,11 +1,12 @@
 import pytest
 
 from l0.l0errors import (
+    CircularVarInitializerError,
     DuplicateItemDefnError,
     ItemNotFoundError,
     VoidVarInitializerError,
 )
-from util import check_prog_output, compile_str
+from util import check_prog_output, compile_modules, compile_str
 
 
 def test_int_mod_var_ref_in_fn(tmp_path):
@@ -264,17 +265,56 @@ def test_diverging_bare_block_local_var(tmp_path):
     check_prog_output(tmp_path, src, "", 7)
 
 
-@pytest.mark.xfail
+def test_mod_var_self_cycle(tmp_path):
+    src = """
+    let a = a;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(CircularVarInitializerError):
+        compile_str(tmp_path, src)
+
+
 def test_mod_var_cycle(tmp_path):
     src = """
     let b = a;
     let a = b;
-
-    extern fn puts(s: *u8) i32;
-
     pub fn main() i32 {
-        puts(b);
-        return 100;
+        return 0;
     }
     """
-    check_prog_output(tmp_path, src, "abcd\n", 100)
+    with pytest.raises(CircularVarInitializerError):
+        compile_str(tmp_path, src)
+
+
+def test_mod_var_three_way_cycle(tmp_path):
+    src = """
+    let a = b;
+    let b = c;
+    let c = a;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(CircularVarInitializerError):
+        compile_str(tmp_path, src)
+
+
+def test_cross_module_var_cycle(tmp_path):
+    # Circular imports are legal (see A5), so a mod-var cycle can now
+    # span modules too - the cycle-check has to catch this, not just the
+    # single-module case.
+    main_src = """
+    import a;
+    pub let x = a::y;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    a_src = """
+    import main;
+    pub let y = main::x;
+    """
+    with pytest.raises(CircularVarInitializerError):
+        compile_modules(tmp_path, main=main_src, a=a_src)

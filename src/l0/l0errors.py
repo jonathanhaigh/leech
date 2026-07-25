@@ -744,6 +744,31 @@ class VoidVarInitializerError(UserError):
         super().__init__(ERROR, "Variable initializer cannot be void", span)
 
 
+class CircularVarInitializerError(UserError):
+    """Raised when a module variable's initializer depends on itself,
+    directly or transitively through other module variables."""
+
+    def __init__(
+        self,
+        var_name: str,
+        var_span: Optional[SrcSpan],
+        cycle: Sequence[tuple[str, Optional[SrcSpan]]],
+    ) -> None:
+        """
+        :param var_name: The name of the variable whose initializer is
+            circular (also the first and last variable in ``cycle``).
+        :param var_span: The span of that variable's ``let`` statement.
+        :param cycle: Every variable on the cycle, as ``(name, span)``
+            pairs, in dependency order, starting and ending at
+            ``var_name``.
+        """
+        super().__init__(
+            ERROR, f'Initializer of variable "{var_name}" depends on itself', var_span
+        )
+        for name, span in cycle:
+            self.add_extra(NOTE, f'Variable "{name}" defined here', span)
+
+
 class CannotTakeAddressOfComptimeValueError(UserError):
     """Raised when a compile-time-evaluated expression's result would need
     the address of a temporary that has no address at runtime."""
