@@ -1,6 +1,7 @@
 """Lowering of l0 IR to LLVM IR, via llvmlite."""
 
 from collections import ChainMap
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Optional
 from llvmlite import ir as ll
@@ -125,17 +126,58 @@ class Compiler:
     def compile(self) -> None:
         """Compile :attr:`mod` into :attr:`ll_mod`.
 
-        Every module item is declared (given an LLVM symbol) before any
-        item is compiled, so that forward references between items
-        resolve correctly regardless of declaration order.
+        Runs in four phases over every module in the program - not just
+        :attr:`mod` - taken from the loader, which has already
+        deduplicated modules reached by more than one import path.
+        Declaring everything up front means forward references between
+        items resolve regardless of declaration order, and driving the
+        declare phases off the loader rather than recursing through
+        imports means they don't depend on *import* order either.
+
+        Types are declared before functions and variables because a
+        signature can name a struct from a module loaded later than the
+        one declaring the signature.
+
+        Only :attr:`mod`'s own function bodies and variable initializers
+        are compiled; items belonging to imported modules are left as
+        declarations, to be resolved against those modules' own
+        separately-compiled output at link time. Struct *bodies* are the
+        exception - :attr:`mod` needs imported structs' layouts to index
+        into them.
         """
         self.ll_mod.triple = "x86_64-linux-gnu"
 
-        for item in self.mod.items:
-            self._declare_mod_item(item)
+        for item in self._program_items():
+            if isinstance(item.value, StructTyp):
+                self._declare_mod_item(item)
+
+        for item in self._program_items():
+            if not isinstance(item.value, StructTyp):
+                self._declare_mod_item(item)
+
+        for item in self._program_items():
+            if isinstance(item.value, StructTyp):
+                self._compile_mod_struct(item, item.value)
 
         for item in self.mod.items:
             self._compile_mod_item(item)
+
+    def _program_items(self) -> Iterator[ir_module.ModItem]:
+        """Every item of every module in the program that needs an LLVM symbol.
+
+        Imported modules contribute only their public items, since
+        nothing outside them can refer to the rest. Items that are
+        themselves imported modules are skipped: this walk already covers
+        every module, so recursing into them would be redundant.
+
+        :return: The items, grouped by module in load order.
+        """
+        for mod in self.mod.loader.mods:
+            for item in mod.items:
+                if isinstance(item.value, ir_module.Mod):
+                    continue
+                if mod is self.mod or item.access == ir_module.PUBLIC:
+                    yield item
 
     def _ll_typ(self, typ: Typ) -> ll.Type:
         match typ:
@@ -169,8 +211,6 @@ class Compiler:
             case StructTyp():
                 ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
                 self._ll_mod_items.set(item.value, ll_item)
-            case ir_module.Mod():
-                self._declare_import(item, item.value)
             case _:
                 raise NotImplementedError(item)
 
@@ -183,9 +223,14 @@ class Compiler:
             case ir_module.FnDecl():
                 return
             case StructTyp():
-                return self._compile_mod_struct(item, item.value)
+                # Already compiled, along with every other module's, by
+                # the struct-body phase of compile().
+                return
             case ir_module.Mod():
-                return self._compile_import(item, item.value)
+                # An import contributes no symbols of its own; the
+                # imported module's items are handled by compile()'s walk
+                # over the whole program.
+                return
             case _:
                 raise NotImplementedError(item)
 
@@ -241,16 +286,6 @@ class Compiler:
         ll_typ.set_body(
             *(self._ll_mod_items.get(field.typ) for field in typ.fields.values())
         )
-
-    def _declare_import(self, _item: ir_module.ModItem, mod: ir_module.Mod) -> None:
-        for item in mod.items:
-            if item.access == ir_module.PUBLIC:
-                self._declare_mod_item(item)
-
-    def _compile_import(self, _item: ir_module.ModItem, mod: ir_module.Mod) -> None:
-        for item in mod.items:
-            if item.access == ir_module.PUBLIC and isinstance(item.value, StructTyp):
-                self._compile_mod_struct(item, item.value)
 
     def _compile_bb(
         self, bb: ir_values.BasicBlock, ctx: Compiler._FnBuilderContext

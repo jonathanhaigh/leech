@@ -44,12 +44,17 @@ class Env:
                     return "type"
 
     items: ChainMap[tuple[Env.Namespace, str], typs.Typ | ir_values.Value[typs.PtrTyp]]
+    #: Where a name was bound, for bindings whose item can't point at its
+    #: own definition site (see :meth:`add`'s ``span`` parameter). Scoped
+    #: to this Env alone, mirroring ``items.maps[0]``.
+    _spans: dict[tuple[Env.Namespace, str], SrcSpan]
 
     def __init__(self, parent: Optional[Env] = None) -> None:
         if parent is None:
             self.items = ChainMap()
         else:
             self.items = parent.items.new_child()
+        self._spans = {}
 
     def new_child(self) -> Env:
         """Create a new scope nested inside this one.
@@ -83,22 +88,37 @@ class Env:
 
         return None
 
-    def add(self, ns: Env.Namespace, name: str, item: Any) -> None:
+    def add(
+        self,
+        ns: Env.Namespace,
+        name: str,
+        item: Any,
+        span: Optional[SrcSpan] = None,
+    ) -> None:
         """Bind ``name`` to ``item`` in ``ns``, in this scope only.
 
         :param ns: The namespace to bind in.
         :param name: The name to bind.
         :param item: The item to bind ``name`` to.
+        :param span: Where the binding is written, for the duplicate
+            diagnostic. Defaults to the span of ``item``'s own AST node,
+            which is the right answer for everything except an ``import``
+            (whose item is a whole :class:`~l0.ir_module.Mod`, whose AST
+            node covers the entire imported file rather than the
+            ``import`` statement).
         :raises DuplicateItemDefnError: If ``name`` is already bound in
             ``ns`` in this scope.
         """
         key = (ns, name)
         if key in self.items.maps[0]:
             existing = self.items[key]
-            raise DuplicateItemDefnError(
-                ns.item_kind(), name, item.span, ast.opt_span(existing)
-            )
+            if span is None:
+                span = ast.opt_span(item)
+            existing_span = self._spans.get(key) or ast.opt_span(existing)
+            raise DuplicateItemDefnError(ns.item_kind(), name, span, existing_span)
         self.items[key] = item
+        if span is not None:
+            self._spans[key] = span
 
     def get_var(self, name: str) -> Optional[ir_values.Value[typs.PtrTyp]]:
         """Look up a variable by name.
@@ -108,15 +128,21 @@ class Env:
         """
         return self.get(Env.Namespace.VARS, name)
 
-    def add_var(self, name: str, var: ir_values.Value[typs.PtrTyp]) -> None:
+    def add_var(
+        self,
+        name: str,
+        var: ir_values.Value[typs.PtrTyp],
+        span: Optional[SrcSpan] = None,
+    ) -> None:
         """Bind a variable name in this scope.
 
         :param name: The name to bind.
         :param var: The variable to bind ``name`` to.
+        :param span: Where the binding is written; see :meth:`add`.
         :raises DuplicateItemDefnError: If ``name`` is already bound to a
             variable in this scope.
         """
-        return self.add(Env.Namespace.VARS, name, var)
+        return self.add(Env.Namespace.VARS, name, var, span)
 
     def get_typ(self, name: str) -> Optional[typs.Typ]:
         """Look up a type by name.
@@ -126,15 +152,18 @@ class Env:
         """
         return self.get(Env.Namespace.TYPS, name)
 
-    def add_typ(self, name: str, typ: typs.Typ) -> None:
+    def add_typ(
+        self, name: str, typ: typs.Typ, span: Optional[SrcSpan] = None
+    ) -> None:
         """Bind a type name in this scope.
 
         :param name: The name to bind.
         :param typ: The type to bind ``name`` to.
+        :param span: Where the binding is written; see :meth:`add`.
         :raises DuplicateItemDefnError: If ``name`` is already bound to a
             type in this scope.
         """
-        return self.add(Env.Namespace.TYPS, name, typ)
+        return self.add(Env.Namespace.TYPS, name, typ, span)
 
     @staticmethod
     def _private_item_diag_info(

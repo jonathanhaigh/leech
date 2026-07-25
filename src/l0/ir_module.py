@@ -6,7 +6,7 @@ import enum
 from functools import cached_property
 from typing import Final, Generic, Optional, TypeVar, override
 
-from l0 import comptime, ir_builder, ir_env, main
+from l0 import comptime, ir_builder, ir_env, ir_loader
 from l0 import l0ast as ast
 from l0.asserts import assert_eq, checked_cast
 from l0.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
@@ -16,7 +16,7 @@ from l0.l0errors import (
     ModDoesNotExistError,
 )
 from l0.opt_util import opt_unwrap
-from l0.src import SrcFile
+from l0.src import SrcFile, SrcSpan
 from l0.typs import (
     BOOL,
     CONST,
@@ -273,30 +273,53 @@ class Mod(Typ):
     Also usable as a :class:`~l0.typs.Typ`, so a module name can appear as
     a path segment when resolving a qualified name (e.g. ``some_mod::foo``).
 
+    Construction is two-phase: ``__init__`` only sets up empty state, and
+    :meth:`build` populates :attr:`items`. This lets
+    :meth:`~l0.ir_loader.ModLoader.load` register a module before building
+    it, so an import cycle resolves to the module already under
+    construction rather than recursing forever.
+
     :param name: The module's name, used to qualify its items' symbol
         names in the generated code.
     :param mod_ast: The parsed module.
+    :param loader: The loader to resolve this module's imports through.
     """
 
     _name: Final[str]
     ast: Final[ast.Mod]
     items: Final[list[ModItem]]
     env: Final[ir_env.Env]
+    loader: Final[ir_loader.ModLoader]
 
     @override
-    def __init__(self, name: str, mod_ast: ast.Mod) -> None:
+    def __init__(
+        self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader
+    ) -> None:
         builtin_env = ir_env.Env()
         self._name = name
         self.ast = mod_ast
         self.items = []
         self.env = builtin_env.new_child()
+        self.loader = loader
 
         builtin_env.add_typ("usize", USIZE)
         builtin_env.add_typ("isize", ISIZE)
         builtin_env.add_typ("bool", BOOL)
 
+    def build(self) -> None:
+        """Populate :attr:`items` from this module's parsed definitions.
+
+        Called once, by the loader, immediately after construction.
+        ``impl`` blocks are built last so the structs they attach to are
+        already bound in :attr:`env`.
+
+        :raises ModDoesNotExistError: If an ``import`` names a module file
+            that doesn't exist.
+        :raises DuplicateItemDefnError: If two definitions in this module
+            share a name.
+        """
         impl_defns = []
-        for defn_ast in mod_ast.defns:
+        for defn_ast in self.ast.defns:
             if isinstance(defn_ast, ast.ImplDefn):
                 impl_defns.append(defn_ast)
             else:
@@ -344,8 +367,8 @@ class Mod(Typ):
                 mod_path = defn_ast.span.file.path.with_stem(mod_name)
                 if not mod_path.exists():
                     raise ModDoesNotExistError(mod_name, defn_ast.ident.span)
-                mod = main.compile_to_ir(SrcFile(mod_path))
-                self._add_item(mod_name, PRIVATE, mod)
+                mod = self.loader.load(mod_path)
+                self._add_item(mod_name, PRIVATE, mod, span=defn_ast.ident.span)
             case _:
                 raise NotImplementedError
 
@@ -376,11 +399,12 @@ class Mod(Typ):
         access: Access,
         value: Value[PtrTyp] | Typ,
         qualify_name: bool = True,
+        span: Optional[SrcSpan] = None,
     ) -> None:
         v = ModItem(self, name, access, value, qualify_name)
         self.items.append(v)
         if isinstance(value, Value):
-            self.env.add_var(name, value)
+            self.env.add_var(name, value, span)
         else:
             value = checked_cast(value, Typ)
-            self.env.add_typ(name, value)
+            self.env.add_typ(name, value, span)

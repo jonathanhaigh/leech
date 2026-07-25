@@ -2,7 +2,8 @@ from pathlib import Path
 import subprocess
 
 from l0 import l0ast as ast
-from l0.main import build_parser, compile
+from l0.main import compile
+from l0.parse import build_parser
 from l0.src import SrcFile
 
 

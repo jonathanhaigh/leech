@@ -1,97 +1,36 @@
 """The compiler driver: CLI argument handling and the top-level compile pipeline."""
 
 import argparse
-from collections.abc import Iterable
-import os
 import pathlib
 import sys
-
-from lark import Lark, UnexpectedCharacters, UnexpectedToken
-
 
 from l0.codegen import Compiler
 from l0.l0errors import (
     ERROR,
     UserError,
     TextErrorRenderer,
-    UnexpectedCharacterError,
-    UnexpectedTokenError,
     error_level,
     errors,
     register_error,
 )
 from l0 import ir_module
-from l0 import l0ast as ast
-from l0.src import SrcFile, SrcSpan
-
-GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "l0.lark")
-
-
-def build_parser(start_rule: str) -> Lark:
-    """Build a Lark LALR parser for the l0 grammar.
-
-    :param start_rule: The grammar rule to use as the parse entry point.
-    :return: A configured, ready-to-use parser.
-    """
-    return Lark.open(
-        GRAMMAR_PATH,
-        start=start_rule,
-        strict=True,
-        propagate_positions=True,
-        parser="lalr",
-    )
-
-
-def _describe_expected_tokens(parser: Lark, names: Iterable[str]) -> list[str]:
-    """Describe a set of Lark terminal names for a diagnostic message.
-
-    Literal-string terminals (punctuation and keywords) are shown as
-    their literal text, e.g. ``'";"'``; other terminals (identifiers,
-    literals) are shown by name, e.g. ``'IDENT'``. Lark's end-of-input
-    marker is described in words.
-
-    :param parser: The parser ``names`` came from, used to look up each
-        terminal's definition.
-    :param names: The Lark terminal names to describe.
-    :return: The descriptions, sorted and de-duplicated.
-    """
-    terminals_by_name = {t.name: t for t in parser.terminals}
-    descriptions = set[str]()
-    for name in names:
-        if name == "$END":
-            descriptions.add("end of input")
-            continue
-        term = terminals_by_name.get(name)
-        if term is not None and term.pattern.type == "str":
-            descriptions.add(f'"{term.pattern.value}"')
-        else:
-            descriptions.add(name)
-    return sorted(descriptions)
+from l0.ir_loader import ModLoader
+from l0.src import SrcFile
 
 
 def compile_to_ir(file: SrcFile) -> ir_module.Mod:
-    """Parse and lower a source file into an IR module.
+    """Parse and lower a source file, and everything it imports, into IR.
 
     :param file: The source file to compile.
-    :return: The resulting IR module.
+    :return: The resulting IR module, whose
+        :attr:`~l0.ir_module.Mod.loader` holds every module reached from
+        it.
     :raises UnexpectedCharacterError: If a character in ``file`` can't
         start any valid token.
     :raises UnexpectedTokenError: If a token in ``file`` doesn't fit the
         grammar at that point (including the input ending too soon).
     """
-    parser = build_parser("mod")
-    try:
-        tree = parser.parse(file.src)
-    except UnexpectedCharacters as err:
-        span = SrcSpan.single_char(file, err.pos_in_stream, err.line, err.column)
-        raise UnexpectedCharacterError(err.char, span) from err
-    except UnexpectedToken as err:
-        span = SrcSpan(file, err.token)
-        found = "end of input" if err.token.type == "$END" else f'token "{err.token}"'
-        expected = _describe_expected_tokens(parser, err.accepts or err.expected)
-        raise UnexpectedTokenError(found, span, expected) from err
-    mod_ast = ast.Mod(file, tree)
-    return ir_module.Mod(file.path.stem, mod_ast)
+    return ModLoader().load(file.path)
 
 
 def compile(file: SrcFile) -> str:

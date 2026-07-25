@@ -1,5 +1,7 @@
 import pytest
 from l0.l0errors import (
+    DuplicateItemDefnError,
+    ModDoesNotExistError,
     PrivateItemAccessError,
     PrivateStructFieldAccessError,
     UnexpectedTokenError,
@@ -324,3 +326,245 @@ def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(tmp_pat
     }
     """
     check_prog_output(tmp_path, main_src, "", 42, a=a_src)
+
+
+def test_mod_does_not_exist(tmp_path):
+    main_src = """
+    import nope;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(ModDoesNotExistError):
+        compile_modules(tmp_path, main=main_src)
+
+
+def test_duplicate_import(tmp_path):
+    # Importing the same module twice binds the same name twice, which is
+    # a duplicate definition like any other - not a crash.
+    main_src = """
+    import a;
+    import a;
+    pub fn main() i32 {
+        return a::f();
+    }
+    """
+    a_src = """
+    pub fn f() i32 {
+        return 1;
+    }
+    """
+    with pytest.raises(DuplicateItemDefnError):
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+def test_import_chain(tmp_path):
+    # main -> a -> b -> c: each module is reached only through the one
+    # above it, so the whole chain has to be loaded transitively.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::viaa();
+    }
+    """
+    a_src = """
+    import b;
+    pub fn viaa() i32 {
+        return b::viab() + 1;
+    }
+    """
+    b_src = """
+    import c;
+    pub fn viab() i32 {
+        return c::base() + 10;
+    }
+    """
+    c_src = """
+    pub fn base() i32 {
+        return 100;
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 111, a=a_src, b=b_src, c=c_src)
+
+
+def test_diamond_import(tmp_path):
+    # main and a both import c, so c is reached by two paths. Its Foo must
+    # be one type across both, or the value a::wrap() returns wouldn't be
+    # usable as the c::Foo that main's own import names.
+    main_src = """
+    import c;
+    import a;
+    pub fn main() i32 {
+        let f = a::wrap(7);
+        let g = c::mk(35);
+        return f.v + g.v;
+    }
+    """
+    a_src = """
+    import c;
+    pub fn wrap(n: i32) c::Foo {
+        return c::mk(n);
+    }
+    """
+    c_src = """
+    pub struct Foo {
+        pub v: i32,
+    }
+
+    pub fn mk(n: i32) Foo {
+        return Foo { v: n };
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+
+
+def test_diamond_import_reversed_order(tmp_path):
+    # Same as test_diamond_import but importing a before c, which is the
+    # order that used to leave c::Foo undeclared when a's signature
+    # referring to it was declared first.
+    main_src = """
+    import a;
+    import c;
+    pub fn main() i32 {
+        let f = a::wrap(7);
+        let g = c::mk(35);
+        return f.v + g.v;
+    }
+    """
+    a_src = """
+    import c;
+    pub fn wrap(n: i32) c::Foo {
+        return c::mk(n);
+    }
+    """
+    c_src = """
+    pub struct Foo {
+        pub v: i32,
+    }
+
+    pub fn mk(n: i32) Foo {
+        return Foo { v: n };
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+
+
+def test_import_of_typ_re_exported_by_imported_mod(tmp_path):
+    # main never imports c itself; c::Foo reaches it only through a's
+    # public signature, so c has to be lowered on a's behalf.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        let f = a::viaa();
+        return f.v;
+    }
+    """
+    a_src = """
+    import c;
+    pub fn viaa() c::Foo {
+        return c::mk(42);
+    }
+    """
+    c_src = """
+    pub struct Foo {
+        pub v: i32,
+    }
+
+    pub fn mk(n: i32) Foo {
+        return Foo { v: n };
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+
+
+def test_import_of_var_re_exported_by_imported_mod(tmp_path):
+    # A module variable reached only transitively still needs an external
+    # declaration in main's output for the link to resolve.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::viaa();
+    }
+    """
+    a_src = """
+    import c;
+    pub fn viaa() i32 {
+        return c::cvar;
+    }
+    """
+    c_src = """
+    pub let cvar = 30;
+    """
+    check_prog_output(tmp_path, main_src, "", 30, a=a_src, c=c_src)
+
+
+def test_circular_import(tmp_path):
+    # a and b import each other. Loading registers each module before
+    # building it, so the cycle resolves to the module already under
+    # construction instead of recursing forever.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::f();
+    }
+    """
+    a_src = """
+    import b;
+    pub fn f() i32 {
+        return b::g() + 1;
+    }
+
+    pub fn only_from_b() i32 {
+        return 5;
+    }
+    """
+    b_src = """
+    import a;
+    pub fn g() i32 {
+        return a::only_from_b() * 2;
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 11, a=a_src, b=b_src)
+
+
+def test_circular_import_of_typ(tmp_path):
+    # The cycle carries a struct type as well as functions, so the
+    # partially-built module has to be usable for type resolution too.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::f().v;
+    }
+    """
+    a_src = """
+    import b;
+    pub struct Foo {
+        pub v: i32,
+    }
+
+    pub fn f() Foo {
+        return b::g();
+    }
+    """
+    b_src = """
+    import a;
+    pub fn g() a::Foo {
+        return a::Foo { v: 42 };
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 42, a=a_src, b=b_src)
+
+
+def test_self_import(tmp_path):
+    # Degenerate cycle: a module importing itself resolves to itself.
+    main_src = """
+    import main;
+    pub fn main() i32 {
+        return main::helper();
+    }
+
+    pub fn helper() i32 {
+        return 7;
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 7)
