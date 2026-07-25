@@ -1,6 +1,23 @@
 import pytest
-from l0.l0errors import ItemNotFoundError
+from l0.l0errors import ItemNotFoundError, UnexpectedTokenError
 from util import check_prog_output, compile_modules
+
+
+def test_import_of_module_with_syntax_error(tmp_path):
+    # Parsing happens per-module (main.compile_to_ir recurses for each
+    # `import`), so a syntax error in an imported module must be caught
+    # and reported the same way as one in the top-level file.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    a_src = """
+    pub fn f() i32
+    """
+    with pytest.raises(UnexpectedTokenError):
+        compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_fn(tmp_path):

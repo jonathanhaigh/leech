@@ -1,5 +1,6 @@
 """User-facing diagnostics: error/warning types, and their rendering."""
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import IntEnum
 import sys
@@ -66,6 +67,39 @@ class UserError(Exception):
     def level(self):
         """The severity of this error's primary message."""
         return self.message.level
+
+
+class UnexpectedCharacterError(UserError):
+    """Raised when the lexer encounters a character that can't start any
+    valid token, given where it appears in the source."""
+
+    def __init__(self, char: str, span: SrcSpan) -> None:
+        super().__init__(ERROR, f'Unexpected character "{char}"', span)
+
+
+class UnexpectedTokenError(UserError):
+    """Raised when the parser encounters a token that doesn't fit anywhere
+    in the grammar at that point - a syntax error. Also raised when the
+    input ends before a complete module has been parsed, since l0's LALR
+    parser reports that the same way, as an unexpected end-of-input
+    "token".
+
+    :param found: A short description of what was found instead of
+        something valid, e.g. ``'token ";"'`` or ``'end of input'``.
+    :param span: Where ``found`` occurs (or, for end-of-input, the
+        position immediately after the last real token).
+    :param expected: Human-readable descriptions of what would have been
+        valid instead (e.g. ``'";"'``, ``'IDENT'``), used to add an
+        explanatory note. May be empty if nothing more specific than
+        ``found`` is known.
+    """
+
+    def __init__(
+        self, found: str, span: SrcSpan, expected: Collection[str]
+    ) -> None:
+        super().__init__(ERROR, f"Unexpected {found}", span)
+        if expected:
+            self.add_extra(NOTE, f"Expected one of: {', '.join(expected)}", None)
 
 
 class ItemNotFoundError(UserError):

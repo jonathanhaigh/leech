@@ -6,9 +6,79 @@ from l0.l0errors import (
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     NotCallableError,
+    UnexpectedCharacterError,
+    UnexpectedTokenError,
     WhileCondNotBoolError,
 )
 from util import compile_str, find_pos
+
+
+def test_unexpected_character_message(tmp_path):
+    src = """pub fn main() i32 {
+    return 0 @ 1;
+}
+"""
+    with pytest.raises(UnexpectedCharacterError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"@"' in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "@")
+
+    # Unlike UnexpectedTokenError, there's no "expected" note: the lexer
+    # couldn't form a token at all, so there's nothing to enumerate.
+    assert exc_info.value.extra == []
+
+
+def test_unexpected_token_message(tmp_path):
+    src = """pub fn main() i32 {
+    return 0
+}
+"""
+    with pytest.raises(UnexpectedTokenError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"}"' in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "}")
+
+    assert len(exc_info.value.extra) == 1
+    note = exc_info.value.extra[0]
+    assert note.message == 'Expected one of: ";"'
+    assert note.span is None
+
+
+def test_unexpected_end_of_input_message(tmp_path):
+    src = """pub fn main() i32 {
+    return 0;
+"""
+    with pytest.raises(UnexpectedTokenError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert "Unexpected end of input" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    # Positioned right after the last real token, since there's nothing
+    # left in the source for the span to point at directly.
+    assert span.start_line == 2
+
+    assert len(exc_info.value.extra) == 1
+    note = exc_info.value.extra[0]
+    assert note.span is None
+    # Many different statement/expression-starting tokens are valid here;
+    # spot-check a representative few rather than the whole list (which
+    # is checked exactly in test_cli.py's equivalent scenario).
+    assert '"return"' in note.message
+    assert '"}"' in note.message
+    assert "IDENT" in note.message
 
 
 def test_if_cond_not_bool_message(tmp_path):

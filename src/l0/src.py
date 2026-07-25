@@ -55,3 +55,27 @@ class SrcSpan:
         self.end_line = lark_meta.end_line
         self.start_col = lark_meta.column
         self.end_col = lark_meta.end_column
+
+    @classmethod
+    def single_char(cls, file: SrcFile, pos: int, line: int, col: int) -> SrcSpan:
+        """Construct a span covering a single character at a raw position.
+
+        Used when only a bare position is available (e.g. from a lexer
+        error that couldn't form a token at all), rather than a full Lark
+        ``Meta``/``Token`` with both a start and an end.
+
+        :param file: The source file the span is located in.
+        :param pos: The character's index into the file.
+        :param line: The character's 1-based line number.
+        :param col: The character's 1-based column number.
+        :return: A one-character-wide span starting at ``pos``.
+        """
+        span = cls.__new__(cls)
+        span.file = file
+        span.start = pos
+        span.end = pos + 1
+        span.start_line = line
+        span.end_line = line
+        span.start_col = col
+        span.end_col = col + 1
+        return span

@@ -104,6 +104,65 @@ def test_cli_warning_still_writes_output(tmp_path):
     assert "ret i32 1" in ll_path.read_text()
 
 
+def test_cli_unexpected_character_error(tmp_path):
+    src_path = tmp_path / "main.l0"
+    src_path.write_text("""pub fn main() i32 {
+    return 0 @ 1;
+}
+""")
+
+    proc = run_cli(src_path)
+
+    assert proc.returncode == ERROR
+    assert proc.stdout == ""
+    assert proc.stderr == (
+        'ERROR: Unexpected character "@"\n'
+        "2|     return 0 @ 1;\n"
+        "----------------^\n"
+    )
+    assert not src_path.with_suffix(".ll").exists()
+
+
+def test_cli_unexpected_token_error(tmp_path):
+    src_path = tmp_path / "main.l0"
+    src_path.write_text("""pub fn main() i32 {
+    return 0
+}
+""")
+
+    proc = run_cli(src_path)
+
+    assert proc.returncode == ERROR
+    assert proc.stdout == ""
+    assert proc.stderr == (
+        'ERROR: Unexpected token "}"\n'
+        "3| }\n"
+        "---^\n"
+        'NOTE: Expected one of: ";"\n'
+    )
+    assert not src_path.with_suffix(".ll").exists()
+
+
+def test_cli_unexpected_end_of_input_error(tmp_path):
+    src_path = tmp_path / "main.l0"
+    src_path.write_text("""pub fn main() i32 {
+    return 0;
+""")
+
+    proc = run_cli(src_path)
+
+    assert proc.returncode == ERROR
+    assert proc.stdout == ""
+    assert proc.stderr == (
+        "ERROR: Unexpected end of input\n"
+        "2|     return 0;\n"
+        "---------------^\n"
+        "NOTE: Expected one of: \"&\", \"(\", \"[\", \"false\", \"if\", \"let\","
+        ' "return", "true", "while", "{", "}", IDENT, INT_LIT, STR_LIT\n'
+    )
+    assert not src_path.with_suffix(".ll").exists()
+
+
 def test_cli_warning_fires_once_for_multiple_dead_statements(tmp_path):
     src_path = tmp_path / "main.l0"
     src_path.write_text("""pub fn main() i32 {
