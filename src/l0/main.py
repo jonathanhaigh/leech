@@ -1,3 +1,5 @@
+"""The compiler driver: CLI argument handling and the top-level compile pipeline."""
+
 import argparse
 import os
 import pathlib
@@ -23,6 +25,11 @@ GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "l0.lark")
 
 
 def build_parser(start_rule: str) -> Lark:
+    """Build a Lark LALR parser for the l0 grammar.
+
+    :param start_rule: The grammar rule to use as the parse entry point.
+    :return: A configured, ready-to-use parser.
+    """
     return Lark.open(
         GRAMMAR_PATH,
         start=start_rule,
@@ -33,6 +40,11 @@ def build_parser(start_rule: str) -> Lark:
 
 
 def compile_to_ir(file: SrcFile) -> ir_module.Mod:
+    """Parse and lower a source file into an IR module.
+
+    :param file: The source file to compile.
+    :return: The resulting IR module.
+    """
     parser = build_parser("mod")
     tree = parser.parse(file.src)
     mod_ast = ast.Mod(file, tree)
@@ -40,6 +52,11 @@ def compile_to_ir(file: SrcFile) -> ir_module.Mod:
 
 
 def compile(file: SrcFile) -> str:
+    """Compile a source file all the way down to textual LLVM IR.
+
+    :param file: The source file to compile.
+    :return: The generated LLVM IR, as text.
+    """
     mod = compile_to_ir(file)
     compiler = Compiler(mod)
     compiler.compile()
@@ -47,6 +64,14 @@ def compile(file: SrcFile) -> str:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the ``l0c`` command-line arguments.
+
+    Defaults the output path (``-o``) to the input filename with its
+    suffix replaced by ``.ll``, unless the input filename already ends in
+    ``.ll``, in which case ``-o`` must be given explicitly.
+
+    :return: The parsed arguments, with ``filename`` and ``o`` populated.
+    """
     parser = argparse.ArgumentParser(prog="l0c", description="l0 compiler")
     parser.add_argument("filename", help="source file", type=pathlib.Path)
     parser.add_argument("-o", help="output file", metavar="FILENAME", type=pathlib.Path)
@@ -65,6 +90,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def run() -> None:
+    """Run the ``l0c`` CLI: parse arguments, compile, and report or write output.
+
+    On a user-facing compile error, the error is registered and rendered
+    to stderr instead of raising; the process then exits with the
+    resulting error level (see :mod:`l0.l0errors`), writing the compiled
+    output to the ``-o`` path only if no error occurred.
+    """
     args = parse_args()
     file = SrcFile(args.filename)
 

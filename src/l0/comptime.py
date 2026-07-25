@@ -1,3 +1,10 @@
+"""A tree-walking interpreter for evaluating IR at compile time.
+
+Used to evaluate module-level ``let`` initializers (see
+:class:`l0.ir_module.ModVar`), which must be computable without running
+generated code.
+"""
+
 from typing import Final, Optional
 
 from l0 import ir_module, ir_values
@@ -10,6 +17,18 @@ from l0.l0errors import (
 
 
 class Interpreter:
+    """Executes the instructions of a :class:`~l0.ir_values.Cfg` at compile time.
+
+    Walks the control-flow graph from its entry block, evaluating each
+    instruction in turn and recording its result, until a ``ret``
+    instruction is reached.
+
+    :param cfg: The control-flow graph to execute.
+    :param params: The callee's formal parameters, used to bind ``args``.
+    :param args: The compile-time-known argument values, positionally
+        matched to ``params``.
+    """
+
     registers: Final[dict[ir_values.Value, ir_values.ComptimeValue]]
     cfg: Final[ir_values.Cfg]
     curr_bb: ir_values.BasicBlock
@@ -31,6 +50,21 @@ class Interpreter:
         self.ret_value = None
 
     def eval(self) -> ir_values.ComptimeValue:
+        """Run the interpreter to completion and return the result.
+
+        :return: The value passed to the ``ret`` instruction that ended
+            execution.
+        :raises CannotTakeAddressOfComptimeValueError: If the returned
+            value, or a value returned by a nested call evaluated along
+            the way, is or contains a pointer to a compile-time-only
+            temporary that has no address at runtime.
+        :raises SetNonLocalVarAtComptimeError: If a ``store`` instruction
+            (directly, or in a nested call) writes through a pointer to a
+            non-temporary (i.e. a variable outside the expression being
+            evaluated).
+        :raises CallExternFnAtComptimeError: If a ``call`` instruction
+            (directly, or in a nested call) calls a function with no body.
+        """
         while True:
             if self.ret_value is not None:
                 self._check_not_temporary(self.ret_value)

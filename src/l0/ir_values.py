@@ -1,3 +1,5 @@
+"""The IR data model: values, instructions, basic blocks, and control-flow graphs."""
+
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from functools import cached_property
@@ -52,6 +54,16 @@ AstT = TypeVar("AstT", bound=ast.Ast, covariant=True, default=ast.Ast)
 
 
 def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
+    """Compute the pointer type produced by indexing into ``base_typ``.
+
+    :param base_typ: The pointer type being indexed into (pointing to an
+        array or struct type).
+    :param index: The index value; must be a :class:`ComptimeInt` if
+        ``base_typ`` points to a struct.
+    :return: A pointer to the indexed array element type or struct field
+        type, with the pointer's mutability tightened to const if the
+        indexed struct field is const.
+    """
     mut = base_typ.mut
     typ = base_typ.pointee_typ
     match typ:
@@ -76,6 +88,13 @@ def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
 
 
 class Value(ABC, Generic[TypT, AstT]):
+    """Base class for anything that has a type and a source location: IR
+    values, instructions, and function parameters.
+
+    :param ast: The AST node this value was built from, if any (builtin
+        values may have none).
+    """
+
     ast: Final[Optional[AstT]]
 
     def __init__(self, ast: Optional[AstT]) -> None:
@@ -83,24 +102,43 @@ class Value(ABC, Generic[TypT, AstT]):
 
     @cached_property
     def typ(self) -> TypT:
+        """This value's type, computed once (via :meth:`calculate_typ`) and cached."""
         return self.calculate_typ()
 
     @property
     def span(self) -> Optional[SrcSpan]:
+        """The source location of :attr:`ast`, if it has one."""
         return opt_map(self.ast, lambda x: x.span)
 
     @abstractmethod
     def calculate_typ(self) -> TypT:
-        pass
+        """Compute this value's type; backs the cached :attr:`typ` property."""
 
 
 class ComptimeValue(Generic[TypT, AstT], Value[TypT, AstT]):
+    """Base class for values whose contents are known at compile time."""
+
     def copy(self) -> Self:
+        """Return an independent copy of this value.
+
+        Only meaningfully overridden by mutable aggregates
+        (:class:`ComptimeArray`, :class:`ComptimeStruct`); other
+        subclasses are immutable and return ``self`` unchanged.
+        """
         # Most ComptimeValues are immutable so real copying is not required
         return self
 
 
 class ComptimeInt(ComptimeValue[IntTyp]):
+    """A compile-time-known integer value.
+
+    :param typ: The integer type.
+    :param value: The integer value.
+    :param ast: The AST node this value was built from, if any.
+    :raises IntLitOverflowError: If ``value`` doesn't fit in ``typ``'s
+        width.
+    """
+
     _typ: Final[IntTyp]
     value: Final[int]
 
@@ -118,6 +156,12 @@ class ComptimeInt(ComptimeValue[IntTyp]):
 
 
 class ComptimeBool(ComptimeValue[BoolTyp]):
+    """A compile-time-known boolean value.
+
+    :param value: The boolean value.
+    :param ast: The AST node this value was built from, if any.
+    """
+
     value: Final[bool]
 
     def __init__(self, value: bool, ast: Optional[ast.Ast]) -> None:
@@ -130,6 +174,12 @@ class ComptimeBool(ComptimeValue[BoolTyp]):
 
 
 class ComptimeCStr(ComptimeValue[PtrTyp]):
+    """A compile-time-known, nul-terminated C string constant.
+
+    :param value: The string's contents (excluding the nul terminator).
+    :param ast: The AST node this value was built from, if any.
+    """
+
     value: Final[bytearray]
     initializer_typ: Final[ArrayTyp]
 
@@ -144,27 +194,51 @@ class ComptimeCStr(ComptimeValue[PtrTyp]):
 
 
 class ComptimeAggregate(Generic[TypT, AstT], ComptimeValue[TypT, AstT]):
+    """Base class for compile-time-known array and struct values."""
+
     @abstractmethod
     def __len__(self) -> int:
         pass
 
     @abstractmethod
     def get_element(self, index: int) -> ComptimeValue:
-        pass
+        """Get the element at ``index`` (an array index or struct field index).
+
+        :param index: The zero-based element index.
+        :return: The element's value.
+        """
 
     @abstractmethod
     def set_element(self, value: ComptimeValue, index: int) -> None:
-        pass
+        """Set the element at ``index`` (an array index or struct field index).
+
+        :param value: The value to set the element to.
+        :param index: The zero-based element index.
+        """
 
     def values(self) -> Sequence[ComptimeValue]:
+        """All of this aggregate's elements, in index order."""
         return [self.get_element(i) for i in range(len(self))]
 
     def check_index(self, index: int) -> None:
+        """Assert that ``index`` is in bounds for this aggregate.
+
+        :param index: The zero-based element index to check.
+        :raises AssertionError: If ``index`` is out of bounds.
+        """
         assert_ge(index, 0)
         assert_lt(index, len(self))
 
 
 class ComptimeArray(ComptimeAggregate[ArrayTyp]):
+    """A compile-time-known array value.
+
+    :param typ: The array type.
+    :param elements: The element values, in index order; must match
+        ``typ`` in length and element type.
+    :param ast: The AST node this value was built from, if any.
+    """
+
     elements: list[ComptimeValue]
     _typ: Final[ArrayTyp]
 
@@ -202,6 +276,14 @@ class ComptimeArray(ComptimeAggregate[ArrayTyp]):
 
 
 class ComptimeStruct(ComptimeAggregate[StructTyp]):
+    """A compile-time-known struct value.
+
+    :param typ: The struct type.
+    :param fields: The field values, keyed by field name; must match
+        ``typ``'s fields in names and types.
+    :param ast: The AST node this value was built from, if any.
+    """
+
     fields: dict[str, ComptimeValue]
     _typ: Final[StructTyp]
 
@@ -247,20 +329,43 @@ class ComptimeStruct(ComptimeAggregate[StructTyp]):
 
 
 class ComptimePtr(Generic[AstT], ComptimeValue[PtrTyp, AstT]):
+    """Base class for compile-time-known pointer values.
+
+    Unlike a runtime pointer (see :class:`AllocaInstr`), a compile-time
+    pointer can be directly loaded from and stored to, since the pointee
+    it refers to is itself tracked as a Python object rather than living
+    in memory.
+    """
+
     @abstractmethod
     def load(self) -> ComptimeValue:
-        pass
+        """Read the value currently pointed to."""
 
     @abstractmethod
     def store(self, value: ComptimeValue) -> None:
-        pass
+        """Overwrite the value pointed to.
+
+        :param value: The value to store.
+        """
 
     @abstractmethod
     def is_temporary(self) -> bool:
-        pass
+        """Whether this pointer refers to a value with no address at runtime.
+
+        Used to reject taking the address of, or returning a pointer
+        into, a compile-time-only temporary (see
+        :class:`~l0.l0errors.CannotTakeAddressOfComptimeValueError`).
+        """
 
 
 class ComptimeAlloc(ComptimePtr):
+    """A compile-time-known pointer to a freshly-allocated, uninitialized value.
+
+    :param typ: The type of the allocated value.
+    :param mut: The mutability of the allocated value.
+    :param ast: The AST node this value was built from, if any.
+    """
+
     value: ComptimeValue
     mut: Final[Mutability]
 
@@ -288,6 +393,14 @@ class ComptimeAlloc(ComptimePtr):
 
 
 class ComptimeGep(ComptimePtr):
+    """A compile-time-known pointer into an aggregate, e.g. ``&arr[i]`` or
+    ``&s.field``.
+
+    :param base: The pointer being indexed into.
+    :param index: The array or struct field index.
+    :param ast: The AST node this value was built from, if any.
+    """
+
     base: Final[ComptimePtr]
     index: Final[ComptimeInt]
 
@@ -319,6 +432,11 @@ class ComptimeGep(ComptimePtr):
 
 
 class VoidValue(ComptimeValue[VoidTyp]):
+    """The single, valueless result of a void-typed expression.
+
+    :param ast: The AST node this value was built from, if any.
+    """
+
     @override
     def __init__(self, ast: Optional[ast.Ast]):
         super().__init__(ast)
@@ -329,6 +447,12 @@ class VoidValue(ComptimeValue[VoidTyp]):
 
 
 class UndefValue(ComptimeValue):
+    """A placeholder for a not-yet-initialized element of an aggregate being built.
+
+    :param typ: The type the eventual value will have.
+    :param ast: The AST node this value was built from, if any.
+    """
+
     _typ: Final[Typ]
 
     @override
@@ -342,6 +466,14 @@ class UndefValue(ComptimeValue):
 
 
 class Param(Value[Typ, ast.Param]):
+    """A formal parameter of a function.
+
+    :param fn: The function this is a parameter of.
+    :param pos: The parameter's zero-based position in the parameter
+        list.
+    :param ast: The AST node this value was built from, if any.
+    """
+
     fn: Final[ir_module.FnSpec]
     pos: Final[int]
 
@@ -360,6 +492,12 @@ class Param(Value[Typ, ast.Param]):
 
 
 class Instr(Value[TypT, AstT], Generic[TypT, AstT]):
+    """Base class for a single instruction within a :class:`BasicBlock`.
+
+    :param bb: The basic block this instruction belongs to.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     bb: Final[BasicBlock]
 
     @override
@@ -372,10 +510,19 @@ class Instr(Value[TypT, AstT], Generic[TypT, AstT]):
 
     @property
     def name(self) -> str:
+        """This instruction's kind, as used in :class:`BasicBlock`'s textual dump."""
         return type(self).__name__
 
 
 class BinOpInstr(Instr):
+    """Base class for binary arithmetic instructions.
+
+    :param bb: The basic block this instruction belongs to.
+    :param lhs: The left-hand operand; must have the same type as ``rhs``.
+    :param rhs: The right-hand operand.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     lhs: Final[Value]
     rhs: Final[Value]
 
@@ -394,26 +541,35 @@ class BinOpInstr(Instr):
 
 
 class AddInstr(BinOpInstr):
-    pass
+    """Integer addition."""
 
 
 class SubInstr(BinOpInstr):
-    pass
+    """Integer subtraction."""
 
 
 class MulInstr(BinOpInstr):
-    pass
+    """Integer multiplication."""
 
 
 class SdivInstr(BinOpInstr):
-    pass
+    """Signed integer division."""
 
 
 class UdivInstr(BinOpInstr):
-    pass
+    """Unsigned integer division."""
 
 
 class IcmpInstr(Instr):
+    """Base class for integer comparison instructions.
+
+    :param bb: The basic block this instruction belongs to.
+    :param op: The comparison operator, e.g. ``"<"`` or ``"=="``.
+    :param lhs: The left-hand operand; must have the same type as ``rhs``.
+    :param rhs: The right-hand operand.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     op: Final[str]
     lhs: Final[Value]
     rhs: Final[Value]
@@ -433,14 +589,21 @@ class IcmpInstr(Instr):
 
 
 class IcmpSignedInstr(IcmpInstr):
-    pass
+    """A comparison between signed integers."""
 
 
 class IcmpUnsignedInstr(IcmpInstr):
-    pass
+    """A comparison between unsigned integers."""
 
 
 class LoadInstr(Instr):
+    """Reads the value pointed to by a pointer.
+
+    :param bb: The basic block this instruction belongs to.
+    :param src: The pointer to read through.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     src: Final[Value]
 
     @override
@@ -456,6 +619,15 @@ class LoadInstr(Instr):
 
 
 class AllocaInstr(Instr[PtrTyp]):
+    """Allocates space for a value on the stack and returns a pointer to it.
+
+    :param bb: The basic block this instruction belongs to.
+    :param typ: The type of value to allocate space for.
+    :param mut: The mutability of the returned pointer.
+    :param count: The number of contiguous values to allocate space for.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     allocated_typ: Final[Typ]
     mut: Final[Mutability]
     count: Final[int]
@@ -480,6 +652,14 @@ class AllocaInstr(Instr[PtrTyp]):
 
 
 class StoreInstr(Instr[VoidTyp]):
+    """Writes a value through a pointer.
+
+    :param bb: The basic block this instruction belongs to.
+    :param value: The value to write; must match ``dest``'s pointee type.
+    :param dest: The pointer to write through.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     value: Final[Value]
     dest: Final[Value]
 
@@ -499,6 +679,20 @@ class StoreInstr(Instr[VoidTyp]):
 
 
 class GepInstr(Instr[PtrTyp]):
+    """Computes a pointer to an element of an array or struct, without reading it.
+
+    Corresponds to LLVM's ``getelementptr`` instruction, but simplified to
+    a single index: unlike ``getelementptr``, there is no separate leading
+    index into ``base`` itself (which LLVM requires to always be ``0`` for
+    non-array pointer accesses); ``index`` indexes directly into the
+    pointee.
+
+    :param bb: The basic block this instruction belongs to.
+    :param base: The pointer to the array or struct being indexed into.
+    :param index: The array or struct field index; see :func:`gep_typ`.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     base: Final[Value]
     index: Value
 
@@ -521,6 +715,16 @@ class GepInstr(Instr[PtrTyp]):
 
 
 class InsertValueInstr(Instr):
+    """Returns a copy of an aggregate value with one element replaced.
+
+    :param bb: The basic block this instruction belongs to.
+    :param aggregate: The aggregate value to copy.
+    :param value: The value to insert.
+    :param indeces: The path of indices identifying the element to
+        replace within nested aggregates.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     aggregate: Final[Value]
     value: Final[Value]
     indeces: tuple[ComptimeInt, ...]
@@ -545,6 +749,14 @@ class InsertValueInstr(Instr):
 
 
 class CallInstr(Instr[Typ, ast.CallExpr]):
+    """Calls a function.
+
+    :param bb: The basic block this instruction belongs to.
+    :param callee: The function pointer to call.
+    :param args: The argument values, in parameter order.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     callee: Final[Value]
     args: tuple[Value, ...]
 
@@ -568,6 +780,14 @@ class CallInstr(Instr[Typ, ast.CallExpr]):
 
 
 class PhiInstr(Instr):
+    """Selects a value depending on which predecessor block control arrived from.
+
+    :param bb: The basic block this instruction belongs to.
+    :param incoming: The value to select for each possible predecessor
+        block; all values must have the same type.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     incoming: Final[dict["BasicBlock", Value]]
 
     @override
@@ -588,6 +808,13 @@ class PhiInstr(Instr):
 
 
 class BranchInstr(Instr[NeverTyp]):
+    """An unconditional branch to another basic block; terminates its block.
+
+    :param bb: The basic block this instruction belongs to.
+    :param target: The block to branch to.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     target: Final[BasicBlock]
 
     @override
@@ -603,6 +830,16 @@ class BranchInstr(Instr[NeverTyp]):
 
 
 class CbranchInstr(Instr[NeverTyp]):
+    """A conditional branch to one of two basic blocks; terminates its block.
+
+    :param bb: The basic block this instruction belongs to.
+    :param condition: The boolean value to branch on.
+    :param true_target: The block to branch to if ``condition`` is true.
+    :param false_target: The block to branch to if ``condition`` is
+        false.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     condition: Final[Value]
     true_target: Final[BasicBlock]
     false_target: Final[BasicBlock]
@@ -627,6 +864,13 @@ class CbranchInstr(Instr[NeverTyp]):
 
 
 class RetInstr(Instr[NeverTyp]):
+    """Returns a value from the current function; terminates its block.
+
+    :param bb: The basic block this instruction belongs to.
+    :param value: The value to return.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     value: Final[Value]
 
     @override
@@ -640,6 +884,12 @@ class RetInstr(Instr[NeverTyp]):
 
 
 class UnreachableInstr(Instr[NeverTyp]):
+    """Marks a point control flow can never reach; terminates its block.
+
+    :param bb: The basic block this instruction belongs to.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
     @override
     def __init__(self, bb: BasicBlock, ast: Optional[ast.Ast]) -> None:
         super().__init__(bb, ast)
@@ -650,6 +900,20 @@ class UnreachableInstr(Instr[NeverTyp]):
 
 
 class BasicBlock:
+    """A straight-line sequence of instructions ending in at most one terminator.
+
+    Provides one factory method per instruction kind (:meth:`add`,
+    :meth:`load`, :meth:`branch`, etc.), each of which constructs the
+    instruction, appends it to :attr:`instrs`, and returns it. Once a
+    terminator instruction (a branch, return, or unreachable) has been
+    added, further additions are silently dropped (after a one-time
+    unreachable-code warning) rather than appended, since LLVM does not
+    allow instructions after a block's terminator.
+
+    :param name: This block's name, used as its label in the generated
+        LLVM IR.
+    """
+
     name: Final[str]
     instrs: Final[list[Instr]]
     terminated: bool
@@ -662,6 +926,7 @@ class BasicBlock:
         self.warned_unreachable = False
 
     def __str__(self) -> str:
+        """A textual dump of this block's label and instructions, one per line."""
         instrs = "".join(f"\n{instr}" for instr in self.instrs)
         return f"{self.name}:{instrs}"
 
@@ -683,47 +948,59 @@ class BasicBlock:
         return instr
 
     def add(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> AddInstr:
+        """Append an :class:`AddInstr` to this block."""
         return self._add_instr(AddInstr(self, lhs, rhs, ast))
 
     def sub(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> SubInstr:
+        """Append a :class:`SubInstr` to this block."""
         return self._add_instr(SubInstr(self, lhs, rhs, ast))
 
     def mul(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> MulInstr:
+        """Append a :class:`MulInstr` to this block."""
         return self._add_instr(MulInstr(self, lhs, rhs, ast))
 
     def sdiv(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> SdivInstr:
+        """Append a :class:`SdivInstr` to this block."""
         return self._add_instr(SdivInstr(self, lhs, rhs, ast))
 
     def udiv(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> UdivInstr:
+        """Append a :class:`UdivInstr` to this block."""
         return self._add_instr(UdivInstr(self, lhs, rhs, ast))
 
     def icmp_signed(
         self, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
     ) -> IcmpSignedInstr:
+        """Append an :class:`IcmpSignedInstr` to this block."""
         return self._add_instr(IcmpSignedInstr(self, op, lhs, rhs, ast))
 
     def icmp_unsigned(
         self, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
     ) -> IcmpUnsignedInstr:
+        """Append an :class:`IcmpUnsignedInstr` to this block."""
         return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast))
 
     def phi(
         self, incoming: dict[BasicBlock, Value], ast: Optional[ast.Ast]
     ) -> PhiInstr:
+        """Append a :class:`PhiInstr` to this block."""
         return self._add_instr(PhiInstr(self, incoming, ast))
 
     def load(self, src: Value, ast: Optional[ast.Ast]) -> LoadInstr:
+        """Append a :class:`LoadInstr` to this block."""
         return self._add_instr(LoadInstr(self, src, ast))
 
     def alloca(
         self, typ: Typ, mut: Mutability, count: int, ast: Optional[ast.Ast]
     ) -> AllocaInstr:
+        """Append an :class:`AllocaInstr` to this block."""
         return self._add_instr(AllocaInstr(self, typ, mut, count, ast))
 
     def store(self, value: Value, dest: Value, ast: Optional[ast.Ast]) -> StoreInstr:
+        """Append a :class:`StoreInstr` to this block."""
         return self._add_instr(StoreInstr(self, value, dest, ast))
 
     def gep(self, base: Value, index: Value, ast: Optional[ast.Ast]) -> GepInstr:
+        """Append a :class:`GepInstr` to this block."""
         return self._add_instr(GepInstr(self, base, index, ast))
 
     def insert_value(
@@ -733,14 +1010,17 @@ class BasicBlock:
         indeces: tuple[ComptimeInt, ...],
         ast: Optional[ast.Ast],
     ) -> InsertValueInstr:
+        """Append an :class:`InsertValueInstr` to this block."""
         return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast))
 
     def call(
         self, callee: Value, args: tuple[Value, ...], ast: Optional[ast.CallExpr]
     ) -> CallInstr:
+        """Append a :class:`CallInstr` to this block."""
         return self._add_instr(CallInstr(self, callee, args, ast))
 
     def branch(self, target: BasicBlock, ast: Optional[ast.Ast]) -> BranchInstr:
+        """Append a terminating :class:`BranchInstr` to this block."""
         return self._add_instr(BranchInstr(self, target, ast), terminate=True)
 
     def cbranch(
@@ -750,26 +1030,37 @@ class BasicBlock:
         false_target: BasicBlock,
         ast: Optional[ast.Ast],
     ) -> CbranchInstr:
+        """Append a terminating :class:`CbranchInstr` to this block."""
         return self._add_instr(
             CbranchInstr(self, condition, true_target, false_target, ast),
             terminate=True,
         )
 
     def ret(self, value: Value, ast: Optional[ast.Ast]) -> RetInstr:
+        """Append a terminating :class:`RetInstr` to this block."""
         return self._add_instr(RetInstr(self, value, ast), terminate=True)
 
     def unreachable(self, ast: Optional[ast.Ast]) -> UnreachableInstr:
+        """Append a terminating :class:`UnreachableInstr` to this block."""
         return self._add_instr(UnreachableInstr(self, ast), terminate=True)
 
 
 class Cfg(nx.DiGraph):
+    """A function's or initializer's control-flow graph of basic blocks.
+
+    A thin wrapper around a NetworkX directed graph, adding a distinguished
+    entry and exit block.
+    """
+
     _entry: Optional[BasicBlock]
     _exit: Optional[BasicBlock]
 
     @property
     def entry(self) -> BasicBlock:
+        """The block execution starts at."""
         return opt_unwrap(self._entry)
 
     @property
     def exit(self) -> BasicBlock:
+        """The block all returns are wired to, for reachability analysis."""
         return opt_unwrap(self._exit)

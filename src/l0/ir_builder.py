@@ -1,3 +1,5 @@
+"""AST-to-IR lowering, with type checking performed inline as it goes."""
+
 import enum
 from typing import Final, Optional
 
@@ -69,11 +71,31 @@ from l0.typs import (
 
 
 class ExprContext(enum.Enum):
+    """Whether an expression is being lowered for its value or its address.
+
+    An expression built in :attr:`PLACE` context yields a pointer to
+    where the value lives (e.g. the target of an assignment or the
+    operand of ``&``), rather than the value itself.
+    """
+
     PLACE = 0
     VALUE = 1
 
 
 class CfgBuilder:
+    """Lowers a single function body or module-variable initializer to a
+    :class:`~l0.ir_values.Cfg`.
+
+    Each ``build_*`` method lowers one AST node kind, performing the
+    relevant type checks (raising the corresponding
+    :mod:`~l0.l0errors` error on failure) and emitting instructions into
+    :attr:`curr_bb` as it goes.
+
+    :param fn: The function whose body is being lowered, or ``None`` when
+        lowering a module-variable initializer (which isn't part of any
+        function).
+    """
+
     fn: Optional[ir_module.FnSpec]
     cfg: Final[Cfg]
     curr_bb: BasicBlock
@@ -88,6 +110,16 @@ class CfgBuilder:
         self.curr_bb = self.cfg.entry
 
     def build_var_initializer(self, defn_ast: ast.VarDefn, e: Env) -> None:
+        """Lower a module-level ``let`` initializer expression into :attr:`cfg`.
+
+        :param defn_ast: The parsed variable declaration.
+        :param e: The scope to resolve names in.
+        :raises VoidVarInitializerError: If the initializer expression has
+            type ``void``.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the initializer expression; see
+            :meth:`build_expr`.
+        """
         assert self.fn is None
         e = e.new_child()
         initializer = self.build_expr(defn_ast.let_stmt.expr, e, ExprContext.VALUE)
@@ -96,6 +128,18 @@ class CfgBuilder:
         self.ret(initializer, defn_ast.let_stmt.expr)
 
     def build_fn(self, fn_ast: ast.FnDefn, e: Env) -> None:
+        """Lower a function body into :attr:`cfg`.
+
+        :param fn_ast: The parsed function definition.
+        :param e: The scope to resolve names in.
+        :raises InvalidRetTypError: If the body's tail expression's type
+            doesn't match the function's declared return type.
+        :raises MissingRetError: If the function's declared return type
+            isn't ``void`` but the body doesn't end in a return or a
+            diverging expression.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the body; see :meth:`build_expr`.
+        """
         assert self.fn is not None
         e = e.new_child()
 
@@ -135,6 +179,18 @@ class CfgBuilder:
         self.ret(VoidValue(ret_ast), ret_ast)
 
     def build_expr(self, expr_ast: ast.Expr, e: Env, ctx: ExprContext) -> Value:
+        """Lower any expression, dispatching to the ``build_*_expr`` method
+        matching its AST node kind.
+
+        :param expr_ast: The parsed expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower for the expression's value or its
+            address.
+        :return: The lowered expression's value.
+        :raises l0.l0errors.UserError: As any of the many subclasses that
+            the individual ``build_*_expr`` methods (and, transitively,
+            any sub-expressions) may raise.
+        """
         match expr_ast:
             case ast.BlockExpr():
                 return self.build_block_expr(expr_ast, e, ctx)
@@ -174,6 +230,18 @@ class CfgBuilder:
     def build_block_expr(
         self, block_ast: ast.BlockExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower a ``{ ... }`` block expression.
+
+        :param block_ast: The parsed block expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the tail expression for its value or
+            its address.
+        :return: The lowered tail expression's value, or a void value if
+            the block has none.
+        :raises l0.l0errors.UserError: As any of the many subclasses that
+            lowering a statement (see :meth:`build_stmt`) or the tail
+            expression (see :meth:`build_expr`) may raise.
+        """
         e = e.new_child()
         for stmt_ast in block_ast.stmts:
             self.build_stmt(stmt_ast, e)
@@ -183,6 +251,24 @@ class CfgBuilder:
         return self.build_expr(block_ast.expr, e, ctx)
 
     def build_if_expr(self, if_ast: ast.IfExpr, e: Env, ctx: ExprContext) -> Value:
+        """Lower an ``if``/``else`` expression.
+
+        :param if_ast: The parsed ``if`` expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the taken branch for its value or its
+            address.
+        :return: The value of whichever branch is taken, merged via a phi
+            instruction if both branches complete normally.
+        :raises IfCondNotBoolError: If the condition's type isn't
+            ``bool``.
+        :raises IfElsTypMismatchError: If the ``if`` and ``else`` branches'
+            types don't match.
+        :raises IfTypNotVoidError: If there is no ``else`` branch and the
+            ``if`` branch's type isn't ``void``.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the condition or either branch;
+            see :meth:`build_expr`.
+        """
         cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
         if cond.typ != BOOL:
             raise IfCondNotBoolError(
@@ -245,6 +331,19 @@ class CfgBuilder:
     def build_while_expr(
         self, while_ast: ast.WhileExpr, e: Env, _ctx: ExprContext
     ) -> Value:
+        """Lower a ``while`` loop expression.
+
+        :param while_ast: The parsed ``while`` expression.
+        :param e: The scope to resolve names in.
+        :return: A void value.
+        :raises WhileCondNotBoolError: If the condition's type isn't
+            ``bool``.
+        :raises WhileTypNotVoidError: If the loop body's type isn't
+            ``void`` (or ``never``).
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the condition or the loop body;
+            see :meth:`build_expr`.
+        """
         cond_bb = self.add_bb("while_cond")
         loop_bb = self.add_bb("while_loop")
         end_bb = self.add_bb("while_end")
@@ -273,6 +372,23 @@ class CfgBuilder:
     def build_call_expr(
         self, call_ast: ast.CallExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower a function call expression.
+
+        :param call_ast: The parsed call expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The call's result.
+        :raises NotCallableError: If the callee's type isn't a function
+            pointer.
+        :raises NotEnoughArgsError: If too few arguments are given.
+        :raises TooManyArgsError: If too many arguments are given.
+        :raises InvalidArgTypError: If an argument's type doesn't match
+            the corresponding parameter's type.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the callee or an argument; see
+            :meth:`build_expr`.
+        """
         callee = self.build_expr(call_ast.callee, e, ExprContext.VALUE)
         callee_diag_str = call_ast.callee.diag_str()
         if not (
@@ -319,6 +435,21 @@ class CfgBuilder:
     def build_bin_op_expr(
         self, op_ast: ast.BinOpExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower a binary operator expression (arithmetic or comparison).
+
+        :param op_ast: The parsed binary operation.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The operation's result.
+        :raises InvalidBinOpArgTypError: If either operand's type isn't an
+            integer type.
+        :raises IncompatibleBinOpArgTypsError: If the operands' types
+            don't match.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering either operand; see
+            :meth:`build_expr`.
+        """
         lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
         if not isinstance(lhs.typ, IntTyp):
             raise InvalidBinOpArgTypError(
@@ -367,6 +498,14 @@ class CfgBuilder:
     def build_unary_op_expr(
         self, op_ast: ast.UnaryOpExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower a unary operator expression (currently, only ``&``).
+
+        :param op_ast: The parsed unary operation.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The operation's result.
+        """
         match op_ast.op.name:
             case "&":
                 return self._in_context(
@@ -377,6 +516,16 @@ class CfgBuilder:
                 raise NotImplementedError(op_ast.op.name)
 
     def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
+        """Lower a (possibly qualified) variable or function reference.
+
+        :param var_ast: The parsed variable expression.
+        :param e: The scope to resolve the path in.
+        :param ctx: Whether to lower the result for its value or its
+            address; ignored for function references, which are always
+            returned as-is.
+        :return: The referenced variable or function.
+        :raises ItemNotFoundError: If the path cannot be resolved.
+        """
         var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
         if isinstance(var, ir_module.FnSpec):
             return var
@@ -388,6 +537,19 @@ class CfgBuilder:
     def build_array_expr(
         self, arr_expr: ast.ArrayExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower an array literal expression.
+
+        :param arr_expr: The parsed array expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The constructed array value.
+        :raises VoidArrayElementError: If the element type is ``void``.
+        :raises IncompatibleTypInArrayExpr: If an element's type doesn't
+            match the first element's type.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering an element; see :meth:`build_expr`.
+        """
         elts = [self.build_expr(elt, e, ExprContext.VALUE) for elt in arr_expr.elements]
         if not elts:
             raise NotImplementedError("empty array expression")
@@ -416,6 +578,22 @@ class CfgBuilder:
     def build_array_access_expr(
         self, aa_expr: ast.ArrayAccessExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower an array indexing expression (``arr[index]``).
+
+        :param aa_expr: The parsed array access expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The indexed element, or a pointer to it if ``ctx`` is
+            :attr:`~ExprContext.PLACE`.
+        :raises IndexIntoInvalidTypError: If the indexed expression's type
+            isn't an array type.
+        :raises InvalidIndexTypError: If the index expression's type isn't
+            ``usize``.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the array or index expression; see
+            :meth:`build_expr`.
+        """
         arr_ptr = self.build_expr(aa_expr.array, e, ExprContext.PLACE)
         arr_ptr_typ = checked_cast(arr_ptr.typ, PtrTyp)
         if not isinstance(arr_ptr_typ.pointee_typ, ArrayTyp):
@@ -438,6 +616,28 @@ class CfgBuilder:
     def build_struct_expr(
         self, struct_expr: ast.StructExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower a struct literal expression.
+
+        :param struct_expr: The parsed struct expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The constructed struct value.
+        :raises ItemNotFoundError: If the named type cannot be resolved.
+        :raises TypeOfStructExprNotStructError: If the named type isn't a
+            struct type.
+        :raises InvalidStructFieldError: If a given field name isn't a
+            field of the struct type.
+        :raises DuplicateFieldInStructExprError: If a field is given a
+            value more than once.
+        :raises MissingFieldInStructExprError: If a required field is
+            omitted.
+        :raises IncompatibleStructFieldTypError: If a field's given value
+            has the wrong type.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering a field's value expression; see
+            :meth:`build_expr`.
+        """
         struct_typ = Typ.from_ast(struct_expr.typ, e)
         if not isinstance(struct_typ, StructTyp):
             raise TypeOfStructExprNotStructError(struct_typ.name, struct_expr.typ.span)
@@ -497,6 +697,22 @@ class CfgBuilder:
     def build_struct_access_expr(
         self, sa_expr: ast.StructAccessExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower a struct field access expression (``s.field``).
+
+        :param sa_expr: The parsed struct access expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The field's value, or a pointer to it if ``ctx`` is
+            :attr:`~ExprContext.PLACE`.
+        :raises FieldAccessIntoInvalidTypError: If the accessed
+            expression's type isn't a struct type.
+        :raises InvalidStructFieldError: If the named field isn't a field
+            of the struct type.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the struct expression; see
+            :meth:`build_expr`.
+        """
         struct_ptr = self.build_expr(sa_expr.struct, e, ExprContext.PLACE)
         struct_ptr_typ = checked_cast(struct_ptr.typ, PtrTyp)
         struct_typ = struct_ptr_typ.pointee_typ
@@ -520,6 +736,20 @@ class CfgBuilder:
     def build_deref_expr(
         self, d_expr: ast.DerefExpr, e: Env, ctx: ExprContext
     ) -> Value:
+        """Lower a pointer dereference expression (``ptr.*``).
+
+        :param d_expr: The parsed dereference expression.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The pointee's value, or the pointer itself unchanged if
+            ``ctx`` is :attr:`~ExprContext.PLACE`.
+        :raises DerefInvalidTypError: If the dereferenced expression's
+            type isn't a data pointer type.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the pointer expression; see
+            :meth:`build_expr`.
+        """
         ptr = self.build_expr(d_expr.ptr, e, ExprContext.VALUE)
         if not isinstance(ptr.typ, PtrTyp) or isinstance(ptr.typ.pointee_typ, FnTyp):
             raise DerefInvalidTypError(ptr.typ.name, d_expr.ptr.span)
@@ -529,6 +759,15 @@ class CfgBuilder:
             return self.curr_bb.load(ptr, d_expr)
 
     def build_stmt(self, stmt_ast: ast.Stmt, e: Env) -> None:
+        """Lower any statement, dispatching to the ``build_*_stmt`` method
+        matching its AST node kind.
+
+        :param stmt_ast: The parsed statement.
+        :param e: The scope to resolve names in.
+        :raises l0.l0errors.UserError: As any of the many subclasses that
+            the individual ``build_*_stmt`` methods (and, transitively,
+            any sub-expressions) may raise.
+        """
         match stmt_ast:
             case ast.ExprStmt():
                 self.build_expr(stmt_ast.expr, e, ExprContext.VALUE)
@@ -540,6 +779,19 @@ class CfgBuilder:
                 self.build_assignment_stmt(stmt_ast, e)
 
     def build_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
+        """Lower a ``return`` statement.
+
+        :param ret_ast: The parsed return statement.
+        :param e: The scope to resolve names in.
+        :raises RetNotInFnError: If not currently lowering a function body.
+        :raises InvalidRetTypError: If the returned expression's type
+            doesn't match the function's declared return type.
+        :raises InvalidVoidRetError: If no expression is given but the
+            function's declared return type isn't ``void``.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the returned expression; see
+            :meth:`build_expr`.
+        """
         if self.fn is None:
             raise RetNotInFnError(ret_ast.span)
 
@@ -573,6 +825,17 @@ class CfgBuilder:
         self.ret(VoidValue(ret_ast), ret_ast)
 
     def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
+        """Lower a local ``let`` statement.
+
+        :param let_ast: The parsed ``let`` statement.
+        :param e: The scope to resolve names in, and to bind the new
+            variable in.
+        :raises VoidVarInitializerError: If the initializer expression has
+            type ``void``.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the initializer expression; see
+            :meth:`build_expr`.
+        """
         expr = self.build_expr(let_ast.expr, e, ExprContext.VALUE)
         if expr.typ == VOID:
             raise VoidVarInitializerError(expr.span)
@@ -583,6 +846,15 @@ class CfgBuilder:
         self.curr_bb.store(expr, alloca, let_ast)
 
     def build_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> None:
+        """Lower an assignment statement (``place = expr``).
+
+        :param ass_ast: The parsed assignment statement.
+        :param e: The scope to resolve names in.
+        :raises AssignToConstError: If the assignment target is const.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the target or the assigned
+            expression; see :meth:`build_expr`.
+        """
         expr = self.build_expr(ass_ast.expr, e, ExprContext.VALUE)
         place = self.build_expr(ass_ast.place, e, ExprContext.PLACE)
 
@@ -605,15 +877,34 @@ class CfgBuilder:
             return value
 
     def add_bb(self, basename: str) -> BasicBlock:
+        """Create a new, empty basic block and add it to :attr:`cfg`.
+
+        :param basename: A human-readable name to derive the block's
+            (uniquified) name from.
+        :return: The new basic block. It is not made the current block;
+            use :meth:`set_position` for that.
+        """
         bb = BasicBlock(self._generate_bb_name(basename))
         self.cfg.add_node(bb)
         return bb
 
     def set_position(self, bb: BasicBlock) -> None:
+        """Make ``bb`` the block that subsequent instructions are added to.
+
+        :param bb: The basic block to switch to; must already be in
+            :attr:`cfg`.
+        """
         assert_in(bb, self.cfg)
         self.curr_bb = bb
 
     def branch(self, target: BasicBlock, ast: ast.Ast) -> None:
+        """Terminate :attr:`curr_bb` with an unconditional branch, and
+        switch to ``target``.
+
+        :param target: The basic block to branch to; must already be in
+            :attr:`cfg`.
+        :param ast: The AST node the branch instruction is attributed to.
+        """
         assert_in(target, self.cfg)
         self.curr_bb.branch(target, ast)
         self.cfg.add_edge(self.curr_bb, target)
@@ -626,6 +917,18 @@ class CfgBuilder:
         false_target: BasicBlock,
         ast: ast.Ast,
     ) -> None:
+        """Terminate :attr:`curr_bb` with a conditional branch.
+
+        Unlike :meth:`branch`, this does not change :attr:`curr_bb`; the
+        caller is expected to call :meth:`set_position` next.
+
+        :param condition: The boolean value to branch on.
+        :param true_target: The block to branch to if ``condition`` is
+            true; must already be in :attr:`cfg`.
+        :param false_target: The block to branch to if ``condition`` is
+            false; must already be in :attr:`cfg`.
+        :param ast: The AST node the branch instruction is attributed to.
+        """
         assert_in(true_target, self.cfg)
         assert_in(false_target, self.cfg)
         self.curr_bb.cbranch(condition, true_target, false_target, ast)
@@ -633,5 +936,10 @@ class CfgBuilder:
         self.cfg.add_edge(self.curr_bb, false_target)
 
     def ret(self, value: Value, ast: Optional[ast.Ast]) -> None:
+        """Terminate :attr:`curr_bb` with a return of ``value``.
+
+        :param value: The value to return.
+        :param ast: The AST node the return instruction is attributed to.
+        """
         self.curr_bb.ret(value, ast)
         self.cfg.add_edge(self.curr_bb, self.cfg.exit)

@@ -1,3 +1,5 @@
+"""The parsed AST: one node class per grammar rule, built from Lark parse trees."""
+
 from abc import ABC, abstractmethod
 import ast as python_ast
 from collections.abc import Callable
@@ -15,14 +17,31 @@ from l0.typs import ADDR_SIZE, SIGNED, UNSIGNED
 
 
 def as_token(branch: Branch[Token]) -> Token:
+    """Assert that a Lark tree child is a leaf token, and return it as such.
+
+    :param branch: The parse-tree child to check.
+    :return: ``branch``, statically typed as :class:`~lark.Token`.
+    :raises AssertionError: If ``branch`` is not a :class:`~lark.Token`.
+    """
     return checked_cast(branch, Token)
 
 
 def as_tree(branch: Branch[Token]) -> Tree[Token]:
+    """Assert that a Lark tree child is itself a subtree, and return it as such.
+
+    :param branch: The parse-tree child to check.
+    :return: ``branch``, statically typed as :class:`~lark.Tree`.
+    :raises AssertionError: If ``branch`` is not a :class:`~lark.Tree`.
+    """
     return checked_cast(branch, Tree)
 
 
 class Ast(ABC):
+    """Base class for every AST node.
+
+    :param span: The node's source location.
+    """
+
     span: SrcSpan
 
     def __init__(self, span: SrcSpan) -> None:
@@ -46,6 +65,12 @@ class Ast(ABC):
                 return f"{indent * level}{child_val!r}"
 
     def pretty(self, indent: str = "  ", level: int = 0) -> str:
+        """Render this node and its children as an indented tree, for debugging.
+
+        :param indent: The string used for one level of indentation.
+        :param level: The starting indentation depth.
+        :return: The formatted tree.
+        """
         cls_name = type(self).__name__
         child_attrs = ((k, v) for k, v in vars(self).items() if k != "span")
         child_strs = "\n".join(
@@ -55,10 +80,15 @@ class Ast(ABC):
 
     @abstractmethod
     def diag_str(self) -> str:
-        pass
+        """A short, human-readable description of this node, for use in diagnostics.
+
+        E.g. ``'variable "x"'`` or ``"if expression"``.
+        """
 
 
 class Ident(Ast):
+    """A single identifier."""
+
     name: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -72,6 +102,8 @@ class Ident(Ast):
 
 
 class Path(Ast):
+    """A (possibly ``::``-qualified) sequence of identifiers, e.g. ``some_mod::Foo``."""
+
     idents: list[Ident]
 
     @override
@@ -85,10 +117,13 @@ class Path(Ast):
         return f"path {self.str()}"
 
     def str(self) -> str:
+        """This path rendered back as ``::``-separated source text."""
         return "::".join(ident.name for ident in self.idents)
 
 
 class Expr(Ast):
+    """Base class for every expression node."""
+
     @staticmethod
     def _child_ctors() -> dict["str", Callable[[SrcFile, Tree], Expr]]:
         return {
@@ -113,20 +148,45 @@ class Expr(Ast):
 
     @staticmethod
     def is_expr_tree(tree: ParseTree) -> bool:
+        """Whether ``tree``'s grammar rule is one that produces an :class:`Expr`.
+
+        :param tree: The parse tree to check.
+        :return: Whether ``tree`` can be passed to :meth:`from_tree`.
+        """
         return tree.data in Expr._child_ctors()
 
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> Expr:
+        """Build the appropriate :class:`Expr` subclass instance from a parse tree.
+
+        :param file: The source file ``tree`` was parsed from.
+        :param tree: The parse tree, whose grammar rule determines which
+            :class:`Expr` subclass is constructed.
+        :return: The constructed expression node.
+        """
         return Expr._child_ctors()[tree.data](file, tree)
 
 
 class PlaceExpr(Expr):
+    """Base class for expressions that can appear on the left of ``=``."""
+
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> PlaceExpr:
+        """Build the appropriate :class:`PlaceExpr` subclass instance from a parse tree.
+
+        :param file: The source file ``tree`` was parsed from.
+        :param tree: The parse tree, whose grammar rule determines which
+            :class:`PlaceExpr` subclass is constructed.
+        :return: The constructed expression node.
+        :raises AssertionError: If ``tree``'s grammar rule doesn't produce
+            a :class:`PlaceExpr`.
+        """
         return checked_cast(Expr.from_tree(file, tree), PlaceExpr)
 
 
 class BlockExpr(Expr):
+    """A ``{ stmt; ...; tail_expr }`` block expression."""
+
     stmts: list[Stmt]
     expr: Optional[Expr]
 
@@ -156,6 +216,8 @@ class BlockExpr(Expr):
 
 
 class IfExpr(Expr):
+    """An ``if (condition) { ... } else { ... }`` expression."""
+
     condition: Expr
     then: BlockExpr
     els: Optional[BlockExpr]
@@ -180,6 +242,8 @@ class IfExpr(Expr):
 
 
 class WhileExpr(Expr):
+    """A ``while (condition) { ... }`` loop expression."""
+
     condition: Expr
     block: BlockExpr
 
@@ -196,6 +260,8 @@ class WhileExpr(Expr):
 
 
 class StrLit(Expr):
+    """A string literal."""
+
     value: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -210,6 +276,12 @@ class StrLit(Expr):
 
 
 class IntLit(Expr):
+    """An integer literal, e.g. ``42``, ``5i8``, or ``3usize``.
+
+    The type suffix, if present, determines :attr:`typ` directly; if
+    absent, the literal defaults to ``i32``.
+    """
+
     token: Token
     value: int
     typ: typs.IntTyp
@@ -241,6 +313,8 @@ class IntLit(Expr):
 
 
 class ArrayLength(Expr):
+    """An array type's length, e.g. the ``4`` in ``[i32; 4]``."""
+
     token: Token
     value: int
 
@@ -257,6 +331,8 @@ class ArrayLength(Expr):
 
 
 class BoolLit(Expr):
+    """A boolean literal, ``true`` or ``false``."""
+
     token: Token
     value: bool
 
@@ -274,6 +350,8 @@ class BoolLit(Expr):
 
 
 class VarExpr(PlaceExpr):
+    """A (possibly qualified) variable or function reference, e.g. ``some_mod::x``."""
+
     path: Path
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -287,6 +365,8 @@ class VarExpr(PlaceExpr):
 
 
 class ArrayAccessExpr(PlaceExpr):
+    """An array indexing expression, ``array[index]``."""
+
     array: Expr
     index: Expr
 
@@ -303,6 +383,8 @@ class ArrayAccessExpr(PlaceExpr):
 
 
 class ArrayExpr(Expr):
+    """An array literal, e.g. ``[1, 2, 3]``."""
+
     elements: list[Expr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -320,6 +402,8 @@ class ArrayExpr(Expr):
 
 
 class StructExpr(Expr):
+    """A struct literal, e.g. ``Point { x: 1, y: 2 }``."""
+
     typ: BasicTyp
     fields: list[StructFieldExpr]
 
@@ -340,6 +424,8 @@ class StructExpr(Expr):
 
 
 class StructFieldExpr(Expr):
+    """A single ``field: value`` entry within a :class:`StructExpr`."""
+
     ident: Ident
     value: Expr
 
@@ -356,6 +442,8 @@ class StructFieldExpr(Expr):
 
 
 class StructAccessExpr(PlaceExpr):
+    """A struct field access expression, ``struct.field``."""
+
     struct: Expr
     field: Ident
 
@@ -372,6 +460,8 @@ class StructAccessExpr(PlaceExpr):
 
 
 class DerefExpr(PlaceExpr):
+    """A pointer dereference expression, ``ptr.*``."""
+
     ptr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -386,6 +476,8 @@ class DerefExpr(PlaceExpr):
 
 
 class CallExpr(Expr):
+    """A function call expression, ``callee(args...)``."""
+
     callee: Expr
     args: list[Expr]
 
@@ -406,6 +498,8 @@ class CallExpr(Expr):
 
 
 class Op(Ast):
+    """A binary or unary operator token, e.g. ``+`` or ``&``."""
+
     name: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -419,6 +513,8 @@ class Op(Ast):
 
 
 class BinOpExpr(Expr):
+    """A binary operator expression, ``lhs op rhs``."""
+
     lhs: Expr
     op: Op
     rhs: Expr
@@ -436,6 +532,8 @@ class BinOpExpr(Expr):
 
 
 class UnaryOpExpr(Expr):
+    """A unary operator expression, ``op operand`` (currently, only ``&operand``)."""
+
     op: Op
     operand: Expr
 
@@ -451,8 +549,17 @@ class UnaryOpExpr(Expr):
 
 
 class Stmt(Ast):
+    """Base class for every statement node."""
+
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> Stmt:
+        """Build the appropriate :class:`Stmt` subclass instance from a parse tree.
+
+        :param file: The source file ``tree`` was parsed from.
+        :param tree: The parse tree, whose grammar rule determines which
+            :class:`Stmt` subclass is constructed.
+        :return: The constructed statement node.
+        """
         assert_eq(tree.data, "stmt")
         (child,) = map(as_tree, tree.children)
         child_classes = {
@@ -465,6 +572,8 @@ class Stmt(Ast):
 
 
 class ExprStmt(Stmt):
+    """An expression evaluated for its side effects, followed by ``;``."""
+
     expr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -479,6 +588,8 @@ class ExprStmt(Stmt):
 
 
 class RetStmt(Stmt):
+    """A ``return`` statement, with or without a value."""
+
     expr: Optional[Expr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -493,6 +604,8 @@ class RetStmt(Stmt):
 
 
 class LetStmt(Stmt):
+    """A local ``let`` binding statement."""
+
     mut: Optional[Mutability]
     ident: Ident
     expr: Expr
@@ -511,6 +624,8 @@ class LetStmt(Stmt):
 
 
 class AssignmentStmt(Stmt):
+    """An assignment statement, ``place = expr``."""
+
     place: PlaceExpr
     expr: Expr
 
@@ -527,12 +642,26 @@ class AssignmentStmt(Stmt):
 
 
 class Typ(Ast):
+    """Base class for every parsed type-expression node.
+
+    Not to be confused with :class:`l0.typs.Typ`, the *resolved* type
+    representation this is later converted to (see
+    :meth:`l0.typs.Typ.from_ast`).
+    """
+
     def __init__(self, span: SrcSpan) -> None:
         super().__init__(span)
         self._typ = None
 
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> Typ:
+        """Build the appropriate :class:`Typ` subclass instance from a parse tree.
+
+        :param file: The source file ``tree`` was parsed from.
+        :param tree: The parse tree, whose grammar rule determines which
+            :class:`Typ` subclass is constructed.
+        :return: The constructed type-expression node.
+        """
         child_classes = {
             "basic_typ": BasicTyp,
             "ptr_typ": PtrTyp,
@@ -542,6 +671,8 @@ class Typ(Ast):
 
 
 class BasicTyp(Typ):
+    """A named type, e.g. ``i32`` or ``some_mod::Foo``."""
+
     path: Path
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -556,6 +687,8 @@ class BasicTyp(Typ):
 
 
 class PtrTyp(Typ):
+    """A pointer type expression, e.g. ``*i32`` or ``*mut i32``."""
+
     pointee_typ: Typ
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -570,6 +703,8 @@ class PtrTyp(Typ):
 
 
 class ArrayTyp(Typ):
+    """A fixed-length array type expression, e.g. ``[i32; 4]``."""
+
     element_typ: Typ
     length: ArrayLength
 
@@ -586,6 +721,8 @@ class ArrayTyp(Typ):
 
 
 class Param(Ast):
+    """A single formal parameter in a function declaration or definition."""
+
     name: Ident
     typ: Typ
 
@@ -602,8 +739,17 @@ class Param(Ast):
 
 
 class Defn(Ast):
+    """Base class for every top-level module item definition."""
+
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> Defn:
+        """Build the appropriate :class:`Defn` subclass instance from a parse tree.
+
+        :param file: The source file ``tree`` was parsed from.
+        :param tree: The parse tree, whose grammar rule determines which
+            :class:`Defn` subclass is constructed.
+        :return: The constructed definition node.
+        """
         assert_eq(tree.data, "defn")
         (child,) = map(as_tree, tree.children)
         child_classes = {
@@ -618,6 +764,17 @@ class Defn(Ast):
 
 
 class FnSpec(Defn):
+    """Base class shared by function declarations and function definitions.
+
+    :param file: The source file ``tree`` was parsed from.
+    :param tree: The declaration's or definition's own parse tree, used
+        only for its source span.
+    :param ident: The parse tree for the function's name.
+    :param param_list: The parse tree for the function's parameter list.
+    :param ret_typ: The parse tree for the function's return type, or
+        ``None`` if unspecified (i.e. ``void``).
+    """
+
     name: Ident
     params: list[Param]
     ret_typ: Optional[Typ]
@@ -639,6 +796,8 @@ class FnSpec(Defn):
 
 
 class FnDecl(FnSpec):
+    """A function declared without a body (e.g. an external/builtin function)."""
+
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "fn_decl")
         ident, param_list, ret_typ = tree.children
@@ -652,6 +811,8 @@ class FnDecl(FnSpec):
 
 
 class FnDefn(FnSpec):
+    """A function defined with a body."""
+
     access: Optional[Access]
     block: BlockExpr
 
@@ -670,6 +831,8 @@ class FnDefn(FnSpec):
 
 
 class VarDefn(Defn):
+    """A module-level ``let`` variable definition."""
+
     access: Optional[Access]
     let_stmt: LetStmt
 
@@ -686,6 +849,8 @@ class VarDefn(Defn):
 
 
 class StructDefn(Defn):
+    """A struct type definition."""
+
     access: Optional[Access]
     ident: Ident
     fields: list[StructFieldDefn]
@@ -708,6 +873,8 @@ class StructDefn(Defn):
 
 
 class StructFieldDefn(Ast):
+    """A single field declaration within a :class:`StructDefn`."""
+
     access: Optional[Access]
     mut: Optional[Mutability]
     ident: Ident
@@ -728,6 +895,8 @@ class StructFieldDefn(Ast):
 
 
 class ImplDefn(Defn):
+    """An ``impl SomeStruct { ... }`` block of associated functions."""
+
     typ: Typ
     fns: list[FnDefn]
 
@@ -744,6 +913,8 @@ class ImplDefn(Defn):
 
 
 class Import(Defn):
+    """An ``import some_mod;`` statement."""
+
     ident: Ident
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -758,6 +929,8 @@ class Import(Defn):
 
 
 class Access(Ast):
+    """An optional ``pub`` access specifier."""
+
     value: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -769,6 +942,14 @@ class Access(Ast):
 
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> Optional[Access]:
+        """Build an :class:`Access` from a parse tree, if it has one present.
+
+        :param file: The source file ``tree`` was parsed from.
+        :param tree: The parse tree for the (possibly absent) access
+            specifier.
+        :return: The constructed node, or ``None`` if no ``pub`` keyword
+            is present.
+        """
         (child,) = tree.children
         if child is not None:
             return Access(file, tree)
@@ -781,6 +962,8 @@ class Access(Ast):
 
 
 class Mutability(Ast):
+    """An optional ``mut`` mutability specifier."""
+
     value: str
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -791,6 +974,14 @@ class Mutability(Ast):
 
     @staticmethod
     def from_tree(file: SrcFile, tree: ParseTree) -> Optional[Mutability]:
+        """Build a :class:`Mutability` from a parse tree, if it has one present.
+
+        :param file: The source file ``tree`` was parsed from.
+        :param tree: The parse tree for the (possibly absent) mutability
+            specifier.
+        :return: The constructed node, or ``None`` if no ``mut`` keyword
+            is present.
+        """
         (child,) = tree.children
         if child is not None:
             return Mutability(file, tree)
@@ -803,6 +994,8 @@ class Mutability(Ast):
 
 
 class Mod(Ast):
+    """A parsed module: the top-level sequence of definitions in a source file."""
+
     defns: list[Defn]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -816,6 +1009,12 @@ class Mod(Ast):
 
 
 def opt_ast(obj: Any) -> Optional[Ast]:
+    """Get ``obj``'s ``ast`` attribute, if it has one and it's an :class:`Ast`.
+
+    :param obj: The object to inspect (typically an
+        :class:`~l0.ir_values.Value`).
+    :return: ``obj.ast``, or ``None`` if absent or not an :class:`Ast`.
+    """
     attr = getattr(obj, "ast", None)
     if isinstance(attr, Ast):
         return attr
@@ -823,4 +1022,10 @@ def opt_ast(obj: Any) -> Optional[Ast]:
 
 
 def opt_span(obj: Any) -> Optional[SrcSpan]:
+    """Get the source span of ``obj``'s ``ast`` attribute, if it has one.
+
+    :param obj: The object to inspect (typically an
+        :class:`~l0.ir_values.Value`).
+    :return: The span of ``obj.ast``, or ``None`` if unavailable.
+    """
     return opt_map(opt_ast(obj), lambda x: x.span)

@@ -1,3 +1,5 @@
+"""Module/program structure: functions, module-level variables, and modules."""
+
 from abc import abstractmethod
 from dataclasses import dataclass
 import enum
@@ -32,11 +34,20 @@ FnAstT = TypeVar("FnAstT", bound=ast.FnSpec, covariant=True)
 
 
 class Access(enum.Enum):
+    """Whether a module item is visible outside its declaring module."""
+
     PRIVATE = 0
     PUBLIC = 1
 
     @staticmethod
     def from_ast(ast: Optional[ast.Access]) -> Access:
+        """Determine access from an optional ``pub`` keyword in the AST.
+
+        :param ast: The parsed ``pub`` keyword node, or ``None`` if
+            absent.
+        :return: :data:`PUBLIC` if ``ast`` is present, otherwise
+            :data:`PRIVATE`.
+        """
         if ast is None:
             return PRIVATE
         assert_eq(ast.value, "pub")
@@ -49,6 +60,16 @@ PUBLIC = Access.PUBLIC
 
 @dataclass
 class ModItem:
+    """A single named item (function, variable, type, or import) in a module.
+
+    :param mod: The module this item belongs to.
+    :param name: The item's unqualified name.
+    :param access: Whether the item is public or private.
+    :param value: The item itself.
+    :param qualify_name: Whether :attr:`qualified_name` should prefix
+        ``name`` with the module's name.
+    """
+
     mod: Final[Mod]
     name: Final[str]
     access: Final[Access]
@@ -57,6 +78,10 @@ class ModItem:
 
     @property
     def qualified_name(self) -> str:
+        """This item's name, prefixed with its module's name unless opted out.
+
+        Used as the symbol name emitted into the generated LLVM IR.
+        """
         if self.qualify_name:
             return f"{self.mod.name}.{self.name}"
         else:
@@ -64,6 +89,12 @@ class ModItem:
 
 
 class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
+    """Base class for anything callable that can appear as a module item.
+
+    A function pointer that can never be dereferenced to a plain value -
+    it can only be called.
+    """
+
     @override
     def load(self) -> ComptimeValue:
         assert False, "Can't dereference a function pointer"
@@ -78,23 +109,32 @@ class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
 
     @cached_property
     def params(self) -> tuple[Param, ...]:
+        """This function's formal parameters, in declaration order."""
         return self.calculate_params()
 
     @abstractmethod
     def calculate_params(self) -> tuple[Param, ...]:
-        pass
+        """Compute :attr:`params`; overridden by subclasses."""
 
     @property
     @abstractmethod
     def name(self) -> str:
-        pass
+        """This function's name."""
 
     @property
     def fn_typ(self) -> FnTyp:
+        """This function's type, i.e. the pointee type of :attr:`typ`."""
         return checked_cast(self.typ.pointee_typ, FnTyp)
 
 
 class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
+    """Base class for functions declared or defined in l0 source.
+
+    :param ast: The parsed function declaration or definition.
+    :param e: The enclosing scope, used to resolve parameter and return
+        types.
+    """
+
     env: Final[ir_env.Env]
 
     @override
@@ -132,18 +172,35 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
 
 
 class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
-    pass
+    """A function declared without a body (e.g. an external/builtin function)."""
 
 
 class Fn(NonBuiltinFnSpec[ast.FnDefn]):
+    """A function defined with a body in l0 source."""
+
     @cached_property
     def cfg(self) -> Cfg:
+        """This function's body, lowered to a control-flow graph.
+
+        Built lazily, on first access.
+        """
         builder = ir_builder.CfgBuilder(self)
         builder.build_fn(opt_unwrap(self.ast), self.env)
         return builder.cfg
 
 
 class ModVar(ComptimePtr[ast.VarDefn]):
+    """A module-level ``let`` binding.
+
+    Its initializer must be computable at compile time (see
+    :class:`l0.comptime.Interpreter`), since it becomes a global variable's
+    initial value in the generated code.
+
+    :param ast: The parsed variable declaration.
+    :param e: The enclosing scope, used to build and evaluate the
+        initializer expression.
+    """
+
     env: Final[ir_env.Env]
     mut: Final[Mutability]
 
@@ -167,12 +224,20 @@ class ModVar(ComptimePtr[ast.VarDefn]):
 
     @cached_property
     def initializer(self) -> ComptimeValue:
+        """This variable's initial value, evaluated at compile time.
+
+        Computed lazily, on first access.
+        """
         # TODO: detect recursion
         assert self.ast is not None
         return comptime.Interpreter(self.cfg, (), ()).eval()
 
     @cached_property
     def cfg(self) -> Cfg:
+        """The initializer expression, lowered to a control-flow graph.
+
+        Built lazily, on first access.
+        """
         builder = ir_builder.CfgBuilder()
         builder.build_var_initializer(opt_unwrap(self.ast), self.env)
         return builder.cfg
@@ -183,6 +248,16 @@ class ModVar(ComptimePtr[ast.VarDefn]):
 
 
 class Mod(Typ):
+    """A compiled l0 module: the functions, variables, types, and imports it declares.
+
+    Also usable as a :class:`~l0.typs.Typ`, so a module name can appear as
+    a path segment when resolving a qualified name (e.g. ``some_mod::foo``).
+
+    :param name: The module's name, used to qualify its items' symbol
+        names in the generated code.
+    :param mod_ast: The parsed module.
+    """
+
     _name: Final[str]
     ast: Final[ast.Mod]
     items: Final[list[ModItem]]

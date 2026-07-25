@@ -1,3 +1,5 @@
+"""User-facing diagnostics: error/warning types, and their rendering."""
+
 from dataclasses import dataclass
 from enum import IntEnum
 import sys
@@ -8,6 +10,8 @@ from l0.src import SrcSpan
 
 
 class Level(IntEnum):
+    """The severity of a diagnostic message."""
+
     NOTE = 0
     WARNING = 1
     ERROR = 2
@@ -20,12 +24,26 @@ ERROR = Level.ERROR
 
 @dataclass
 class Message:
+    """A single diagnostic message, optionally located in source."""
+
     level: Level
     message: str
     span: Optional[SrcSpan]
 
 
 class UserError(Exception):
+    """Base class for diagnosable compile errors and warnings.
+
+    Carries a primary :class:`Message` plus any number of extra messages
+    (e.g. "previous definition here" notes) that get rendered alongside
+    it.
+
+    :param level: The severity of the primary message.
+    :param message: The primary message text.
+    :param span: The source location the primary message refers to, if
+        any.
+    """
+
     message: Message
     extra: list[Message]
 
@@ -35,24 +53,38 @@ class UserError(Exception):
         self.extra = []
 
     def add_extra(self, level: Level, message: str, span: Optional[SrcSpan]) -> None:
+        """Attach an extra message to be rendered alongside the primary one.
+
+        :param level: The severity of the extra message.
+        :param message: The extra message text.
+        :param span: The source location the extra message refers to, if
+            any.
+        """
         self.extra.append(Message(level, message, span))
 
     @property
     def level(self):
+        """The severity of this error's primary message."""
         return self.message.level
 
 
 class ItemNotFoundError(UserError):
+    """Raised when a name cannot be resolved in scope."""
+
     def __init__(self, item_kind: str, name: str, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
 
 
 class AssignToConstError(UserError):
+    """Raised when assigning through a const pointer or to a const place."""
+
     def __init__(self, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot assign to const place expression", span)
 
 
 class DuplicateItemDefnError(UserError):
+    """Raised when a name is defined more than once in the same scope."""
+
     def __init__(
         self,
         item_kind: str,
@@ -66,6 +98,8 @@ class DuplicateItemDefnError(UserError):
 
 
 class NotCallableError(UserError):
+    """Raised when calling a value whose type isn't a function pointer."""
+
     def __init__(self, callee_diag: str, given_typ: str, span: Optional[SrcSpan]):
         super().__init__(
             ERROR, f'{callee_diag} of type "{given_typ}" is not callable', span
@@ -73,6 +107,8 @@ class NotCallableError(UserError):
 
 
 class InvalidArgTypError(UserError):
+    """Raised when a call argument's type doesn't match the parameter's type."""
+
     def __init__(
         self,
         callee_diag: str,
@@ -94,6 +130,8 @@ class InvalidArgTypError(UserError):
 
 
 class InvalidBinOpArgTypError(UserError):
+    """Raised when a binary operator's operand has an unsupported type."""
+
     def __init__(
         self,
         op: str,
@@ -117,6 +155,8 @@ class InvalidBinOpArgTypError(UserError):
 
 
 class IncompatibleBinOpArgTypsError(UserError):
+    """Raised when a binary operator's operands have differing types."""
+
     def __init__(
         self,
         op: str,
@@ -136,6 +176,8 @@ class IncompatibleBinOpArgTypsError(UserError):
 
 
 class TooManyArgsError(UserError):
+    """Raised when a call passes more arguments than the callee takes."""
+
     def __init__(
         self,
         callee_diag: str,
@@ -155,6 +197,8 @@ class TooManyArgsError(UserError):
 
 
 class NotEnoughArgsError(UserError):
+    """Raised when a call passes fewer arguments than the callee takes."""
+
     def __init__(
         self,
         callee_diag: str,
@@ -173,6 +217,9 @@ class NotEnoughArgsError(UserError):
 
 
 class InvalidRetTypError(UserError):
+    """Raised when a ``return`` expression's type doesn't match the
+    function's return type."""
+
     def __init__(
         self,
         fn_name: str,
@@ -198,6 +245,8 @@ class InvalidRetTypError(UserError):
 
 
 class InvalidVoidRetError(UserError):
+    """Raised when a value-less ``return`` appears in a non-void function."""
+
     def __init__(
         self,
         fn_name: str,
@@ -219,16 +268,22 @@ class InvalidVoidRetError(UserError):
 
 
 class RetNotInFnError(UserError):
+    """Raised when a ``return`` statement appears outside a function body."""
+
     def __init__(self, ret_span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, "Return statement not in function", ret_span)
 
 
 class UnreachableCodeWarning(UserError):
+    """Warns about code that can never be executed."""
+
     def __init__(self, code_typ: str, code_span: Optional[SrcSpan]) -> None:
         super().__init__(WARNING, f"{code_typ} is unreachable", code_span)
 
 
 class MissingRetError(UserError):
+    """Raised when a non-void function's body doesn't return or diverge."""
+
     def __init__(
         self,
         fn_name: str,
@@ -250,6 +305,8 @@ class MissingRetError(UserError):
 
 
 class IncompatibleTypInArrayExpr(UserError):
+    """Raised when an array literal's elements don't all have the same type."""
+
     def __init__(
         self,
         element_typ: str,
@@ -268,11 +325,15 @@ class IncompatibleTypInArrayExpr(UserError):
 
 
 class VoidArrayElementError(UserError):
+    """Raised when an array literal's element type is ``void``."""
+
     def __init__(self, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, 'Array element cannot have type "void"', span)
 
 
 class TypeOfStructExprNotStructError(UserError):
+    """Raised when a struct literal's named type isn't actually a struct type."""
+
     def __init__(self, typ: str, span: Optional[SrcSpan]):
         super().__init__(
             ERROR,
@@ -282,6 +343,8 @@ class TypeOfStructExprNotStructError(UserError):
 
 
 class ImplForNonStructTypError(UserError):
+    """Raised when an ``impl`` block targets a non-struct type."""
+
     def __init__(self, typ_diag: str, span: Optional[SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -291,6 +354,8 @@ class ImplForNonStructTypError(UserError):
 
 
 class ImplForNonLocalStructTypError(UserError):
+    """Raised when an ``impl`` block targets a struct defined in another module."""
+
     def __init__(self, typ_diag: str, span: Optional[SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -303,6 +368,8 @@ class ImplForNonLocalStructTypError(UserError):
 
 
 class InvalidStructFieldError(UserError):
+    """Raised when referring to a field a struct type doesn't have."""
+
     def __init__(
         self,
         field_name: str,
@@ -320,6 +387,8 @@ class InvalidStructFieldError(UserError):
 
 
 class IncompatibleStructFieldTypError(UserError):
+    """Raised when a struct literal field's value has the wrong type."""
+
     def __init__(
         self,
         field_name: str,
@@ -342,6 +411,8 @@ class IncompatibleStructFieldTypError(UserError):
 
 
 class MissingFieldInStructExprError(UserError):
+    """Raised when a struct literal omits a required field."""
+
     def __init__(
         self,
         field_name: str,
@@ -359,6 +430,8 @@ class MissingFieldInStructExprError(UserError):
 
 
 class DuplicateFieldInStructExprError(UserError):
+    """Raised when a struct literal gives a value for the same field twice."""
+
     def __init__(
         self,
         field_name: str,
@@ -379,6 +452,8 @@ class DuplicateFieldInStructExprError(UserError):
 
 
 class DuplicateFieldInStructDefnError(UserError):
+    """Raised when a struct declaration defines the same field name twice."""
+
     def __init__(
         self,
         field_name: str,
@@ -399,11 +474,15 @@ class DuplicateFieldInStructDefnError(UserError):
 
 
 class FieldAccessIntoInvalidTypError(UserError):
+    """Raised when using ``.`` field access on a non-struct type."""
+
     def __init__(self, typ: str, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, f'Field access into invalid type "{typ}"', span)
 
 
 class IfElsTypMismatchError(UserError):
+    """Raised when an ``if`` expression's two branches have differing types."""
+
     def __init__(
         self,
         then_typ: str,
@@ -417,6 +496,8 @@ class IfElsTypMismatchError(UserError):
 
 
 class IfTypNotVoidError(UserError):
+    """Raised when an ``if`` without ``else`` has a non-void ``then`` type."""
+
     def __init__(
         self,
         then_typ: str,
@@ -430,6 +511,8 @@ class IfTypNotVoidError(UserError):
 
 
 class IfCondNotBoolError(UserError):
+    """Raised when an ``if`` condition's type isn't ``bool``."""
+
     def __init__(
         self, expr_diag: str, expr_typ: str, expr_span: Optional[SrcSpan]
     ) -> None:
@@ -441,6 +524,8 @@ class IfCondNotBoolError(UserError):
 
 
 class WhileTypNotVoidError(UserError):
+    """Raised when a ``while`` loop's body has a non-void type."""
+
     def __init__(
         self,
         block_typ: str,
@@ -454,6 +539,8 @@ class WhileTypNotVoidError(UserError):
 
 
 class WhileCondNotBoolError(UserError):
+    """Raised when a ``while`` loop's condition's type isn't ``bool``."""
+
     def __init__(
         self, expr_diag: str, expr_typ: str, expr_span: Optional[SrcSpan]
     ) -> None:
@@ -465,16 +552,22 @@ class WhileCondNotBoolError(UserError):
 
 
 class IndexIntoInvalidTypError(UserError):
+    """Raised when using ``[]`` indexing on a non-array type."""
+
     def __init__(self, typ: str, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, f'Index into invalid type "{typ}"', span)
 
 
 class InvalidIndexTypError(UserError):
+    """Raised when an array index expression's type isn't ``usize``."""
+
     def __init__(self, typ: str, span: SrcSpan) -> None:
         super().__init__(ERROR, f'Invalid index typ "{typ}"', span)
 
 
 class ArrayIndexOutOfBoundsError(UserError):
+    """Raised when a compile-time-known array index is out of bounds."""
+
     def __init__(self, index: int, index_span: SrcSpan, array_typ: str) -> None:
         super().__init__(
             ERROR,
@@ -484,6 +577,8 @@ class ArrayIndexOutOfBoundsError(UserError):
 
 
 class IntLitOverflowError(UserError):
+    """Raised when an integer literal doesn't fit in its type's width."""
+
     def __init__(self, value: int, typ: str, span: Optional[SrcSpan]) -> None:
         super().__init__(
             ERROR, f'Integer literal {value} does not fit in type "{typ}"', span
@@ -491,47 +586,75 @@ class IntLitOverflowError(UserError):
 
 
 class DerefInvalidTypError(UserError):
+    """Raised when dereferencing a value whose type isn't a data pointer."""
+
     def __init__(self, typ: str, span: SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot dereference value of type "{typ}"', span)
 
 
 class VoidVarInitializerError(UserError):
+    """Raised when a module-level ``let`` initializer has type ``void``."""
+
     def __init__(self, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, "Module variable initializer cannot be void", span)
 
 
 class CannotTakeAddressOfComptimeValueError(UserError):
+    """Raised when a compile-time-evaluated expression's result would need
+    the address of a temporary that has no address at runtime."""
+
     def __init__(self, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot take address of comptime value", span)
 
 
 class CallExternFnAtComptimeError(UserError):
+    """Raised when compile-time evaluation needs to call a function with no body."""
+
     def __init__(self, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot call extern function at comptime", span)
 
 
 class SetNonLocalVarAtComptimeError(UserError):
+    """Raised when compile-time evaluation needs to write through a pointer
+    to a variable outside the expression being evaluated."""
+
     def __init__(self, span: Optional[SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot set non-local variable at comptime", span)
 
 
 class ModDoesNotExistError(UserError):
+    """Raised when an ``import`` names a module file that doesn't exist."""
+
     def __init__(self, name: str, span: SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot find module "{name}"', span)
 
 
 class TextErrorRenderer:
+    """Renders diagnostics as plain text, with a source excerpt, to stderr."""
+
     def display_errors(self, errs: list[UserError]) -> None:
+        """Render each error in ``errs``, in order.
+
+        :param errs: The errors to render.
+        """
         for err in errs:
             self.display_error(err)
 
     def display_error(self, err: UserError) -> None:
+        """Render an error's primary message followed by its extra messages.
+
+        :param err: The error to render.
+        """
 
         self.display_message(err.message)
         for message in err.extra:
             self.display_message(message)
 
     def display_message(self, message: Message) -> None:
+        """Render a single message, with a source excerpt if it has a span.
+
+        :param message: The message to render.
+        """
 
         print(f"{message.level.name}: {message.message}", file=sys.stderr)
         if message.span is not None:
@@ -554,6 +677,10 @@ _error_level: Level = NOTE
 
 
 def register_error(err: UserError) -> None:
+    """Record a diagnostic and raise the process's overall error level if needed.
+
+    :param err: The diagnostic to record.
+    """
     global _error_level
     if err.level > _error_level:
         _error_level = err.level
@@ -561,13 +688,20 @@ def register_error(err: UserError) -> None:
 
 
 def raise_error(err: UserError) -> None:
+    """Record a diagnostic (see :func:`register_error`) and then raise it.
+
+    :param err: The diagnostic to record and raise.
+    :raises UserError: Always; raises ``err`` itself.
+    """
     register_error(err)
     raise err
 
 
 def errors() -> list[UserError]:
+    """Return all diagnostics recorded so far, in registration order."""
     return _errors
 
 
 def error_level() -> Level:
+    """Return the highest severity level among all recorded diagnostics."""
     return _error_level

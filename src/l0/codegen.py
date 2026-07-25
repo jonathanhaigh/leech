@@ -1,3 +1,5 @@
+"""Lowering of l0 IR to LLVM IR, via llvmlite."""
+
 from collections import ChainMap
 from dataclasses import dataclass
 from typing import Optional
@@ -24,6 +26,12 @@ from l0.typs import (
 def set_linkage(
     ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access
 ) -> None:
+    """Set an LLVM global's linkage to match an l0 item's access.
+
+    :param ll_global: The LLVM global variable or function to set linkage
+        on.
+    :param access: The l0 item's access.
+    """
     if access == ir_module.PRIVATE:
         ll_global.linkage = "private"
     else:
@@ -31,12 +39,31 @@ def set_linkage(
 
 
 class Compiler:
+    """Lowers a single :class:`~l0.ir_module.Mod` to an LLVM module.
+
+    :param mod: The IR module to compile.
+    """
+
     mod: ir_module.Mod
     ll_mod: ll.Module
     _ll_mod_items: Compiler.LLItems
     _tmp_name: VarNamer
 
     class LLItems:
+        """A cache mapping l0 IR values and types to their LLVM counterparts.
+
+        Looking up an item that hasn't been compiled yet compiles and
+        caches it on demand. Like :class:`~l0.ir_env.Env`, instances form
+        a parent/child chain (see :meth:`new_child`), used to give each
+        function body its own scope for its instructions' LLVM values
+        while still sharing the enclosing module-level cache.
+
+        :param compiler: The compiler to dispatch on-demand compilation
+            to.
+        :param values: The initial mapping to wrap, or ``None`` to start
+            empty.
+        """
+
         compiler: Compiler
         items: ChainMap[ir_values.Value | Typ, ll.Value | ll.Type]
 
@@ -55,9 +82,18 @@ class Compiler:
                 self.items = ChainMap()
 
         def new_child(self) -> Compiler.LLItems:
+            """Create a new cache nested inside this one.
+
+            :return: A fresh cache that inherits this cache's entries.
+            """
             return Compiler.LLItems(self.compiler, self.items.new_child())
 
         def get(self, item: ir_values.Value | Typ) -> ll.Value | ll.Type:
+            """Get the LLVM value or type for ``item``, compiling it if needed.
+
+            :param item: The l0 IR value or type to look up.
+            :return: The corresponding LLVM value or type.
+            """
             if item not in self.items:
                 if isinstance(item, ir_values.ComptimeValue):
                     self.items[item] = self.compiler._compile_comptime_value(item)
@@ -66,6 +102,12 @@ class Compiler:
             return self.items[item]
 
         def set(self, item: ir_values.Value | Typ, ll_item: ll.Value | ll.Type) -> None:
+            """Record the LLVM value or type to use for ``item``.
+
+            :param item: The l0 IR value or type.
+            :param ll_item: The LLVM value or type to associate with
+                ``item``.
+            """
             self.items[item] = ll_item
 
     @dataclass
@@ -81,6 +123,12 @@ class Compiler:
         self._tmp_name = VarNamer()
 
     def compile(self) -> None:
+        """Compile :attr:`mod` into :attr:`ll_mod`.
+
+        Every module item is declared (given an LLVM symbol) before any
+        item is compiled, so that forward references between items
+        resolve correctly regardless of declaration order.
+        """
         self.ll_mod.triple = "x86_64-linux-gnu"
 
         for item in self.mod.items:
