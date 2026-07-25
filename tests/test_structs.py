@@ -5,6 +5,7 @@ from l0.l0errors import (
     DuplicateFieldInStructDefnError,
     FieldAccessIntoInvalidTypError,
     IncompatibleStructFieldTypError,
+    InfiniteSizeStructError,
     InvalidStructFieldError,
     MissingFieldInStructExprError,
     ItemNotFoundError,
@@ -102,6 +103,115 @@ def test_struct_with_ptr_to_same_struct(tmp_path):
     struct T {
       a: i32,
       t: *T,
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
+    # An array of pointers is fine: each element is a fixed-size pointer,
+    # regardless of what it points to.
+    src = """
+    struct T {
+      a: i32,
+      ts: [*T; 3],
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_struct_contains_itself_by_value(tmp_path):
+    src = """
+    struct T {
+      t: T,
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(InfiniteSizeStructError):
+        compile_str(tmp_path, src)
+
+
+def test_struct_contains_itself_via_zero_length_array(tmp_path):
+    # Unlike Rust, a zero-length array doesn't break the cycle here:
+    # LLVM rejects a recursive identified struct type outright, whatever
+    # the array's length.
+    src = """
+    struct T {
+      t: [T; 0],
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(InfiniteSizeStructError):
+        compile_str(tmp_path, src)
+
+
+def test_struct_contains_itself_via_nonempty_array(tmp_path):
+    src = """
+    struct T {
+      t: [T; 3],
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(InfiniteSizeStructError):
+        compile_str(tmp_path, src)
+
+
+def test_mutual_struct_recursion_by_value(tmp_path):
+    src = """
+    struct A {
+      b: B,
+    }
+    struct B {
+      a: A,
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(InfiniteSizeStructError):
+        compile_str(tmp_path, src)
+
+
+def test_mutual_struct_recursion_by_ptr(tmp_path):
+    # The by-value cycle check must not follow pointer fields at all:
+    # A and B each contain the other only behind a pointer, so neither
+    # has unbounded size.
+    src = """
+    struct A {
+      b: *B,
+    }
+    struct B {
+      a: *A,
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_struct_diamond_containment_is_not_a_cycle(tmp_path):
+    # A contains B twice (by value), but B doesn't contain A - not a
+    # cycle, just two fields sharing a type.
+    src = """
+    struct B {
+      v: i32,
+    }
+    struct A {
+      x: B,
+      y: B,
     }
     pub fn main() i32 {
         return 0;

@@ -3,6 +3,7 @@ import pytest
 from l0.l0errors import (
     IfCondNotBoolError,
     IfElsTypMismatchError,
+    InfiniteSizeStructError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     NotCallableError,
@@ -241,6 +242,39 @@ def test_void_mod_var_initializer_message(tmp_path):
 
     msg = str(exc_info.value)
     assert "void" in msg
+
+
+def test_infinite_size_struct_message(tmp_path):
+    src = """
+    struct A {
+        b: B,
+    }
+    struct B {
+        a: A,
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(InfiniteSizeStructError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"A"' in msg
+    assert "infinite size" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "struct A")
+
+    assert len(exc_info.value.extra) == 2
+    first, second = exc_info.value.extra
+    assert first.message == 'Field "b" of struct "A" contains "B" by value'
+    assert first.span is not None
+    assert (first.span.start_line, first.span.start_col) == find_pos(src, "b: B")
+    assert second.message == 'Field "a" of struct "B" contains "A" by value'
+    assert second.span is not None
+    assert (second.span.start_line, second.span.start_col) == find_pos(src, "a: A")
 
 
 def test_if_cond_not_bool_message(tmp_path):

@@ -1,6 +1,6 @@
 """User-facing diagnostics: error/warning types, and their rendering."""
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
 import sys
@@ -561,6 +561,41 @@ class DuplicateFieldInStructDefnError(UserError):
                 NOTE,
                 f'Definition of field "{field_name}" previously given here',
                 previous_span,
+            )
+
+
+class InfiniteSizeStructError(UserError):
+    """Raised when a struct contains itself by value - directly, through
+    other structs, or through arrays of any length (including zero: LLVM
+    rejects a recursive identified struct type outright, regardless of
+    whether an array within it is empty) - giving it unbounded size. A
+    field behind a pointer doesn't count, since a pointer's size doesn't
+    depend on its pointee.
+    """
+
+    def __init__(
+        self,
+        struct_name: str,
+        struct_span: Optional[SrcSpan],
+        cycle: Sequence[tuple[str, str, Optional[SrcSpan], str]],
+    ) -> None:
+        """
+        :param struct_name: The name of the struct whose size is
+            unbounded (also the first and last struct in ``cycle``).
+        :param struct_span: The span of that struct's definition.
+        :param cycle: The chain of fields that closes the cycle, as
+            ``(containing_struct, field_name, field_span, contained_struct)``
+            tuples, in containment order, ending back at ``struct_name``.
+        """
+        super().__init__(
+            ERROR, f'Struct "{struct_name}" has infinite size', struct_span
+        )
+        for containing, field_name, field_span, contained in cycle:
+            self.add_extra(
+                NOTE,
+                f'Field "{field_name}" of struct "{containing}" contains '
+                f'"{contained}" by value',
+                field_span,
             )
 
 

@@ -11,7 +11,7 @@ from weakref import WeakValueDictionary
 from l0 import ir_env, ir_module
 from l0 import l0ast as ast
 from l0.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
-from l0.l0errors import DuplicateFieldInStructDefnError
+from l0.l0errors import DuplicateFieldInStructDefnError, InfiniteSizeStructError
 from l0.src import SrcFile, SrcSpan
 
 
@@ -376,7 +376,11 @@ class StructTyp(Typ):
 
         :raises DuplicateFieldInStructDefnError: If the declaration
             contains two fields with the same name.
+        :raises InfiniteSizeStructError: If this struct contains itself by
+            value, directly or through other structs.
         """
+        self._check_finite_size([], [])
+
         fields = {}
         for i, field_ast in enumerate(self.ast.fields):
             name = field_ast.ident.name
@@ -388,6 +392,39 @@ class StructTyp(Typ):
             fields[name] = StructField(i, field_ast, self.env)
 
         return fields.items().mapping
+
+    def _check_finite_size(
+        self,
+        visiting: list[StructTyp],
+        hops: list[tuple[str, str, Optional[SrcSpan], str]],
+    ) -> None:
+        """Raise if this struct is reachable from itself by value.
+
+        Walks field types directly from :attr:`ast` rather than through
+        :attr:`fields`, so this can run as the first step of resolving
+        :attr:`fields` itself without recursing into it.
+
+        :param visiting: The structs on the path from the struct whose
+            size is being checked down to this one, in traversal order.
+        :param hops: The ``(containing, field_name, field_span,
+            contained)`` edge for each step in ``visiting``; one shorter
+            than ``visiting``, since it records the edges *between*
+            consecutive entries.
+        :raises InfiniteSizeStructError: If this struct is already being
+            visited, i.e. reachable from itself.
+        """
+        if self in visiting:
+            cycle_start = visiting.index(self)
+            raise InfiniteSizeStructError(self.name, self.span, hops[cycle_start:])
+
+        visiting = [*visiting, self]
+        for field_ast in self.ast.fields:
+            typ = Typ.from_ast(field_ast.typ, self.env)
+            while isinstance(typ, ArrayTyp):
+                typ = typ.element_typ
+            if isinstance(typ, StructTyp):
+                hop = (self.name, field_ast.ident.name, field_ast.span, typ.name)
+                typ._check_finite_size(visiting, [*hops, hop])
 
     @property
     def span(self) -> SrcSpan:
