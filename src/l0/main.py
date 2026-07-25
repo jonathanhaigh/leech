@@ -15,7 +15,8 @@ from l0.l0errors import (
     errors,
     register_error,
 )
-from l0 import ir, l0ast as ast
+from l0 import ir_module
+from l0 import l0ast as ast
 from l0.src import SrcFile
 
 GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "l0.lark")
@@ -31,11 +32,11 @@ def build_parser(start_rule: str) -> Lark:
     )
 
 
-def compile_to_ir(file: SrcFile) -> ir.Mod:
+def compile_to_ir(file: SrcFile) -> ir_module.Mod:
     parser = build_parser("mod")
     tree = parser.parse(file.src)
     mod_ast = ast.Mod(file, tree)
-    return ir.Mod(file.path.stem, mod_ast)
+    return ir_module.Mod(file.path.stem, mod_ast)
 
 
 def compile(file: SrcFile) -> str:

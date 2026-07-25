@@ -6,7 +6,8 @@ from types import MappingProxyType
 from typing import ClassVar, Final, Optional, Self, override
 from weakref import WeakValueDictionary
 
-from l0 import ir, l0ast as ast
+from l0 import ir_env, ir_module
+from l0 import l0ast as ast
 from l0.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
 from l0.l0errors import DuplicateFieldInStructDefnError
 from l0.src import SrcSpan
@@ -71,7 +72,7 @@ class Typ(ABC):
         pass
 
     @staticmethod
-    def from_ast(typ_ast: ast.Typ, e: ir.Env) -> Typ:
+    def from_ast(typ_ast: ast.Typ, e: ir_env.Env) -> Typ:
         match typ_ast:
             case ast.BasicTyp():
                 typ = e.resolve_typ(typ_ast.path)
@@ -160,9 +161,9 @@ class ArrayTyp(Typ):
 class StructField:
     index: Final[int]
     ast: Final[ast.StructFieldDefn]
-    env: Final[ir.Env]
+    env: Final[ir_env.Env]
 
-    def __init__(self, index: int, ast: ast.StructFieldDefn, e: ir.Env) -> None:
+    def __init__(self, index: int, ast: ast.StructFieldDefn, e: ir_env.Env) -> None:
         self.index = index
         self.ast = ast
         self.env = e
@@ -176,8 +177,8 @@ class StructField:
         return Typ.from_ast(self.ast.typ, self.env)
 
     @cached_property
-    def access(self) -> ir.Access:
-        return ir.Access.from_ast(self.ast.access)
+    def access(self) -> ir_module.Access:
+        return ir_module.Access.from_ast(self.ast.access)
 
     @cached_property
     def mut(self) -> Mutability:
@@ -186,9 +187,9 @@ class StructField:
 
 class StructTyp(Typ):
     ast: Final[ast.StructDefn]
-    env: Final[ir.Env]
+    env: Final[ir_env.Env]
 
-    def __init__(self, ast: ast.StructDefn, e: ir.Env) -> None:
+    def __init__(self, ast: ast.StructDefn, e: ir_env.Env) -> None:
         self.ast = ast
         self.env = e.new_child()
 
