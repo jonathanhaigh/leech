@@ -153,6 +153,13 @@ class Env:
                 # Only the struct's own scope - not its parents' scopes, which
                 # the struct's Env inherits from for resolving field types.
                 res = container.env.items.maps[0].get((ns, ident.name))
+                # Everything reachable here is an associated function (see
+                # Mod._build_impl_defn); private ones are invisible outside
+                # the struct's own module, same as private Mod items above.
+                if isinstance(res, ir_module.Fn) and not res.is_accessible_from(
+                    ident.span.file
+                ):
+                    res = None
 
         if res is None:
             raise ItemNotFoundError(ns.item_kind(), ident.name, ident.span)

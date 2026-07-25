@@ -188,6 +188,26 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         builder.build_fn(opt_unwrap(self.ast), self.env)
         return builder.cfg
 
+    def is_accessible_from(self, file: SrcFile) -> bool:
+        """Whether this function can be called from code in ``file``.
+
+        Only relevant for associated functions (defined in an ``impl``
+        block): a private one can only be called from the module its
+        struct is defined in, mirroring
+        :meth:`~l0.typs.StructField.is_accessible_from`. Free module-level
+        functions are filtered by access before reaching this point (see
+        :meth:`~l0.ir_env.Env._resolve_path_segment`), so this is only
+        consulted for the ``Struct::method()`` lookup path.
+
+        :param file: The source file to check accessibility from.
+        :return: Whether this function is accessible from ``file``.
+        """
+        assert self.ast is not None
+        return (
+            Access.from_ast(self.ast.access) == PUBLIC
+            or self.ast.span.file.path == file.path
+        )
+
 
 class ModVar(ComptimePtr[ast.VarDefn]):
     """A module-level ``let`` binding.
