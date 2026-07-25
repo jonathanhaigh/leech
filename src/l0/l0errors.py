@@ -702,10 +702,11 @@ class DerefInvalidTypError(UserError):
 
 
 class VoidVarInitializerError(UserError):
-    """Raised when a module-level ``let`` initializer has type ``void``."""
+    """Raised when a ``let`` initializer (module-level or local) has type
+    ``void``."""
 
     def __init__(self, span: Optional[SrcSpan]) -> None:
-        super().__init__(ERROR, "Module variable initializer cannot be void", span)
+        super().__init__(ERROR, "Variable initializer cannot be void", span)
 
 
 class CannotTakeAddressOfComptimeValueError(UserError):

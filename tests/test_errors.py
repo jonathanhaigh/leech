@@ -10,6 +10,7 @@ from l0.l0errors import (
     PrivateStructFieldAccessError,
     UnexpectedCharacterError,
     UnexpectedTokenError,
+    VoidVarInitializerError,
     WhileCondNotBoolError,
 )
 from util import compile_modules, compile_str, find_pos
@@ -206,6 +207,40 @@ def test_private_typ_access_message(tmp_path):
     assert note.message == 'Type "T" defined here'
     assert note.span is not None
     assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "struct T")
+
+
+def test_void_local_var_initializer_message(tmp_path):
+    # The message used to say "Module variable initializer cannot be
+    # void" even for this local (in-function) let statement, which was
+    # actively misleading - it isn't a module variable at all.
+    src = """
+    fn f() { }
+    pub fn main() i32 {
+        let x = f();
+        return 0;
+    }
+    """
+    with pytest.raises(VoidVarInitializerError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert "void" in msg
+    assert "Module" not in msg
+
+
+def test_void_mod_var_initializer_message(tmp_path):
+    src = """
+    fn f() { }
+    let x = f();
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(VoidVarInitializerError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert "void" in msg
 
 
 def test_if_cond_not_bool_message(tmp_path):
