@@ -1,8 +1,10 @@
 import pytest
 
 from l0.l0errors import (
+    EmptyArrayTypUnknownError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
+    InvalidArgTypError,
     InvalidIndexTypError,
     VoidArrayElementError,
 )
@@ -140,26 +142,116 @@ def test_array_ret_typ_and_param_typ(tmp_path):
     check_prog_output(tmp_path, src, "", 4)
 
 
-def test_empty_array_expr(tmp_path):
+def test_empty_array_expr_typ_unknown(tmp_path):
     src = """
     pub fn main() i32 {
         let x = [];
         return 0;
     }
     """
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(EmptyArrayTypUnknownError):
         compile_str(tmp_path, src)
 
 
-def test_comptime_empty_array_expr(tmp_path):
+def test_comptime_empty_array_expr_typ_unknown(tmp_path):
     src = """
     let x = [];
     pub fn main() i32 {
         return 0;
     }
     """
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(EmptyArrayTypUnknownError):
         compile_str(tmp_path, src)
+
+
+def test_empty_array_as_call_arg(tmp_path):
+    src = """
+    fn f(a: [i32; 0]) i32 {
+        return 42;
+    }
+    pub fn main() i32 {
+        return f([]);
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_comptime_empty_array_as_call_arg(tmp_path):
+    src = """
+    fn f(a: [i32; 0]) i32 {
+        return 42;
+    }
+    let x = f([]);
+    pub fn main() i32 {
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_empty_array_wrong_expected_length(tmp_path):
+    src = """
+    fn f(a: [i32; 3]) i32 {
+        return 0;
+    }
+    pub fn main() i32 {
+        return f([]);
+    }
+    """
+    with pytest.raises(InvalidArgTypError):
+        compile_str(tmp_path, src)
+
+
+def test_empty_array_return(tmp_path):
+    src = """
+    fn f() [i32; 0] {
+        return [];
+    }
+    pub fn main() i32 {
+        let x = f();
+        return 42;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_empty_array_struct_field(tmp_path):
+    src = """
+    struct T {
+        arr: [i32; 0],
+    }
+    pub fn main() i32 {
+        let t = T { arr: [] };
+        return 55;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 55)
+
+
+def test_empty_array_assignment(tmp_path):
+    src = """
+    fn f(a: [i32; 0]) i32 {
+        let mut x = a;
+        x = [];
+        return 99;
+    }
+    pub fn main() i32 {
+        return f([]);
+    }
+    """
+    check_prog_output(tmp_path, src, "", 99)
+
+
+def test_nested_empty_array_as_call_arg(tmp_path):
+    src = """
+    fn f(a: [[i32; 0]; 2]) i32 {
+        return 7;
+    }
+    pub fn main() i32 {
+        return f([[], []]);
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
 
 
 def test_void_array_element(tmp_path):

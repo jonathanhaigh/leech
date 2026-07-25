@@ -331,6 +331,21 @@ class VoidArrayElementError(UserError):
         super().__init__(ERROR, 'Array element cannot have type "void"', span)
 
 
+class EmptyArrayTypUnknownError(UserError):
+    """Raised when an empty array literal's element type can't be inferred.
+
+    An empty array literal has no elements to infer a type from, so it can
+    only be typed when the surrounding context (a function argument,
+    return value, struct field, or assignment target) already has a known
+    array type.
+    """
+
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(
+            ERROR, "Cannot infer element type of empty array expression", span
+        )
+
+
 class TypeOfStructExprNotStructError(UserError):
     """Raised when a struct literal's named type isn't actually a struct type."""
 

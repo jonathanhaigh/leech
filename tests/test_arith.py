@@ -33,7 +33,7 @@ def test_comptime_int_arith(tmp_path):
 def test_incompatible_bin_op_args(lhs, rhs, tmp_path):
     src = f"""
     pub fn main() i32 {{
-        x = {lhs} + {rhs};
+        let x = {lhs} + {rhs};
         return 0;
     }}
     """
@@ -44,7 +44,7 @@ def test_incompatible_bin_op_args(lhs, rhs, tmp_path):
 def test_invalid_bin_op_arg(tmp_path):
     src = """
     pub fn main() i32 {
-        x = true + false;
+        let x = true + false;
         return 0;
     }
     """

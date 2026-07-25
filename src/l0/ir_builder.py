@@ -23,6 +23,7 @@ from l0.l0errors import (
     AssignToConstError,
     DerefInvalidTypError,
     DuplicateFieldInStructExprError,
+    EmptyArrayTypUnknownError,
     FieldAccessIntoInvalidTypError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
@@ -178,7 +179,13 @@ class CfgBuilder:
 
         self.ret(VoidValue(ret_ast), ret_ast)
 
-    def build_expr(self, expr_ast: ast.Expr, e: Env, ctx: ExprContext) -> Value:
+    def build_expr(
+        self,
+        expr_ast: ast.Expr,
+        e: Env,
+        ctx: ExprContext,
+        expected_typ: Optional[Typ] = None,
+    ) -> Value:
         """Lower any expression, dispatching to the ``build_*_expr`` method
         matching its AST node kind.
 
@@ -186,6 +193,11 @@ class CfgBuilder:
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower for the expression's value or its
             address.
+        :param expected_typ: The type ``expr_ast`` is expected to have, if
+            known from the surrounding context (e.g. a call argument's
+            declared parameter type). Only consulted by expressions that
+            can't otherwise infer their own type, such as an empty array
+            literal; ignored everywhere else.
         :return: The lowered expression's value.
         :raises l0.l0errors.UserError: As any of the many subclasses that
             the individual ``build_*_expr`` methods (and, transitively,
@@ -215,7 +227,7 @@ class CfgBuilder:
             case ast.VarExpr():
                 return self.build_var_expr(expr_ast, e, ctx)
             case ast.ArrayExpr():
-                return self.build_array_expr(expr_ast, e, ctx)
+                return self.build_array_expr(expr_ast, e, ctx, expected_typ)
             case ast.ArrayAccessExpr():
                 return self.build_array_access_expr(expr_ast, e, ctx)
             case ast.StructExpr():
@@ -399,13 +411,19 @@ class CfgBuilder:
                 callee_diag_str, callee.typ.name, call_ast.callee.span
             )
 
+        fn_typ = callee.typ.pointee_typ
+        param_typs = fn_typ.param_typs
         args = tuple(
-            self.build_expr(arg_ast, e, ExprContext.VALUE) for arg_ast in call_ast.args
+            self.build_expr(
+                arg_ast,
+                e,
+                ExprContext.VALUE,
+                param_typs[i] if i < len(param_typs) else None,
+            )
+            for i, arg_ast in enumerate(call_ast.args)
         )
 
         num_args = len(args)
-        fn_typ = callee.typ.pointee_typ
-        param_typs = fn_typ.param_typs
         num_params = len(param_typs)
         if num_args < num_params:
             raise NotEnoughArgsError(
@@ -535,28 +553,54 @@ class CfgBuilder:
         return self.curr_bb.load(var, var_ast)
 
     def build_array_expr(
-        self, arr_expr: ast.ArrayExpr, e: Env, ctx: ExprContext
+        self,
+        arr_expr: ast.ArrayExpr,
+        e: Env,
+        ctx: ExprContext,
+        expected_typ: Optional[Typ] = None,
     ) -> Value:
         """Lower an array literal expression.
+
+        An empty array literal has no elements to infer an element type
+        from, so it's only accepted when ``expected_typ`` gives one (e.g.
+        when the array literal is a call argument, a ``return`` value, a
+        struct field's value, or an assignment's right-hand side, all of
+        which have a statically-known target type); otherwise it's
+        rejected. When ``expected_typ`` is known, it's also propagated to
+        each element, so a nested empty array (e.g. one element of a
+        non-empty outer array) can be resolved the same way.
 
         :param arr_expr: The parsed array expression.
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the result for its value or its
             address.
+        :param expected_typ: This array literal's expected type, if known
+            from the surrounding context.
         :return: The constructed array value.
+        :raises EmptyArrayTypUnknownError: If the array literal is empty
+            and ``expected_typ`` isn't a known array type.
         :raises VoidArrayElementError: If the element type is ``void``.
         :raises IncompatibleTypInArrayExpr: If an element's type doesn't
             match the first element's type.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
             subclasses, while lowering an element; see :meth:`build_expr`.
         """
-        elts = [self.build_expr(elt, e, ExprContext.VALUE) for elt in arr_expr.elements]
+        expected_elt_typ = (
+            expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
+        )
+        elts = [
+            self.build_expr(elt, e, ExprContext.VALUE, expected_elt_typ)
+            for elt in arr_expr.elements
+        ]
         if not elts:
-            raise NotImplementedError("empty array expression")
+            if expected_elt_typ is None:
+                raise EmptyArrayTypUnknownError(arr_expr.span)
+            elt_typ = expected_elt_typ
+        else:
+            elt_typ = elts[0].typ
 
-        elt_typ = elts[0].typ
         if elt_typ == VOID:
-            raise VoidArrayElementError(elts[0].span)
+            raise VoidArrayElementError(elts[0].span if elts else arr_expr.span)
         arr_typ = ArrayTyp.get_or_create(elt_typ, len(elts))
         arr = ComptimeArray(
             arr_typ,
@@ -667,7 +711,10 @@ class CfgBuilder:
                     field_values[field_expr.ident.name].span,
                 )
             field_values[field_expr.ident.name] = self.build_expr(
-                field_expr.value, e, ExprContext.VALUE
+                field_expr.value,
+                e,
+                ExprContext.VALUE,
+                struct_typ.fields[field_expr.ident.name].typ,
             )
 
         for i, field in enumerate(struct_typ.fields.values()):
@@ -801,7 +848,7 @@ class CfgBuilder:
             ret_typ_span = self.fn.ast.span
 
         if ret_ast.expr is not None:
-            expr = self.build_expr(ret_ast.expr, e, ExprContext.VALUE)
+            expr = self.build_expr(ret_ast.expr, e, ExprContext.VALUE, ret_typ)
             if expr.typ == NEVER:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
@@ -848,6 +895,17 @@ class CfgBuilder:
     def build_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> None:
         """Lower an assignment statement (``place = expr``).
 
+        l0 deliberately evaluates the place expression before the value
+        expression (matching JavaScript, Java, C#, and Go; the opposite of
+        Rust, Python, and C++17's built-in ``=``). Where the place and
+        value expressions both have observable side effects (e.g. a call
+        in an array index alongside a call on the right-hand side), the
+        place's side effects happen first. This is also what makes the
+        place's type available to use as the value expression's
+        :meth:`build_expr`-level ``expected_typ`` hint (needed e.g. to
+        resolve an empty array literal assigned into a place of known
+        array type).
+
         :param ass_ast: The parsed assignment statement.
         :param e: The scope to resolve names in.
         :raises AssignToConstError: If the assignment target is const.
@@ -855,11 +913,13 @@ class CfgBuilder:
             subclasses, while lowering the target or the assigned
             expression; see :meth:`build_expr`.
         """
-        expr = self.build_expr(ass_ast.expr, e, ExprContext.VALUE)
         place = self.build_expr(ass_ast.place, e, ExprContext.PLACE)
-
         place_typ = checked_cast(place.typ, PtrTyp)
         assert place_typ.pointee_typ != VOID, "assignment place cannot be void"
+        expr = self.build_expr(
+            ass_ast.expr, e, ExprContext.VALUE, place_typ.pointee_typ
+        )
+
         if place_typ.mut == CONST:
             raise AssignToConstError(ass_ast.place.span)
 

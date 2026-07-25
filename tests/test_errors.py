@@ -98,7 +98,7 @@ pub fn main() i32 {
 
 def test_invalid_bin_op_arg_typ_message(tmp_path):
     src = """pub fn main() i32 {
-    x = true + 1;
+    let x = true + 1;
     return 0;
 }
 """

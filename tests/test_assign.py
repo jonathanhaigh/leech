@@ -213,3 +213,33 @@ def test_assign_to_temporary(tmp_path):
     """
     with pytest.raises(AssignToConstError):
         compile_str(tmp_path, src)
+
+
+def test_assign_evaluates_place_before_value(tmp_path):
+    # `mark_place` has the side effect of setting `order` to 1 before
+    # yielding the (const, always-0) index of the assignment's place.
+    # `read_order` has no side effect; it just reports what `order` was
+    # when it ran. If the place is evaluated before the value (which l0
+    # guarantees; see CfgBuilder.build_assignment_stmt's docstring),
+    # `read_order` runs after `mark_place` has already set `order` to 1,
+    # so `arr[0]` ends up holding 1. If it were the other way around,
+    # `read_order` would still see `order`'s initial value of 0.
+    src = """
+    let mut order = 0;
+
+    fn mark_place() usize {
+        order = 1;
+        return 0usize;
+    }
+
+    fn read_order() i32 {
+        return order;
+    }
+
+    pub fn main() i32 {
+        let mut arr = [0, 0];
+        arr[mark_place()] = read_order();
+        return arr[0usize];
+    }
+    """
+    check_prog_output(tmp_path, src, "", 1)
