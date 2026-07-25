@@ -36,6 +36,23 @@ def test_struct_access(tmp_path):
     check_prog_output(tmp_path, src, "abc\n", 13)
 
 
+def test_private_field_accessible_within_defining_module(tmp_path):
+    # Private (the default - no `pub`) fields are freely readable,
+    # writable, and settable from within the same module as the struct.
+    src = """
+    struct T {
+        mut val: i32,
+    }
+
+    pub fn main() i32 {
+        let mut t = T { val: 1 };
+        t.val = 42;
+        return t.val;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
 def test_duplicate_field_in_struct_defn(tmp_path):
     src = """
     struct T {

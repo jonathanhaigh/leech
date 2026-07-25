@@ -435,6 +435,26 @@ class InvalidStructFieldError(UserError):
             self.add_extra(NOTE, f'Struct "{struct_typ}" defined here', struct_span)
 
 
+class PrivateStructFieldAccessError(UserError):
+    """Raised when reading, writing, or initializing a private struct
+    field from outside the module the struct is defined in."""
+
+    def __init__(
+        self,
+        field_name: str,
+        access_span: Optional[SrcSpan],
+        struct_typ: str,
+        field_defn_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Field "{field_name}" of struct "{struct_typ}" is private',
+            access_span,
+        )
+        if field_defn_span is not None:
+            self.add_extra(NOTE, f'Field "{field_name}" defined here', field_defn_span)
+
+
 class IncompatibleStructFieldTypError(UserError):
     """Raised when a struct literal field's value has the wrong type."""
 

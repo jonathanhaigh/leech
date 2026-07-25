@@ -6,11 +6,12 @@ from l0.l0errors import (
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     NotCallableError,
+    PrivateStructFieldAccessError,
     UnexpectedCharacterError,
     UnexpectedTokenError,
     WhileCondNotBoolError,
 )
-from util import compile_str, find_pos
+from util import compile_modules, compile_str, find_pos
 
 
 def test_unexpected_character_message(tmp_path):
@@ -79,6 +80,42 @@ def test_unexpected_end_of_input_message(tmp_path):
     assert '"return"' in note.message
     assert '"}"' in note.message
     assert "IDENT" in note.message
+
+
+def test_private_struct_field_access_message(tmp_path):
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        let t = a::make();
+        return t.val;
+    }
+    """
+    a_src = """
+    pub struct T {
+        val: i32,
+    }
+
+    pub fn make() T {
+        return T { val: 1 };
+    }
+    """
+    with pytest.raises(PrivateStructFieldAccessError) as exc_info:
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+    msg = str(exc_info.value)
+    assert '"val"' in msg
+    assert '"T"' in msg
+    assert "private" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(main_src, "val")
+
+    assert len(exc_info.value.extra) == 1
+    note = exc_info.value.extra[0]
+    assert note.message == 'Field "val" defined here'
+    assert note.span is not None
+    assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "val")
 
 
 def test_if_cond_not_bool_message(tmp_path):

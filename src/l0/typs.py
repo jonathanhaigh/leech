@@ -12,7 +12,7 @@ from l0 import ir_env, ir_module
 from l0 import l0ast as ast
 from l0.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
 from l0.l0errors import DuplicateFieldInStructDefnError
-from l0.src import SrcSpan
+from l0.src import SrcFile, SrcSpan
 
 
 class Mutability(Enum):
@@ -318,6 +318,18 @@ class StructField:
         regardless of this value.
         """
         return Mutability.from_ast(self.ast.mut)
+
+    def is_accessible_from(self, file: SrcFile) -> bool:
+        """Whether this field can be read, written, or initialized from
+        code in ``file``.
+
+        Public fields are accessible from any module; private fields are
+        only accessible from the module the struct is defined in.
+
+        :param file: The source file to check accessibility from.
+        :return: Whether the field is accessible from ``file``.
+        """
+        return self.access == ir_module.PUBLIC or self.ast.span.file.path == file.path
 
 
 class StructTyp(Typ):

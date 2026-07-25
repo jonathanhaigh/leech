@@ -43,6 +43,7 @@ from l0.l0errors import (
     MissingRetError,
     NotCallableError,
     NotEnoughArgsError,
+    PrivateStructFieldAccessError,
     RetNotInFnError,
     TooManyArgsError,
     TypeOfStructExprNotStructError,
@@ -677,6 +678,8 @@ class CfgBuilder:
             struct type.
         :raises InvalidStructFieldError: If a given field name isn't a
             field of the struct type.
+        :raises PrivateStructFieldAccessError: If a given field is private
+            and ``struct_expr`` isn't in the struct's defining module.
         :raises DuplicateFieldInStructExprError: If a field is given a
             value more than once.
         :raises MissingFieldInStructExprError: If a required field is
@@ -709,6 +712,11 @@ class CfgBuilder:
                     struct_typ.name,
                     struct_typ.span,
                 )
+            field = struct_typ.fields[field_expr.ident.name]
+            if not field.is_accessible_from(struct_expr.span.file):
+                raise PrivateStructFieldAccessError(
+                    field.name, field_expr.ident.span, struct_typ.name, field.ast.span
+                )
             if field_expr.ident.name in field_values:
                 raise DuplicateFieldInStructExprError(
                     field_expr.ident.name,
@@ -716,10 +724,7 @@ class CfgBuilder:
                     field_values[field_expr.ident.name].span,
                 )
             field_values[field_expr.ident.name] = self.build_expr(
-                field_expr.value,
-                e,
-                ExprContext.VALUE,
-                struct_typ.fields[field_expr.ident.name].typ,
+                field_expr.value, e, ExprContext.VALUE, field.typ
             )
 
         for i, field in enumerate(struct_typ.fields.values()):
@@ -742,8 +747,6 @@ class CfgBuilder:
                 struct, field_value, (field_index,), field_value.ast
             )
 
-            # TODO: check field access specifiers
-
         return self._in_context(struct, ctx)
 
     def build_struct_access_expr(
@@ -761,6 +764,8 @@ class CfgBuilder:
             expression's type isn't a struct type.
         :raises InvalidStructFieldError: If the named field isn't a field
             of the struct type.
+        :raises PrivateStructFieldAccessError: If the named field is
+            private and ``sa_expr`` isn't in the struct's defining module.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the struct expression; see
             :meth:`build_expr`.
@@ -776,8 +781,13 @@ class CfgBuilder:
             raise InvalidStructFieldError(
                 field_name, sa_expr.field.span, struct_typ.name, struct_typ.span
             )
+        field = struct_typ.fields[field_name]
+        if not field.is_accessible_from(sa_expr.span.file):
+            raise PrivateStructFieldAccessError(
+                field_name, sa_expr.field.span, struct_typ.name, field.ast.span
+            )
 
-        index = ComptimeInt(I32, struct_typ.fields[field_name].index, sa_expr)
+        index = ComptimeInt(I32, field.index, sa_expr)
         field_ptr = self.curr_bb.gep(struct_ptr, index, sa_expr)
 
         if ctx == ExprContext.PLACE:
