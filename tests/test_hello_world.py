@@ -42,3 +42,61 @@ def test_comptime_recursive_factorial_fn(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 120)
+
+
+def test_mutually_recursive_fns(tmp_path):
+    # is_even is defined before is_odd but calls it, so this also
+    # exercises a forward reference between top-level functions.
+    src = """
+    fn is_even(n: i32) bool {
+        if (n == 0) {
+            return true;
+        };
+        return is_odd(n - 1);
+    }
+
+    fn is_odd(n: i32) bool {
+        if (n == 0) {
+            return false;
+        };
+        return is_even(n - 1);
+    }
+
+    pub fn main() i32 {
+        if (is_even(10)) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+    """
+    check_prog_output(tmp_path, src, "", 1)
+
+
+def test_comptime_mutually_recursive_fns(tmp_path):
+    src = """
+    fn is_even(n: i32) bool {
+        if (n == 0) {
+            return true;
+        };
+        return is_odd(n - 1);
+    }
+
+    fn is_odd(n: i32) bool {
+        if (n == 0) {
+            return false;
+        };
+        return is_even(n - 1);
+    }
+
+    let x = is_even(10);
+
+    pub fn main() i32 {
+        if (x) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+    """
+    check_prog_output(tmp_path, src, "", 1)
