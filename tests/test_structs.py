@@ -37,6 +37,28 @@ def test_struct_access(tmp_path):
     check_prog_output(tmp_path, src, "abc\n", 13)
 
 
+def test_empty_struct(tmp_path):
+    src = """
+    struct T {}
+    pub fn main() i32 {
+        let t = T {};
+        return 0;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_comptime_empty_struct(tmp_path):
+    src = """
+    struct T {}
+    let t = T {};
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
 def test_private_field_accessible_within_defining_module(tmp_path):
     # Private (the default - no `pub`) fields are freely readable,
     # writable, and settable from within the same module as the struct.
@@ -283,6 +305,21 @@ def test_incompatible_struct_field_typ(tmp_path):
     }
     pub fn main() i32 {
         let x = T {a: "abc"};
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleStructFieldTypError):
+        compile_str(tmp_path, src)
+
+
+def test_void_call_as_struct_field_initializer(tmp_path):
+    src = """
+    fn f() { }
+    struct T {
+        a: i32,
+    }
+    pub fn main() i32 {
+        let x = T {a: f()};
         return 0;
     }
     """

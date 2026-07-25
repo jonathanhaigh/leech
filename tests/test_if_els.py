@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import IfTypNotVoidError, IfElsTypMismatchError
+from l0.l0errors import IfCondNotBoolError, IfTypNotVoidError, IfElsTypMismatchError
 from util import check_prog_output, compile_str
 
 
@@ -161,4 +161,18 @@ def test_if_els_with_mismatching_typs(tmp_path):
     }
     """
     with pytest.raises(IfElsTypMismatchError):
+        compile_str(tmp_path, src)
+
+
+def test_void_call_as_if_cond(tmp_path):
+    src = """
+    fn f() { }
+    pub fn main() i32 {
+        if (f()) {
+            return 1;
+        };
+        return 0;
+    }
+    """
+    with pytest.raises(IfCondNotBoolError):
         compile_str(tmp_path, src)

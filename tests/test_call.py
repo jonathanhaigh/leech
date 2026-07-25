@@ -58,6 +58,18 @@ def test_comptime_invalid_arg_typ(tmp_path):
         compile_str(tmp_path, src)
 
 
+def test_void_call_as_arg(tmp_path):
+    src = """
+    fn f() { }
+    fn g(x: i32) i32 { return x; }
+    pub fn main() i32 {
+        return g(f());
+    }
+    """
+    with pytest.raises(InvalidArgTypError):
+        compile_str(tmp_path, src)
+
+
 def test_too_many_args(tmp_path):
     src = """
     pub fn f(x: i32) i32 { x + x }

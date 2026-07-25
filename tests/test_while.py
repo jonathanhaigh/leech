@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import WhileTypNotVoidError
+from l0.l0errors import WhileCondNotBoolError, WhileTypNotVoidError
 from util import check_prog_output, compile_str
 
 
@@ -59,4 +59,17 @@ def test_while_body_not_void(tmp_path):
     }
     """
     with pytest.raises(WhileTypNotVoidError):
+        compile_str(tmp_path, src)
+
+
+def test_void_call_as_while_cond(tmp_path):
+    src = """
+    fn f() { }
+    pub fn main() i32 {
+        while (f()) {
+        };
+        return 0;
+    }
+    """
+    with pytest.raises(WhileCondNotBoolError):
         compile_str(tmp_path, src)
