@@ -17,6 +17,7 @@ from l0.typs import (
     BoolTyp,
     FnTyp,
     IntTyp,
+    NeverTyp,
     PtrTyp,
     StructTyp,
     Typ,
@@ -199,12 +200,18 @@ class Compiler:
                 return ll.ArrayType(self._ll_mod_items.get(typ.element_typ), typ.length)
             case VoidTyp():
                 return ll.VoidType()
+            case StructTyp():
+                # Every StructTyp reachable during codegen is declared
+                # (and cached here) by the earlier declare-types phase,
+                # so LLItems.get() should never fall through to this
+                # method for one - if it does, that phase missed it.
+                assert typ in self._ll_mod_items.items, (
+                    f'struct "{typ.name}" was never declared'
+                )
+                return checked_cast(self._ll_mod_items.items[typ], ll.Type)
+            case NeverTyp():
+                assert False, "a never-typed value shouldn't need an LLVM type"
             case _:
-                # StructTyp and NeverTyp are the only Typ subclasses with
-                # no case here. Every StructTyp reachable during codegen
-                # is already cached by the earlier declare-types phase,
-                # so LLItems.get() never falls through to this method for
-                # one; NeverTyp never reaches this method at all.
                 assert False, f"unhandled type {typ}"
 
     def _declare_mod_item(self, item: ir_module.ModItem):
