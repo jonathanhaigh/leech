@@ -82,7 +82,7 @@ def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
                 mut = CONST
             typ = field.typ
         case _:
-            raise NotImplementedError(typ)
+            assert False, f"can't index into pointee type {typ}"
 
     return PtrTyp.get_or_create(typ, mut)
 

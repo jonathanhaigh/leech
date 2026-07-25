@@ -244,7 +244,7 @@ class CfgBuilder:
             case ast.DerefExpr():
                 return self.build_deref_expr(expr_ast, e, ctx)
             case _:
-                raise NotImplementedError(expr_ast)
+                assert False, f"unhandled expression kind {expr_ast}"
 
     def build_block_expr(
         self, block_ast: ast.BlockExpr, e: Env, ctx: ExprContext
@@ -522,7 +522,7 @@ class CfgBuilder:
                 else:
                     res = self.curr_bb.udiv(lhs, rhs, op_ast)
             case _:
-                raise NotImplementedError(op)
+                assert False, f"unhandled binary operator {op!r}"
 
         return self._in_context(res, ctx)
 
@@ -544,7 +544,7 @@ class CfgBuilder:
                     ctx,
                 )
             case _:
-                raise NotImplementedError(op_ast.op.name)
+                assert False, f"unhandled unary operator {op_ast.op.name!r}"
 
     def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
         """Lower a (possibly qualified) variable or function reference.

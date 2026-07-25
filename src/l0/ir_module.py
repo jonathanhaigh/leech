@@ -398,7 +398,9 @@ class Mod(Typ):
                 mod = self.loader.load(mod_path)
                 self._add_item(mod_name, PRIVATE, mod, span=defn_ast.ident.span)
             case _:
-                raise NotImplementedError
+                # ImplDefn is the only other Defn subclass; the caller
+                # (Mod.build) filters those out before calling here.
+                assert False, f"unhandled definition {defn_ast}"
 
     def _build_impl_defn(self, impl_ast: ast.ImplDefn) -> None:
         impl_typ_ast = impl_ast.typ

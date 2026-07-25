@@ -148,7 +148,7 @@ class Typ(ABC):
                     Typ.from_ast(typ_ast.element_typ, e), typ_ast.length.value
                 )
             case _:
-                raise NotImplementedError(ast)
+                assert False, f"unhandled type ast node {typ_ast}"
 
 
 class IntTyp(Typ):

@@ -200,7 +200,12 @@ class Compiler:
             case VoidTyp():
                 return ll.VoidType()
             case _:
-                raise NotImplementedError
+                # StructTyp and NeverTyp are the only Typ subclasses with
+                # no case here. Every StructTyp reachable during codegen
+                # is already cached by the earlier declare-types phase,
+                # so LLItems.get() never falls through to this method for
+                # one; NeverTyp never reaches this method at all.
+                assert False, f"unhandled type {typ}"
 
     def _declare_mod_item(self, item: ir_module.ModItem):
         match item.value:
@@ -212,7 +217,10 @@ class Compiler:
                 ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
                 self._ll_mod_items.set(item.value, ll_item)
             case _:
-                raise NotImplementedError(item)
+                # An import (ir_module.Mod) is the only other possible
+                # item value, and _program_items() - the only source of
+                # items passed here - filters those out.
+                assert False, f"unhandled module item {item}"
 
     def _compile_mod_item(self, item: ir_module.ModItem) -> None:
         match item.value:
@@ -232,7 +240,7 @@ class Compiler:
                 # over the whole program.
                 return
             case _:
-                raise NotImplementedError(item)
+                assert False, f"unhandled module item {item}"
 
     def _declare_mod_var(
         self, item: ir_module.ModItem, var: ir_module.ModVar
@@ -383,14 +391,14 @@ class Compiler:
             case ir_values.UnreachableInstr():
                 return ctx.ll_builder.unreachable()
             case _:
-                raise NotImplementedError(instr)
+                assert False, f"unhandled instruction {instr}"
 
     def _compile_comptime_value(self, value: ir_values.ComptimeValue) -> ll.Value:
         match value:
             case ir_values.UndefValue():
                 return ll.Constant(self._ll_mod_items.get(value.typ), ll.Undefined)
             case ir_values.VoidValue():
-                raise NotImplementedError
+                assert False, "a void value should never need a runtime representation"
             case ir_values.ComptimeInt():
                 return ll.Constant(self._ll_mod_items.get(value.typ), value.value)
             case ir_values.ComptimeBool():
@@ -425,4 +433,11 @@ class Compiler:
                 assert isinstance(base, (ll.GlobalValue, ll.Constant))
                 return base.gep([zero, ll_index])
             case _:
-                raise NotImplementedError(value)
+                # NeverValue and ComptimeAlloc are the only other
+                # ComptimeValue subclasses: a NeverValue can only exist
+                # in an already-terminated block, so nothing ever reads
+                # it as an operand; a ComptimeAlloc's is_temporary() is
+                # always true, so it can never escape the interpreter as
+                # a value in its own right (see
+                # CannotTakeAddressOfComptimeValueError).
+                assert False, f"unhandled comptime value {value}"
