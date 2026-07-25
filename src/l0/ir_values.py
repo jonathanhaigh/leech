@@ -452,6 +452,28 @@ class VoidValue(ComptimeValue[VoidTyp]):
         return VOID
 
 
+class NeverValue(ComptimeValue[NeverTyp]):
+    """The valueless result of a block that ends already terminated.
+
+    Used for a block with no tail expression whose statements already
+    diverged (e.g. ended in ``return``), as opposed to :class:`VoidValue`
+    for one that genuinely falls off the end. Unlike the ``never``-typed
+    terminator instructions (:class:`RetInstr`, :class:`BranchInstr`,
+    :class:`UnreachableInstr`), this adds nothing to the block: one of
+    those has already terminated it by the time this is used.
+
+    :param ast: The AST node this value was built from, if any.
+    """
+
+    @override
+    def __init__(self, ast: Optional[ast.Ast]):
+        super().__init__(ast)
+
+    @override
+    def calculate_typ(self) -> NeverTyp:
+        return NEVER
+
+
 class UndefValue(ComptimeValue):
     """A placeholder for a not-yet-initialized element of an aggregate being built.
 

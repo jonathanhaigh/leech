@@ -216,6 +216,54 @@ def test_void_mod_var(tmp_path):
         compile_str(tmp_path, src)
 
 
+def test_diverging_if_els_local_var_true(tmp_path):
+    # Both branches diverge, so the if/else's type is `never`, not `void`
+    # - unlike test_void_local_var, this is legitimate, unreachable-after
+    # code, analogous to Rust's `let x: i32 = if c { return 1 } else {
+    # return 2 };`.
+    src = """
+    pub fn main() i32 {
+        let x = if (true) {
+            return 1;
+        } else {
+            return 2;
+        };
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 1)
+
+
+def test_diverging_if_els_local_var_false(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = if (false) {
+            return 1;
+        } else {
+            return 2;
+        };
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 2)
+
+
+def test_diverging_bare_block_local_var(tmp_path):
+    # A block with no tail expression is `never`-typed (not `void`) if its
+    # statements already diverged, the same distinction as above but
+    # without an if/else - a bare `{ ... }` is a valid expression on its
+    # own (l0.lark's `?expr: block_expr`).
+    src = """
+    pub fn main() i32 {
+        let x = {
+            return 7;
+        };
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
+
+
 @pytest.mark.xfail
 def test_mod_var_cycle(tmp_path):
     src = """

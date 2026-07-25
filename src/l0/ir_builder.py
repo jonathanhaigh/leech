@@ -15,6 +15,7 @@ from l0.ir_values import (
     ComptimeCStr,
     ComptimeInt,
     ComptimeStruct,
+    NeverValue,
     UndefValue,
     Value,
     VoidValue,
@@ -254,8 +255,9 @@ class CfgBuilder:
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the tail expression for its value or
             its address.
-        :return: The lowered tail expression's value, or a void value if
-            the block has none.
+        :return: The lowered tail expression's value if the block has one;
+            otherwise a void value if its statements complete normally, or
+            a never value if they already diverged (e.g. via ``return``).
         :raises l0.l0errors.UserError: As any of the many subclasses that
             lowering a statement (see :meth:`build_stmt`) or the tail
             expression (see :meth:`build_expr`) may raise.
@@ -265,6 +267,8 @@ class CfgBuilder:
             self.build_stmt(stmt_ast, e)
 
         if block_ast.expr is None:
+            if self.curr_bb.terminated:
+                return NeverValue(block_ast)
             return VoidValue(block_ast)
         return self.build_expr(block_ast.expr, e, ctx)
 
@@ -337,7 +341,10 @@ class CfgBuilder:
             self.set_position(end_bb)
             if have_then_value:
                 return then
-            self.curr_bb.unreachable(if_ast)
+            # Neither branch reaches end_bb: it's genuinely unreachable,
+            # not just void, and needs a terminator of its own since
+            # nothing branches into it.
+            return self.curr_bb.unreachable(if_ast)
 
         if have_then_value:
             if then.typ != VOID:
