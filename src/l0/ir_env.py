@@ -197,10 +197,7 @@ class Env:
             case Env():
                 res = container.get(ns, ident.name)
             case ir_module.Mod():
-                item = next(
-                    (item for item in container.items if item.name == ident.name),
-                    None,
-                )
+                item = container.get_item(ns, ident.name)
                 if item is None or item.access == ir_module.PUBLIC:
                     res = None if item is None else item.value
                 else:

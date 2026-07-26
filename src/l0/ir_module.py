@@ -1,6 +1,7 @@
 """Module/program structure: functions, module-level variables, and modules."""
 
 from abc import abstractmethod
+from collections.abc import Collection
 from dataclasses import dataclass
 import enum
 from functools import cached_property
@@ -76,6 +77,21 @@ class ModItem:
     access: Final[Access]
     value: Final[Value[PtrTyp] | Typ]
     qualify_name: Final[bool] = True
+
+    @property
+    def ns(self) -> ir_env.Env.Namespace:
+        """Which namespace this item's name is bound in.
+
+        Functions and variables are values, so they live in
+        :attr:`~l0.ir_env.Env.Namespace.VARS`; structs - and imported
+        modules, which double as types - live in
+        :attr:`~l0.ir_env.Env.Namespace.TYPS`. A module can therefore hold
+        a value and a type of the same name, which is why its items are
+        keyed on namespace as well as name (see :meth:`Mod.get_item`).
+        """
+        if isinstance(self.value, Value):
+            return ir_env.Env.Namespace.VARS
+        return ir_env.Env.Namespace.TYPS
 
     @property
     def qualified_name(self) -> str:
@@ -315,7 +331,10 @@ class Mod(Typ):
 
     _name: Final[str]
     ast: Final[ast.Mod]
-    items: Final[list[ModItem]]
+    #: This module's items, keyed on the namespace and name they're
+    #: declared under, in declaration order. See :meth:`get_item` and
+    #: :attr:`items`.
+    _items: Final[dict[tuple[ir_env.Env.Namespace, str], ModItem]]
     env: Final[ir_env.Env]
     loader: Final[ir_loader.ModLoader]
 
@@ -326,7 +345,7 @@ class Mod(Typ):
         builtin_env = ir_env.Env()
         self._name = name
         self.ast = mod_ast
-        self.items = []
+        self._items = {}
         self.env = builtin_env.new_child()
         self.loader = loader
 
@@ -360,6 +379,23 @@ class Mod(Typ):
     @override
     def name(self) -> str:
         return self._name
+
+    @property
+    def items(self) -> Collection[ModItem]:
+        """Every item this module declares, in declaration order."""
+        return self._items.values()
+
+    def get_item(self, ns: ir_env.Env.Namespace, name: str) -> Optional[ModItem]:
+        """Find the item this module declares as ``name`` in ``ns``.
+
+        :param ns: The namespace to look in. A value and a type of the
+            same name are different items (see :attr:`ModItem.ns`), so the
+            namespace is part of the lookup.
+        :param name: The item's unqualified name.
+        :return: The item, or ``None`` if this module declares nothing of
+            that name in ``ns``.
+        """
+        return self._items.get((ns, name))
 
     def _build_defn(self, defn_ast: ast.Defn) -> None:
         match defn_ast:
@@ -431,10 +467,10 @@ class Mod(Typ):
         qualify_name: bool = True,
         span: Optional[SrcSpan] = None,
     ) -> None:
-        v = ModItem(self, name, access, value, qualify_name)
-        self.items.append(v)
-        if isinstance(value, Value):
-            self.env.add_var(name, value, span)
-        else:
-            value = checked_cast(value, Typ)
-            self.env.add_typ(name, value, span)
+        item = ModItem(self, name, access, value, qualify_name)
+        # Bind in env before recording the item: Env.add is what rejects a
+        # duplicate definition, and it has to raise before _items is
+        # written to, so that a name can never be silently rebound to a
+        # different item.
+        self.env.add(item.ns, name, value, span)
+        self._items[(item.ns, name)] = item

@@ -48,7 +48,7 @@ class ModLoader:
         mod = ir_module.Mod(path.stem, mod_ast, self)
         # Registered *before* building, so a module reached again while
         # it's still being built - i.e. an import cycle - gets this same
-        # object back instead of recursing forever. Its `items` list is
+        # object back instead of recursing forever. Its `items` are
         # still filling up at that point, but nothing consults an
         # imported module's items during building: signatures, struct
         # fields and initializers all resolve lazily, long after every

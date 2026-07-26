@@ -218,6 +218,66 @@ def test_import_private_typ_use_comptime(tmp_path):
         compile_modules(tmp_path, main=main_src, a=a_src)
 
 
+def test_import_typ_with_var_of_same_name(tmp_path):
+    # A module can hold a variable and a type of the same name, since they
+    # live in separate namespaces. Resolving a::T in a type position must
+    # find the struct, not the variable that happens to be declared first.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        let x = a::T{v: 32};
+        return x.v;
+    }
+    """
+    a_src = """
+    pub let T = 5;
+
+    pub struct T {
+        pub v: i32,
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 32, a=a_src)
+
+
+def test_import_var_with_typ_of_same_name(tmp_path):
+    # The mirror image of test_import_typ_with_var_of_same_name: a::T in a
+    # value position must find the variable, not the struct type.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::T;
+    }
+    """
+    a_src = """
+    pub struct T {
+        pub v: i32,
+    }
+
+    pub let T = 5;
+    """
+    check_prog_output(tmp_path, main_src, "", 5, a=a_src)
+
+
+def test_import_var_with_private_typ_of_same_name(tmp_path):
+    # The access check has to be made against the item in the namespace
+    # being resolved: a private type doesn't make a public variable of the
+    # same name inaccessible.
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::T;
+    }
+    """
+    a_src = """
+    struct T {
+        v: i32,
+    }
+
+    pub let T = 5;
+    """
+    check_prog_output(tmp_path, main_src, "", 5, a=a_src)
+
+
 def test_import_private_struct_field_construct(tmp_path):
     # T itself is public, but priv_val isn't, so constructing a T from
     # outside a's module can't set it, even though it names a real field.
