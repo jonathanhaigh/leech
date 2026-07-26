@@ -228,6 +228,40 @@ def test_assign_through_const_ptr_deref(tmp_path):
         compile_str(tmp_path, src)
 
 
+def test_assign_through_explicit_mut_ptr_param(tmp_path):
+    # `*mut T`, written explicitly as a parameter's type (as opposed to
+    # arising implicitly from `&` on a `let mut` local, which
+    # test_assign_through_ptr_deref already covers), is writable through
+    # the same way.
+    src = """
+    fn set(p: *mut i32) {
+        p.* = 2;
+    }
+    pub fn main() i32 {
+        let mut x = 1;
+        set(&x);
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 2)
+
+
+def test_assign_through_explicit_const_ptr_param(tmp_path):
+    # `*T` (no `mut`) is still const by default when written explicitly.
+    src = """
+    fn set(p: *i32) {
+        p.* = 2;
+    }
+    pub fn main() i32 {
+        let x = 1;
+        set(&x);
+        return x;
+    }
+    """
+    with pytest.raises(AssignToConstError):
+        compile_str(tmp_path, src)
+
+
 def test_assign_to_temporary(tmp_path):
     src = """
     fn f() [i32; 4] {

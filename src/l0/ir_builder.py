@@ -42,8 +42,10 @@ from l0.l0errors import (
     InvalidVoidRetError,
     MissingFieldInStructExprError,
     MissingRetError,
+    NotAMethodError,
     NotCallableError,
     NotEnoughArgsError,
+    PrivateItemAccessError,
     PrivateStructFieldAccessError,
     RetNotInFnError,
     TooManyArgsError,
@@ -399,11 +401,27 @@ class CfgBuilder:
     ) -> Value:
         """Lower a function call expression.
 
+        If the callee is written as ``x.name``, ``name`` is looked up as a
+        method (an associated function with a ``self`` receiver) of
+        ``x``'s struct type first; if found, ``x`` (its place - a method
+        receiver is always by-pointer) becomes an implicit leading
+        argument. If ``name`` doesn't resolve to a method this way (wrong
+        name, found but receiverless, or ``x`` isn't struct-typed), this
+        falls back to ordinary field access, exactly as if the call
+        weren't there (e.g. calling through a struct field that happens
+        to hold a function pointer).
+
         :param call_ast: The parsed call expression.
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The call's result.
+        :raises NotAMethodError: If ``x.name(...)`` names a real
+            associated function of ``x``'s struct type that has no
+            ``self`` receiver.
+        :raises PrivateItemAccessError: If ``x.name(...)`` names a private
+            method, called from outside the module its struct is defined
+            in.
         :raises NotCallableError: If the callee's type isn't a function
             pointer.
         :raises NotEnoughArgsError: If too few arguments are given.
@@ -414,27 +432,72 @@ class CfgBuilder:
             subclasses, while lowering the callee or an argument; see
             :meth:`build_expr`.
         """
-        callee = self.build_expr(call_ast.callee, e, ExprContext.VALUE)
-        callee_diag_str = call_ast.callee.diag_str()
+        callee_ast = call_ast.callee
+        recv_ast: Optional[ast.Expr] = None
+        recv_arg: Optional[Value] = None
+
+        if isinstance(callee_ast, ast.StructAccessExpr):
+            recv_place = self.build_expr(callee_ast.struct, e, ExprContext.PLACE)
+            method: Optional[ir_module.Fn] = None
+            if isinstance(recv_place.typ, PtrTyp) and isinstance(
+                recv_place.typ.pointee_typ, StructTyp
+            ):
+                struct_typ = recv_place.typ.pointee_typ
+                candidate = struct_typ.env.items.maps[0].get(
+                    (Env.Namespace.VARS, callee_ast.field.name)
+                )
+                if isinstance(candidate, ir_module.Fn):
+                    if not candidate.is_accessible_from(callee_ast.span.file):
+                        raise PrivateItemAccessError(
+                            "function",
+                            callee_ast.field.name,
+                            callee_ast.field.span,
+                            candidate.span,
+                        )
+                    assert candidate.ast is not None
+                    if candidate.ast.receiver is None:
+                        raise NotAMethodError(
+                            callee_ast.field.name,
+                            struct_typ.name,
+                            callee_ast.field.span,
+                            candidate.span,
+                        )
+                    method = candidate
+
+            if method is not None:
+                recv_arg = recv_place
+                recv_ast = callee_ast.struct
+                callee: Value = method
+            else:
+                callee = self._build_struct_field_access(
+                    recv_place, callee_ast, ExprContext.VALUE
+                )
+        else:
+            callee = self.build_expr(callee_ast, e, ExprContext.VALUE)
+
+        callee_diag_str = callee_ast.diag_str()
         if not (
             isinstance(callee.typ, PtrTyp)
             and isinstance(callee.typ.pointee_typ, CallableTyp)
         ):
-            raise NotCallableError(
-                callee_diag_str, callee.typ.name, call_ast.callee.span
-            )
+            raise NotCallableError(callee_diag_str, callee.typ.name, callee_ast.span)
 
         fn_typ = callee.typ.pointee_typ
         param_typs = fn_typ.param_typs
-        args = tuple(
+        offset = 1 if recv_ast is not None else 0
+        arg_asts: list[ast.Expr] = (
+            [recv_ast] if recv_ast is not None else []
+        ) + list(call_ast.args)
+        lowered_args = tuple(
             self.build_expr(
                 arg_ast,
                 e,
                 ExprContext.VALUE,
                 param_typs[i] if i < len(param_typs) else None,
             )
-            for i, arg_ast in enumerate(call_ast.args)
+            for i, arg_ast in enumerate(call_ast.args, start=offset)
         )
+        args = ((recv_arg,) if recv_arg is not None else ()) + lowered_args
 
         num_args = len(args)
         num_params = len(param_typs)
@@ -458,7 +521,7 @@ class CfgBuilder:
                     i + 1,
                     arg.typ.name,
                     param_typs[i].name,
-                    call_ast.args[i].span,
+                    arg_asts[i].span,
                 )
 
         return self._in_context(self.curr_bb.call(callee, args, call_ast), ctx)
@@ -775,6 +838,32 @@ class CfgBuilder:
             :meth:`build_expr`.
         """
         struct_ptr = self.build_expr(sa_expr.struct, e, ExprContext.PLACE)
+        return self._build_struct_field_access(struct_ptr, sa_expr, ctx)
+
+    def _build_struct_field_access(
+        self, struct_ptr: Value, sa_expr: ast.StructAccessExpr, ctx: ExprContext
+    ) -> Value:
+        """Lower ``s.field`` given ``s``'s already-lowered place pointer.
+
+        Split out of :meth:`build_struct_access_expr` so
+        :meth:`build_call_expr` can fall back to plain field access
+        (e.g. a struct field that happens to hold a callable value)
+        without re-lowering ``sa_expr.struct`` a second time.
+
+        :param struct_ptr: ``sa_expr.struct`` already lowered in
+            :attr:`~ExprContext.PLACE` context.
+        :param sa_expr: The parsed struct access expression.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The field's value, or a pointer to it if ``ctx`` is
+            :attr:`~ExprContext.PLACE`.
+        :raises FieldAccessIntoInvalidTypError: If ``struct_ptr``'s
+            pointee type isn't a struct type.
+        :raises InvalidStructFieldError: If the named field isn't a field
+            of the struct type.
+        :raises PrivateStructFieldAccessError: If the named field is
+            private and ``sa_expr`` isn't in the struct's defining module.
+        """
         struct_ptr_typ = checked_cast(struct_ptr.typ, PtrTyp)
         struct_typ = struct_ptr_typ.pointee_typ
         if not isinstance(struct_typ, StructTyp):

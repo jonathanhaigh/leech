@@ -142,7 +142,9 @@ class Typ(ABC):
                 typ = e.resolve_typ(typ_ast.path)
                 return typ
             case ast.PtrTyp():
-                return PtrTyp.get_or_create(Typ.from_ast(typ_ast.pointee_typ, e), CONST)
+                return PtrTyp.get_or_create(
+                    Typ.from_ast(typ_ast.pointee_typ, e), Mutability.from_ast(typ_ast.mut)
+                )
             case ast.ArrayTyp():
                 return ArrayTyp.get_or_create(
                     Typ.from_ast(typ_ast.element_typ, e), typ_ast.length.value

@@ -438,6 +438,44 @@ class ImplForNonLocalStructTypError(UserError):
         )
 
 
+class SelfParamOutsideImplError(UserError):
+    """Raised when a function outside an ``impl`` block - including an
+    ``extern`` declaration, which can never be an associated function -
+    declares a ``*self``/``*mut self`` receiver."""
+
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            '"self" parameter is only allowed on functions defined inside'
+            ' an "impl" block',
+            span,
+        )
+
+
+class NotAMethodError(UserError):
+    """Raised when calling ``x.name(...)`` where ``name`` is an associated
+    function of ``x``'s struct type, but that function has no ``self``
+    receiver, so it can't be called via dot syntax."""
+
+    def __init__(
+        self,
+        fn_name: str,
+        struct_typ: str,
+        span: Optional[SrcSpan],
+        fn_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Associated function "{fn_name}" of struct "{struct_typ}" has no'
+                ' "self" parameter and cannot be called as a method'
+            ),
+            span,
+        )
+        if fn_span is not None:
+            self.add_extra(NOTE, f'Function "{fn_name}" defined here', fn_span)
+
+
 class InvalidStructFieldError(UserError):
     """Raised when referring to a field a struct type doesn't have."""
 

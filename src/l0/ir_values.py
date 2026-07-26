@@ -493,13 +493,15 @@ class UndefValue(ComptimeValue):
         return self._typ
 
 
-class Param(Value[Typ, ast.Param]):
-    """A formal parameter of a function.
+class Param(Value[Typ, ast.Param | ast.Receiver]):
+    """A formal parameter of a function, including a method's receiver.
 
     :param fn: The function this is a parameter of.
     :param pos: The parameter's zero-based position in the parameter
         list.
-    :param ast: The AST node this value was built from, if any.
+    :param ast: The AST node this value was built from, if any - a
+        :class:`~l0.l0ast.Receiver` at position 0 for a method's ``self``,
+        otherwise a :class:`~l0.l0ast.Param`.
     """
 
     fn: Final[ir_module.FnSpec]
@@ -507,7 +509,7 @@ class Param(Value[Typ, ast.Param]):
 
     @override
     def __init__(
-        self, fn: ir_module.FnSpec, pos: int, ast: Optional[ast.Param]
+        self, fn: ir_module.FnSpec, pos: int, ast: Optional[ast.Param | ast.Receiver]
     ) -> None:
         super().__init__(ast)
         self.fn = fn

@@ -11,7 +11,9 @@ fn_defn: access _fn_prototype block_expr
 _fn_prototype: "fn" ident "(" param_list ")" [typ]
 !access: ["pub"]
 param_list: _param_list?
-_param_list: param ("," param)* ","?
+_param_list: receiver ("," param)* ","?
+    | param ("," param)* ","?
+receiver: "*" mut "self"
 param: ident ":" typ
 
 fn_decl: "extern" _fn_prototype ";"
@@ -32,7 +34,7 @@ import: "import" ident ";"
   | array_typ
 
 basic_typ: path
-ptr_typ: "*" typ
+ptr_typ: "*" mut typ
 array_typ: "[" typ ";" array_length "]"
 array_length: NONNEG_INT
 

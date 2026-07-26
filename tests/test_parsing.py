@@ -521,7 +521,20 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         ),
         ("typ", "x", T("basic_typ", "path", "ident", Tok("x"))),
         ("typ", "_", T("basic_typ", "path", "ident", Tok("_"))),
-        ("typ", "*u8", T("ptr_typ", "basic_typ", "path", "ident", Tok("u8"))),
+        (
+            "typ",
+            "*u8",
+            T("ptr_typ").cs(
+                T("mut", Tok(None)), T("basic_typ", "path", "ident", Tok("u8"))
+            ),
+        ),
+        (
+            "typ",
+            "*mut u8",
+            T("ptr_typ").cs(
+                T("mut", Tok("mut")), T("basic_typ", "path", "ident", Tok("u8"))
+            ),
+        ),
         (
             "typ",
             "[a; 10]",
@@ -534,7 +547,13 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "typ",
             "[**u8; 0]",
             T("array_typ").cs(
-                T("ptr_typ", "ptr_typ", "basic_typ", "path", "ident", Tok("u8")),
+                T("ptr_typ").cs(
+                    T("mut", Tok(None)),
+                    T("ptr_typ").cs(
+                        T("mut", Tok(None)),
+                        T("basic_typ", "path", "ident", Tok("u8")),
+                    ),
+                ),
                 T("array_length", Tok("0")),
             ),
         ),
@@ -552,9 +571,12 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
         (
             "typ",
             "*[u8; 1]",
-            T("ptr_typ", "array_typ").cs(
-                T("basic_typ", "path", "ident", Tok("u8")),
-                T("array_length", Tok("1")),
+            T("ptr_typ").cs(
+                T("mut", Tok(None)),
+                T("array_typ").cs(
+                    T("basic_typ", "path", "ident", Tok("u8")),
+                    T("array_length", Tok("1")),
+                ),
             ),
         ),
         (
@@ -562,6 +584,37 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "x: i32",
             T("param").cs(
                 T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
+            ),
+        ),
+        (
+            "param_list",
+            "*self",
+            T("param_list", "receiver", "mut", Tok(None)),
+        ),
+        (
+            "param_list",
+            "*mut self",
+            T("param_list", "receiver", "mut", Tok("mut")),
+        ),
+        (
+            "param_list",
+            "*self, x: i32",
+            T("param_list").cs(
+                T("receiver", "mut", Tok(None)),
+                T("param").cs(
+                    T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
+                ),
+            ),
+        ),
+        (
+            # The literal "self" token only takes priority over IDENT in
+            # the exact position it's grammatically valid (right after
+            # "* mut" in a receiver) - everywhere else, including as an
+            # ordinary param name, "self" still lexes as IDENT.
+            "param",
+            "self: i32",
+            T("param").cs(
+                T("ident", Tok("self")), T("basic_typ", "path", "ident", Tok("i32"))
             ),
         ),
         (
@@ -635,7 +688,10 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                         T("access", Tok("pub")),
                         T("mut", Tok("mut")),
                         T("ident", Tok("b")),
-                        T("ptr_typ", "basic_typ", "path", "ident", Tok("u8")),
+                        T("ptr_typ").cs(
+                            T("mut", Tok(None)),
+                            T("basic_typ", "path", "ident", Tok("u8")),
+                        ),
                     ),
                     T("struct_field_defn").cs(
                         T("access", Tok(None)),
@@ -666,7 +722,9 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "defn",
             "impl *Foo {}",
             T("defn", "impl_defn").cs(
-                T("ptr_typ", "basic_typ", "path", "ident", Tok("Foo")),
+                T("ptr_typ").cs(
+                    T("mut", Tok(None)), T("basic_typ", "path", "ident", Tok("Foo"))
+                ),
             ),
         ),
         (
@@ -824,6 +882,8 @@ def test_parse(rule, src, expected):
         ("param", ":x"),
         ("param", "x:0"),
         ("param", "0:x"),
+        ("param", "self"),
+        ("param_list", "self"),
         ("fn_defn", ""),
         ("fn_defn", "fn f(,) a {}"),
         ("fn_defn", "fn () a {}"),

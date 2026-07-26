@@ -96,6 +96,23 @@ class Ident(Ast):
         super().__init__(SrcSpan(file, tree.meta))
         self.name = as_token(tree.children[0])
 
+    @staticmethod
+    def synthetic(name: str, span: SrcSpan) -> Ident:
+        """Construct an :class:`Ident` not backed by a parse tree.
+
+        Used for the implicit ``self`` binding a method's receiver
+        introduces (see :class:`Receiver`), which has no ``ident``
+        subtree of its own to build one from.
+
+        :param name: The identifier text.
+        :param span: The source location to attribute the identifier to.
+        :return: The synthesized identifier.
+        """
+        ident = Ident.__new__(Ident)
+        ident.span = span
+        ident.name = name
+        return ident
+
     @override
     def diag_str(self) -> str:
         return f"identifier {self.name}"
@@ -689,12 +706,14 @@ class BasicTyp(Typ):
 class PtrTyp(Typ):
     """A pointer type expression, e.g. ``*i32`` or ``*mut i32``."""
 
+    mut: Optional[Mutability]
     pointee_typ: Typ
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "ptr_typ")
         super().__init__(SrcSpan(file, tree.meta))
-        (typ,) = tree.children
+        mut, typ = tree.children
+        self.mut = Mutability.from_tree(file, as_tree(mut))
         self.pointee_typ = Typ.from_tree(file, as_tree(typ))
 
     @override
@@ -738,6 +757,30 @@ class Param(Ast):
         return f'parameter "{self.name.name}"'
 
 
+class Receiver(Ast):
+    """A method's ``self`` receiver: ``*self`` or ``*mut self``.
+
+    Unlike :class:`Param`, its type isn't written in source - it's always
+    a pointer to the enclosing ``impl`` block's struct (see
+    :class:`~l0.ir_module.NonBuiltinFnSpec`), so there is no ``typ`` field
+    here, only the pointer's mutability.
+    """
+
+    name: Ident
+    mut: Optional[Mutability]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert_eq(tree.data, "receiver")
+        super().__init__(SrcSpan(file, tree.meta))
+        self.name = Ident.synthetic("self", self.span)
+        (mut,) = tree.children
+        self.mut = Mutability.from_tree(file, as_tree(mut))
+
+    @override
+    def diag_str(self) -> str:
+        return '"self" receiver'
+
+
 class Defn(Ast):
     """Base class for every top-level module item definition."""
 
@@ -776,6 +819,7 @@ class FnSpec(Defn):
     """
 
     name: Ident
+    receiver: Optional[Receiver]
     params: list[Param]
     ret_typ: Optional[Typ]
 
@@ -792,7 +836,13 @@ class FnSpec(Defn):
         self.ret_typ = opt_map(ret_typ, lambda x: Typ.from_tree(file, x))
 
         assert_eq(param_list.data, "param_list")
-        self.params = [Param(file, as_tree(child)) for child in param_list.children]
+        children = [as_tree(child) for child in param_list.children]
+        if children and children[0].data == "receiver":
+            self.receiver = Receiver(file, children[0])
+            children = children[1:]
+        else:
+            self.receiver = None
+        self.params = [Param(file, child) for child in children]
 
 
 class FnDecl(FnSpec):

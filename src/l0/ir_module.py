@@ -16,6 +16,7 @@ from l0.l0errors import (
     ImplForNonLocalStructTypError,
     ImplForNonStructTypError,
     ModDoesNotExistError,
+    SelfParamOutsideImplError,
 )
 from l0.opt_util import opt_unwrap
 from l0.src import SrcFile, SrcSpan
@@ -150,14 +151,25 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
     :param ast: The parsed function declaration or definition.
     :param e: The enclosing scope, used to resolve parameter and return
         types.
+    :param recv_struct_typ: The struct this function is an associated
+        function of, if any - only consulted when ``ast.receiver`` is
+        present, to synthesize the receiver's pointer-to-struct type
+        (which, unlike an ordinary parameter's, isn't written in source).
     """
 
     env: Final[ir_env.Env]
+    recv_struct_typ: Final[Optional[StructTyp]]
 
     @override
-    def __init__(self, ast: FnAstT, e: ir_env.Env) -> None:
+    def __init__(
+        self,
+        ast: FnAstT,
+        e: ir_env.Env,
+        recv_struct_typ: Optional[StructTyp] = None,
+    ) -> None:
         super().__init__(ast)
         self.env = e.new_child()
+        self.recv_struct_typ = recv_struct_typ
 
     @override
     def calculate_typ(self) -> PtrTyp:
@@ -167,9 +179,16 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
         else:
             ret_typ = Typ.from_ast(self.ast.ret_typ, self.env)
 
-        param_typs = (
+        param_typs: list[Typ] = [
             Typ.from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
-        )
+        ]
+        if self.ast.receiver is not None:
+            assert self.recv_struct_typ is not None
+            recv_typ = PtrTyp.get_or_create(
+                self.recv_struct_typ, Mutability.from_ast(self.ast.receiver.mut)
+            )
+            param_typs.insert(0, recv_typ)
+
         return PtrTyp.get_or_create(
             FnTyp.get_or_create(ret_typ, tuple(param_typs)), CONST
         )
@@ -177,9 +196,14 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
     @override
     def calculate_params(self) -> tuple[Param, ...]:
         assert self.ast is not None
-        return tuple(
-            Param(self, pos, param_ast) for pos, param_ast in enumerate(self.ast.params)
-        )
+        offset = 1 if self.ast.receiver is not None else 0
+        params = [
+            Param(self, pos + offset, param_ast)
+            for pos, param_ast in enumerate(self.ast.params)
+        ]
+        if self.ast.receiver is not None:
+            params.insert(0, Param(self, 0, self.ast.receiver))
+        return tuple(params)
 
     @property
     @override
@@ -406,6 +430,8 @@ class Mod(Typ):
                     ModVar(defn_ast, self.env),
                 )
             case ast.FnDecl():
+                if defn_ast.receiver is not None:
+                    raise SelfParamOutsideImplError(defn_ast.receiver.span)
                 self._add_item(
                     defn_ast.name.name,
                     Access.PUBLIC,
@@ -413,6 +439,8 @@ class Mod(Typ):
                     False,
                 )
             case ast.FnDefn():
+                if defn_ast.receiver is not None:
+                    raise SelfParamOutsideImplError(defn_ast.receiver.span)
                 qualify_name = self.name != "main" or defn_ast.name.name != "main"
                 self._add_item(
                     defn_ast.name.name,
@@ -453,7 +481,7 @@ class Mod(Typ):
             )
 
         for fn_ast in impl_ast.fns:
-            fn = Fn(fn_ast, typ.env)
+            fn = Fn(fn_ast, typ.env, recv_struct_typ=typ)
             typ.env.add_var(fn_ast.name.name, fn)
             self._add_item(
                 f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn
