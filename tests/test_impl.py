@@ -152,6 +152,118 @@ def test_duplicate_assoc_fn_name_across_impl_blocks(tmp_path):
         compile_str(tmp_path, src)
 
 
+def test_field_and_method_same_name_rejected(tmp_path):
+    # A struct's fields and associated functions share one namespace, so a
+    # field and a method can't have the same name - unlike Rust, where
+    # `c.get` and `c.get()` would disambiguate them.
+    src = """
+    struct Counter { get: i32 }
+    impl Counter {
+        fn get(*self) i32 { self.*.get }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(DuplicateItemDefnError):
+        compile_str(tmp_path, src)
+
+
+def test_field_and_receiverless_assoc_fn_same_name_rejected(tmp_path):
+    # The clash is with the shared member namespace, not with method-call
+    # syntax, so a receiverless associated function collides just the same.
+    src = """
+    struct Foo { new: i32 }
+    impl Foo {
+        fn new() Foo { Foo { new: 1 } }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(DuplicateItemDefnError):
+        compile_str(tmp_path, src)
+
+
+def test_field_and_method_same_name_rejected_in_separate_impl_block(tmp_path):
+    src = """
+    struct Foo { a: i32 }
+    impl Foo {
+        fn f() i32 { 1 }
+    }
+    impl Foo {
+        fn a(*self) i32 { 2 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(DuplicateItemDefnError):
+        compile_str(tmp_path, src)
+
+
+def test_same_name_field_and_method_in_different_structs(tmp_path):
+    # Member namespaces are per-struct: A's field `get` and B's method
+    # `get` don't clash with each other.
+    src = """
+    struct A { get: i32 }
+    struct B { n: i32 }
+    impl B {
+        fn get(*self) i32 { self.*.n }
+    }
+    pub fn main() i32 {
+        let a = A { get: 5 };
+        let b = B { n: 37 };
+        return a.get + b.get();
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_field_not_reachable_by_assoc_fn_path(tmp_path):
+    # Sharing a namespace with associated functions doesn't make a field
+    # addressable as Foo::a - fields are only reachable through a value.
+    src = """
+    struct Foo { a: i32 }
+    impl Foo {
+        fn f() i32 { 1 }
+    }
+    pub fn main() i32 {
+        return Foo::a;
+    }
+    """
+    with pytest.raises(ItemNotFoundError):
+        compile_str(tmp_path, src)
+
+
+def test_assoc_fn_not_usable_as_typ(tmp_path):
+    # A struct's members are all values, so an associated function must not
+    # resolve in a type position even though the member lookup is keyed on
+    # name alone.
+    src = """
+    struct Foo { a: i32 }
+    impl Foo {
+        fn f() i32 { 1 }
+    }
+    fn g(p: Foo::f) i32 { return 0; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(ItemNotFoundError):
+        compile_str(tmp_path, src)
+
+
+def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
+    # Associated functions are bound in their struct's own scope, which a
+    # function body's scope descends from, so they can call each other
+    # without qualification.
+    src = """
+    struct S { n: i32 }
+    impl S {
+        fn helper() i32 { 7 }
+        fn get(*self) i32 { helper() + self.*.n }
+    }
+    pub fn main() i32 {
+        let s = S { n: 35 };
+        return s.get();
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
 @pytest.mark.parametrize(
     "impl_typ",
     (

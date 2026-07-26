@@ -175,23 +175,6 @@ def test_dot_call_on_receiverless_assoc_fn_rejected(tmp_path):
         compile_str(tmp_path, src)
 
 
-def test_dot_call_prefers_method_over_field_of_same_name(tmp_path):
-    # A struct can have a field and a method sharing a name (they're in
-    # different namespaces - a field is a value binding, an impl fn is
-    # looked up separately). Dot-call syntax resolves the method first.
-    src = """
-    struct Counter { get: i32 }
-    impl Counter {
-        fn get(*self) i32 { 99 }
-    }
-    pub fn main() i32 {
-        let c = Counter { get: 1 };
-        return c.get();
-    }
-    """
-    check_prog_output(tmp_path, src, "", 99)
-
-
 def test_field_access_of_non_method_name_still_works(tmp_path):
     # Non-call field access (no trailing `(...)`) is untouched by method
     # resolution - it never goes through build_call_expr at all.

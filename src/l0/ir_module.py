@@ -238,7 +238,10 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         :meth:`~l0.typs.StructField.is_accessible_from`. Free module-level
         functions are filtered by access before reaching this point (see
         :meth:`~l0.ir_env.Env._resolve_path_segment`), so this is only
-        consulted for the ``Struct::method()`` lookup path.
+        consulted for the two ways of reaching an associated function: the
+        ``Struct::method()`` path form, and the ``value.method()``
+        dot-call form (see
+        :meth:`~l0.ir_builder.CfgBuilder.build_call_expr`).
 
         :param file: The source file to check accessibility from.
         :return: Whether this function is accessible from ``file``.
@@ -382,12 +385,19 @@ class Mod(Typ):
 
         Called once, by the loader, immediately after construction.
         ``impl`` blocks are built last so the structs they attach to are
-        already bound in :attr:`env`.
+        already bound in :attr:`env` - and so every struct's fields are
+        registered before any associated function, which is what makes an
+        associated function always the newcomer in a name clash with a
+        field (see :meth:`~l0.typs.StructTyp.add_assoc_fn`).
 
         :raises ModDoesNotExistError: If an ``import`` names a module file
             that doesn't exist.
         :raises DuplicateItemDefnError: If two definitions in this module
-            share a name.
+            share a name, or if a struct's associated function has the
+            same name as one of that struct's fields or another of its
+            associated functions.
+        :raises DuplicateFieldInStructDefnError: If a struct in this
+            module declares two fields with the same name.
         """
         impl_defns = []
         for defn_ast in self.ast.defns:
@@ -482,7 +492,7 @@ class Mod(Typ):
 
         for fn_ast in impl_ast.fns:
             fn = Fn(fn_ast, typ.env, recv_struct_typ=typ)
-            typ.env.add_var(fn_ast.name.name, fn)
+            typ.add_assoc_fn(fn)
             self._add_item(
                 f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn
             )

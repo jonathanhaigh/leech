@@ -405,11 +405,13 @@ class CfgBuilder:
         method (an associated function with a ``self`` receiver) of
         ``x``'s struct type first; if found, ``x`` (its place - a method
         receiver is always by-pointer) becomes an implicit leading
-        argument. If ``name`` doesn't resolve to a method this way (wrong
-        name, found but receiverless, or ``x`` isn't struct-typed), this
-        falls back to ordinary field access, exactly as if the call
-        weren't there (e.g. calling through a struct field that happens
-        to hold a function pointer).
+        argument. Otherwise this falls back to ordinary field access,
+        exactly as if the call weren't there (e.g. calling through a
+        struct field that happens to hold a function pointer). Since a
+        struct's fields and associated functions share one namespace, a
+        name can't be both, so the fallback applies exactly when ``name``
+        is a field, isn't a member of the struct at all, or ``x`` isn't
+        struct-typed.
 
         :param call_ast: The parsed call expression.
         :param e: The scope to resolve names in.
@@ -443,10 +445,8 @@ class CfgBuilder:
                 recv_place.typ.pointee_typ, StructTyp
             ):
                 struct_typ = recv_place.typ.pointee_typ
-                candidate = struct_typ.env.items.maps[0].get(
-                    (Env.Namespace.VARS, callee_ast.field.name)
-                )
-                if isinstance(candidate, ir_module.Fn):
+                candidate = struct_typ.get_assoc_fn(callee_ast.field.name)
+                if candidate is not None:
                     if not candidate.is_accessible_from(callee_ast.span.file):
                         raise PrivateItemAccessError(
                             "function",

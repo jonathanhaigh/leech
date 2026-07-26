@@ -12,7 +12,7 @@ from l0.l0errors import (
     TypeOfStructExprNotStructError,
 )
 
-from util import check_prog_output, compile_str
+from util import check_prog_output, compile_str, write_whole_file
 
 
 def test_struct_access(tmp_path):
@@ -148,6 +148,30 @@ def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
     check_prog_output(tmp_path, src, "", 0)
 
 
+def test_duplicate_field_in_unused_private_struct_in_imported_module(tmp_path):
+    # Field names are registered when the struct is built, not lazily when
+    # something first looks at its fields, so a duplicate is caught even in
+    # a struct nothing ever uses. Compiles only main.l0 on purpose:
+    # compile_modules would compile a.l0 as a root module too, and a root
+    # module's structs are all reached by codegen regardless.
+    a_src = """
+    struct T {
+      x: i32,
+      x: i32,
+    }
+    pub fn g() i32 { return 1; }
+    """
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        return a::g();
+    }
+    """
+    write_whole_file(tmp_path / "a.l0", a_src)
+    with pytest.raises(DuplicateFieldInStructDefnError):
+        compile_str(tmp_path, main_src)
+
+
 def test_struct_contains_itself_by_value(tmp_path):
     src = """
     struct T {
@@ -158,6 +182,25 @@ def test_struct_contains_itself_by_value(tmp_path):
     }
     """
     with pytest.raises(InfiniteSizeStructError):
+        compile_str(tmp_path, src)
+
+
+def test_duplicate_field_reported_before_infinite_size(tmp_path):
+    # A duplicate field name wins over the infinite-size error: it's a
+    # local, syntactic problem that needs no type resolution to diagnose,
+    # whereas the infinite-size diagnostic names fields - which is exactly
+    # what's ambiguous while a name is duplicated.
+    src = """
+    struct T {
+      t: T,
+      a: i32,
+      a: i32,
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(DuplicateFieldInStructDefnError):
         compile_str(tmp_path, src)
 
 

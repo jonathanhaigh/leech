@@ -2,6 +2,7 @@ import pytest
 
 from l0.l0errors import (
     CircularVarInitializerError,
+    DuplicateItemDefnError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
     InfiniteSizeStructError,
@@ -243,6 +244,38 @@ def test_void_mod_var_initializer_message(tmp_path):
 
     msg = str(exc_info.value)
     assert "void" in msg
+
+
+def test_field_and_assoc_fn_name_clash_message(tmp_path):
+    # The note pointing at the field is what makes this diagnostic
+    # comprehensible: without it, "duplicate associated function" gives no
+    # hint that the other definition is a field.
+    src = """
+    struct Counter {
+        get: i32,
+    }
+    impl Counter {
+        fn get(*self) i32 { 0 }
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(DuplicateItemDefnError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"get"' in msg
+    assert "associated function" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "get(*self)")
+
+    (note,) = exc_info.value.extra
+    assert note.message == "Previous definition here"
+    assert note.span is not None
+    assert (note.span.start_line, note.span.start_col) == find_pos(src, "get: i32")
 
 
 def test_infinite_size_struct_message(tmp_path):

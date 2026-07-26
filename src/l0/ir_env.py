@@ -210,15 +210,19 @@ class Env:
                             item_kind, ident.name, ident.span, defn_span
                         )
             case typs.StructTyp():
-                # Only the struct's own scope - not its parents' scopes, which
-                # the struct's Env inherits from for resolving field types.
-                res = container.env.items.maps[0].get((ns, ident.name))
-                # Everything reachable here is an associated function (see
-                # Mod._build_impl_defn); private ones are invisible outside
-                # the struct's own module, same as private Mod items above.
-                if isinstance(res, ir_module.Fn) and not res.is_accessible_from(
-                    ident.span.file
-                ):
+                # A struct's members share one namespace and are all values,
+                # never types, so a type lookup can't name one. Of those
+                # members only associated functions are reachable by path:
+                # `SomeStruct::x` is not a way to name a field, so a field
+                # falls through to "not found" below.
+                res = (
+                    container.get_assoc_fn(ident.name)
+                    if ns == Env.Namespace.VARS
+                    else None
+                )
+                # Private associated functions are invisible outside the
+                # struct's own module, same as private Mod items above.
+                if res is not None and not res.is_accessible_from(ident.span.file):
                     raise PrivateItemAccessError(
                         "function", ident.name, ident.span, res.span
                     )

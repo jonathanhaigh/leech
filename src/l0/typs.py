@@ -11,7 +11,11 @@ from weakref import WeakValueDictionary
 from l0 import ir_env, ir_module
 from l0 import l0ast as ast
 from l0.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
-from l0.l0errors import DuplicateFieldInStructDefnError, InfiniteSizeStructError
+from l0.l0errors import (
+    DuplicateFieldInStructDefnError,
+    DuplicateItemDefnError,
+    InfiniteSizeStructError,
+)
 from l0.src import SrcFile, SrcSpan
 
 
@@ -342,16 +346,50 @@ class StructTyp(Typ):
     in the source introduces its own distinct type (see
     :meth:`cache_key`).
 
+    A struct's *members* - its fields and its associated functions - share
+    a single namespace, so a field and an associated function can't have
+    the same name. They're registered in two phases: fields by
+    ``__init__``, then associated functions by :meth:`add_assoc_fn` as the
+    enclosing module builds its ``impl`` blocks (see
+    :meth:`~l0.ir_module.Mod.build`, which defers those until after every
+    struct is declared).
+
+    This makes a struct a named-item container much like a
+    :class:`~l0.ir_module.Mod`, and the member API here deliberately
+    mirrors ``Mod``'s item API (:meth:`~l0.ir_module.Mod.get_item` and
+    friends) so the two can be unified if that becomes worthwhile. It
+    isn't yet: ``Mod`` keys its items on *namespace and* name, since a
+    module-level variable and type may share a name, whereas a struct
+    keys on name alone. If structs or traits gain associated items that
+    aren't functions - associated types or consts - that difference will
+    need revisiting, and a shared abstraction will have more to share.
+
     :param ast: The parsed struct declaration.
     :param e: The enclosing scope, used to resolve field types.
+    :raises DuplicateFieldInStructDefnError: If the declaration contains
+        two fields with the same name.
     """
 
     ast: Final[ast.StructDefn]
     env: Final[ir_env.Env]
+    #: This struct's members - its fields and its associated functions -
+    #: keyed by name, in registration order: fields first, in declaration
+    #: order, then associated functions in ``impl``-block order. Fields
+    #: and associated functions deliberately share one namespace; see the
+    #: class docstring.
+    _members: Final[dict[str, StructField | ir_module.Fn]]
 
     def __init__(self, ast: ast.StructDefn, e: ir_env.Env) -> None:
         self.ast = ast
         self.env = e.new_child()
+        self._members = {}
+        # Registering fields here - rather than lazily, along with
+        # `fields` - deliberately resolves no types: a StructField only
+        # stores its index, AST node and scope, so this is safe even
+        # though a field's type may name a struct declared later in the
+        # module.
+        for i, field_ast in enumerate(ast.fields):
+            self._add_member(StructField(i, field_ast, self.env))
 
     @override
     @classmethod
@@ -372,27 +410,107 @@ class StructTyp(Typ):
     def name(self) -> str:
         return self.ast.ident.name
 
+    @staticmethod
+    def _member_ident_span(member: StructField | ir_module.Fn) -> Optional[SrcSpan]:
+        """The span of ``member``'s name, for duplicate-member diagnostics.
+
+        Points at the identifier rather than the whole declaration, since
+        a duplicate member is a problem with its name specifically.
+
+        :param member: The field or associated function to locate.
+        :return: The span of the member's name.
+        """
+        if isinstance(member, StructField):
+            return member.ast.ident.span
+        assert member.ast is not None
+        return member.ast.name.span
+
+    def _add_member(self, member: StructField | ir_module.Fn) -> None:
+        """Register ``member`` under its own name among this struct's members.
+
+        A struct's fields and associated functions share a single
+        namespace, so this rejects an associated function whose name is
+        already taken by a field just as readily as it rejects two fields
+        or two associated functions of the same name.
+
+        :param member: The field or associated function to register.
+        :raises DuplicateFieldInStructDefnError: If ``member`` is a field
+            whose name is already taken.
+        :raises DuplicateItemDefnError: If ``member`` is an associated
+            function whose name is already taken - by a field or by
+            another associated function.
+        """
+        existing = self._members.get(member.name)
+        if existing is not None:
+            span = StructTyp._member_ident_span(member)
+            existing_span = StructTyp._member_ident_span(existing)
+            if isinstance(member, StructField):
+                # Every field is registered during construction, before
+                # the enclosing module builds any impl block, so the only
+                # thing a field can collide with is another field.
+                assert isinstance(existing, StructField)
+                raise DuplicateFieldInStructDefnError(
+                    member.name, span, existing_span
+                )
+            raise DuplicateItemDefnError(
+                "associated function", member.name, span, existing_span
+            )
+        self._members[member.name] = member
+
+    def add_assoc_fn(self, fn: ir_module.Fn) -> None:
+        """Register ``fn`` as one of this struct's associated functions.
+
+        Binds ``fn`` twice: among this struct's members, where it shares a
+        namespace with the struct's fields, and in :attr:`env`, which is
+        what lets associated functions of the same struct call each other
+        by bare, unqualified name.
+
+        Registered among the members first, so a rejected function is
+        never left bound in :attr:`env`. This is the mirror image of
+        :meth:`~l0.ir_module.Mod._add_item`, where the ``Env`` is the
+        duplicate-definition authority; here the member table is, since
+        fields never enter :attr:`env`.
+
+        :param fn: The associated function, already constructed with
+            :attr:`env` as its enclosing scope.
+        :raises DuplicateItemDefnError: If this struct already has a field
+            or an associated function named ``fn.name``.
+        """
+        self._add_member(fn)
+        self.env.add_var(fn.name, fn)
+
+    def get_assoc_fn(self, name: str) -> Optional[ir_module.Fn]:
+        """Find this struct's associated function called ``name``.
+
+        A field of that name is deliberately *not* a match: fields are
+        reached only through :attr:`fields`, never as
+        ``SomeStruct::name`` nor as the callee of a method call.
+
+        :param name: The name to look up.
+        :return: The associated function, or ``None`` if this struct has
+            no member of that name, or its member of that name is a field.
+        """
+        member = self._members.get(name)
+        return member if isinstance(member, ir_module.Fn) else None
+
     @cached_property
     def fields(self) -> MappingProxyType[str, StructField]:
         """This struct's fields, keyed by name, in declaration order.
 
-        :raises DuplicateFieldInStructDefnError: If the declaration
-            contains two fields with the same name.
+        A view of the field members among this struct's members;
+        duplicate names were already rejected as each member was
+        registered (see :meth:`add_assoc_fn` and the class docstring).
+
         :raises InfiniteSizeStructError: If this struct contains itself by
             value, directly or through other structs.
         """
         self._check_finite_size([], [])
 
-        fields = {}
-        for i, field_ast in enumerate(self.ast.fields):
-            name = field_ast.ident.name
-            if name in fields:
-                raise DuplicateFieldInStructDefnError(
-                    name, field_ast.ident.span, fields[name].ast.ident.span
-                )
-
-            fields[name] = StructField(i, field_ast, self.env)
-
+        fields = {
+            name: member
+            for name, member in self._members.items()
+            if isinstance(member, StructField)
+        }
         return fields.items().mapping
 
     def _check_finite_size(
