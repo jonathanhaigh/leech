@@ -29,6 +29,7 @@ from l0.l0errors import (
     IfCondNotBoolError,
     IfElsTypMismatchError,
     IfTypNotVoidError,
+    IncompatibleAssignmentTypError,
     IncompatibleBinOpArgTypsError,
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
@@ -1019,6 +1020,8 @@ class CfgBuilder:
         :param ass_ast: The parsed assignment statement.
         :param e: The scope to resolve names in.
         :raises AssignToConstError: If the assignment target is const.
+        :raises IncompatibleAssignmentTypError: If the assigned value's
+            type doesn't match, and doesn't coerce to, the place's type.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the target or the assigned
             expression; see :meth:`build_expr`.
@@ -1032,6 +1035,16 @@ class CfgBuilder:
 
         if place_typ.mut == CONST:
             raise AssignToConstError(ass_ast.place.span)
+
+        coerced = self._coerce(expr, place_typ.pointee_typ, ass_ast.expr)
+        if coerced is None:
+            raise IncompatibleAssignmentTypError(
+                expr.typ.name,
+                place_typ.pointee_typ.name,
+                ass_ast.expr.span,
+                ass_ast.place.span,
+            )
+        expr = coerced
 
         self.curr_bb.store(expr, place, ass_ast)
 

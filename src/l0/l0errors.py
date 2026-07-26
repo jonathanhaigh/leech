@@ -138,6 +138,26 @@ class AssignToConstError(UserError):
         super().__init__(ERROR, "Cannot assign to const place expression", span)
 
 
+class IncompatibleAssignmentTypError(UserError):
+    """Raised when an assigned value's type doesn't match the place's."""
+
+    def __init__(
+        self,
+        given_typ: str,
+        place_typ: str,
+        span: Optional[SrcSpan],
+        place_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Cannot assign value of type "{given_typ}" to place of type'
+            f' "{place_typ}"',
+            span,
+        )
+        if place_span is not None:
+            self.add_extra(NOTE, f'Place has type "{place_typ}"', place_span)
+
+
 class DuplicateItemDefnError(UserError):
     """Raised when a name is defined more than once in the same scope."""
 

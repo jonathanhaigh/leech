@@ -2,6 +2,7 @@ import pytest
 
 from l0.l0errors import (
     AssignToConstError,
+    IncompatibleAssignmentTypError,
     SetNonLocalVarAtComptimeError,
 )
 from util import check_prog_output, compile_str
@@ -244,6 +245,60 @@ def test_assign_through_explicit_mut_ptr_param(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 2)
+
+
+def test_assign_wrong_typ_to_local(tmp_path):
+    # Assignment used not to type-check at all, so a mismatch tripped an
+    # internal assertion in StoreInstr instead of being diagnosed.
+    src = """
+    pub fn main() i32 {
+        let mut x = 1i32;
+        x = 2u8;
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleAssignmentTypError):
+        compile_str(tmp_path, src)
+
+
+def test_assign_wrong_typ_through_ptr_deref(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let mut x = 1i32;
+        let p = &x;
+        p.* = 2u8;
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleAssignmentTypError):
+        compile_str(tmp_path, src)
+
+
+def test_assign_wrong_typ_to_struct_field(tmp_path):
+    src = """
+    struct T { mut a: i32 }
+    pub fn main() i32 {
+        let mut t = T { a: 1 };
+        t.a = "abc";
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleAssignmentTypError):
+        compile_str(tmp_path, src)
+
+
+def test_assign_to_const_reported_before_typ_mismatch(tmp_path):
+    # Both wrong at once: the place being const is reported first, since
+    # it's a problem with the assignment itself rather than the value.
+    src = """
+    pub fn main() i32 {
+        let x = 1i32;
+        x = 2u8;
+        return 0;
+    }
+    """
+    with pytest.raises(AssignToConstError):
+        compile_str(tmp_path, src)
 
 
 def test_assign_through_explicit_const_ptr_param(tmp_path):
