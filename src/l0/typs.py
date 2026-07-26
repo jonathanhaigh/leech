@@ -283,7 +283,7 @@ class PtrTyp(Typ):
     @override
     def name(self) -> str:
         mut_str = "mut " if self.mut == MUT else ""
-        return f"{mut_str}*{self.pointee_typ.name}"
+        return f"*{mut_str}{self.pointee_typ.name}"
 
     @override
     def coerces_to(self, target: Typ) -> bool:

@@ -1,5 +1,12 @@
+import pathlib
+
 import pytest
+from l0 import l0ast as ast
+from l0.ir_env import Env
 from l0.l0errors import IntLitOverflowError
+from l0.parse import build_parser
+from l0.src import SrcFile
+from l0.typs import Typ
 from util import check_prog_output, compile_str, find_pos
 
 
@@ -123,3 +130,21 @@ def test_comptime_int_lit_overflow_signed(tmp_path):
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == find_pos(src, "128i8")
+
+
+@pytest.mark.parametrize(
+    "src,expected",
+    (
+        ("*i32", "*i32"),
+        ("*mut i32", "*mut i32"),
+        ("**mut u8", "**mut u8"),
+        ("[*mut i32; 2]", "[*mut i32; 2]"),
+    ),
+)
+def test_ptr_typ_name_matches_source_syntax(src, expected):
+    # Type names appear in diagnostics, so they should read the way the
+    # type would be written.
+    file = SrcFile(pathlib.Path("test.l0"))
+    tree = build_parser("typ").parse(src)
+    typ = Typ.from_ast(ast.Typ.from_tree(file, tree), Env())
+    assert typ.name == expected
