@@ -2,6 +2,7 @@ import pytest
 from l0.l0errors import (
     DivisionByZeroAtComptimeError,
     IncompatibleBinOpArgTypsError,
+    IntLitOverflowError,
     IntOverflowAtComptimeError,
     InvalidBinOpArgTypError,
     InvalidUnaryOpArgTypError,
@@ -219,6 +220,63 @@ def test_comptime_neg_overflow(tmp_path):
     }
     """
     with pytest.raises(IntOverflowAtComptimeError):
+        compile_str(tmp_path, src)
+
+
+@pytest.mark.parametrize(
+    "decl",
+    (
+        # Both the inferred and the explicitly-suffixed spelling of i8's
+        # minimum value. Negation of a literal is folded into a single
+        # constant, so the check is against -128 rather than against the
+        # 128 that appears in the source and wouldn't fit i8 on its own.
+        "let x: i8 = -128;",
+        "let x = -128i8;",
+    ),
+)
+def test_negated_int_lit_at_signed_typ_min(tmp_path, decl):
+    src = f"""
+    pub fn main() i32 {{
+        {decl}
+        return if (x == 0i8 - 127i8 - 1i8) {{ 7 }} else {{ 0 }};
+    }}
+    """
+    check_prog_output(tmp_path, src, "", 7)
+
+
+def test_comptime_negated_int_lit_at_signed_typ_min(tmp_path):
+    src = """
+    let x: i8 = -128;
+    pub fn main() i32 {
+        return if (x == 0i8 - 127i8 - 1i8) { 7 } else { 0 };
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
+
+
+def test_negated_int_lit_overflow(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x: i8 = -200;
+        return 0;
+    }
+    """
+    with pytest.raises(IntLitOverflowError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert "-200" in msg
+    assert '"i8"' in msg
+
+
+def test_negated_int_lit_infers_unsigned_is_rejected(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x: u8 = -1;
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidUnaryOpArgTypError):
         compile_str(tmp_path, src)
 
 

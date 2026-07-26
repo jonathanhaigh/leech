@@ -60,6 +60,7 @@ from l0.l0errors import (
 )
 from l0.naming import VarNamer
 from l0.opt_util import opt_map, opt_or_default
+from l0.src import SrcSpan
 from l0.typs import (
     BOOL,
     CONST,
@@ -159,8 +160,8 @@ class CfgBuilder:
             self.curr_bb.store(param, alloca, param.ast)
             e.add_var(param.ast.name.name, alloca)
 
-        block = self.build_expr(fn_ast.block, e, ExprContext.VALUE)
         ret_typ = self.fn.fn_typ.ret_typ
+        block = self.build_expr(fn_ast.block, e, ExprContext.VALUE, ret_typ)
         ret_typ_span = opt_map(fn_ast.ret_typ, lambda x: x.span)
         ret_ast = opt_or_default(fn_ast.block.expr, fn_ast.block)
 
@@ -205,9 +206,13 @@ class CfgBuilder:
             address.
         :param expected_typ: The type ``expr_ast`` is expected to have, if
             known from the surrounding context (e.g. a call argument's
-            declared parameter type). Only consulted by expressions that
-            can't otherwise infer their own type, such as an empty array
-            literal; ignored everywhere else.
+            declared parameter type). Consulted by expressions that can't
+            otherwise infer their own type - an empty array literal, and
+            an integer literal written without a type suffix (see
+            :meth:`_int_lit_typ`) - and passed on by the constructs that
+            merely pass a value through, such as a block's tail expression
+            or an ``if``'s branches. Operator operands deliberately don't
+            receive it; ignored everywhere else.
         :return: The lowered expression's value.
         :raises l0.l0errors.UserError: As any of the many subclasses that
             the individual ``build_*_expr`` methods (and, transitively,
@@ -215,9 +220,9 @@ class CfgBuilder:
         """
         match expr_ast:
             case ast.BlockExpr():
-                return self.build_block_expr(expr_ast, e, ctx)
+                return self.build_block_expr(expr_ast, e, ctx, expected_typ)
             case ast.IfExpr():
-                return self.build_if_expr(expr_ast, e, ctx)
+                return self.build_if_expr(expr_ast, e, ctx, expected_typ)
             case ast.WhileExpr():
                 return self.build_while_expr(expr_ast, e, ctx)
             case ast.CallExpr():
@@ -225,16 +230,13 @@ class CfgBuilder:
             case ast.BinOpExpr():
                 return self.build_bin_op_expr(expr_ast, e, ctx)
             case ast.UnaryOpExpr():
-                return self.build_unary_op_expr(expr_ast, e, ctx)
+                return self.build_unary_op_expr(expr_ast, e, ctx, expected_typ)
             case ast.StrLit():
                 return self._in_context(ComptimeCStr(expr_ast.value, expr_ast), ctx)
             case ast.IntLit():
-                if not expr_ast.typ.fits(expr_ast.value):
-                    raise IntLitOverflowError(
-                        expr_ast.value, expr_ast.typ.name, expr_ast.span
-                    )
                 return self._in_context(
-                    ComptimeInt(expr_ast.typ, expr_ast.value, expr_ast), ctx
+                    self._build_int_lit(expr_ast, expected_typ, False, expr_ast.span),
+                    ctx,
                 )
             case ast.BoolLit():
                 return self._in_context(ComptimeBool(expr_ast.value, expr_ast), ctx)
@@ -254,7 +256,11 @@ class CfgBuilder:
                 assert False, f"unhandled expression kind {expr_ast}"
 
     def build_block_expr(
-        self, block_ast: ast.BlockExpr, e: Env, ctx: ExprContext
+        self,
+        block_ast: ast.BlockExpr,
+        e: Env,
+        ctx: ExprContext,
+        expected_typ: Optional[Typ] = None,
     ) -> Value:
         """Lower a ``{ ... }`` block expression.
 
@@ -262,6 +268,9 @@ class CfgBuilder:
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the tail expression for its value or
             its address.
+        :param expected_typ: The type the block is expected to have, if
+            known; the block's value is its tail expression's, so this is
+            passed straight on to it.
         :return: The lowered tail expression's value if the block has one;
             otherwise a void value if its statements complete normally, or
             a never value if they already diverged (e.g. via ``return``).
@@ -277,15 +286,25 @@ class CfgBuilder:
             if self.curr_bb.terminated:
                 return NeverValue(block_ast)
             return VoidValue(block_ast)
-        return self.build_expr(block_ast.expr, e, ctx)
+        return self.build_expr(block_ast.expr, e, ctx, expected_typ)
 
-    def build_if_expr(self, if_ast: ast.IfExpr, e: Env, ctx: ExprContext) -> Value:
+    def build_if_expr(
+        self,
+        if_ast: ast.IfExpr,
+        e: Env,
+        ctx: ExprContext,
+        expected_typ: Optional[Typ] = None,
+    ) -> Value:
         """Lower an ``if``/``else`` expression.
 
         :param if_ast: The parsed ``if`` expression.
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the taken branch for its value or its
             address.
+        :param expected_typ: The type the expression is expected to have,
+            if known; its value comes from whichever branch is taken, so
+            this is passed on to both branches (but not the condition,
+            which is always ``bool``).
         :return: The value of whichever branch is taken, merged via a phi
             instruction if both branches complete normally.
         :raises IfCondNotBoolError: If the condition's type isn't
@@ -313,7 +332,7 @@ class CfgBuilder:
             self.cbranch(cond, then_bb, end_bb, if_ast)
 
         self.set_position(then_bb)
-        then = self.build_expr(if_ast.then, e, ctx)
+        then = self.build_expr(if_ast.then, e, ctx, expected_typ)
         then_last_bb = self.curr_bb
         if then.typ == NEVER and not then_last_bb.terminated:
             then_last_bb.unreachable(if_ast.then)
@@ -324,7 +343,7 @@ class CfgBuilder:
         if els_bb is not None:
             self.set_position(els_bb)
             assert if_ast.els is not None
-            els = self.build_expr(if_ast.els, e, ctx)
+            els = self.build_expr(if_ast.els, e, ctx, expected_typ)
             els_last_bb = self.curr_bb
             if els.typ == NEVER and not els_last_bb.terminated:
                 self.curr_bb.unreachable(if_ast.els)
@@ -600,7 +619,11 @@ class CfgBuilder:
         return self._in_context(res, ctx)
 
     def build_unary_op_expr(
-        self, op_ast: ast.UnaryOpExpr, e: Env, ctx: ExprContext
+        self,
+        op_ast: ast.UnaryOpExpr,
+        e: Env,
+        ctx: ExprContext,
+        expected_typ: Optional[Typ] = None,
     ) -> Value:
         """Lower a unary operator expression (``&`` or ``-``).
 
@@ -608,9 +631,14 @@ class CfgBuilder:
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the result for its value or its
             address.
+        :param expected_typ: The type the expression is expected to have,
+            if known. Negation preserves its operand's type, so this is
+            passed on to the operand; ``&`` ignores it.
         :return: The operation's result.
         :raises InvalidUnaryOpArgTypError: If ``-``'s operand isn't a
             signed integer type.
+        :raises IntLitOverflowError: If ``-``'s operand is a literal whose
+            negation doesn't fit its type.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the operand; see :meth:`build_expr`.
         """
@@ -621,7 +649,31 @@ class CfgBuilder:
                     ctx,
                 )
             case "-":
-                operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
+                # A literal operand is folded into a single negative
+                # constant rather than being built and then negated, so
+                # that a signed type's minimum value can be written: the
+                # positive half of the range stops one short of it, so
+                # e.g. the 128 in -128i8 would overflow on its own.
+                if isinstance(op_ast.operand, ast.IntLit):
+                    typ = self._int_lit_typ(op_ast.operand, expected_typ)
+                    if typ.signage != SIGNED:
+                        raise InvalidUnaryOpArgTypError(
+                            op_ast.op.name,
+                            op_ast.op.span,
+                            typ.name,
+                            "a signed integer type",
+                            op_ast.operand.span,
+                        )
+                    return self._in_context(
+                        self._build_int_lit(
+                            op_ast.operand, expected_typ, True, op_ast.span
+                        ),
+                        ctx,
+                    )
+
+                operand = self.build_expr(
+                    op_ast.operand, e, ExprContext.VALUE, expected_typ
+                )
                 if not isinstance(operand.typ, IntTyp) or operand.typ.signage != SIGNED:
                     raise InvalidUnaryOpArgTypError(
                         op_ast.op.name,
@@ -738,8 +790,8 @@ class CfgBuilder:
             :attr:`~ExprContext.PLACE`.
         :raises IndexIntoInvalidTypError: If the indexed expression's type
             isn't an array type.
-        :raises InvalidIndexTypError: If the index expression's type isn't
-            ``usize``.
+        :raises InvalidIndexTypError: If the index expression's type isn't,
+            and doesn't coerce to, ``usize``.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the array or index expression; see
             :meth:`build_expr`.
@@ -751,9 +803,14 @@ class CfgBuilder:
                 arr_ptr_typ.pointee_typ.name, aa_expr.array.span
             )
 
-        index = self.build_expr(aa_expr.index, e, ExprContext.VALUE)
-        if index.typ != USIZE:
+        # An index is a coercion point like any other unambiguous target
+        # type: a bare literal infers as usize, and a narrower unsigned
+        # value widens to it.
+        index = self.build_expr(aa_expr.index, e, ExprContext.VALUE, USIZE)
+        coerced_index = self._coerce(index, USIZE, aa_expr.index)
+        if coerced_index is None:
             raise InvalidIndexTypError(index.typ.name, aa_expr.index.span)
+        index = coerced_index
 
         # TODO: bounds check
 
@@ -1110,6 +1167,60 @@ class CfgBuilder:
                 declared_typ_ast.span,
             )
         return coerced
+
+    def _int_lit_typ(
+        self, lit_ast: ast.IntLit, expected_typ: Optional[Typ]
+    ) -> IntTyp:
+        """Choose an integer literal's type.
+
+        A literal written with a type suffix always has that type. One
+        written without takes the type the surrounding context expects,
+        if that's an integer type, and falls back to ``i32`` otherwise.
+
+        This is inference, not coercion: an ``i32`` value never converts
+        to a ``u8`` (see :meth:`_coerce`), but a literal that hasn't been
+        given a type yet can simply be a ``u8``. Contexts that have no
+        single expected type - operator operands above all - pass
+        ``None`` here, which is what keeps ``1 + 1`` from inferring.
+
+        :param lit_ast: The parsed integer literal.
+        :param expected_typ: The type the context expects, if known.
+        :return: The type to give the literal.
+        """
+        if lit_ast.explicit_typ is not None:
+            return lit_ast.explicit_typ
+        if isinstance(expected_typ, IntTyp):
+            return expected_typ
+        return I32
+
+    def _build_int_lit(
+        self,
+        lit_ast: ast.IntLit,
+        expected_typ: Optional[Typ],
+        negated: bool,
+        span: Optional[SrcSpan],
+    ) -> Value:
+        """Lower an integer literal to a compile-time-known value.
+
+        :param lit_ast: The parsed integer literal.
+        :param expected_typ: The type the context expects, if known; see
+            :meth:`_int_lit_typ`.
+        :param negated: Whether the literal is the operand of a unary
+            minus, and so denotes the negation of its written value. The
+            negated value is what's range-checked, which is what lets a
+            signed type's minimum value (e.g. ``-128i8``) be written at
+            all: ``128`` on its own doesn't fit ``i8``.
+        :param span: The span to attribute an overflow diagnostic to -
+            the whole negation expression when ``negated``, so that the
+            reported literal and the highlighted source agree.
+        :return: The literal's value.
+        :raises IntLitOverflowError: If the value doesn't fit its type.
+        """
+        typ = self._int_lit_typ(lit_ast, expected_typ)
+        value = -lit_ast.value if negated else lit_ast.value
+        if not typ.fits(value):
+            raise IntLitOverflowError(value, typ.name, span)
+        return ComptimeInt(typ, value, lit_ast)
 
     def _coerce(
         self, value: Value, target: Typ, ast: Optional[ast.Ast]

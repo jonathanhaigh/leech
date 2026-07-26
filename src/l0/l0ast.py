@@ -295,13 +295,15 @@ class StrLit(Expr):
 class IntLit(Expr):
     """An integer literal, e.g. ``42``, ``5i8``, or ``3usize``.
 
-    The type suffix, if present, determines :attr:`typ` directly; if
-    absent, the literal defaults to ``i32``.
+    A type suffix, if written, fixes the literal's type as
+    :attr:`explicit_typ`. Without one the type is left open here and
+    chosen during lowering, from the type the surrounding context
+    expects (see :meth:`l0.ir_builder.CfgBuilder._int_lit_typ`).
     """
 
     token: Token
     value: int
-    typ: typs.IntTyp
+    explicit_typ: Optional[typs.IntTyp]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "int_lit")
@@ -317,11 +319,10 @@ class IntLit(Expr):
                 width = ADDR_SIZE
             else:
                 width = int(m[3])
+            self.explicit_typ = typs.IntTyp.get_or_create(width, signage)
         else:
-            signage = SIGNED
-            width = 32
+            self.explicit_typ = None
 
-        self.typ = typs.IntTyp.get_or_create(width, signage)
         self.value = int(m[1])
 
     @override

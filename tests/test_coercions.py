@@ -324,13 +324,14 @@ def test_widening_int_coercion_array_element(tmp_path):
 
 
 def test_widening_int_coercion_let_initializer(tmp_path):
-    # The `: i64` annotation makes the let statement a coercion point:
-    # -10 is an i32 expression (unary minus doesn't change that), widened
-    # to i64 here. `+` never coerces its operands, so adding another i64
-    # only type-checks if x is actually i64, not i32.
+    # The `: i64` annotation makes the let statement a coercion point.
+    # The suffix on -10i8 is what keeps this a coercion test: without it
+    # the literal would simply be inferred as an i64 and nothing would be
+    # widened. `+` never coerces its operands, so adding another i64 only
+    # type-checks if x is actually i64.
     src = """
     pub fn main() i32 {
-        let x: i64 = -10;
+        let x: i64 = -10i8;
         let y = x + 20i64;
         return if (y == 10i64) { 7 } else { 0 };
     }

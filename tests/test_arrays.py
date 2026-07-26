@@ -39,6 +39,54 @@ def test_comptime_array_access(tmp_path):
     check_prog_output(tmp_path, src, "", 27)
 
 
+def test_array_index_int_lit_infers_usize(tmp_path):
+    # An index is a coercion point, so a bare literal is a usize - no
+    # explicit `0usize` suffix needed.
+    src = """
+    pub fn main() i32 {
+        let arr = [10, 20, 30];
+        return arr[0] + arr[2];
+    }
+    """
+    check_prog_output(tmp_path, src, "", 40)
+
+
+def test_array_index_widens_to_usize(tmp_path):
+    # A u8 index isn't a usize, but widens to one.
+    src = """
+    pub fn main() i32 {
+        let arr = [10, 20, 30];
+        let i: u8 = 2;
+        return arr[i];
+    }
+    """
+    check_prog_output(tmp_path, src, "", 30)
+
+
+def test_array_index_signed_is_rejected(tmp_path):
+    # i32 -> usize is signed-to-unsigned, which never coerces.
+    src = """
+    pub fn main() i32 {
+        let arr = [10, 20, 30];
+        let i = 1i32;
+        return arr[i];
+    }
+    """
+    with pytest.raises(InvalidIndexTypError):
+        compile_str(tmp_path, src)
+
+
+def test_comptime_array_index_int_lit_infers_usize(tmp_path):
+    src = """
+    let arr = [1, 2, 3, 4];
+    let x = arr[2];
+    pub fn main() i32 {
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 3)
+
+
 def test_comptime_array_incompatible_typs(tmp_path):
     src = """
     let arr = [1, 2usize];
