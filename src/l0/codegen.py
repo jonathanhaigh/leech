@@ -11,6 +11,7 @@ from l0 import ir_module, ir_values
 from l0.asserts import assert_eq, checked_cast
 from l0.naming import VarNamer
 from l0.typs import (
+    SIGNED,
     USIZE,
     VOID,
     ArrayTyp,
@@ -353,6 +354,20 @@ class Compiler:
             case ir_values.LoadInstr():
                 return ctx.ll_builder.load(
                     ctx.ll_values.get(instr.src), typ=self._ll_mod_items.get(instr.typ)
+                )
+            case ir_values.IntExtInstr():
+                # Which extension to use follows from the source type: a
+                # signed value's sign bit has to be replicated to keep
+                # its value, an unsigned one's must not be.
+                src_typ = checked_cast(instr.value.typ, IntTyp)
+                extend = (
+                    ctx.ll_builder.sext
+                    if src_typ.signage == SIGNED
+                    else ctx.ll_builder.zext
+                )
+                return extend(  # type: ignore
+                    ctx.ll_values.get(instr.value),
+                    self._ll_mod_items.get(instr.typ),
                 )
             case ir_values.AllocaInstr():
                 return ctx.ll_builder.alloca(

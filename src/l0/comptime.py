@@ -150,6 +150,15 @@ class Interpreter:
                     self._get_comptime_value(instr.src), ir_values.ComptimePtr
                 )
                 self.registers[instr] = src.load()
+            case ir_values.IntExtInstr():
+                # Widening never changes the value, only the type it's
+                # held in.
+                int_value = checked_cast(
+                    self._get_comptime_value(instr.value), ir_values.ComptimeInt
+                )
+                self.registers[instr] = ir_values.ComptimeInt(
+                    instr.typ, int_value.value, instr.ast
+                )
             case ir_values.AllocaInstr():
                 self.registers[instr] = ir_values.ComptimeAlloc(
                     instr.allocated_typ, instr.mut, instr.ast

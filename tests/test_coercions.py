@@ -2,6 +2,7 @@ import pytest
 
 from l0.l0errors import (
     IncompatibleAssignmentTypError,
+    IncompatibleBinOpArgTypsError,
     IncompatibleStructFieldTypError,
     InvalidArgTypError,
     InvalidRetTypError,
@@ -159,3 +160,238 @@ def test_comptime_mut_ptr_coerces_to_const_ptr(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 42)
+
+
+@pytest.mark.parametrize(
+    "src_typ,dst_typ",
+    (
+        ("i8", "i16"),
+        ("i8", "i64"),
+        ("i32", "i33"),
+        ("u8", "u16"),
+        ("u8", "u64"),
+        # An unsigned type fits in a signed one only with a bit to spare
+        # for the sign.
+        ("u8", "i9"),
+        ("u8", "i32"),
+        ("u31", "i32"),
+    ),
+)
+def test_widening_int_coercion_allowed(src_typ, dst_typ, tmp_path):
+    src = f"""
+    fn f(x: {dst_typ}) {dst_typ} {{
+        return x;
+    }}
+    pub fn main() i32 {{
+        let a = 42{src_typ};
+        f(a);
+        return 0;
+    }}
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+@pytest.mark.parametrize(
+    "src_typ,dst_typ",
+    (
+        # Narrowing loses values.
+        ("i16", "i8"),
+        ("u16", "u8"),
+        # A signed type's negatives never fit in an unsigned one, however
+        # wide.
+        ("i8", "u64"),
+        # ...and an unsigned type needs a spare bit to fit in a signed
+        # one of the same width.
+        ("u8", "i8"),
+        ("u32", "i32"),
+    ),
+)
+def test_narrowing_int_coercion_rejected(src_typ, dst_typ, tmp_path):
+    src = f"""
+    fn f(x: {dst_typ}) {dst_typ} {{
+        return x;
+    }}
+    pub fn main() i32 {{
+        let a = 42{src_typ};
+        f(a);
+        return 0;
+    }}
+    """
+    with pytest.raises(InvalidArgTypError):
+        compile_str(tmp_path, src)
+
+
+def test_widening_sign_extends_signed_source(tmp_path):
+    # -5i8 must widen to -5, not to 251. Tested with a comparison rather
+    # than by returning the value: the two candidates differ by exactly
+    # 256, which an exit status can't tell apart.
+    src = """
+    fn as_i32(x: i32) i32 {
+        return x;
+    }
+    pub fn main() i32 {
+        let neg = 0i8 - 5i8;
+        return if (as_i32(neg) < 0i32) {
+            7
+        } else {
+            0
+        };
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
+
+
+def test_widening_zero_extends_unsigned_source(tmp_path):
+    # 200u8 must widen to 200, not to -56.
+    src = """
+    fn as_i32(x: i32) i32 {
+        return x;
+    }
+    pub fn main() i32 {
+        let big = 200u8;
+        return if (as_i32(big) > 0i32) {
+            7
+        } else {
+            0
+        };
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
+
+
+def test_widening_int_coercion_return(tmp_path):
+    src = """
+    fn f() i64 {
+        let a = 42i8;
+        return a;
+    }
+    pub fn main() i32 {
+        f();
+        return 0;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_widening_int_coercion_tail_expr(tmp_path):
+    src = """
+    fn f() i64 { 42i8 }
+    pub fn main() i32 {
+        f();
+        return 0;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_widening_int_coercion_assignment(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let mut x = 0i32;
+        let small = 42i8;
+        x = small;
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_widening_int_coercion_struct_field(tmp_path):
+    src = """
+    struct T { a: i32 }
+    pub fn main() i32 {
+        let small = 42i8;
+        let t = T { a: small };
+        return t.a;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_widening_int_coercion_array_element(tmp_path):
+    src = """
+    fn first(a: [i32; 2]) i32 {
+        return a[0usize];
+    }
+    pub fn main() i32 {
+        let small = 42i8;
+        let other = 7i16;
+        return first([small, other]);
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_comptime_widening_int_coercion(tmp_path):
+    # Module-level initializers are evaluated by the interpreter, so it
+    # has to understand the widening instruction too.
+    src = """
+    struct T { a: i64 }
+    fn f() i64 {
+        let small = 42i8;
+        let t = T { a: small };
+        return t.a;
+    }
+    let x = f();
+    fn as_i32(v: i32) i32 { return v; }
+    pub fn main() i32 {
+        let small = 7i8;
+        return as_i32(small) + 35i32;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_no_coercion_in_arithmetic(tmp_path):
+    # Operands have no single target type, so they never coerce - even
+    # when one would legally widen to the other.
+    src = """
+    pub fn main() i32 {
+        let a = 1i8;
+        let b = 1i16;
+        let c = a + b;
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleBinOpArgTypsError):
+        compile_str(tmp_path, src)
+
+
+def test_no_coercion_in_comparison(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let a = 1i8;
+        let b = 1i16;
+        let c = a < b;
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleBinOpArgTypsError):
+        compile_str(tmp_path, src)
+
+
+def test_no_coercion_in_let_initializer(tmp_path):
+    # A `let` has no declared type to coerce towards, so the initializer
+    # keeps its own type rather than widening.
+    src = """
+    fn takes_i8(x: i8) i8 { return x; }
+    pub fn main() i32 {
+        let a = 42i8;
+        let b = a;
+        takes_i8(b);
+        return 0;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_bool_does_not_coerce_to_int(tmp_path):
+    src = """
+    fn f(x: i32) i32 { return x; }
+    pub fn main() i32 {
+        f(true);
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidArgTypError):
+        compile_str(tmp_path, src)

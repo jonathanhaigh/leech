@@ -249,11 +249,12 @@ def test_assign_through_explicit_mut_ptr_param(tmp_path):
 
 def test_assign_wrong_typ_to_local(tmp_path):
     # Assignment used not to type-check at all, so a mismatch tripped an
-    # internal assertion in StoreInstr instead of being diagnosed.
+    # internal assertion in StoreInstr instead of being diagnosed. i32
+    # into a u8 place narrows, so it doesn't coerce either.
     src = """
     pub fn main() i32 {
-        let mut x = 1i32;
-        x = 2u8;
+        let mut x = 1u8;
+        x = 2i32;
         return 0;
     }
     """
@@ -264,9 +265,9 @@ def test_assign_wrong_typ_to_local(tmp_path):
 def test_assign_wrong_typ_through_ptr_deref(tmp_path):
     src = """
     pub fn main() i32 {
-        let mut x = 1i32;
-        let p = &x;
-        p.* = 2u8;
+        let mut x = 1u8;
+        let mut p = &x;
+        p.* = 2i32;
         return 0;
     }
     """
@@ -292,8 +293,8 @@ def test_assign_to_const_reported_before_typ_mismatch(tmp_path):
     # it's a problem with the assignment itself rather than the value.
     src = """
     pub fn main() i32 {
-        let x = 1i32;
-        x = 2u8;
+        let x = 1u8;
+        x = 2i32;
         return 0;
     }
     """

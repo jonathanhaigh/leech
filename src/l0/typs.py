@@ -216,6 +216,20 @@ class IntTyp(Typ):
         """
         return self.min_value <= value <= self.max_value
 
+    @override
+    def coerces_to(self, target: Typ) -> bool:
+        """Allow widening to an integer type that can represent every value.
+
+        Comparing ranges is the whole rule, so the awkward cases fall out
+        without being special-cased: ``u8`` coerces to ``i16``, and even
+        to ``i9``, but not to ``i8``, which can't hold 255; and no signed
+        type coerces to an unsigned one, which could never hold its
+        negative values.
+        """
+        return isinstance(target, IntTyp) and (
+            target.min_value <= self.min_value and self.max_value <= target.max_value
+        )
+
 
 class BoolTyp(Typ):
     """The boolean type."""

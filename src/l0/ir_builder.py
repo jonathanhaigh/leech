@@ -1077,6 +1077,10 @@ class CfgBuilder:
             return value
         if not value.typ.coerces_to(target):
             return None
+        if isinstance(target, IntTyp):
+            return self.curr_bb.int_ext(value, target, ast)
+        # A *mut T given where a *T is wanted needs nothing emitted: the
+        # two have the same representation.
         return value
 
     def _value_to_ptr(self, value: Value) -> Value[PtrTyp]:

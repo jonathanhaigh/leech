@@ -648,6 +648,40 @@ class LoadInstr(Instr):
         return src_typ.pointee_typ
 
 
+class IntExtInstr(Instr[IntTyp]):
+    """Widens an integer to a type that can represent all of its values.
+
+    Only ever built for a legal widening coercion (see
+    :meth:`~l0.typs.IntTyp.coerces_to`), so it never changes the value -
+    which of LLVM's sign- and zero-extend it lowers to follows from
+    whether :attr:`value`'s type is signed.
+
+    :param bb: The basic block this instruction belongs to.
+    :param value: The integer to widen.
+    :param typ: The integer type to widen it to.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
+    value: Final[Value]
+    _typ: Final[IntTyp]
+
+    @override
+    def __init__(
+        self, bb: BasicBlock, value: Value, typ: IntTyp, ast: Optional[ast.Ast]
+    ) -> None:
+        super().__init__(bb, ast)
+        src_typ = checked_cast(value.typ, IntTyp)
+        assert src_typ.coerces_to(typ), (
+            f'"{src_typ.name}" does not widen to "{typ.name}"'
+        )
+        self.value = value
+        self._typ = typ
+
+    @override
+    def calculate_typ(self) -> IntTyp:
+        return self._typ
+
+
 class AllocaInstr(Instr[PtrTyp]):
     """Allocates space for a value on the stack and returns a pointer to it.
 
@@ -1018,6 +1052,12 @@ class BasicBlock:
     def load(self, src: Value, ast: Optional[ast.Ast]) -> LoadInstr:
         """Append a :class:`LoadInstr` to this block."""
         return self._add_instr(LoadInstr(self, src, ast))
+
+    def int_ext(
+        self, value: Value, typ: IntTyp, ast: Optional[ast.Ast]
+    ) -> IntExtInstr:
+        """Append an :class:`IntExtInstr` to this block."""
+        return self._add_instr(IntExtInstr(self, value, typ, ast))
 
     def alloca(
         self, typ: Typ, mut: Mutability, count: int, ast: Optional[ast.Ast]
