@@ -1,4 +1,7 @@
+from l0.asserts import checked_cast
 from l0.ir_loader import ModLoader
+from l0.ir_module import Mod
+from l0.typs import StructTyp
 
 from util import write_whole_file
 
@@ -54,8 +57,13 @@ def test_diamond_shares_one_struct_typ(tmp_path):
         c="pub struct Foo { pub v: i32 }\npub fn mk(n: i32) Foo { return Foo{v: n}; }",
     )
     mods = {mod.name: mod for mod in loader.mods}
-    foo_via_a = mods["a"].env.get_typ("c").env.get_typ("Foo")
-    foo_via_b = mods["b"].env.get_typ("c").env.get_typ("Foo")
+    # Each lookup is checked rather than chained straight through: get_typ
+    # returns an Optional, so two failed lookups would otherwise both be
+    # None and make the final assertion pass without proving anything.
+    c_via_a = checked_cast(mods["a"].env.get_typ("c"), Mod)
+    c_via_b = checked_cast(mods["b"].env.get_typ("c"), Mod)
+    foo_via_a = checked_cast(c_via_a.env.get_typ("Foo"), StructTyp)
+    foo_via_b = checked_cast(c_via_b.env.get_typ("Foo"), StructTyp)
     assert foo_via_a is foo_via_b
 
 
