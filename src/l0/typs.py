@@ -271,6 +271,19 @@ class PtrTyp(Typ):
         mut_str = "mut " if self.mut == MUT else ""
         return f"{mut_str}*{self.pointee_typ.name}"
 
+    @override
+    def coerces_to(self, target: Typ) -> bool:
+        """Allow a mutable pointer where a const one is wanted.
+
+        Giving up the ability to write through a pointer is always safe,
+        so ``*mut T`` coerces to ``*T``. The reverse doesn't: a ``*T``
+        can't be used where writing is required. Nothing is emitted for
+        this coercion - the two have the same representation.
+        """
+        return super().coerces_to(target) or (
+            self.mut == MUT and self.new_with_mut(CONST) == target
+        )
+
     def new_with_mut(self, mut: Mutability) -> PtrTyp:
         """Return the pointer type with the same pointee but different mutability.
 

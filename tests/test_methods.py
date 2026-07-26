@@ -58,11 +58,9 @@ def test_mut_ptr_method_call_on_const_place_rejected(tmp_path):
         compile_str(tmp_path, src)
 
 
-def test_const_ptr_method_call_on_mut_place_rejected(tmp_path):
-    # Known limitation, not a bug: MUT -> CONST pointer coercion at call
-    # boundaries is deferred (to be designed alongside other coercions
-    # later), so a const-receiver method can't yet be called through a
-    # `let mut` place - only through a plain (non-`mut`) one.
+def test_const_ptr_method_call_on_mut_place(tmp_path):
+    # A `let mut` place gives a *mut receiver, which coerces to the *self
+    # method's const one - giving up write access is always safe.
     src = """
     struct Counter { n: i32 }
     impl Counter {
@@ -73,8 +71,7 @@ def test_const_ptr_method_call_on_mut_place_rejected(tmp_path):
         return c.get();
     }
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    check_prog_output(tmp_path, src, "", 42)
 
 
 def test_dot_call_and_explicit_path_call_equivalent_const_receiver(tmp_path):

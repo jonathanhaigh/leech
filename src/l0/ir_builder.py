@@ -664,7 +664,7 @@ class CfgBuilder:
             and ``expected_typ`` isn't a known array type.
         :raises VoidArrayElementError: If the element type is ``void``.
         :raises IncompatibleTypInArrayExpr: If an element's type doesn't
-            match the first element's type.
+            match, and doesn't coerce to, the element type.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
             subclasses, while lowering an element; see :meth:`build_expr`.
         """
@@ -675,12 +675,16 @@ class CfgBuilder:
             self.build_expr(elt, e, ExprContext.VALUE, expected_elt_typ)
             for elt in arr_expr.elements
         ]
-        if not elts:
-            if expected_elt_typ is None:
-                raise EmptyArrayTypUnknownError(arr_expr.span)
+        # Elements coerce only towards an element type the surrounding
+        # context supplied. With nothing to go on the type is taken from
+        # the first element, and coercing the rest towards that would let
+        # the elements' order decide whether the literal is accepted.
+        if expected_elt_typ is not None:
             elt_typ = expected_elt_typ
-        else:
+        elif elts:
             elt_typ = elts[0].typ
+        else:
+            raise EmptyArrayTypUnknownError(arr_expr.span)
 
         if elt_typ == VOID:
             raise VoidArrayElementError(elts[0].span if elts else arr_expr.span)
