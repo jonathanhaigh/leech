@@ -402,6 +402,24 @@ class EmptyArrayTypUnknownError(UserError):
         )
 
 
+class ModUsedAsTypError(UserError):
+    """Raised when a module name is used where a type is required.
+
+    Modules share a namespace with types (so the two can't share a name),
+    but a module isn't a type: it can only qualify a path.
+    """
+
+    def __init__(self, mod_name: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(
+            ERROR, f'Module "{mod_name}" cannot be used as a type', span
+        )
+        self.add_extra(
+            NOTE,
+            f'A module name can only qualify a path, e.g. "{mod_name}::SomeTyp"',
+            None,
+        )
+
+
 class TypeOfStructExprNotStructError(UserError):
     """Raised when a struct literal's named type isn't actually a struct type."""
 

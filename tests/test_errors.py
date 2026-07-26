@@ -3,6 +3,7 @@ import pytest
 from l0.l0errors import (
     CircularVarInitializerError,
     DuplicateItemDefnError,
+    ModUsedAsTypError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
     InfiniteSizeStructError,
@@ -244,6 +245,62 @@ def test_void_mod_var_initializer_message(tmp_path):
 
     msg = str(exc_info.value)
     assert "void" in msg
+
+
+def test_mod_used_as_typ_message(tmp_path):
+    main_src = """
+    import a;
+    fn g(p: a) i32 {
+        return 0;
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    a_src = """
+    pub fn f() i32 {
+        return 1;
+    }
+    """
+    with pytest.raises(ModUsedAsTypError) as exc_info:
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+    msg = str(exc_info.value)
+    assert '"a"' in msg
+    assert "cannot be used as a type" in msg
+
+    # The caret points at the path segment naming the module, not at the
+    # import that bound it.
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(main_src, "a) i32")
+
+    # The note has no span of its own - a module's AST node covers its
+    # whole file, so there's nothing useful to point at.
+    (note,) = exc_info.value.extra
+    assert 'e.g. "a::SomeTyp"' in note.message
+    assert note.span is None
+
+
+def test_mod_and_typ_name_clash_message(tmp_path):
+    # Modules share the container namespace with types, so the duplicate
+    # diagnostic has to name both possibilities rather than just "type".
+    main_src = """
+    import a;
+    struct a { x: i32 }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    a_src = """
+    pub fn f() i32 {
+        return 1;
+    }
+    """
+    with pytest.raises(DuplicateItemDefnError) as exc_info:
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+    assert str(exc_info.value) == 'Duplicate definition of type or module "a"'
 
 
 def test_field_and_assoc_fn_name_clash_message(tmp_path):

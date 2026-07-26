@@ -76,7 +76,7 @@ class ModItem:
     mod: Final[Mod]
     name: Final[str]
     access: Final[Access]
-    value: Final[Value[PtrTyp] | Typ]
+    value: Final[Value[PtrTyp] | ir_env.Container]
     qualify_name: Final[bool] = True
 
     @property
@@ -84,15 +84,17 @@ class ModItem:
         """Which namespace this item's name is bound in.
 
         Functions and variables are values, so they live in
-        :attr:`~l0.ir_env.Env.Namespace.VARS`; structs - and imported
-        modules, which double as types - live in
-        :attr:`~l0.ir_env.Env.Namespace.TYPS`. A module can therefore hold
-        a value and a type of the same name, which is why its items are
-        keyed on namespace as well as name (see :meth:`Mod.get_item`).
+        :attr:`~l0.ir_env.Env.Namespace.VARS`; structs live in
+        :attr:`~l0.ir_env.Env.Namespace.CONTAINERS`, and so do imported
+        modules - a module isn't a type, but it deliberately shares that
+        namespace with types, so a module and a type can't share a name.
+        A module can therefore hold a value and a type of the same name,
+        which is why its items are keyed on namespace as well as name
+        (see :meth:`Mod.get_item`).
         """
         if isinstance(self.value, Value):
             return ir_env.Env.Namespace.VARS
-        return ir_env.Env.Namespace.TYPS
+        return ir_env.Env.Namespace.CONTAINERS
 
     @property
     def qualified_name(self) -> str:
@@ -338,11 +340,16 @@ class ModVar(ComptimePtr[ast.VarDefn]):
         return PtrTyp.get_or_create(self.initializer.typ, self.mut)
 
 
-class Mod(Typ):
+class Mod:
     """A compiled l0 module: the functions, variables, types, and imports it declares.
 
-    Also usable as a :class:`~l0.typs.Typ`, so a module name can appear as
-    a path segment when resolving a qualified name (e.g. ``some_mod::foo``).
+    A module is *not* a type, and can't be used as one. It can head a
+    qualified path (``some_mod::foo``) because
+    :meth:`~l0.ir_env.Env._resolve_path_segment` accepts a module as a
+    scope to look a name up in, and it shares the
+    :attr:`~l0.ir_env.Env.Namespace.CONTAINERS` namespace with types so
+    that a module and a type can't have the same name (see
+    :attr:`ModItem.ns`).
 
     Construction is two-phase: ``__init__`` only sets up empty state, and
     :meth:`build` populates :attr:`items`. This lets
@@ -365,7 +372,6 @@ class Mod(Typ):
     env: Final[ir_env.Env]
     loader: Final[ir_loader.ModLoader]
 
-    @override
     def __init__(
         self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader
     ) -> None:
@@ -376,9 +382,9 @@ class Mod(Typ):
         self.env = builtin_env.new_child()
         self.loader = loader
 
-        builtin_env.add_typ("usize", USIZE)
-        builtin_env.add_typ("isize", ISIZE)
-        builtin_env.add_typ("bool", BOOL)
+        builtin_env.add_container("usize", USIZE)
+        builtin_env.add_container("isize", ISIZE)
+        builtin_env.add_container("bool", BOOL)
 
     def build(self) -> None:
         """Populate :attr:`items` from this module's parsed definitions.
@@ -410,8 +416,8 @@ class Mod(Typ):
             self._build_impl_defn(impl_ast)
 
     @property
-    @override
     def name(self) -> str:
+        """This module's name, used to qualify its items' symbol names."""
         return self._name
 
     @property
@@ -501,7 +507,7 @@ class Mod(Typ):
         self,
         name: str,
         access: Access,
-        value: Value[PtrTyp] | Typ,
+        value: Value[PtrTyp] | ir_env.Container,
         qualify_name: bool = True,
         span: Optional[SrcSpan] = None,
     ) -> None:

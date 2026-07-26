@@ -2,6 +2,7 @@ import pytest
 from l0.l0errors import (
     DuplicateItemDefnError,
     ModDoesNotExistError,
+    ModUsedAsTypError,
     PrivateItemAccessError,
     PrivateStructFieldAccessError,
     UnexpectedTokenError,
@@ -416,6 +417,76 @@ def test_duplicate_import(tmp_path):
     """
     with pytest.raises(DuplicateItemDefnError):
         compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+@pytest.mark.parametrize(
+    "defn",
+    (
+        "fn g(p: a) i32 { return 0; }",
+        "fn g() a { return 0; }",
+        "struct S { x: a }",
+        "fn g(p: *a) i32 { return 0; }",
+        "fn g(p: [a; 2]) i32 { return 0; }",
+        "impl a { }",
+        "fn g() i32 { let x = a { }; return 0; }",
+    ),
+)
+def test_mod_used_as_typ(defn, tmp_path):
+    # A module shares a namespace with types but isn't one, so naming it
+    # where a type is required is an error rather than something that
+    # slips through to crash the compiler later.
+    main_src = f"""
+    import a;
+    {defn}
+    pub fn main() i32 {{
+        return 0;
+    }}
+    """
+    a_src = """
+    pub fn f() i32 {
+        return 1;
+    }
+    """
+    with pytest.raises(ModUsedAsTypError):
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+def test_import_and_struct_same_name(tmp_path):
+    # Modules and types share one namespace, so an import and a struct
+    # can't have the same name.
+    main_src = """
+    import a;
+    struct a { x: i32 }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    a_src = """
+    pub fn f() i32 {
+        return 1;
+    }
+    """
+    with pytest.raises(DuplicateItemDefnError):
+        compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+def test_import_and_var_same_name(tmp_path):
+    # Variables are in the other namespace, though, so an import and a
+    # variable - or a function - may share a name.
+    main_src = """
+    import a;
+    let a = 11;
+    fn f() i32 { return a; }
+    pub fn main() i32 {
+        return f() + a::f();
+    }
+    """
+    a_src = """
+    pub fn f() i32 {
+        return 1;
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 12, a=a_src)
 
 
 def test_import_chain(tmp_path):

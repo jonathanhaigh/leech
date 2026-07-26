@@ -1,29 +1,40 @@
-"""Scope and name resolution for variables and types."""
+"""Scope and name resolution for variables, types and modules."""
 
 import enum
 import re
-from typing import Any, ChainMap, Optional, cast
+from typing import Any, ChainMap, Optional
 
 from l0 import ir_module, ir_values
 from l0 import l0ast as ast
 from l0 import typs
-from l0.asserts import assert_ge
+from l0.asserts import assert_ge, checked_cast
 from l0.l0errors import (
     DuplicateItemDefnError,
     ItemNotFoundError,
+    ModUsedAsTypError,
     PrivateItemAccessError,
 )
 from l0.src import SrcSpan
 
+type Container = typs.Typ | ir_module.Mod
+"""Anything bindable in the :attr:`Env.Namespace.CONTAINERS` namespace.
+
+A type or an imported module. Modules aren't types, but they share one
+namespace with them, so a module and a type in the same scope can't have
+the same name. Both can hold associated items, which is what the
+namespace's name refers to.
+"""
+
 
 class Env:
-    """A lexical scope mapping names to variables and types.
+    """A lexical scope mapping names to variables, types and modules.
 
     Scopes are chained: a child scope (see :meth:`new_child`) sees its own
     bindings plus everything visible in its ancestors, and shadows
-    ancestor bindings of the same name. Variables and types are looked up
-    in separate namespaces (see :class:`Namespace`), so a variable and a
-    type may share a name without conflict.
+    ancestor bindings of the same name. Names are looked up in separate
+    namespaces (see :class:`Namespace`), so a variable and a type may
+    share a name without conflict - but a type and a module may not,
+    since those share one namespace.
 
     :param parent: The enclosing scope, or ``None`` to create a fresh,
         top-level scope.
@@ -33,17 +44,17 @@ class Env:
         """Which kind of item a name is being looked up or bound in."""
 
         VARS = 0
-        TYPS = 1
+        CONTAINERS = 1
 
         def item_kind(self) -> str:
             """A human-readable label for this namespace, for diagnostics."""
             match self:
                 case Env.Namespace.VARS:
                     return "variable"
-                case Env.Namespace.TYPS:
-                    return "type"
+                case Env.Namespace.CONTAINERS:
+                    return "type or module"
 
-    items: ChainMap[tuple[Env.Namespace, str], typs.Typ | ir_values.Value[typs.PtrTyp]]
+    items: ChainMap[tuple[Env.Namespace, str], Container | ir_values.Value[typs.PtrTyp]]
     #: Where a name was bound, for bindings whose item can't point at its
     #: own definition site (see :meth:`add`'s ``span`` parameter). Scoped
     #: to this Env alone, mirroring ``items.maps[0]``.
@@ -67,7 +78,7 @@ class Env:
         """Look up ``name`` in ``ns``, searching outward through parent scopes.
 
         Integer type names (e.g. ``i32``, ``u8``) are recognized and
-        created on demand when looked up in the type namespace.
+        created on demand when looked up in the container namespace.
 
         :param ns: The namespace to search in.
         :param name: The name to look up.
@@ -77,7 +88,7 @@ class Env:
         if key in self.items:
             return self.items[key]
 
-        if ns == Env.Namespace.TYPS:
+        if ns == Env.Namespace.CONTAINERS:
             m = re.fullmatch("([iu])([1-9][0-9]*)", name)
             if m:
                 signage = typs.SIGNED if m[1] == "i" else typs.UNSIGNED
@@ -120,14 +131,6 @@ class Env:
         if span is not None:
             self._spans[key] = span
 
-    def get_var(self, name: str) -> Optional[ir_values.Value[typs.PtrTyp]]:
-        """Look up a variable by name.
-
-        :param name: The variable name to look up.
-        :return: The bound variable, or ``None`` if not bound.
-        """
-        return self.get(Env.Namespace.VARS, name)
-
     def add_var(
         self,
         name: str,
@@ -144,30 +147,22 @@ class Env:
         """
         return self.add(Env.Namespace.VARS, name, var, span)
 
-    def get_typ(self, name: str) -> Optional[typs.Typ]:
-        """Look up a type by name.
-
-        :param name: The type name to look up.
-        :return: The bound type, or ``None`` if not bound.
-        """
-        return self.get(Env.Namespace.TYPS, name)
-
-    def add_typ(
-        self, name: str, typ: typs.Typ, span: Optional[SrcSpan] = None
+    def add_container(
+        self, name: str, item: Container, span: Optional[SrcSpan] = None
     ) -> None:
-        """Bind a type name in this scope.
+        """Bind a type or module name in this scope.
 
         :param name: The name to bind.
-        :param typ: The type to bind ``name`` to.
+        :param item: The type or module to bind ``name`` to.
         :param span: Where the binding is written; see :meth:`add`.
         :raises DuplicateItemDefnError: If ``name`` is already bound to a
-            type in this scope.
+            type or module in this scope.
         """
-        return self.add(Env.Namespace.TYPS, name, typ, span)
+        return self.add(Env.Namespace.CONTAINERS, name, item, span)
 
     @staticmethod
     def _private_item_diag_info(
-        value: ir_values.Value[typs.PtrTyp] | typs.Typ,
+        value: ir_values.Value[typs.PtrTyp] | Container,
     ) -> Optional[tuple[str, Optional[SrcSpan]]]:
         """A human-readable kind and definition span for a private-item
         diagnostic, if one applies.
@@ -190,14 +185,14 @@ class Env:
     @staticmethod
     def _resolve_path_segment(
         ns: Env.Namespace,
-        container: Env | ir_module.Mod | typs.StructTyp,
+        scope: Env | ir_module.Mod | typs.StructTyp,
         ident: ast.Ident,
     ) -> Any:
-        match container:
+        match scope:
             case Env():
-                res = container.get(ns, ident.name)
+                res = scope.get(ns, ident.name)
             case ir_module.Mod():
-                item = container.get_item(ns, ident.name)
+                item = scope.get_item(ns, ident.name)
                 if item is None or item.access == ir_module.PUBLIC:
                     res = None if item is None else item.value
                 else:
@@ -216,7 +211,7 @@ class Env:
                 # `SomeStruct::x` is not a way to name a field, so a field
                 # falls through to "not found" below.
                 res = (
-                    container.get_assoc_fn(ident.name)
+                    scope.get_assoc_fn(ident.name)
                     if ns == Env.Namespace.VARS
                     else None
                 )
@@ -232,23 +227,13 @@ class Env:
 
         return res
 
-    def resolve_var(self, path: ast.Path) -> ir_values.Value[typs.PtrTyp]:
-        """Resolve a (possibly qualified) path to a variable.
-
-        :param path: The path to resolve, e.g. ``some_mod::some_var``.
-        :return: The variable the path refers to.
-        :raises ItemNotFoundError: If any segment of the path cannot be
-            resolved.
-        :raises PrivateItemAccessError: If the path resolves to a private
-            variable or function, accessed from outside the module it (or,
-            for an associated function, its struct) is defined in.
-        """
-        return cast(
-            ir_values.Value[typs.PtrTyp], self.resolve_path(Env.Namespace.VARS, path)
-        )
-
     def resolve_typ(self, path: ast.Path) -> typs.Typ:
         """Resolve a (possibly qualified) path to a type.
+
+        Only the path's *final* segment has to name a type: earlier
+        segments are resolved by :meth:`resolve_path`, which is what lets
+        a module qualify a path (``some_mod::SomeStruct``) even though a
+        module isn't a type.
 
         :param path: The path to resolve, e.g. ``some_mod::SomeStruct``.
         :return: The type the path refers to.
@@ -256,15 +241,20 @@ class Env:
             resolved.
         :raises PrivateItemAccessError: If the path resolves to a private
             type, accessed from outside the module it's defined in.
+        :raises ModUsedAsTypError: If the path resolves to a module, which
+            shares a namespace with types but isn't one.
         """
-        return cast(typs.Typ, self.resolve_path(Env.Namespace.TYPS, path))
+        item = self.resolve_path(Env.Namespace.CONTAINERS, path)
+        if isinstance(item, ir_module.Mod):
+            raise ModUsedAsTypError(item.name, path.idents[-1].span)
+        return checked_cast(item, typs.Typ)
 
     def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:
         """Resolve a (possibly qualified) path to an item in ``ns``.
 
-        All but the last segment of ``path`` are resolved as types (module
-        or struct names), used to find the container the final segment is
-        looked up in.
+        All but the last segment of ``path`` are resolved in the container
+        namespace (module or struct names), giving the scope the final
+        segment is looked up in.
 
         :param ns: The namespace the final path segment is looked up in.
         :param path: The path to resolve.
@@ -278,8 +268,10 @@ class Env:
         """
         assert_ge(len(path.idents), 1)
 
-        container = self
+        scope = self
         for ident in path.idents[:-1]:
-            container = Env._resolve_path_segment(Env.Namespace.TYPS, container, ident)
+            scope = Env._resolve_path_segment(
+                Env.Namespace.CONTAINERS, scope, ident
+            )
 
-        return Env._resolve_path_segment(ns, container, path.idents[-1])
+        return Env._resolve_path_segment(ns, scope, path.idents[-1])
