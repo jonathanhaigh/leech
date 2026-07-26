@@ -40,6 +40,7 @@ from l0.l0errors import (
     InvalidIndexTypError,
     InvalidRetTypError,
     InvalidStructFieldError,
+    InvalidUnaryOpArgTypError,
     InvalidVoidRetError,
     MissingFieldInStructExprError,
     MissingRetError,
@@ -599,13 +600,17 @@ class CfgBuilder:
     def build_unary_op_expr(
         self, op_ast: ast.UnaryOpExpr, e: Env, ctx: ExprContext
     ) -> Value:
-        """Lower a unary operator expression (currently, only ``&``).
+        """Lower a unary operator expression (``&`` or ``-``).
 
         :param op_ast: The parsed unary operation.
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The operation's result.
+        :raises InvalidUnaryOpArgTypError: If ``-``'s operand isn't a
+            signed integer type.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the operand; see :meth:`build_expr`.
         """
         match op_ast.op.name:
             case "&":
@@ -613,6 +618,17 @@ class CfgBuilder:
                     self.build_expr(op_ast.operand, e, ExprContext.PLACE),
                     ctx,
                 )
+            case "-":
+                operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
+                if not isinstance(operand.typ, IntTyp) or operand.typ.signage != SIGNED:
+                    raise InvalidUnaryOpArgTypError(
+                        op_ast.op.name,
+                        op_ast.op.span,
+                        operand.typ.name,
+                        "a signed integer type",
+                        op_ast.operand.span,
+                    )
+                return self._in_context(self.curr_bb.neg(operand, op_ast), ctx)
             case _:
                 assert False, f"unhandled unary operator {op_ast.op.name!r}"
 

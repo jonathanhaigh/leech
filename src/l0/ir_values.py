@@ -590,6 +590,26 @@ class UdivInstr(BinOpInstr):
     """Unsigned integer division."""
 
 
+class NegInstr(Instr):
+    """Integer negation.
+
+    :param bb: The basic block this instruction belongs to.
+    :param operand: The value to negate.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
+    operand: Final[Value]
+
+    @override
+    def __init__(self, bb: BasicBlock, operand: Value, ast: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast)
+        self.operand = operand
+
+    @override
+    def calculate_typ(self) -> Typ:
+        return self.operand.typ
+
+
 class IcmpInstr(Instr):
     """Base class for integer comparison instructions.
 
@@ -1030,6 +1050,10 @@ class BasicBlock:
     def udiv(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> UdivInstr:
         """Append a :class:`UdivInstr` to this block."""
         return self._add_instr(UdivInstr(self, lhs, rhs, ast))
+
+    def neg(self, operand: Value, ast: Optional[ast.Ast]) -> NegInstr:
+        """Append a :class:`NegInstr` to this block."""
+        return self._add_instr(NegInstr(self, operand, ast))
 
     def icmp_signed(
         self, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]

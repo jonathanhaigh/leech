@@ -85,7 +85,7 @@ while_expr: "while" "(" expr ")" block_expr
 ?factor: unary_op factor
   | atom_expr
 
-!unary_op: "&"
+!unary_op: "&" | "-"
 
 ?atom_expr: call_expr
   | array_access_expr

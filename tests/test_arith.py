@@ -4,6 +4,7 @@ from l0.l0errors import (
     IncompatibleBinOpArgTypsError,
     IntOverflowAtComptimeError,
     InvalidBinOpArgTypError,
+    InvalidUnaryOpArgTypError,
 )
 from util import check_prog_output, compile_str
 
@@ -184,6 +185,62 @@ def test_comptime_signed_div_overflow(tmp_path):
     }
     """
     with pytest.raises(IntOverflowAtComptimeError):
+        compile_str(tmp_path, src)
+
+
+def test_int_arith_unary_minus(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = 5;
+        return -x - 3;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 256 - 8)
+
+
+def test_comptime_unary_minus(tmp_path):
+    src = """
+    let x = -5 - 3;
+    pub fn main() i32 {
+        return x;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 256 - 8)
+
+
+def test_comptime_neg_overflow(tmp_path):
+    # i8's min value is -128, which has no positive counterpart representable
+    # in i8 (max is 127) - negating it must be a compile error.
+    src = """
+    let neg128 = 0i8 - 127i8 - 1i8;
+    let x = -neg128;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(IntOverflowAtComptimeError):
+        compile_str(tmp_path, src)
+
+
+def test_invalid_unary_op_arg_unsigned(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = -0u32;
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidUnaryOpArgTypError):
+        compile_str(tmp_path, src)
+
+
+def test_invalid_unary_op_arg_non_int(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = -true;
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidUnaryOpArgTypError):
         compile_str(tmp_path, src)
 
 

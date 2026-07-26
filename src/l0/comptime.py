@@ -121,6 +121,15 @@ class Interpreter:
                     raise IntOverflowAtComptimeError(ret, lhs.typ.name, instr.span)
                 self.registers[instr] = ir_values.ComptimeInt(lhs.typ, ret, instr.ast)
 
+            case ir_values.NegInstr():
+                operand = checked_cast(
+                    self._get_comptime_value(instr.operand), ir_values.ComptimeInt
+                )
+                ret = -operand.value
+                if not operand.typ.fits(ret):
+                    raise IntOverflowAtComptimeError(ret, operand.typ.name, instr.span)
+                self.registers[instr] = ir_values.ComptimeInt(operand.typ, ret, instr.ast)
+
             case ir_values.IcmpSignedInstr() | ir_values.IcmpUnsignedInstr():
                 lhs = checked_cast(
                     self._get_comptime_value(instr.lhs), ir_values.ComptimeInt

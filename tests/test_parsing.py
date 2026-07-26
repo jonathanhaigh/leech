@@ -420,6 +420,60 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             ),
         ),
         (
+            "expr",
+            "-a",
+            T("factor").cs(
+                T("unary_op", Tok("-")),
+                T("var_expr", "path", "ident", Tok("a")),
+            ),
+        ),
+        (
+            "expr",
+            "-a - b",
+            T("arith_expr").cs(
+                T("factor").cs(
+                    T("unary_op", Tok("-")),
+                    T("var_expr", "path", "ident", Tok("a")),
+                ),
+                T("add_op", Tok("-")),
+                T("var_expr", "path", "ident", Tok("b")),
+            ),
+        ),
+        (
+            "expr",
+            "- -a",
+            T("factor").cs(
+                T("unary_op", Tok("-")),
+                T("factor").cs(
+                    T("unary_op", Tok("-")),
+                    T("var_expr", "path", "ident", Tok("a")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "-a * b",
+            T("term").cs(
+                T("factor").cs(
+                    T("unary_op", Tok("-")),
+                    T("var_expr", "path", "ident", Tok("a")),
+                ),
+                T("mul_op", Tok("*")),
+                T("var_expr", "path", "ident", Tok("b")),
+            ),
+        ),
+        (
+            "expr",
+            "-a.b",
+            T("factor").cs(
+                T("unary_op", Tok("-")),
+                T("struct_access_expr").cs(
+                    T("var_expr", "path", "ident", Tok("a")),
+                    T("ident", Tok("b")),
+                ),
+            ),
+        ),
+        (
             "stmt",
             "let x = 1;",
             T("stmt", "let_stmt").cs(

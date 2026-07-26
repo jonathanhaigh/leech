@@ -230,6 +230,30 @@ class InvalidBinOpArgTypError(UserError):
             self.add_extra(NOTE, f'For "{op}" operation here', op_span)
 
 
+class InvalidUnaryOpArgTypError(UserError):
+    """Raised when a unary operator's operand has an unsupported type."""
+
+    def __init__(
+        self,
+        op: str,
+        op_span: Optional[SrcSpan],
+        given_typ: str,
+        expected_typ: str,
+        arg_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Operand of unary operation "{op}"'
+                f' has invalid type "{given_typ}",'
+                f' expecting "{expected_typ}"'
+            ),
+            arg_span,
+        )
+        if op_span is not None:
+            self.add_extra(NOTE, f'For "{op}" operation here', op_span)
+
+
 class IncompatibleBinOpArgTypsError(UserError):
     """Raised when a binary operator's operands have differing types."""
 

@@ -549,7 +549,7 @@ class BinOpExpr(Expr):
 
 
 class UnaryOpExpr(Expr):
-    """A unary operator expression, ``op operand`` (currently, only ``&operand``)."""
+    """A unary operator expression, ``op operand`` (``&operand`` or ``-operand``)."""
 
     op: Op
     operand: Expr

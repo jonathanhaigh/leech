@@ -339,6 +339,10 @@ class Compiler:
                     ctx.ll_values.get(instr.lhs),
                     ctx.ll_values.get(instr.rhs),
                 )
+            case ir_values.NegInstr():
+                return ctx.ll_builder.neg(  # type: ignore
+                    ctx.ll_values.get(instr.operand),
+                )
             case ir_values.IcmpSignedInstr():
                 return ctx.ll_builder.icmp_signed(
                     instr.op,
