@@ -126,6 +126,23 @@ class Typ(ABC):
         """
         return (cls, *args)
 
+    def coerces_to(self, target: Typ) -> bool:
+        """Whether a value of this type may be implicitly converted to ``target``.
+
+        Coercion is only ever applied where the target type is
+        unambiguous - a call argument, an assignment, a ``return``, a
+        struct literal field - never to unify the operands of an
+        operator. See :meth:`~l0.ir_builder.CfgBuilder._coerce`, the sole
+        caller.
+
+        This base implementation allows only the identity coercion;
+        subclasses widen it.
+
+        :param target: The type being coerced to.
+        :return: Whether the coercion is allowed.
+        """
+        return self == target
+
     @property
     @abstractmethod
     def name(self) -> str:

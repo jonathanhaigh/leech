@@ -165,7 +165,8 @@ class CfgBuilder:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
                 return
-            if block.typ != ret_typ:
+            coerced = self._coerce(block, ret_typ, ret_ast)
+            if coerced is None:
                 raise InvalidRetTypError(
                     self.fn.name,
                     ret_typ.name,
@@ -173,7 +174,7 @@ class CfgBuilder:
                     block.typ.name,
                     ret_ast.span,
                 )
-            self.ret(block, ret_ast)
+            self.ret(coerced, ret_ast)
             return
 
         if self.curr_bb.terminated:
@@ -513,8 +514,10 @@ class CfgBuilder:
                 num_args,
                 num_params,
             )
+        coerced_args = []
         for i, arg in enumerate(args):
-            if arg.typ != param_typs[i]:
+            coerced = self._coerce(arg, param_typs[i], arg_asts[i])
+            if coerced is None:
                 raise InvalidArgTypError(
                     callee_diag_str,
                     call_ast.span,
@@ -523,8 +526,11 @@ class CfgBuilder:
                     param_typs[i].name,
                     arg_asts[i].span,
                 )
+            coerced_args.append(coerced)
 
-        return self._in_context(self.curr_bb.call(callee, args, call_ast), ctx)
+        return self._in_context(
+            self.curr_bb.call(callee, tuple(coerced_args), call_ast), ctx
+        )
 
     def build_bin_op_expr(
         self, op_ast: ast.BinOpExpr, e: Env, ctx: ExprContext
@@ -686,12 +692,13 @@ class CfgBuilder:
 
         for i, elt in enumerate(elts):
             elt_ast = arr_expr.elements[i]
-            if elt.typ != elt_typ:
+            coerced = self._coerce(elt, elt_typ, elt_ast)
+            if coerced is None:
                 raise IncompatibleTypInArrayExpr(
                     elt.typ.name, i, elt_ast.span, arr_typ.name
                 )
             elt_index = ComptimeInt(USIZE, i, elt_ast)
-            arr = self.curr_bb.insert_value(arr, elt, (elt_index,), elt_ast)
+            arr = self.curr_bb.insert_value(arr, coerced, (elt_index,), elt_ast)
 
         return self._in_context(arr, ctx)
 
@@ -800,7 +807,8 @@ class CfgBuilder:
                     field.name, field.ast.span, struct_typ.name, struct_expr.span
                 )
             field_value = field_values[field.name]
-            if field.typ != field_value.typ:
+            coerced = self._coerce(field_value, field.typ, field_value.ast)
+            if coerced is None:
                 raise IncompatibleStructFieldTypError(
                     field.name,
                     struct_typ.name,
@@ -811,7 +819,7 @@ class CfgBuilder:
                 )
             field_index = ComptimeInt(I32, i, field_value.ast)
             struct = self.curr_bb.insert_value(
-                struct, field_value, (field_index,), field_value.ast
+                struct, coerced, (field_index,), field_value.ast
             )
 
         return self._in_context(struct, ctx)
@@ -954,7 +962,8 @@ class CfgBuilder:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
                 return
-            if expr.typ != ret_typ:
+            coerced = self._coerce(expr, ret_typ, ret_ast.expr)
+            if coerced is None:
                 raise InvalidRetTypError(
                     self.fn.name,
                     ret_typ.name,
@@ -962,7 +971,7 @@ class CfgBuilder:
                     expr.typ.name,
                     ret_ast.expr.span,
                 )
-            self.ret(expr, ret_ast)
+            self.ret(coerced, ret_ast)
             return
 
         if ret_typ != VOID:
@@ -1025,6 +1034,33 @@ class CfgBuilder:
             raise AssignToConstError(ass_ast.place.span)
 
         self.curr_bb.store(expr, place, ass_ast)
+
+    def _coerce(
+        self, value: Value, target: Typ, ast: Optional[ast.Ast]
+    ) -> Optional[Value]:
+        """Convert ``value`` to ``target``, if the language allows it implicitly.
+
+        The single place implicit coercion happens. Callers are the
+        handful of sites with an unambiguous target type - call
+        arguments (including a method's receiver), assignment, ``return``
+        and a function's tail expression, struct literal fields, and
+        array literal elements whose type comes from context. Operator
+        operands deliberately don't coerce.
+
+        Returning ``None`` rather than raising lets each caller report the
+        failure with the error class that fits its context.
+
+        :param value: The value to convert.
+        :param target: The type to convert it to.
+        :param ast: The AST node to attribute any emitted instruction to.
+        :return: A value of type ``target``, or ``None`` if ``value``'s
+            type doesn't coerce to it.
+        """
+        if value.typ == target:
+            return value
+        if not value.typ.coerces_to(target):
+            return None
+        return value
 
     def _value_to_ptr(self, value: Value) -> Value[PtrTyp]:
         alloca = self.curr_bb.alloca(value.typ, CONST, 1, value.ast)
