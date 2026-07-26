@@ -621,18 +621,20 @@ class RetStmt(Stmt):
 
 
 class LetStmt(Stmt):
-    """A local ``let`` binding statement."""
+    """A local ``let`` binding statement, with an optional declared type."""
 
     mut: Optional[Mutability]
     ident: Ident
+    typ: Optional["Typ"]
     expr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "let_stmt")
         super().__init__(SrcSpan(file, tree.meta))
-        mut, ident, expr = tree.children
+        mut, ident, typ, expr = tree.children
         self.mut = Mutability.from_tree(file, as_tree(mut))
         self.ident = Ident(file, as_tree(ident))
+        self.typ = opt_map(typ, lambda x: Typ.from_tree(file, as_tree(x)))
         self.expr = Expr.from_tree(file, as_tree(expr))
 
     @override

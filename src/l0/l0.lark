@@ -45,7 +45,7 @@ stmt: expr_stmt
 
 expr_stmt: expr ";"
 ret_stmt: "return" [expr] ";"
-let_stmt: "let" mut ident "=" expr ";"
+let_stmt: "let" mut ident [":" typ] "=" expr ";"
 !mut: ["mut"]
 
 assignment_stmt: place "=" expr ";"

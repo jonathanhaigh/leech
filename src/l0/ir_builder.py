@@ -31,6 +31,7 @@ from l0.l0errors import (
     IfTypNotVoidError,
     IncompatibleAssignmentTypError,
     IncompatibleBinOpArgTypsError,
+    IncompatibleLetTypError,
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
@@ -124,16 +125,17 @@ class CfgBuilder:
         :param e: The scope to resolve names in.
         :raises VoidVarInitializerError: If the initializer expression has
             type ``void``.
+        :raises IncompatibleLetTypError: If the initializer's type doesn't
+            match, and doesn't coerce to, a declared type.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the initializer expression; see
             :meth:`build_expr`.
         """
         assert self.fn is None
         e = e.new_child()
-        initializer = self.build_expr(defn_ast.let_stmt.expr, e, ExprContext.VALUE)
-        if initializer.typ == VOID:
-            raise VoidVarInitializerError(initializer.span)
-        self.ret(initializer, defn_ast.let_stmt.expr)
+        let_ast = defn_ast.let_stmt
+        initializer = self._build_let_initializer(let_ast, e, ExprContext.VALUE)
+        self.ret(initializer, let_ast.expr)
 
     def build_fn(self, fn_ast: ast.FnDefn, e: Env) -> None:
         """Lower a function body into :attr:`cfg`.
@@ -1010,13 +1012,13 @@ class CfgBuilder:
             variable in.
         :raises VoidVarInitializerError: If the initializer expression has
             type ``void``.
+        :raises IncompatibleLetTypError: If the initializer's type doesn't
+            match, and doesn't coerce to, a declared type.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the initializer expression; see
             :meth:`build_expr`.
         """
-        expr = self.build_expr(let_ast.expr, e, ExprContext.VALUE)
-        if expr.typ == VOID:
-            raise VoidVarInitializerError(expr.span)
+        expr = self._build_let_initializer(let_ast, e, ExprContext.VALUE)
         name = let_ast.ident.name
         mut = Mutability.from_ast(let_ast.mut)
         alloca = self.curr_bb.alloca(expr.typ, mut, 1, let_ast)
@@ -1067,6 +1069,47 @@ class CfgBuilder:
         expr = coerced
 
         self.curr_bb.store(expr, place, ass_ast)
+
+    def _build_let_initializer(
+        self, let_ast: ast.LetStmt, e: Env, ctx: ExprContext
+    ) -> Value:
+        """Lower a ``let`` statement's initializer expression, shared by
+        :meth:`build_let_stmt` and :meth:`build_var_initializer`.
+
+        If ``let_ast`` has a declared type, the initializer is coerced to
+        it; otherwise the initializer's own type is used as-is, with no
+        coercion.
+
+        :param let_ast: The parsed ``let`` statement.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The (possibly coerced) initializer's value.
+        :raises VoidVarInitializerError: If the initializer expression has
+            type ``void``.
+        :raises IncompatibleLetTypError: If the initializer's type doesn't
+            match, and doesn't coerce to, the declared type.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering the initializer expression; see
+            :meth:`build_expr`.
+        """
+        declared_typ_ast = let_ast.typ
+        expected_typ = opt_map(declared_typ_ast, lambda t: Typ.from_ast(t, e))
+        expr = self.build_expr(let_ast.expr, e, ctx, expected_typ)
+        if expr.typ == VOID:
+            raise VoidVarInitializerError(expr.span)
+        if expected_typ is None or declared_typ_ast is None:
+            return expr
+        coerced = self._coerce(expr, expected_typ, let_ast.expr)
+        if coerced is None:
+            raise IncompatibleLetTypError(
+                let_ast.ident.name,
+                expected_typ.name,
+                expr.typ.name,
+                let_ast.expr.span,
+                declared_typ_ast.span,
+            )
+        return coerced
 
     def _coerce(
         self, value: Value, target: Typ, ast: Optional[ast.Ast]

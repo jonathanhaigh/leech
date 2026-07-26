@@ -158,6 +158,32 @@ class IncompatibleAssignmentTypError(UserError):
             self.add_extra(NOTE, f'Place has type "{place_typ}"', place_span)
 
 
+class IncompatibleLetTypError(UserError):
+    """Raised when a ``let`` initializer's type doesn't match, and doesn't
+    coerce to, its declared type."""
+
+    def __init__(
+        self,
+        var_name: str,
+        declared_typ: str,
+        given_typ: str,
+        given_span: Optional[SrcSpan],
+        declared_span: Optional[SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Variable "{var_name}" of declared type "{declared_typ}"'
+                f' cannot be initialized with value of type "{given_typ}"'
+            ),
+            given_span,
+        )
+        if declared_span is not None:
+            self.add_extra(
+                NOTE, f'Declared with type "{declared_typ}" here', declared_span
+            )
+
+
 class DuplicateItemDefnError(UserError):
     """Raised when a name is defined more than once in the same scope."""
 

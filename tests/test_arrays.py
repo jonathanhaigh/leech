@@ -164,6 +164,16 @@ def test_comptime_empty_array_expr_typ_unknown(tmp_path):
         compile_str(tmp_path, src)
 
 
+def test_empty_array_expr_infers_from_let_typ(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x: [i32; 0] = [];
+        return 42;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
 def test_empty_array_as_call_arg(tmp_path):
     src = """
     fn f(a: [i32; 0]) i32 {

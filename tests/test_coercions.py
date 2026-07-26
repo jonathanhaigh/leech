@@ -3,6 +3,7 @@ import pytest
 from l0.l0errors import (
     IncompatibleAssignmentTypError,
     IncompatibleBinOpArgTypsError,
+    IncompatibleLetTypError,
     IncompatibleStructFieldTypError,
     InvalidArgTypError,
     InvalidRetTypError,
@@ -320,6 +321,56 @@ def test_widening_int_coercion_array_element(tmp_path):
     }
     """
     check_prog_output(tmp_path, src, "", 42)
+
+
+def test_widening_int_coercion_let_initializer(tmp_path):
+    # The `: i64` annotation makes the let statement a coercion point:
+    # -10 is an i32 expression (unary minus doesn't change that), widened
+    # to i64 here. `+` never coerces its operands, so adding another i64
+    # only type-checks if x is actually i64, not i32.
+    src = """
+    pub fn main() i32 {
+        let x: i64 = -10;
+        let y = x + 20i64;
+        return if (y == 10i64) { 7 } else { 0 };
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
+
+
+def test_narrowing_int_coercion_let_rejected(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x: i8 = 1i16;
+        return 0;
+    }
+    """
+    with pytest.raises(IncompatibleLetTypError):
+        compile_str(tmp_path, src)
+
+
+def test_mut_ptr_coerces_to_const_ptr_let_initializer(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let mut x = 42;
+        let p: *i32 = &x;
+        return p.*;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 42)
+
+
+def test_comptime_widening_int_coercion_let(tmp_path):
+    # Module-level initializers are evaluated by the interpreter, so an
+    # annotated `let` has to widen there too.
+    src = """
+    let x: i64 = 42i8;
+    pub fn main() i32 {
+        let y = x + 1i64;
+        return if (y == 43i64) { 7 } else { 0 };
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
 
 
 def test_comptime_widening_int_coercion(tmp_path):

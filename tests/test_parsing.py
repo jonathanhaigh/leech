@@ -477,14 +477,43 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
             "stmt",
             "let x = 1;",
             T("stmt", "let_stmt").cs(
-                T("mut", Tok(None)), T("ident", Tok("x")), T("int_lit", Tok("1"))
+                T("mut", Tok(None)),
+                T("ident", Tok("x")),
+                None,
+                T("int_lit", Tok("1")),
             ),
         ),
         (
             "stmt",
             "let mut x = 10;",
             T("stmt", "let_stmt").cs(
-                T("mut", Tok("mut")), T("ident", Tok("x")), T("int_lit", Tok("10"))
+                T("mut", Tok("mut")),
+                T("ident", Tok("x")),
+                None,
+                T("int_lit", Tok("10")),
+            ),
+        ),
+        (
+            "stmt",
+            "let x: i64 = 1;",
+            T("stmt", "let_stmt").cs(
+                T("mut", Tok(None)),
+                T("ident", Tok("x")),
+                T("basic_typ", "path", "ident", Tok("i64")),
+                T("int_lit", Tok("1")),
+            ),
+        ),
+        (
+            "stmt",
+            "let mut x: i64 = -10;",
+            T("stmt", "let_stmt").cs(
+                T("mut", Tok("mut")),
+                T("ident", Tok("x")),
+                T("basic_typ", "path", "ident", Tok("i64")),
+                T("factor").cs(
+                    T("unary_op", Tok("-")),
+                    T("int_lit", Tok("10")),
+                ),
             ),
         ),
         ("stmt", "return;", T("stmt", "ret_stmt", Tok(None))),
