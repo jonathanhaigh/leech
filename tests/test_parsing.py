@@ -83,7 +83,20 @@ INT_LITS = [
 NOT_INT_LITS = ["01", "()", "a", "", "!", "1 2", "1_2", "1i0", "1u0"]
 STR_LITS = [' ""', '"abc" ', ' "0" ', r'"\""', r'"\\"']
 NOT_STR_LITS = ["0", '"abc', 'abc"', r'"\"']
-IDENTS = ["_", "a", "A", "_0", "abc_0de", " zZ", "v10_ "]
+IDENTS = [
+    "_",
+    "a",
+    "A",
+    "_0",
+    "abc_0de",
+    " zZ",
+    "v10_ ",
+    # Merely starting with (or containing) a keyword must still lex as a
+    # plain identifier - maximal munch, not keyword-prefix matching.
+    "android",
+    "nothing",
+    "orange",
+]
 NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
 
 
@@ -470,6 +483,67 @@ NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
                 T("struct_access_expr").cs(
                     T("var_expr", "path", "ident", Tok("a")),
                     T("ident", Tok("b")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "a or b and c",
+            T("or_expr").cs(
+                T("var_expr", "path", "ident", Tok("a")),
+                T("or_op", Tok("or")),
+                T("and_expr").cs(
+                    T("var_expr", "path", "ident", Tok("b")),
+                    T("and_op", Tok("and")),
+                    T("var_expr", "path", "ident", Tok("c")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "not a and b",
+            T("and_expr").cs(
+                T("not_expr").cs(
+                    T("not_op", Tok("not")),
+                    T("var_expr", "path", "ident", Tok("a")),
+                ),
+                T("and_op", Tok("and")),
+                T("var_expr", "path", "ident", Tok("b")),
+            ),
+        ),
+        (
+            "expr",
+            "not a == b",
+            T("not_expr").cs(
+                T("not_op", Tok("not")),
+                T("cmp_expr").cs(
+                    T("var_expr", "path", "ident", Tok("a")),
+                    T("cmp_op", Tok("==")),
+                    T("var_expr", "path", "ident", Tok("b")),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "a or b or c",
+            T("or_expr").cs(
+                T("or_expr").cs(
+                    T("var_expr", "path", "ident", Tok("a")),
+                    T("or_op", Tok("or")),
+                    T("var_expr", "path", "ident", Tok("b")),
+                ),
+                T("or_op", Tok("or")),
+                T("var_expr", "path", "ident", Tok("c")),
+            ),
+        ),
+        (
+            "expr",
+            "not not a",
+            T("not_expr").cs(
+                T("not_op", Tok("not")),
+                T("not_expr").cs(
+                    T("not_op", Tok("not")),
+                    T("var_expr", "path", "ident", Tok("a")),
                 ),
             ),
         ),

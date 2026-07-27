@@ -573,6 +573,9 @@ class CfgBuilder:
             subclasses, while lowering either operand; see
             :meth:`build_expr`.
         """
+        if op_ast.op.name in ("and", "or"):
+            return self.build_logic_bin_op_expr(op_ast, e, ctx)
+
         lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
         if not isinstance(lhs.typ, IntTyp):
             raise InvalidBinOpArgTypError(
@@ -618,6 +621,79 @@ class CfgBuilder:
 
         return self._in_context(res, ctx)
 
+    def build_logic_bin_op_expr(
+        self, op_ast: ast.BinOpExpr, e: Env, ctx: ExprContext
+    ) -> Value:
+        """Lower a short-circuiting ``and``/``or`` expression.
+
+        Modelled on :meth:`build_if_expr`: the right operand is only
+        evaluated when it can affect the result, in its own basic block,
+        merged with the short-circuited outcome via a phi.
+
+        :param op_ast: The parsed binary operation (``op.name`` is
+            ``"and"`` or ``"or"``).
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: The operation's result.
+        :raises InvalidBinOpArgTypError: If either operand's type isn't
+            ``bool``.
+        :raises l0.l0errors.UserError: Also raised, as any of many possible
+            subclasses, while lowering either operand; see
+            :meth:`build_expr`.
+        """
+        is_and = op_ast.op.name == "and"
+        lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
+        if lhs.typ != BOOL:
+            raise InvalidBinOpArgTypError(
+                op_ast.op.name,
+                op_ast.op.span,
+                "left",
+                lhs.typ.name,
+                "bool",
+                op_ast.lhs.span,
+            )
+
+        rhs_bb = self.add_bb("and_rhs" if is_and else "or_rhs")
+        end_bb = self.add_bb("and_end" if is_and else "or_end")
+        # `and` evaluates the rhs when the lhs is true; `or`, when it's
+        # false. The value reaching end_bb directly is then the lhs's own
+        # outcome: false for `and`, true for `or`.
+        short_circuit = ComptimeBool(not is_and, op_ast)
+        if is_and:
+            self.cbranch(lhs, rhs_bb, end_bb, op_ast)
+        else:
+            self.cbranch(lhs, end_bb, rhs_bb, op_ast)
+        lhs_last_bb = self.curr_bb  # cbranch doesn't move curr_bb
+
+        self.set_position(rhs_bb)
+        rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
+        rhs_last_bb = self.curr_bb  # building the rhs may have moved it
+        if rhs.typ == NEVER:
+            if not rhs_last_bb.terminated:
+                rhs_last_bb.unreachable(op_ast.rhs)
+        elif rhs.typ != BOOL:
+            raise InvalidBinOpArgTypError(
+                op_ast.op.name,
+                op_ast.op.span,
+                "right",
+                rhs.typ.name,
+                "bool",
+                op_ast.rhs.span,
+            )
+
+        if rhs_last_bb.terminated:
+            # The rhs diverged, so only the short-circuit path reaches
+            # end_bb and there is nothing to merge.
+            self.set_position(end_bb)
+            return self._in_context(short_circuit, ctx)
+
+        self.branch(end_bb, op_ast.rhs)  # moves curr_bb to end_bb
+        res = self.curr_bb.phi(
+            {lhs_last_bb: short_circuit, rhs_last_bb: rhs}, op_ast
+        )
+        return self._in_context(res, ctx)
+
     def build_unary_op_expr(
         self,
         op_ast: ast.UnaryOpExpr,
@@ -625,7 +701,7 @@ class CfgBuilder:
         ctx: ExprContext,
         expected_typ: Optional[Typ] = None,
     ) -> Value:
-        """Lower a unary operator expression (``&`` or ``-``).
+        """Lower a unary operator expression (``&``, ``-``, or ``not``).
 
         :param op_ast: The parsed unary operation.
         :param e: The scope to resolve names in.
@@ -633,10 +709,10 @@ class CfgBuilder:
             address.
         :param expected_typ: The type the expression is expected to have,
             if known. Negation preserves its operand's type, so this is
-            passed on to the operand; ``&`` ignores it.
+            passed on to the operand; ``&`` and ``not`` ignore it.
         :return: The operation's result.
         :raises InvalidUnaryOpArgTypError: If ``-``'s operand isn't a
-            signed integer type.
+            signed integer type, or ``not``'s operand isn't ``bool``.
         :raises IntLitOverflowError: If ``-``'s operand is a literal whose
             negation doesn't fit its type.
         :raises l0.l0errors.UserError: Also raised, as any of many possible
@@ -648,6 +724,17 @@ class CfgBuilder:
                     self.build_expr(op_ast.operand, e, ExprContext.PLACE),
                     ctx,
                 )
+            case "not":
+                operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
+                if operand.typ != BOOL:
+                    raise InvalidUnaryOpArgTypError(
+                        op_ast.op.name,
+                        op_ast.op.span,
+                        operand.typ.name,
+                        "bool",
+                        op_ast.operand.span,
+                    )
+                return self._in_context(self.curr_bb.not_(operand, op_ast), ctx)
             case "-":
                 # A literal operand is folded into a single negative
                 # constant rather than being built and then negated, so

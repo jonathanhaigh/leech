@@ -610,6 +610,26 @@ class NegInstr(Instr):
         return self.operand.typ
 
 
+class NotInstr(Instr):
+    """Boolean negation.
+
+    :param bb: The basic block this instruction belongs to.
+    :param operand: The value to negate.
+    :param ast: The AST node this instruction was built from, if any.
+    """
+
+    operand: Final[Value]
+
+    @override
+    def __init__(self, bb: BasicBlock, operand: Value, ast: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast)
+        self.operand = operand
+
+    @override
+    def calculate_typ(self) -> Typ:
+        return BOOL
+
+
 class IcmpInstr(Instr):
     """Base class for integer comparison instructions.
 
@@ -1054,6 +1074,10 @@ class BasicBlock:
     def neg(self, operand: Value, ast: Optional[ast.Ast]) -> NegInstr:
         """Append a :class:`NegInstr` to this block."""
         return self._add_instr(NegInstr(self, operand, ast))
+
+    def not_(self, operand: Value, ast: Optional[ast.Ast]) -> NotInstr:
+        """Append a :class:`NotInstr` to this block."""
+        return self._add_instr(NotInstr(self, operand, ast))
 
     def icmp_signed(
         self, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]

@@ -58,13 +58,28 @@ assignment_stmt: place "=" expr ";"
 ?expr: block_expr
   | if_expr
   | while_expr
-  | cmp_expr
+  | or_expr
 
 block_expr: "{" stmt* expr? "}"
 
 if_expr: "if" "(" expr ")" block_expr ("else" block_expr)?
 
 while_expr: "while" "(" expr ")" block_expr
+
+?or_expr: or_expr or_op and_expr
+  | and_expr
+
+!or_op: "or"
+
+?and_expr: and_expr and_op not_expr
+  | not_expr
+
+!and_op: "and"
+
+?not_expr: not_op not_expr
+  | cmp_expr
+
+!not_op: "not"
 
 # No recursion in cmp_expr: comparisons can't be chained
 ?cmp_expr: arith_expr cmp_op arith_expr
