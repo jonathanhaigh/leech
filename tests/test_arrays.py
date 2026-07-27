@@ -87,9 +87,23 @@ def test_comptime_array_index_int_lit_infers_usize(tmp_path):
     check_prog_output(tmp_path, src, "", 3)
 
 
-def test_comptime_array_incompatible_typs(tmp_path):
+def test_comptime_array_elt_typ_from_suffixed_elt(tmp_path):
+    # 2usize is the only element whose type it decides itself, so the
+    # bare 1 becomes a usize too rather than the two disagreeing.
     src = """
     let arr = [1, 2usize];
+
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    compile_str(tmp_path, src)
+
+
+def test_comptime_array_incompatible_typs(tmp_path):
+    # Two elements that each decide their own type, and disagree.
+    src = """
+    let arr = [1u8, 2usize];
 
     pub fn main() i32 {
         return 0;
@@ -335,11 +349,14 @@ def test_comptime_void_array_element(tmp_path):
 
 
 def test_void_array_element_from_later_element(tmp_path):
+    # The void element decides the element type wherever it sits, so this
+    # reports the void element itself rather than blaming whichever other
+    # element then failed to coerce to it.
     src = """
     pub fn main() i32 {
         let x = [1, {}];
         return 0;
     }
     """
-    with pytest.raises(IncompatibleTypInArrayExpr):
+    with pytest.raises(VoidArrayElementError):
         compile_str(tmp_path, src)

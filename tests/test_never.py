@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import IncompatibleLetTypError, IncompatibleTypInArrayExpr
+from l0.l0errors import IncompatibleLetTypError
 from l0.typs import BOOL, I32, NEVER
 from util import check_prog_output, compile_str
 
@@ -209,23 +209,18 @@ def test_unannotated_let_diverges_still_works(tmp_path):
     check_prog_output(tmp_path, src, "", 5)
 
 
-# --- Known limitation ---
-
-
-def test_array_first_element_diverges_still_rejected(tmp_path):
-    # Array literal element type is inferred from the first element when
-    # there's no expected-type hint. If the first element diverges, the
-    # inferred "common type" becomes never, and the other (concrete)
-    # elements then fail to coerce into it - a rough edge in that
-    # inference, unrelated to whether a never-typed value itself coerces.
+def test_array_first_element_diverges(tmp_path):
+    # A diverging element says nothing about what type the others should
+    # have, so it doesn't get to decide the element type - the array is
+    # [i32; 3] and the never-typed element coerces into it, wherever it
+    # sits.
     src = """
     pub fn main() i32 {
         let a = [{ return 5; }, 2, 3];
-        return 0;
+        return a[0usize] + 100;
     }
     """
-    with pytest.raises(IncompatibleTypInArrayExpr):
-        compile_str(tmp_path, src)
+    check_prog_output(tmp_path, src, "", 5)
 
 
 def test_not_diverges_does_not_propagate_past_bool(tmp_path):

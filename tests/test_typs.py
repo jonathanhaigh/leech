@@ -191,12 +191,24 @@ def test_comptime_int_lit_infers_declared_typ(tmp_path):
     check_prog_output(tmp_path, src, "", 7)
 
 
-def test_int_lit_inference_does_not_extend_to_operands(tmp_path):
-    # Operands have no single target type, so each 1 stays an i32 and the
-    # i32 result doesn't coerce to u8.
+def test_int_lit_inference_reaches_operands(tmp_path):
+    # Neither operand's type is decided by the operand itself, so both
+    # take the declared type of the variable they end up in.
     src = """
     pub fn main() i32 {
-        let x: u8 = 1 + 1;
+        let x: u8 = 200 + 55;
+        return if (x == 255u8) { 7 } else { 0 };
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
+
+
+def test_int_lit_inference_does_not_reach_across_a_typed_operand(tmp_path):
+    # An operand whose type *is* decided still has to match its peer
+    # exactly: nothing coerces i32 to u8, so this stays an error.
+    src = """
+    pub fn main() i32 {
+        let x: u8 = 1i32 + 1;
         return 0;
     }
     """

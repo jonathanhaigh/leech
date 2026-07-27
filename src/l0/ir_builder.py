@@ -92,6 +92,37 @@ class ExprContext(enum.Enum):
     VALUE = 1
 
 
+def _is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
+    """Whether an expression's type isn't decided by the expression itself.
+
+    True only for an integer literal written without a type suffix, or
+    the negation of one: those take their type from context (see
+    :meth:`CfgBuilder._int_lit_typ`), so where several expressions have
+    to agree on a type, they're the ones that can adapt.
+
+    Such a literal is also pure - lowering it emits no instructions at
+    all - so it can be lowered later than its source position without
+    reordering anything observable.
+
+    :param expr_ast: The parsed expression to classify.
+    :return: Whether the expression's type is still open.
+    """
+    if isinstance(expr_ast, ast.IntLit):
+        return expr_ast.explicit_typ is None
+    if isinstance(expr_ast, ast.UnaryOpExpr) and expr_ast.op.name == "-":
+        return _is_flexible_int_lit(expr_ast.operand)
+    if isinstance(expr_ast, ast.BlockExpr):
+        # A block's value is its tail expression's, so a block that does
+        # nothing else is as flexible as that expression. Statements are
+        # excluded so that only a block with nothing to emit qualifies.
+        return (
+            not expr_ast.stmts
+            and expr_ast.expr is not None
+            and _is_flexible_int_lit(expr_ast.expr)
+        )
+    return False
+
+
 class CfgBuilder:
     """Lowers a single function body or module-variable initializer to a
     :class:`~l0.ir_values.Cfg`.
@@ -228,7 +259,7 @@ class CfgBuilder:
             case ast.CallExpr():
                 return self.build_call_expr(expr_ast, e, ctx)
             case ast.BinOpExpr():
-                return self.build_bin_op_expr(expr_ast, e, ctx)
+                return self.build_bin_op_expr(expr_ast, e, ctx, expected_typ)
             case ast.UnaryOpExpr():
                 return self.build_unary_op_expr(expr_ast, e, ctx, expected_typ)
             case ast.StrLit():
@@ -333,53 +364,107 @@ class CfgBuilder:
         else:
             self.cbranch(cond, then_bb, end_bb, if_ast)
 
-        self.set_position(then_bb)
-        then = self.build_expr(if_ast.then, e, ctx, expected_typ)
-        then_last_bb = self.curr_bb
-        if then.typ == NEVER and not then_last_bb.terminated:
-            then_last_bb.unreachable(if_ast.then)
-        have_then_value = not then_last_bb.terminated
-        if have_then_value:
-            self.branch(end_bb, if_ast.then)
-
-        if els_bb is not None:
-            self.set_position(els_bb)
-            assert if_ast.els is not None
-            els = self.build_expr(if_ast.els, e, ctx, expected_typ)
-            els_last_bb = self.curr_bb
-            if els.typ == NEVER and not els_last_bb.terminated:
-                self.curr_bb.unreachable(if_ast.els)
-            have_els_value = not els_last_bb.terminated
-            if have_els_value:
-                self.branch(end_bb, if_ast.els)
-
-            if have_then_value and have_els_value:
-                if then.typ != els.typ:
-                    raise IfElsTypMismatchError(
-                        then.typ.name,
-                        if_ast.then.span,
-                        els.typ.name,
-                        if_ast.els.span,
-                    )
-                phi_incoming = {els_last_bb: els, then_last_bb: then}
-                res = self.curr_bb.phi(phi_incoming, if_ast)
-                return res
-            if have_els_value:
-                return els
-            self.set_position(end_bb)
-            if have_then_value:
-                return then
-            # Neither branch reaches end_bb: it's genuinely unreachable,
-            # not just void, and needs a terminator of its own since
-            # nothing branches into it.
-            return self.curr_bb.unreachable(if_ast)
-
-        if have_then_value:
-            if then.typ != VOID:
+        if els_bb is None:
+            then, _, have_then_value = self._build_if_arm(
+                if_ast.then, then_bb, end_bb, e, ctx, expected_typ
+            )
+            if have_then_value and then.typ != VOID:
                 raise IfTypNotVoidError(then.typ.name, if_ast.then.span)
+            self.set_position(end_bb)
+            return VoidValue(if_ast)
+
+        els_ast = if_ast.els
+        assert els_ast is not None
+        # With no type supplied by the context the two arms are peers, so
+        # lower the one whose type is already decided first and let a
+        # bare integer literal in the other take its type from it. Only
+        # one arm ever runs, and they're in separate blocks, so which is
+        # lowered first doesn't change what the program does.
+        if (
+            expected_typ is None
+            and _is_flexible_int_lit(if_ast.then)
+            and not _is_flexible_int_lit(els_ast)
+        ):
+            els, els_last_bb, have_els_value = self._build_if_arm(
+                els_ast, els_bb, end_bb, e, ctx, expected_typ
+            )
+            then, then_last_bb, have_then_value = self._build_if_arm(
+                if_ast.then,
+                then_bb,
+                end_bb,
+                e,
+                ctx,
+                self._resolve_peer_typ([els.typ]) if have_els_value else expected_typ,
+            )
+        else:
+            then, then_last_bb, have_then_value = self._build_if_arm(
+                if_ast.then, then_bb, end_bb, e, ctx, expected_typ
+            )
+            els_hint = expected_typ
+            if (
+                expected_typ is None
+                and have_then_value
+                and _is_flexible_int_lit(els_ast)
+            ):
+                els_hint = self._resolve_peer_typ([then.typ])
+            els, els_last_bb, have_els_value = self._build_if_arm(
+                els_ast, els_bb, end_bb, e, ctx, els_hint
+            )
+
+        if have_then_value and have_els_value:
+            if then.typ != els.typ:
+                raise IfElsTypMismatchError(
+                    then.typ.name,
+                    if_ast.then.span,
+                    els.typ.name,
+                    els_ast.span,
+                )
+            self.set_position(end_bb)
+            return self.curr_bb.phi(
+                {els_last_bb: els, then_last_bb: then}, if_ast
+            )
 
         self.set_position(end_bb)
-        return VoidValue(if_ast)
+        if have_then_value:
+            return then
+        if have_els_value:
+            return els
+        # Neither branch reaches end_bb: it's genuinely unreachable,
+        # not just void, and needs a terminator of its own since
+        # nothing branches into it.
+        return self.curr_bb.unreachable(if_ast)
+
+    def _build_if_arm(
+        self,
+        arm_ast: ast.Expr,
+        arm_bb: BasicBlock,
+        end_bb: BasicBlock,
+        e: Env,
+        ctx: ExprContext,
+        expected_typ: Optional[Typ],
+    ) -> tuple[Value, BasicBlock, bool]:
+        """Lower one arm of an ``if``/``else`` into its own basic block.
+
+        :param arm_ast: The parsed arm.
+        :param arm_bb: The block to lower the arm into.
+        :param end_bb: The block the arms merge at.
+        :param e: The scope to resolve names in.
+        :param ctx: Whether to lower the arm for its value or its address.
+        :param expected_typ: The type the arm is expected to have, if
+            known.
+        :return: The arm's value, the block its lowering ended in (which
+            isn't ``arm_bb`` if the arm contained control flow of its
+            own), and whether control reaches ``end_bb`` from it.
+        """
+        self.set_position(arm_bb)
+        value = self.build_expr(arm_ast, e, ctx, expected_typ)
+        last_bb = self.curr_bb
+        if value.typ == NEVER and not last_bb.terminated:
+            last_bb.unreachable(arm_ast)
+        have_value = not last_bb.terminated
+        if have_value:
+            self.branch(end_bb, arm_ast)
+        return value, last_bb, have_value
 
     def build_while_expr(
         self, while_ast: ast.WhileExpr, e: Env, _ctx: ExprContext
@@ -560,7 +645,11 @@ class CfgBuilder:
         )
 
     def build_bin_op_expr(
-        self, op_ast: ast.BinOpExpr, e: Env, ctx: ExprContext
+        self,
+        op_ast: ast.BinOpExpr,
+        e: Env,
+        ctx: ExprContext,
+        expected_typ: Optional[Typ] = None,
     ) -> Value:
         """Lower a binary operator expression (arithmetic or comparison).
 
@@ -568,6 +657,11 @@ class CfgBuilder:
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the result for its value or its
             address.
+        :param expected_typ: The type the expression is expected to have,
+            if known. Only used when *both* operands are bare integer
+            literals and so have nothing else to take a type from; when
+            either operand's type is already decided, that type is what
+            the other has to match.
         :return: The operation's result.
         :raises InvalidBinOpArgTypError: If either operand's type isn't an
             integer type.
@@ -580,10 +674,44 @@ class CfgBuilder:
         if op_ast.op.name in ("and", "or"):
             return self.build_logic_bin_op_expr(op_ast, e, ctx)
 
-        lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
-        propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
-        if propagated is not None:
-            return propagated
+        # The operands are peers: whichever one's type is already decided
+        # is what the other has to match, so lower that one first and let
+        # a bare integer literal on either side take its type from it.
+        # The deferred operand is always such a literal, which emits no
+        # instructions, so left-to-right evaluation is unaffected.
+        if _is_flexible_int_lit(op_ast.lhs) and not _is_flexible_int_lit(op_ast.rhs):
+            rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
+            propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
+            if propagated is not None:
+                return propagated
+            # A bare integer literal always ends up with an integer type,
+            # so the left operand needs no separate check here.
+            lhs = self.build_expr(
+                op_ast.lhs, e, ExprContext.VALUE, self._resolve_peer_typ([rhs.typ])
+            )
+        else:
+            lhs = self.build_expr(
+                op_ast.lhs,
+                e,
+                ExprContext.VALUE,
+                expected_typ if _is_flexible_int_lit(op_ast.lhs) else None,
+            )
+            propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
+            if propagated is not None:
+                return propagated
+
+            rhs = self.build_expr(
+                op_ast.rhs,
+                e,
+                ExprContext.VALUE,
+                self._resolve_peer_typ([lhs.typ])
+                if _is_flexible_int_lit(op_ast.rhs)
+                else None,
+            )
+            propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
+            if propagated is not None:
+                return propagated
+
         if not isinstance(lhs.typ, IntTyp):
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
@@ -593,11 +721,6 @@ class CfgBuilder:
                 "an integer type",
                 op_ast.lhs.span,
             )
-
-        rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
-        propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
-        if propagated is not None:
-            return propagated
         if lhs.typ != rhs.typ:
             raise IncompatibleBinOpArgTypsError(
                 op_ast.op.name,
@@ -855,20 +978,37 @@ class CfgBuilder:
         expected_elt_typ = (
             expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
         )
-        elts = [
-            self.build_expr(elt, e, ExprContext.VALUE, expected_elt_typ)
-            for elt in arr_expr.elements
-        ]
-        # Elements coerce only towards an element type the surrounding
-        # context supplied. With nothing to go on the type is taken from
-        # the first element, and coercing the rest towards that would let
-        # the elements' order decide whether the literal is accepted.
+        if not arr_expr.elements and expected_elt_typ is None:
+            raise EmptyArrayTypUnknownError(arr_expr.span)
+
+        # Two passes, so that a bare integer literal takes its type from
+        # its sibling elements wherever it sits, rather than the first
+        # element deciding for everyone. The deferred elements are all
+        # bare literals, which emit no instructions, so lowering them
+        # second can't reorder any of the others' effects.
+        built: list[Optional[Value]] = [None] * len(arr_expr.elements)
+        for i, elt_ast in enumerate(arr_expr.elements):
+            if not _is_flexible_int_lit(elt_ast):
+                built[i] = self.build_expr(
+                    elt_ast, e, ExprContext.VALUE, expected_elt_typ
+                )
+
+        # An element type the surrounding context supplied is what the
+        # whole array has to coerce to, so it wins over the elements'
+        # own types; without one, the elements decide among themselves.
         if expected_elt_typ is not None:
             elt_typ = expected_elt_typ
-        elif elts:
-            elt_typ = elts[0].typ
         else:
-            raise EmptyArrayTypUnknownError(arr_expr.span)
+            elt_typ = self._resolve_peer_typ([v.typ for v in built if v is not None])
+
+        elts = [
+            v
+            if v is not None
+            else self.build_expr(
+                arr_expr.elements[i], e, ExprContext.VALUE, elt_typ
+            )
+            for i, v in enumerate(built)
+        ]
 
         if elt_typ == VOID:
             raise VoidArrayElementError(elts[0].span if elts else arr_expr.span)
@@ -881,6 +1021,17 @@ class CfgBuilder:
 
         for i, elt in enumerate(elts):
             elt_ast = arr_expr.elements[i]
+            # Elements only coerce towards an element type the context
+            # supplied, which is an unambiguous target. When the elements
+            # settled on one between themselves it isn't: coercing to it
+            # would let their order decide whether a narrower element is
+            # accepted, so they have to agree exactly instead. A
+            # diverging element is exempt - it produces no value to
+            # convert, and says nothing about what the type should be.
+            if expected_elt_typ is None and elt.typ not in (elt_typ, NEVER):
+                raise IncompatibleTypInArrayExpr(
+                    elt.typ.name, i, elt_ast.span, arr_typ.name
+                )
             coerced = self._coerce(elt, elt_typ, elt_ast)
             if coerced is None:
                 raise IncompatibleTypInArrayExpr(
@@ -1281,6 +1432,36 @@ class CfgBuilder:
                 declared_typ_ast.span,
             )
         return coerced
+
+    def _resolve_peer_typ(self, fixed_typs: list[Typ]) -> Typ:
+        """The type a group of peer expressions should agree on.
+
+        "Peers" are expressions that have to end up with one shared type
+        - an array literal's elements, an ``if``/``else``'s two arms, an
+        operator's two operands. ``fixed_typs`` are the types of the
+        peers whose type the expression itself decides (everything that
+        isn't a bare integer literal - see :func:`_is_flexible_int_lit`),
+        in source order.
+
+        The first such type wins, so a bare literal peer adapts to it
+        wherever it sits, rather than the peers' order deciding whose
+        type is used. A ``never`` peer never gets a say: a diverging
+        expression says nothing about what type the others should have.
+        With no fixed peers at all, everything is a bare literal and
+        ``i32`` is the fallback, as for any other unconstrained literal.
+
+        This is deliberately not full unification: peers whose types
+        genuinely disagree aren't reconciled here, they just fail their
+        caller's own compatibility check as before.
+
+        :param fixed_typs: The already-decided peers' types, in source
+            order.
+        :return: The type to lower the flexible peers with.
+        """
+        for typ in fixed_typs:
+            if typ != NEVER:
+                return typ
+        return I32
 
     def _int_lit_typ(
         self, lit_ast: ast.IntLit, expected_typ: Optional[Typ]
