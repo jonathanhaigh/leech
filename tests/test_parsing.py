@@ -98,11 +98,18 @@ IDENTS = [
     "orange",
 ]
 NOT_IDENTS = ["", '"abc"', "0", "9", "1a", "a b", "0_", "("]
+COMMENTED_INTS = [
+    "// leading comment\n8",
+    "8 // trailing comment",
+    "// a\n// b\n8 // c",
+    "8// no space before comment",
+]
 
 
 @pytest.mark.parametrize(
     "rule,src,expected",
     [("expr", src, T("int_lit", Tok(src.strip()))) for src in INT_LITS]
+    + [("expr", src, T("int_lit", Tok("8"))) for src in COMMENTED_INTS]
     + [("expr", src, T("str_lit", Tok(src.strip()))) for src in STR_LITS]
     + [
         ("expr", src, T("var_expr", "path", "ident", Tok(src.strip())))
@@ -1060,6 +1067,8 @@ def test_parse(rule, src, expected):
         ("mod", "1"),
         ("mod", "{}"),
         ("mod", "f(0);"),
+        ("expr", "// just a comment"),
+        ("expr", "/* not a supported comment style */ 1"),
     ],
 )
 def test_parse_fails(rule, src):

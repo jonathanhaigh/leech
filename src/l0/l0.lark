@@ -148,3 +148,6 @@ IDENT: /[_a-zA-Z][_0-9a-zA-Z]*/
 %import common.ESCAPED_STRING -> STR_LIT
 %import common.WS
 %ignore WS
+
+COMMENT: /\/\/[^\n]*/
+%ignore COMMENT
