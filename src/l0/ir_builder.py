@@ -1,5 +1,6 @@
 """AST-to-IR lowering, with type checking performed inline as it goes."""
 
+from dataclasses import dataclass
 import enum
 from typing import Final, Optional
 
@@ -22,6 +23,8 @@ from l0.ir_values import (
 )
 from l0.l0errors import (
     AssignToConstError,
+    BreakNotInLoopError,
+    ContinueNotInLoopError,
     DerefInvalidTypError,
     DuplicateFieldInStructExprError,
     EmptyArrayTypUnknownError,
@@ -43,6 +46,7 @@ from l0.l0errors import (
     InvalidStructFieldError,
     InvalidUnaryOpArgTypError,
     InvalidVoidRetError,
+    LoopLabelNotFoundError,
     MissingFieldInStructExprError,
     MissingRetError,
     NotAMethodError,
@@ -137,10 +141,21 @@ class CfgBuilder:
         function).
     """
 
+    @dataclass
+    class _LoopCtx:
+        """The ``break``/``continue`` targets for one enclosing ``while`` loop."""
+
+        label: Optional[str]
+        cond_bb: BasicBlock
+        end_bb: BasicBlock
+
     fn: Optional[ir_module.FnSpec]
     cfg: Final[Cfg]
     curr_bb: BasicBlock
     _generate_bb_name: Final[VarNamer]
+    #: The ``while`` loops currently being lowered, innermost last - used
+    #: to resolve unlabeled and labeled ``break``/``continue`` targets.
+    _loop_stack: Final[list["CfgBuilder._LoopCtx"]]
 
     def __init__(self, fn: Optional[ir_module.FnSpec] = None) -> None:
         self.fn = fn
@@ -149,6 +164,7 @@ class CfgBuilder:
         self.cfg._entry = self.add_bb("entry")
         self.cfg._exit = self.add_bb("exit")
         self.curr_bb = self.cfg.entry
+        self._loop_stack = []
 
     def build_var_initializer(self, defn_ast: ast.VarDefn, e: Env) -> None:
         """Lower a module-level ``let`` initializer expression into :attr:`cfg`.
@@ -487,6 +503,7 @@ class CfgBuilder:
         end_bb = self.add_bb("while_end")
 
         self.branch(cond_bb, while_ast)
+        self.set_position(cond_bb)
         cond = self.build_expr(while_ast.condition, e, ExprContext.VALUE)
         coerced_cond = self._coerce(cond, BOOL, while_ast.condition)
         if coerced_cond is None:
@@ -499,7 +516,17 @@ class CfgBuilder:
 
         self.cbranch(cond, loop_bb, end_bb, while_ast)
         self.set_position(loop_bb)
-        block = self.build_expr(while_ast.block, e, ExprContext.VALUE)
+        self._loop_stack.append(
+            CfgBuilder._LoopCtx(
+                label=opt_map(while_ast.label, lambda x: x.name),
+                cond_bb=cond_bb,
+                end_bb=end_bb,
+            )
+        )
+        try:
+            block = self.build_expr(while_ast.block, e, ExprContext.VALUE)
+        finally:
+            self._loop_stack.pop()
         if block.typ not in (NEVER, VOID):
             raise WhileTypNotVoidError(block.typ.name, while_ast.block.span)
 
@@ -832,7 +859,8 @@ class CfgBuilder:
             self.set_position(end_bb)
             return self._in_context(short_circuit, ctx)
 
-        self.branch(end_bb, op_ast.rhs)  # moves curr_bb to end_bb
+        self.branch(end_bb, op_ast.rhs)
+        self.set_position(end_bb)
         res = self.curr_bb.phi(
             {lhs_last_bb: short_circuit, rhs_last_bb: coerced_rhs}, op_ast
         )
@@ -1280,6 +1308,10 @@ class CfgBuilder:
                 self.build_let_stmt(stmt_ast, e)
             case ast.AssignmentStmt():
                 self.build_assignment_stmt(stmt_ast, e)
+            case ast.BreakStmt():
+                self.build_break_stmt(stmt_ast)
+            case ast.ContinueStmt():
+                self.build_continue_stmt(stmt_ast)
 
     def build_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
         """Lower a ``return`` statement.
@@ -1327,6 +1359,52 @@ class CfgBuilder:
             )
 
         self.ret(VoidValue(ret_ast), ret_ast)
+
+    def build_break_stmt(self, break_ast: ast.BreakStmt) -> None:
+        """Lower a ``break`` statement.
+
+        :param break_ast: The parsed break statement.
+        :raises BreakNotInLoopError: If not currently lowering a loop body.
+        :raises LoopLabelNotFoundError: If a label is given but no
+            enclosing loop has it.
+        """
+        if not self._loop_stack:
+            raise BreakNotInLoopError(break_ast.span)
+        target = self._resolve_loop_label(break_ast.label)
+        self.branch(target.end_bb, break_ast)
+
+    def build_continue_stmt(self, continue_ast: ast.ContinueStmt) -> None:
+        """Lower a ``continue`` statement.
+
+        :param continue_ast: The parsed continue statement.
+        :raises ContinueNotInLoopError: If not currently lowering a loop
+            body.
+        :raises LoopLabelNotFoundError: If a label is given but no
+            enclosing loop has it.
+        """
+        if not self._loop_stack:
+            raise ContinueNotInLoopError(continue_ast.span)
+        target = self._resolve_loop_label(continue_ast.label)
+        self.branch(target.cond_bb, continue_ast)
+
+    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> "CfgBuilder._LoopCtx":
+        """Find the loop a ``break``/``continue`` targets.
+
+        :param label: The target label, or ``None`` for the innermost
+            enclosing loop. :attr:`_loop_stack` is assumed non-empty -
+            callers check that first, since an empty stack means "not in
+            a loop at all", a different error from "label not found".
+        :return: The named loop, or the innermost one if ``label`` is
+            ``None``.
+        :raises LoopLabelNotFoundError: If ``label`` is given but no
+            enclosing loop has it.
+        """
+        if label is None:
+            return self._loop_stack[-1]
+        for ctx in reversed(self._loop_stack):
+            if ctx.label == label.name:
+                return ctx
+        raise LoopLabelNotFoundError(label.name, label.span)
 
     def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
         """Lower a local ``let`` statement.
@@ -1622,8 +1700,15 @@ class CfgBuilder:
         self.curr_bb = bb
 
     def branch(self, target: BasicBlock, ast: ast.Ast) -> None:
-        """Terminate :attr:`curr_bb` with an unconditional branch, and
-        switch to ``target``.
+        """Terminate :attr:`curr_bb` with an unconditional branch.
+
+        Does not change :attr:`curr_bb`, the same as :meth:`cbranch` and
+        :meth:`ret`; call :meth:`set_position` next if what follows
+        should build into ``target`` (not every caller wants that - e.g.
+        ``break``/``continue`` deliberately leave :attr:`curr_bb` as the
+        block they terminated, so any source code still to come after
+        them in the same block is correctly dropped as unreachable
+        rather than appended into ``target``).
 
         :param target: The basic block to branch to; must already be in
             :attr:`cfg`.
@@ -1632,7 +1717,6 @@ class CfgBuilder:
         assert_in(target, self.cfg)
         self.curr_bb.branch(target, ast)
         self.cfg.add_edge(self.curr_bb, target)
-        self.curr_bb = target
 
     def cbranch(
         self,
@@ -1643,8 +1727,8 @@ class CfgBuilder:
     ) -> None:
         """Terminate :attr:`curr_bb` with a conditional branch.
 
-        Unlike :meth:`branch`, this does not change :attr:`curr_bb`; the
-        caller is expected to call :meth:`set_position` next.
+        Does not change :attr:`curr_bb`; the caller is expected to call
+        :meth:`set_position` next.
 
         :param condition: The boolean value to branch on.
         :param true_target: The block to branch to if ``condition`` is

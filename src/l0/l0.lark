@@ -42,9 +42,13 @@ stmt: expr_stmt
   | ret_stmt
   | let_stmt
   | assignment_stmt
+  | break_stmt
+  | continue_stmt
 
 expr_stmt: expr ";"
 ret_stmt: "return" [expr] ";"
+break_stmt: "break" [ident] ";"
+continue_stmt: "continue" [ident] ";"
 let_stmt: "let" mut ident [":" typ] "=" expr ";"
 !mut: ["mut"]
 
@@ -64,7 +68,7 @@ block_expr: "{" stmt* expr? "}"
 
 if_expr: "if" "(" expr ")" block_expr ("else" block_expr)?
 
-while_expr: "while" "(" expr ")" block_expr
+while_expr: [ident ":"] "while" "(" expr ")" block_expr
 
 ?or_expr: or_expr or_op and_expr
   | and_expr

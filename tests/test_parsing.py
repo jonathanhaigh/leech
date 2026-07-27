@@ -603,6 +603,26 @@ COMMENTED_INTS = [
             'return "abc";',
             T("stmt", "ret_stmt", "str_lit", Tok('"abc"')),
         ),
+        ("stmt", "break;", T("stmt", "break_stmt", Tok(None))),
+        ("stmt", "break lbl;", T("stmt", "break_stmt", "ident", Tok("lbl"))),
+        ("stmt", "continue;", T("stmt", "continue_stmt", Tok(None))),
+        (
+            "stmt",
+            "continue lbl;",
+            T("stmt", "continue_stmt", "ident", Tok("lbl")),
+        ),
+        (
+            "expr",
+            "while (true) {}",
+            T("while_expr").cs(None, T("bool_lit", Tok("true")), T("block_expr")),
+        ),
+        (
+            "expr",
+            "lbl: while (true) {}",
+            T("while_expr").cs(
+                T("ident", Tok("lbl")), T("bool_lit", Tok("true")), T("block_expr")
+            ),
+        ),
         (
             "stmt",
             "x = y;",
@@ -1033,6 +1053,13 @@ def test_parse(rule, src, expected):
         ("stmt", "1 = 2;"),
         ("stmt", "f() = 2;"),
         ("stmt", "(1 + 2) = 2;"),
+        ("stmt", "break"),
+        ("stmt", "break 0;"),
+        ("stmt", "continue"),
+        ("stmt", "continue 0;"),
+        ("expr", "1: while (true) {}"),
+        ("expr", "lbl lbl: while (true) {}"),
+        ("expr", "lbl:: while (true) {}"),
         ("typ", ""),
         ("typ", "0"),
         ("typ", '"abc"'),

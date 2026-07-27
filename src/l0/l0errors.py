@@ -400,6 +400,27 @@ class RetNotInFnError(UserError):
         super().__init__(ERROR, "Return statement not in function", ret_span)
 
 
+class BreakNotInLoopError(UserError):
+    """Raised when a ``break`` statement appears outside any loop."""
+
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Break statement not in a loop", span)
+
+
+class ContinueNotInLoopError(UserError):
+    """Raised when a ``continue`` statement appears outside any loop."""
+
+    def __init__(self, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, "Continue statement not in a loop", span)
+
+
+class LoopLabelNotFoundError(UserError):
+    """Raised when a ``break``/``continue`` names a label no enclosing loop has."""
+
+    def __init__(self, label_name: str, span: Optional[SrcSpan]) -> None:
+        super().__init__(ERROR, f'Loop label "{label_name}" not found', span)
+
+
 class UnreachableCodeWarning(UserError):
     """Warns about code that can never be executed."""
 

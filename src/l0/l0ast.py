@@ -262,15 +262,17 @@ class IfExpr(Expr):
 
 
 class WhileExpr(Expr):
-    """A ``while (condition) { ... }`` loop expression."""
+    """A ``[label:] while (condition) { ... }`` loop expression."""
 
+    label: Optional[Ident]
     condition: Expr
     block: BlockExpr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "while_expr")
         super().__init__(SrcSpan(file, tree.meta))
-        condition, block = tree.children
+        label, condition, block = tree.children
+        self.label = opt_map(label, lambda x: Ident(file, as_tree(x)))
         self.condition = Expr.from_tree(file, as_tree(condition))
         self.block = BlockExpr(file, as_tree(block))
 
@@ -588,6 +590,8 @@ class Stmt(Ast):
             "ret_stmt": RetStmt,
             "let_stmt": LetStmt,
             "assignment_stmt": AssignmentStmt,
+            "break_stmt": BreakStmt,
+            "continue_stmt": ContinueStmt,
         }
         return child_classes[child.data](file, child)
 
@@ -622,6 +626,38 @@ class RetStmt(Stmt):
     @override
     def diag_str(self) -> str:
         return "return statement"
+
+
+class BreakStmt(Stmt):
+    """A ``break`` statement, with or without a target loop label."""
+
+    label: Optional[Ident]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert_eq(tree.data, "break_stmt")
+        super().__init__(SrcSpan(file, tree.meta))
+        (label,) = tree.children
+        self.label = opt_map(label, lambda x: Ident(file, as_tree(x)))
+
+    @override
+    def diag_str(self) -> str:
+        return "break statement"
+
+
+class ContinueStmt(Stmt):
+    """A ``continue`` statement, with or without a target loop label."""
+
+    label: Optional[Ident]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert_eq(tree.data, "continue_stmt")
+        super().__init__(SrcSpan(file, tree.meta))
+        (label,) = tree.children
+        self.label = opt_map(label, lambda x: Ident(file, as_tree(x)))
+
+    @override
+    def diag_str(self) -> str:
+        return "continue statement"
 
 
 class LetStmt(Stmt):

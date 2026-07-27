@@ -9,6 +9,7 @@ from l0.l0errors import (
     InfiniteSizeStructError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
+    LoopLabelNotFoundError,
     NotCallableError,
     PrivateItemAccessError,
     PrivateStructFieldAccessError,
@@ -439,6 +440,25 @@ def test_while_cond_not_bool_message(tmp_path):
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == find_pos(src, "&x")
+
+
+def test_loop_label_not_found_message(tmp_path):
+    src = """pub fn main() i32 {
+    while (true) {
+        break nope;
+    };
+    return 0;
+}
+"""
+    with pytest.raises(LoopLabelNotFoundError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert "nope" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "nope")
 
 
 def test_not_callable_message(tmp_path):
