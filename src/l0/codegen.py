@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Optional
 from llvmlite import ir as ll
-from networkx import bfs_tree
+from networkx import dfs_postorder_nodes
 
 from l0 import ir_module, ir_values
 from l0.asserts import assert_eq, checked_cast
@@ -288,14 +288,23 @@ class Compiler:
         for param, ll_param in zip(fn.params, ll_fn.args):
             ctx.ll_values.set(param, ll_param)
 
-        bb_tree = bfs_tree(fn.cfg, fn.cfg.entry)
-        for bb in bb_tree:
-            if bb.name != "exit":
-                ctx.ll_bbs[bb] = ll_fn.append_basic_block(bb.name)
+        # Reverse postorder, not a plain BFS: a phi's block must be
+        # compiled after every block that produces one of its incoming
+        # values, and BFS (ordering by shortest distance from entry)
+        # doesn't guarantee that whenever two merging branches reach
+        # their merge block at unequal depths - e.g. a short-circuit
+        # operator's direct edge into its end block versus a longer
+        # chain evaluating its right operand. RPO guarantees it for any
+        # edge that isn't a loop back-edge, and loop back-edges never
+        # carry a phi in this compiler (`while` produces no merged
+        # value), so this is safe even though `fn.cfg` can have cycles.
+        bb_order = reversed(list(dfs_postorder_nodes(fn.cfg, fn.cfg.entry)))
+        bb_order = [bb for bb in bb_order if bb.name != "exit"]
+        for bb in bb_order:
+            ctx.ll_bbs[bb] = ll_fn.append_basic_block(bb.name)
 
-        for bb in bb_tree:
-            if bb.name != "exit":
-                self._compile_bb(bb, ctx)
+        for bb in bb_order:
+            self._compile_bb(bb, ctx)
 
     def _compile_mod_struct(self, item: ir_module.ModItem, typ: StructTyp) -> None:
         ll_typ = self.ll_mod.context.get_identified_type(item.qualified_name)
@@ -341,6 +350,10 @@ class Compiler:
                 )
             case ir_values.NegInstr():
                 return ctx.ll_builder.neg(  # type: ignore
+                    ctx.ll_values.get(instr.operand),
+                )
+            case ir_values.NotInstr():
+                return ctx.ll_builder.not_(  # type: ignore
                     ctx.ll_values.get(instr.operand),
                 )
             case ir_values.IcmpSignedInstr():
