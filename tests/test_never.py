@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import IncompatibleTypInArrayExpr
+from l0.l0errors import IncompatibleLetTypError, IncompatibleTypInArrayExpr
 from l0.typs import BOOL, I32, NEVER
 from util import check_prog_output, compile_str
 
@@ -225,4 +225,22 @@ def test_array_first_element_diverges_still_rejected(tmp_path):
     }
     """
     with pytest.raises(IncompatibleTypInArrayExpr):
+        compile_str(tmp_path, src)
+
+
+def test_not_diverges_does_not_propagate_past_bool(tmp_path):
+    # not's operand coerces to bool via _coerce (like if/while's condition
+    # and and/or's operands), rather than propagating never as the whole
+    # not-expression's own type. Its result is only ever used as bool -
+    # e.g. as an if/while condition, or an and/or operand - so this
+    # doesn't come up in practice, but it does mean the never-ness stops
+    # at the not, rather than continuing to coerce to some other type a
+    # diverging expression could otherwise stand in for directly.
+    src = """
+    pub fn main() i32 {
+        let x: i32 = not ({ return 5; });
+        return x;
+    }
+    """
+    with pytest.raises(IncompatibleLetTypError):
         compile_str(tmp_path, src)

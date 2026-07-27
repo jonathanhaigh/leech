@@ -318,13 +318,12 @@ class CfgBuilder:
             see :meth:`build_expr`.
         """
         cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
-        propagated = self._propagate_never(cond, if_ast.condition, ctx)
-        if propagated is not None:
-            return propagated
-        if cond.typ != BOOL:
+        coerced_cond = self._coerce(cond, BOOL, if_ast.condition)
+        if coerced_cond is None:
             raise IfCondNotBoolError(
                 if_ast.condition.diag_str(), cond.typ.name, if_ast.condition.span
             )
+        cond = coerced_cond
         then_bb = self.add_bb("if")
         end_bb = self.add_bb("endif")
         els_bb = None
@@ -383,15 +382,12 @@ class CfgBuilder:
         return VoidValue(if_ast)
 
     def build_while_expr(
-        self, while_ast: ast.WhileExpr, e: Env, ctx: ExprContext
+        self, while_ast: ast.WhileExpr, e: Env, _ctx: ExprContext
     ) -> Value:
         """Lower a ``while`` loop expression.
 
         :param while_ast: The parsed ``while`` expression.
         :param e: The scope to resolve names in.
-        :param ctx: Whether to lower a diverging condition's result for
-            its value or its address; ignored otherwise, since a
-            normally-completing loop is always void.
         :return: A void value.
         :raises WhileCondNotBoolError: If the condition's type isn't
             ``bool``.
@@ -407,15 +403,14 @@ class CfgBuilder:
 
         self.branch(cond_bb, while_ast)
         cond = self.build_expr(while_ast.condition, e, ExprContext.VALUE)
-        propagated = self._propagate_never(cond, while_ast.condition, ctx)
-        if propagated is not None:
-            return propagated
-        if cond.typ != BOOL:
+        coerced_cond = self._coerce(cond, BOOL, while_ast.condition)
+        if coerced_cond is None:
             raise WhileCondNotBoolError(
                 while_ast.condition.diag_str(),
                 cond.typ.name,
                 while_ast.condition.span,
             )
+        cond = coerced_cond
 
         self.cbranch(cond, loop_bb, end_bb, while_ast)
         self.set_position(loop_bb)
@@ -659,10 +654,19 @@ class CfgBuilder:
         """
         is_and = op_ast.op.name == "and"
         lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
+        # Unlike the rhs below, a diverging lhs can't just be coerced and
+        # carried on: lhs_last_bb becomes one of the phi's own incoming
+        # predecessors further down, and if lhs diverged, that block's
+        # real terminator is whatever caused the divergence, not a branch
+        # into the merge block - so the phi would claim a predecessor
+        # that doesn't actually branch there, which LLVM rejects. So
+        # never is handled separately, before this is allowed to reach
+        # _coerce at all.
         propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
         if propagated is not None:
             return propagated
-        if lhs.typ != BOOL:
+        coerced_lhs = self._coerce(lhs, BOOL, op_ast.lhs)
+        if coerced_lhs is None:
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
                 op_ast.op.span,
@@ -671,6 +675,7 @@ class CfgBuilder:
                 "bool",
                 op_ast.lhs.span,
             )
+        lhs = coerced_lhs
 
         rhs_bb = self.add_bb("and_rhs" if is_and else "or_rhs")
         end_bb = self.add_bb("and_end" if is_and else "or_end")
@@ -687,10 +692,8 @@ class CfgBuilder:
         self.set_position(rhs_bb)
         rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
         rhs_last_bb = self.curr_bb  # building the rhs may have moved it
-        if rhs.typ == NEVER:
-            if not rhs_last_bb.terminated:
-                rhs_last_bb.unreachable(op_ast.rhs)
-        elif rhs.typ != BOOL:
+        coerced_rhs = self._coerce(rhs, BOOL, op_ast.rhs)
+        if coerced_rhs is None:
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
                 op_ast.op.span,
@@ -708,7 +711,7 @@ class CfgBuilder:
 
         self.branch(end_bb, op_ast.rhs)  # moves curr_bb to end_bb
         res = self.curr_bb.phi(
-            {lhs_last_bb: short_circuit, rhs_last_bb: rhs}, op_ast
+            {lhs_last_bb: short_circuit, rhs_last_bb: coerced_rhs}, op_ast
         )
         return self._in_context(res, ctx)
 
@@ -744,10 +747,8 @@ class CfgBuilder:
                 )
             case "not":
                 operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
-                propagated = self._propagate_never(operand, op_ast.operand, ctx)
-                if propagated is not None:
-                    return propagated
-                if operand.typ != BOOL:
+                coerced_operand = self._coerce(operand, BOOL, op_ast.operand)
+                if coerced_operand is None:
                     raise InvalidUnaryOpArgTypError(
                         op_ast.op.name,
                         op_ast.op.span,
@@ -755,7 +756,9 @@ class CfgBuilder:
                         "bool",
                         op_ast.operand.span,
                     )
-                return self._in_context(self.curr_bb.not_(operand, op_ast), ctx)
+                return self._in_context(
+                    self.curr_bb.not_(coerced_operand, op_ast), ctx
+                )
             case "-":
                 # A literal operand is folded into a single negative
                 # constant rather than being built and then negated, so
