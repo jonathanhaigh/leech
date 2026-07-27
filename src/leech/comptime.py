@@ -1,15 +1,15 @@
 """A tree-walking interpreter for evaluating IR at compile time.
 
 Used to evaluate module-level ``let`` initializers (see
-:class:`l0.ir_module.ModVar`), which must be computable without running
+:class:`leech.ir_module.ModVar`), which must be computable without running
 generated code.
 """
 
 from typing import Final, Optional
 
-from l0 import ir_module, ir_values
-from l0.asserts import assert_eq, assert_lt, checked_cast
-from l0.l0errors import (
+from leech import ir_module, ir_values
+from leech.asserts import assert_eq, assert_lt, checked_cast
+from leech.leecherrors import (
     CallExternFnAtComptimeError,
     CannotTakeAddressOfComptimeValueError,
     DivisionByZeroAtComptimeError,
@@ -19,7 +19,7 @@ from l0.l0errors import (
 
 
 class Interpreter:
-    """Executes the instructions of a :class:`~l0.ir_values.Cfg` at compile time.
+    """Executes the instructions of a :class:`~leech.ir_values.Cfg` at compile time.
 
     Walks the control-flow graph from its entry block, evaluating each
     instruction in turn and recording its result, until a ``ret``

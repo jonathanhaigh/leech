@@ -9,11 +9,11 @@ from typing import Any, Optional, override
 from lark import Token
 from lark.tree import Branch, ParseTree, Tree
 
-from l0 import typs
-from l0.asserts import assert_eq, assert_in, checked_cast
-from l0.opt_util import opt_map
-from l0.src import SrcFile, SrcSpan
-from l0.typs import ADDR_SIZE, SIGNED, UNSIGNED
+from leech import typs
+from leech.asserts import assert_eq, assert_in, checked_cast
+from leech.opt_util import opt_map
+from leech.src import SrcFile, SrcSpan
+from leech.typs import ADDR_SIZE, SIGNED, UNSIGNED
 
 
 def as_token(branch: Branch[Token]) -> Token:
@@ -303,7 +303,7 @@ class IntLit(Expr):
     A type suffix, if written, fixes the literal's type as
     :attr:`explicit_typ`. Without one the type is left open here and
     chosen during lowering, from the type the surrounding context
-    expects (see :meth:`l0.ir_builder.CfgBuilder._int_lit_typ`).
+    expects (see :meth:`leech.ir_builder.CfgBuilder._int_lit_typ`).
     """
 
     token: Token
@@ -703,9 +703,9 @@ class AssignmentStmt(Stmt):
 class Typ(Ast):
     """Base class for every parsed type-expression node.
 
-    Not to be confused with :class:`l0.typs.Typ`, the *resolved* type
+    Not to be confused with :class:`leech.typs.Typ`, the *resolved* type
     representation this is later converted to (see
-    :meth:`l0.typs.Typ.from_ast`).
+    :meth:`leech.typs.Typ.from_ast`).
     """
 
     def __init__(self, span: SrcSpan) -> None:
@@ -804,7 +804,7 @@ class Receiver(Ast):
 
     Unlike :class:`Param`, its type isn't written in source - it's always
     a pointer to the enclosing ``impl`` block's struct (see
-    :class:`~l0.ir_module.NonBuiltinFnSpec`), so there is no ``typ`` field
+    :class:`~leech.ir_module.NonBuiltinFnSpec`), so there is no ``typ`` field
     here, only the pointer's mutability.
     """
 
@@ -1104,7 +1104,7 @@ def opt_ast(obj: Any) -> Optional[Ast]:
     """Get ``obj``'s ``ast`` attribute, if it has one and it's an :class:`Ast`.
 
     :param obj: The object to inspect (typically an
-        :class:`~l0.ir_values.Value`).
+        :class:`~leech.ir_values.Value`).
     :return: ``obj.ast``, or ``None`` if absent or not an :class:`Ast`.
     """
     attr = getattr(obj, "ast", None)
@@ -1117,7 +1117,7 @@ def opt_span(obj: Any) -> Optional[SrcSpan]:
     """Get the source span of ``obj``'s ``ast`` attribute, if it has one.
 
     :param obj: The object to inspect (typically an
-        :class:`~l0.ir_values.Value`).
+        :class:`~leech.ir_values.Value`).
     :return: The span of ``obj.ast``, or ``None`` if unavailable.
     """
     return opt_map(opt_ast(obj), lambda x: x.span)

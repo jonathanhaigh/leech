@@ -7,20 +7,20 @@ import enum
 from functools import cached_property
 from typing import ClassVar, Final, Generic, Optional, TypeVar, override
 
-from l0 import comptime, ir_builder, ir_env, ir_loader
-from l0 import l0ast as ast
-from l0.asserts import assert_eq, checked_cast
-from l0.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
-from l0.l0errors import (
+from leech import comptime, ir_builder, ir_env, ir_loader
+from leech import leechast as ast
+from leech.asserts import assert_eq, checked_cast
+from leech.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
+from leech.leecherrors import (
     CircularVarInitializerError,
     ImplForNonLocalStructTypError,
     ImplForNonStructTypError,
     ModDoesNotExistError,
     SelfParamOutsideImplError,
 )
-from l0.opt_util import opt_unwrap
-from l0.src import SrcFile, SrcSpan
-from l0.typs import (
+from leech.opt_util import opt_unwrap
+from leech.src import SrcFile, SrcSpan
+from leech.typs import (
     BOOL,
     CONST,
     ISIZE,
@@ -85,8 +85,8 @@ class ModItem:
         """Which namespace this item's name is bound in.
 
         Functions and variables are values, so they live in
-        :attr:`~l0.ir_env.Env.Namespace.VARS`; structs live in
-        :attr:`~l0.ir_env.Env.Namespace.CONTAINERS`, and so do imported
+        :attr:`~leech.ir_env.Env.Namespace.VARS`; structs live in
+        :attr:`~leech.ir_env.Env.Namespace.CONTAINERS`, and so do imported
         modules - a module isn't a type, but it deliberately shares that
         namespace with types, so a module and a type can't share a name.
         A module can therefore hold a value and a type of the same name,
@@ -149,7 +149,7 @@ class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
 
 
 class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
-    """Base class for functions declared or defined in l0 source.
+    """Base class for functions declared or defined in Leech source.
 
     :param ast: The parsed function declaration or definition.
     :param e: The enclosing scope, used to resolve parameter and return
@@ -226,7 +226,7 @@ class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
 
 
 class Fn(NonBuiltinFnSpec[ast.FnDefn]):
-    """A function defined with a body in l0 source."""
+    """A function defined with a body in Leech source."""
 
     @cached_property
     def cfg(self) -> Cfg:
@@ -244,13 +244,13 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         Only relevant for associated functions (defined in an ``impl``
         block): a private one can only be called from the module its
         struct is defined in, mirroring
-        :meth:`~l0.typs.StructField.is_accessible_from`. Free module-level
+        :meth:`~leech.typs.StructField.is_accessible_from`. Free module-level
         functions are filtered by access before reaching this point (see
-        :meth:`~l0.ir_env.Env._resolve_path_segment`), so this is only
+        :meth:`~leech.ir_env.Env._resolve_path_segment`), so this is only
         consulted for the two ways of reaching an associated function: the
         ``Struct::method()`` path form, and the ``value.method()``
         dot-call form (see
-        :meth:`~l0.ir_builder.CfgBuilder.build_call_expr`).
+        :meth:`~leech.ir_builder.CfgBuilder.build_call_expr`).
 
         :param file: The source file to check accessibility from.
         :return: Whether this function is accessible from ``file``.
@@ -266,7 +266,7 @@ class ModVar(ComptimePtr[ast.VarDefn]):
     """A module-level ``let`` binding.
 
     Its initializer must be computable at compile time (see
-    :class:`l0.comptime.Interpreter`), since it becomes a global variable's
+    :class:`leech.comptime.Interpreter`), since it becomes a global variable's
     initial value in the generated code.
 
     :param ast: The parsed variable declaration.
@@ -348,19 +348,19 @@ class ModVar(ComptimePtr[ast.VarDefn]):
 
 
 class Mod:
-    """A compiled l0 module: the functions, variables, types, and imports it declares.
+    """A compiled Leech module: the functions, variables, types, and imports it declares.
 
     A module is *not* a type, and can't be used as one. It can head a
     qualified path (``some_mod::foo``) because
-    :meth:`~l0.ir_env.Env._resolve_path_segment` accepts a module as a
+    :meth:`~leech.ir_env.Env._resolve_path_segment` accepts a module as a
     scope to look a name up in, and it shares the
-    :attr:`~l0.ir_env.Env.Namespace.CONTAINERS` namespace with types so
+    :attr:`~leech.ir_env.Env.Namespace.CONTAINERS` namespace with types so
     that a module and a type can't have the same name (see
     :attr:`ModItem.ns`).
 
     Construction is two-phase: ``__init__`` only sets up empty state, and
     :meth:`build` populates :attr:`items`. This lets
-    :meth:`~l0.ir_loader.ModLoader.load` register a module before building
+    :meth:`~leech.ir_loader.ModLoader.load` register a module before building
     it, so an import cycle resolves to the module already under
     construction rather than recursing forever.
 
@@ -401,7 +401,7 @@ class Mod:
         already bound in :attr:`env` - and so every struct's fields are
         registered before any associated function, which is what makes an
         associated function always the newcomer in a name clash with a
-        field (see :meth:`~l0.typs.StructTyp.add_assoc_fn`).
+        field (see :meth:`~leech.typs.StructTyp.add_assoc_fn`).
 
         :raises ModDoesNotExistError: If an ``import`` names a module file
             that doesn't exist.

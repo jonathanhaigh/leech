@@ -1,7 +1,7 @@
 [project]
-name = "l0"
+name = "leech"
 version = "0.0.1"
-description = "L0 compiler"
+description = "Leech compiler"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-l0 = "l0:main"
+leech = "leech:main"
 
 [build-system]
 requires = ["uv_build>=0.11.13,<0.12.0"]

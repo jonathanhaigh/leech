@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import IncompatibleBinOpArgTypsError
+from leech.leecherrors import IncompatibleBinOpArgTypsError
 from util import check_prog_output, compile_str
 
 CMP_OPS = ("<", "<=", "==", "!=", ">=", ">")

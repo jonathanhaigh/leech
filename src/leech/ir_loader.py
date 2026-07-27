@@ -4,8 +4,8 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Final
 
-from l0 import ir_module, parse
-from l0.src import SrcFile
+from leech import ir_module, parse
+from leech.src import SrcFile
 
 
 class ModLoader:
@@ -14,11 +14,11 @@ class ModLoader:
     A module is identified by its resolved path, so a file reached by
     several import paths (e.g. a "diamond" import graph) is parsed and
     lowered exactly once, and every reference to it shares one
-    :class:`~l0.ir_module.Mod` - and therefore one set of
-    :class:`~l0.typs.StructTyp` instances, which are compared by identity.
+    :class:`~leech.ir_module.Mod` - and therefore one set of
+    :class:`~leech.typs.StructTyp` instances, which are compared by identity.
 
     A loader is single-use in practice: one per invocation of
-    :func:`l0.main.compile`.
+    :func:`leech.main.compile`.
     """
 
     _mods: Final[dict[Path, ir_module.Mod]]
@@ -30,7 +30,7 @@ class ModLoader:
         """Load the module at ``path``, or return the already-loaded one.
 
         :param path: The source file to load. Resolved before use, so
-            paths that differ only in form (``./a.l0`` vs ``a.l0``) name
+            paths that differ only in form (``./a.leech`` vs ``a.leech``) name
             the same module.
         :return: The module, fully built unless it is currently being
             built further up the call stack (see below).

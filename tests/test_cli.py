@@ -1,18 +1,18 @@
 import subprocess
 
-from l0.l0errors import ERROR, NOTE, WARNING
+from leech.leecherrors import ERROR, NOTE, WARNING
 
 
 def run_cli(*args) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["l0", *(str(a) for a in args)],
+        ["leech", *(str(a) for a in args)],
         capture_output=True,
         text=True,
     )
 
 
 def test_cli_success_infers_output_path(tmp_path):
-    src_path = tmp_path / "main.l0"
+    src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
     return 42;
 }
@@ -29,7 +29,7 @@ def test_cli_success_infers_output_path(tmp_path):
 
 
 def test_cli_success_with_explicit_o(tmp_path):
-    src_path = tmp_path / "main.l0"
+    src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
     return 0;
 }
@@ -60,7 +60,7 @@ def test_cli_ll_suffix_requires_explicit_o(tmp_path):
 
 
 def test_cli_error_renders_message_and_does_not_write_output(tmp_path):
-    src_path = tmp_path / "main.l0"
+    src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
     return true + 1;
 }
@@ -83,7 +83,7 @@ def test_cli_error_renders_message_and_does_not_write_output(tmp_path):
 
 
 def test_cli_warning_still_writes_output(tmp_path):
-    src_path = tmp_path / "main.l0"
+    src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
     return 1;
     return 2;
@@ -105,7 +105,7 @@ def test_cli_warning_still_writes_output(tmp_path):
 
 
 def test_cli_unexpected_character_error(tmp_path):
-    src_path = tmp_path / "main.l0"
+    src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
     return 0 @ 1;
 }
@@ -124,7 +124,7 @@ def test_cli_unexpected_character_error(tmp_path):
 
 
 def test_cli_unexpected_token_error(tmp_path):
-    src_path = tmp_path / "main.l0"
+    src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
     return 0
 }
@@ -144,7 +144,7 @@ def test_cli_unexpected_token_error(tmp_path):
 
 
 def test_cli_unexpected_end_of_input_error(tmp_path):
-    src_path = tmp_path / "main.l0"
+    src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
     return 0;
 """)
@@ -166,7 +166,7 @@ def test_cli_unexpected_end_of_input_error(tmp_path):
 
 
 def test_cli_warning_fires_once_for_multiple_dead_statements(tmp_path):
-    src_path = tmp_path / "main.l0"
+    src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
     return 1;
     let y = 2;

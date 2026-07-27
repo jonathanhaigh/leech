@@ -1,4 +1,4 @@
-"""Lowering of l0 IR to LLVM IR, via llvmlite."""
+"""Lowering of Leech IR to LLVM IR, via llvmlite."""
 
 from collections import ChainMap
 from collections.abc import Iterator
@@ -7,10 +7,10 @@ from typing import Optional
 from llvmlite import ir as ll
 from networkx import dfs_postorder_nodes
 
-from l0 import ir_module, ir_values
-from l0.asserts import assert_eq, checked_cast
-from l0.naming import VarNamer
-from l0.typs import (
+from leech import ir_module, ir_values
+from leech.asserts import assert_eq, checked_cast
+from leech.naming import VarNamer
+from leech.typs import (
     SIGNED,
     USIZE,
     VOID,
@@ -29,11 +29,11 @@ from l0.typs import (
 def set_linkage(
     ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access
 ) -> None:
-    """Set an LLVM global's linkage to match an l0 item's access.
+    """Set an LLVM global's linkage to match a Leech item's access.
 
     :param ll_global: The LLVM global variable or function to set linkage
         on.
-    :param access: The l0 item's access.
+    :param access: The Leech item's access.
     """
     if access == ir_module.PRIVATE:
         ll_global.linkage = "private"
@@ -42,7 +42,7 @@ def set_linkage(
 
 
 class Compiler:
-    """Lowers a single :class:`~l0.ir_module.Mod` to an LLVM module.
+    """Lowers a single :class:`~leech.ir_module.Mod` to an LLVM module.
 
     :param mod: The IR module to compile.
     """
@@ -53,10 +53,10 @@ class Compiler:
     _tmp_name: VarNamer
 
     class LLItems:
-        """A cache mapping l0 IR values and types to their LLVM counterparts.
+        """A cache mapping Leech IR values and types to their LLVM counterparts.
 
         Looking up an item that hasn't been compiled yet compiles and
-        caches it on demand. Like :class:`~l0.ir_env.Env`, instances form
+        caches it on demand. Like :class:`~leech.ir_env.Env`, instances form
         a parent/child chain (see :meth:`new_child`), used to give each
         function body its own scope for its instructions' LLVM values
         while still sharing the enclosing module-level cache.
@@ -94,7 +94,7 @@ class Compiler:
         def get(self, item: ir_values.Value | Typ) -> ll.Value | ll.Type:
             """Get the LLVM value or type for ``item``, compiling it if needed.
 
-            :param item: The l0 IR value or type to look up.
+            :param item: The Leech IR value or type to look up.
             :return: The corresponding LLVM value or type.
             """
             if item not in self.items:
@@ -107,7 +107,7 @@ class Compiler:
         def set(self, item: ir_values.Value | Typ, ll_item: ll.Value | ll.Type) -> None:
             """Record the LLVM value or type to use for ``item``.
 
-            :param item: The l0 IR value or type.
+            :param item: The Leech IR value or type.
             :param ll_item: The LLVM value or type to associate with
                 ``item``.
             """

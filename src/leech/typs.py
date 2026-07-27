@@ -1,4 +1,4 @@
-"""l0's type system: type representations, caching, and construction from AST."""
+"""Leech's type system: type representations, caching, and construction from AST."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Hashable
@@ -8,15 +8,15 @@ from types import MappingProxyType
 from typing import ClassVar, Final, Optional, Self, override
 from weakref import WeakValueDictionary
 
-from l0 import ir_env, ir_module
-from l0 import l0ast as ast
-from l0.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
-from l0.l0errors import (
+from leech import ir_env, ir_module
+from leech import leechast as ast
+from leech.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
+from leech.leecherrors import (
     DuplicateFieldInStructDefnError,
     DuplicateItemDefnError,
     InfiniteSizeStructError,
 )
-from l0.src import SrcFile, SrcSpan
+from leech.src import SrcFile, SrcSpan
 
 
 class Mutability(Enum):
@@ -56,7 +56,7 @@ UNSIGNED = Signage.UNSIGNED
 
 
 class Typ(ABC):
-    """Base class for all l0 types.
+    """Base class for all Leech types.
 
     Structural types (e.g. :class:`PtrTyp`, :class:`ArrayTyp`) are
     interned: two calls to :meth:`get_or_create` with equal arguments
@@ -132,7 +132,7 @@ class Typ(ABC):
         Coercion is only ever applied where the target type is
         unambiguous - a call argument, an assignment, a ``return``, a
         struct literal field - never to unify the operands of an
-        operator. See :meth:`~l0.ir_builder.CfgBuilder._coerce`, the sole
+        operator. See :meth:`~leech.ir_builder.CfgBuilder._coerce`, the sole
         caller.
 
         This base implementation allows only the identity coercion;
@@ -395,12 +395,12 @@ class StructTyp(Typ):
     the same name. They're registered in two phases: fields by
     ``__init__``, then associated functions by :meth:`add_assoc_fn` as the
     enclosing module builds its ``impl`` blocks (see
-    :meth:`~l0.ir_module.Mod.build`, which defers those until after every
+    :meth:`~leech.ir_module.Mod.build`, which defers those until after every
     struct is declared).
 
     This makes a struct a named-item container much like a
-    :class:`~l0.ir_module.Mod`, and the member API here deliberately
-    mirrors ``Mod``'s item API (:meth:`~l0.ir_module.Mod.get_item` and
+    :class:`~leech.ir_module.Mod`, and the member API here deliberately
+    mirrors ``Mod``'s item API (:meth:`~leech.ir_module.Mod.get_item` and
     friends) so the two can be unified if that becomes worthwhile. It
     isn't yet: ``Mod`` keys its items on *namespace and* name, since a
     module-level variable and type may share a name, whereas a struct
@@ -511,7 +511,7 @@ class StructTyp(Typ):
 
         Registered among the members first, so a rejected function is
         never left bound in :attr:`env`. This is the mirror image of
-        :meth:`~l0.ir_module.Mod._add_item`, where the ``Env`` is the
+        :meth:`~leech.ir_module.Mod._add_item`, where the ``Env`` is the
         duplicate-definition authority; here the member table is, since
         fields never enter :attr:`env`.
 

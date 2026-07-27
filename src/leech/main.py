@@ -4,8 +4,8 @@ import argparse
 import pathlib
 import sys
 
-from l0.codegen import Compiler
-from l0.l0errors import (
+from leech.codegen import Compiler
+from leech.leecherrors import (
     ERROR,
     UserError,
     TextErrorRenderer,
@@ -13,9 +13,9 @@ from l0.l0errors import (
     errors,
     register_error,
 )
-from l0 import ir_module
-from l0.ir_loader import ModLoader
-from l0.src import SrcFile
+from leech import ir_module
+from leech.ir_loader import ModLoader
+from leech.src import SrcFile
 
 
 def compile_to_ir(file: SrcFile) -> ir_module.Mod:
@@ -23,7 +23,7 @@ def compile_to_ir(file: SrcFile) -> ir_module.Mod:
 
     :param file: The source file to compile.
     :return: The resulting IR module, whose
-        :attr:`~l0.ir_module.Mod.loader` holds every module reached from
+        :attr:`~leech.ir_module.Mod.loader` holds every module reached from
         it.
     :raises UnexpectedCharacterError: If a character in ``file`` can't
         start any valid token.
@@ -46,7 +46,7 @@ def compile(file: SrcFile) -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse the ``l0c`` command-line arguments.
+    """Parse the ``leechc`` command-line arguments.
 
     Defaults the output path (``-o``) to the input filename with its
     suffix replaced by ``.ll``, unless the input filename already ends in
@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
 
     :return: The parsed arguments, with ``filename`` and ``o`` populated.
     """
-    parser = argparse.ArgumentParser(prog="l0c", description="l0 compiler")
+    parser = argparse.ArgumentParser(prog="leechc", description="Leech compiler")
     parser.add_argument("filename", help="source file", type=pathlib.Path)
     parser.add_argument("-o", help="output file", metavar="FILENAME", type=pathlib.Path)
     args = parser.parse_args()
@@ -72,11 +72,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def run() -> None:
-    """Run the ``l0c`` CLI: parse arguments, compile, and report or write output.
+    """Run the ``leechc`` CLI: parse arguments, compile, and report or write output.
 
     On a user-facing compile error, the error is registered and rendered
     to stderr instead of raising; the process then exits with the
-    resulting error level (see :mod:`l0.l0errors`), writing the compiled
+    resulting error level (see :mod:`leech.leecherrors`), writing the compiled
     output to the ``-o`` path only if no error occurred.
     """
     args = parse_args()

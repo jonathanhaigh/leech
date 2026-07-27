@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import WhileCondNotBoolError, WhileTypNotVoidError
+from leech.leecherrors import WhileCondNotBoolError, WhileTypNotVoidError
 from util import check_prog_output, compile_str
 
 

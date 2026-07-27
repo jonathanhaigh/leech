@@ -5,7 +5,7 @@ from typing import Optional
 from lark import Tree, UnexpectedCharacters, UnexpectedToken
 import pytest
 
-from l0.parse import build_parser
+from leech.parse import build_parser
 
 
 @dataclass

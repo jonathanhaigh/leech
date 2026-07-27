@@ -4,17 +4,17 @@ import enum
 import re
 from typing import Any, ChainMap, Optional
 
-from l0 import ir_module, ir_values
-from l0 import l0ast as ast
-from l0 import typs
-from l0.asserts import assert_ge, checked_cast
-from l0.l0errors import (
+from leech import ir_module, ir_values
+from leech import leechast as ast
+from leech import typs
+from leech.asserts import assert_ge, checked_cast
+from leech.leecherrors import (
     DuplicateItemDefnError,
     ItemNotFoundError,
     ModUsedAsTypError,
     PrivateItemAccessError,
 )
-from l0.src import SrcSpan
+from leech.src import SrcSpan
 
 type Container = typs.Typ | ir_module.Mod
 """Anything bindable in the :attr:`Env.Namespace.CONTAINERS` namespace.
@@ -114,7 +114,7 @@ class Env:
         :param span: Where the binding is written, for the duplicate
             diagnostic. Defaults to the span of ``item``'s own AST node,
             which is the right answer for everything except an ``import``
-            (whose item is a whole :class:`~l0.ir_module.Mod`, whose AST
+            (whose item is a whole :class:`~leech.ir_module.Mod`, whose AST
             node covers the entire imported file rather than the
             ``import`` statement).
         :raises DuplicateItemDefnError: If ``name`` is already bound in

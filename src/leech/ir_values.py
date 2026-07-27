@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Final, Generic, Optional, Self, TypeVar, overr
 from more_itertools import nth
 import networkx as nx
 
-from l0 import l0ast as ast
-from l0.asserts import (
+from leech import leechast as ast
+from leech.asserts import (
     assert_all_eq,
     assert_eq,
     assert_ge,
@@ -17,10 +17,10 @@ from l0.asserts import (
     assert_lt,
     checked_cast,
 )
-from l0.l0errors import UnreachableCodeWarning, register_error
-from l0.opt_util import opt_map, opt_unwrap
-from l0.src import SrcSpan
-from l0.typs import (
+from leech.leecherrors import UnreachableCodeWarning, register_error
+from leech.opt_util import opt_map, opt_unwrap
+from leech.src import SrcSpan
+from leech.typs import (
     BOOL,
     CONST,
     CSTR,
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     # reverse reference here is annotation-only, guarding it behind
     # TYPE_CHECKING avoids the runtime import entirely while keeping the
     # annotation available to the type checker.
-    from l0 import ir_module
+    from leech import ir_module
 
 TypT = TypeVar("TypT", bound=Typ, covariant=True, default=Typ)
 AstT = TypeVar("AstT", bound=ast.Ast, covariant=True, default=ast.Ast)
@@ -136,9 +136,9 @@ class ComptimeInt(ComptimeValue[IntTyp]):
     already known to fit ``typ`` (e.g. from a source-level integer
     literal, or the result of a compile-time arithmetic operation) are
     responsible for validating it themselves first, and raising the
-    appropriate diagnostic (:class:`~l0.l0errors.IntLitOverflowError` or
-    :class:`~l0.l0errors.IntOverflowAtComptimeError` respectively) -
-    :meth:`~l0.typs.IntTyp.fits` does the check. This constructor only
+    appropriate diagnostic (:class:`~leech.leecherrors.IntLitOverflowError` or
+    :class:`~leech.leecherrors.IntOverflowAtComptimeError` respectively) -
+    :meth:`~leech.typs.IntTyp.fits` does the check. This constructor only
     asserts that ``value`` fits, as a last-resort invariant check.
 
     :param typ: The integer type.
@@ -360,7 +360,7 @@ class ComptimePtr(Generic[AstT], ComptimeValue[PtrTyp, AstT]):
 
         Used to reject taking the address of, or returning a pointer
         into, a compile-time-only temporary (see
-        :class:`~l0.l0errors.CannotTakeAddressOfComptimeValueError`).
+        :class:`~leech.leecherrors.CannotTakeAddressOfComptimeValueError`).
         """
 
 
@@ -500,8 +500,8 @@ class Param(Value[Typ, ast.Param | ast.Receiver]):
     :param pos: The parameter's zero-based position in the parameter
         list.
     :param ast: The AST node this value was built from, if any - a
-        :class:`~l0.l0ast.Receiver` at position 0 for a method's ``self``,
-        otherwise a :class:`~l0.l0ast.Param`.
+        :class:`~leech.leechast.Receiver` at position 0 for a method's ``self``,
+        otherwise a :class:`~leech.leechast.Param`.
     """
 
     fn: Final[ir_module.FnSpec]
@@ -692,7 +692,7 @@ class IntExtInstr(Instr[IntTyp]):
     """Widens an integer to a type that can represent all of its values.
 
     Only ever built for a legal widening coercion (see
-    :meth:`~l0.typs.IntTyp.coerces_to`), so it never changes the value -
+    :meth:`~leech.typs.IntTyp.coerces_to`), so it never changes the value -
     which of LLVM's sign- and zero-extend it lowers to follows from
     whether :attr:`value`'s type is signed.
 

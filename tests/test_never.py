@@ -1,12 +1,12 @@
 import pytest
 
-from l0.l0errors import (
+from leech.leecherrors import (
     IncompatibleLetTypError,
     InvalidRetTypError,
     ItemNotFoundError,
     MissingRetError,
 )
-from l0.typs import BOOL, I32, NEVER
+from leech.typs import BOOL, I32, NEVER
 from util import check_prog_output, compile_str
 
 

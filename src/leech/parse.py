@@ -5,15 +5,15 @@ import os
 
 from lark import Lark, UnexpectedCharacters, UnexpectedToken
 
-from l0 import l0ast as ast
-from l0.l0errors import UnexpectedCharacterError, UnexpectedTokenError
-from l0.src import SrcFile, SrcSpan
+from leech import leechast as ast
+from leech.leecherrors import UnexpectedCharacterError, UnexpectedTokenError
+from leech.src import SrcFile, SrcSpan
 
-GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "l0.lark")
+GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "leech.lark")
 
 
 def build_parser(start_rule: str) -> Lark:
-    """Build a Lark LALR parser for the l0 grammar.
+    """Build a Lark LALR parser for the Leech grammar.
 
     :param start_rule: The grammar rule to use as the parse entry point.
     :return: A configured, ready-to-use parser.

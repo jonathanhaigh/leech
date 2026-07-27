@@ -1,10 +1,10 @@
 from pathlib import Path
 import subprocess
 
-from l0 import l0ast as ast
-from l0.main import compile
-from l0.parse import build_parser
-from l0.src import SrcFile
+from leech import leechast as ast
+from leech.main import compile
+from leech.parse import build_parser
+from leech.src import SrcFile
 
 
 def find_pos(src: str, substr: str) -> tuple[int, int]:
@@ -32,13 +32,13 @@ def compile_file(path: Path) -> Path:
 
 
 def compile_str(tmp_path: Path, src: str) -> Path:
-    path = tmp_path / "main.l0"
+    path = tmp_path / "main.leech"
     write_whole_file(path, src)
     return compile_file(path)
 
 
 def parse_mod(tmp_path: Path, src: str) -> ast.Mod:
-    path = tmp_path / "main.l0"
+    path = tmp_path / "main.leech"
     write_whole_file(path, src)
     file = SrcFile(path)
     tree = build_parser("mod").parse(file.src)
@@ -47,9 +47,9 @@ def parse_mod(tmp_path: Path, src: str) -> ast.Mod:
 
 def compile_modules(tmp_path: Path, **modules: str) -> list[Path]:
     for mod_name, mod_src in modules.items():
-        write_whole_file(tmp_path / f"{mod_name}.l0", mod_src)
+        write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
 
-    return [compile_file(tmp_path / f"{mod_name}.l0") for mod_name in modules.keys()]
+    return [compile_file(tmp_path / f"{mod_name}.leech") for mod_name in modules.keys()]
 
 
 def check_prog_output(

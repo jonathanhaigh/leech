@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import IfCondNotBoolError, IfTypNotVoidError, IfElsTypMismatchError
+from leech.leecherrors import IfCondNotBoolError, IfTypNotVoidError, IfElsTypMismatchError
 from util import check_prog_output, compile_str
 
 

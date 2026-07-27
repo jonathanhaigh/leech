@@ -1,25 +1,25 @@
-from l0.asserts import checked_cast
-from l0.ir_env import Env
-from l0.ir_loader import ModLoader
-from l0.ir_module import Mod
-from l0.typs import StructTyp
+from leech.asserts import checked_cast
+from leech.ir_env import Env
+from leech.ir_loader import ModLoader
+from leech.ir_module import Mod
+from leech.typs import StructTyp
 
 from util import write_whole_file
 
 
 def load_main(tmp_path, **modules):
-    """Write the given modules and load main.l0, returning its loader."""
+    """Write the given modules and load main.leech, returning its loader."""
     for mod_name, mod_src in modules.items():
-        write_whole_file(tmp_path / f"{mod_name}.l0", mod_src)
+        write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
     loader = ModLoader()
-    loader.load(tmp_path / "main.l0")
+    loader.load(tmp_path / "main.leech")
     return loader
 
 
 def test_load_is_memoized(tmp_path):
-    write_whole_file(tmp_path / "main.l0", "pub fn main() i32 { return 0; }")
+    write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
     loader = ModLoader()
-    path = tmp_path / "main.l0"
+    path = tmp_path / "main.leech"
     assert loader.load(path) is loader.load(path)
     assert len(loader.mods) == 1
 
@@ -28,10 +28,10 @@ def test_load_normalizes_paths(tmp_path):
     # The same file named two different ways is one module, which is what
     # keeps a cycle back to the file the CLI was invoked on from
     # reloading it.
-    write_whole_file(tmp_path / "main.l0", "pub fn main() i32 { return 0; }")
+    write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
     loader = ModLoader()
-    direct = loader.load(tmp_path / "main.l0")
-    indirect = loader.load(tmp_path / "." / "main.l0")
+    direct = loader.load(tmp_path / "main.leech")
+    indirect = loader.load(tmp_path / "." / "main.leech")
     assert direct is indirect
     assert len(loader.mods) == 1
 

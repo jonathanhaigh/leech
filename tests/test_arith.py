@@ -1,5 +1,5 @@
 import pytest
-from l0.l0errors import (
+from leech.leecherrors import (
     DivisionByZeroAtComptimeError,
     IncompatibleBinOpArgTypsError,
     IntLitOverflowError,

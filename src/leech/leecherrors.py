@@ -6,8 +6,8 @@ from enum import IntEnum
 import sys
 from typing import Optional
 
-from l0.asserts import assert_gt
-from l0.src import SrcSpan
+from leech.asserts import assert_gt
+from leech.src import SrcSpan
 
 
 class Level(IntEnum):
@@ -80,7 +80,7 @@ class UnexpectedCharacterError(UserError):
 class UnexpectedTokenError(UserError):
     """Raised when the parser encounters a token that doesn't fit anywhere
     in the grammar at that point - a syntax error. Also raised when the
-    input ends before a complete module has been parsed, since l0's LALR
+    input ends before a complete module has been parsed, since Leech's LALR
     parser reports that the same way, as an unexpected end-of-input
     "token".
 

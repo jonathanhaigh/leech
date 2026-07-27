@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import InvalidBinOpArgTypError, InvalidUnaryOpArgTypError
+from leech.leecherrors import InvalidBinOpArgTypError, InvalidUnaryOpArgTypError
 from util import check_prog_output, compile_str
 
 AND_CASES = (

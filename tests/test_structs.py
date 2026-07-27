@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import (
+from leech.leecherrors import (
     DuplicateFieldInStructExprError,
     DuplicateFieldInStructDefnError,
     FieldAccessIntoInvalidTypError,
@@ -151,8 +151,8 @@ def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
 def test_duplicate_field_in_unused_private_struct_in_imported_module(tmp_path):
     # Field names are registered when the struct is built, not lazily when
     # something first looks at its fields, so a duplicate is caught even in
-    # a struct nothing ever uses. Compiles only main.l0 on purpose:
-    # compile_modules would compile a.l0 as a root module too, and a root
+    # a struct nothing ever uses. Compiles only main.leech on purpose:
+    # compile_modules would compile a.leech as a root module too, and a root
     # module's structs are all reached by codegen regardless.
     a_src = """
     struct T {
@@ -167,7 +167,7 @@ def test_duplicate_field_in_unused_private_struct_in_imported_module(tmp_path):
         return a::g();
     }
     """
-    write_whole_file(tmp_path / "a.l0", a_src)
+    write_whole_file(tmp_path / "a.leech", a_src)
     with pytest.raises(DuplicateFieldInStructDefnError):
         compile_str(tmp_path, main_src)
 

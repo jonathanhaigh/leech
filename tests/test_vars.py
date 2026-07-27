@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import (
+from leech.leecherrors import (
     CircularVarInitializerError,
     DuplicateItemDefnError,
     ItemNotFoundError,
@@ -253,7 +253,7 @@ def test_diverging_bare_block_local_var(tmp_path):
     # A block with no tail expression is `never`-typed (not `void`) if its
     # statements already diverged, the same distinction as above but
     # without an if/else - a bare `{ ... }` is a valid expression on its
-    # own (l0.lark's `?expr: block_expr`).
+    # own (leech.lark's `?expr: block_expr`).
     src = """
     pub fn main() i32 {
         let x = {

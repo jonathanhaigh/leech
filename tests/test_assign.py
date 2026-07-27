@@ -1,6 +1,6 @@
 import pytest
 
-from l0.l0errors import (
+from leech.leecherrors import (
     AssignToConstError,
     IncompatibleAssignmentTypError,
     SetNonLocalVarAtComptimeError,
@@ -337,7 +337,7 @@ def test_assign_evaluates_place_before_value(tmp_path):
     # `mark_place` has the side effect of setting `order` to 1 before
     # yielding the (const, always-0) index of the assignment's place.
     # `read_order` has no side effect; it just reports what `order` was
-    # when it ran. If the place is evaluated before the value (which l0
+    # when it ran. If the place is evaluated before the value (which Leech
     # guarantees; see CfgBuilder.build_assignment_stmt's docstring),
     # `read_order` runs after `mark_place` has already set `order` to 1,
     # so `arr[0]` ends up holding 1. If it were the other way around,
