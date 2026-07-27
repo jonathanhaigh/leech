@@ -188,8 +188,19 @@ class Compiler:
             case BoolTyp():
                 return ll.IntType(1)
             case FnTyp():
+                # A `never` return type has no LLVM representation of its
+                # own (see the NeverTyp case below): a function declared
+                # to return `never` only ever ends its body in
+                # `unreachable`, so its LLVM signature can say `void`
+                # without a real `ret` instruction ever needing to match
+                # it.
+                ll_ret_typ = (
+                    ll.VoidType()
+                    if isinstance(typ.ret_typ, NeverTyp)
+                    else self._ll_mod_items.get(typ.ret_typ)
+                )
                 return ll.FunctionType(
-                    self._ll_mod_items.get(typ.ret_typ),
+                    ll_ret_typ,
                     (self._ll_mod_items.get(param_typ) for param_typ in typ.param_typs),
                 )
             case PtrTyp():

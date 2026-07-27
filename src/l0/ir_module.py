@@ -24,6 +24,7 @@ from l0.typs import (
     BOOL,
     CONST,
     ISIZE,
+    NEVER,
     USIZE,
     VOID,
     FnTyp,
@@ -179,7 +180,13 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
         if self.ast.ret_typ is None:
             ret_typ = VOID
         else:
-            ret_typ = Typ.from_ast(self.ast.ret_typ, self.env)
+            # "never" names a type only here, in return-type position: a
+            # function that never returns normally is the one place a
+            # bottom type is useful to write down. Elsewhere (params,
+            # struct fields, ...) it stays unnameable, the same as "void".
+            ret_typ_env = self.env.new_child()
+            ret_typ_env.add_container("never", NEVER)
+            ret_typ = Typ.from_ast(self.ast.ret_typ, ret_typ_env)
 
         param_typs: list[Typ] = [
             Typ.from_ast(param_ast.typ, self.env) for param_ast in self.ast.params

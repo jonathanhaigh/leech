@@ -1271,7 +1271,9 @@ class CfgBuilder:
         """
         match stmt_ast:
             case ast.ExprStmt():
-                self.build_expr(stmt_ast.expr, e, ExprContext.VALUE)
+                value = self.build_expr(stmt_ast.expr, e, ExprContext.VALUE)
+                if value.typ == NEVER and not self.curr_bb.terminated:
+                    self.curr_bb.unreachable(stmt_ast.expr)
             case ast.RetStmt():
                 self.build_ret_stmt(stmt_ast, e)
             case ast.LetStmt():

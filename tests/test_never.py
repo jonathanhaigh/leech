@@ -1,6 +1,11 @@
 import pytest
 
-from l0.l0errors import IncompatibleLetTypError
+from l0.l0errors import (
+    IncompatibleLetTypError,
+    InvalidRetTypError,
+    ItemNotFoundError,
+    MissingRetError,
+)
 from l0.typs import BOOL, I32, NEVER
 from util import check_prog_output, compile_str
 
@@ -238,4 +243,93 @@ def test_not_diverges_does_not_propagate_past_bool(tmp_path):
     }
     """
     with pytest.raises(IncompatibleLetTypError):
+        compile_str(tmp_path, src)
+
+
+# --- `never` as a written return-type annotation - the source-level
+# feature, as opposed to the type-lattice behaviour exercised above ---
+
+
+def test_extern_fn_returning_never(tmp_path):
+    src = """
+    extern fn exit(code: i32) never;
+
+    fn f(x: i32) i32 {
+        if (x < 0) {
+            exit(7);
+        };
+        return x;
+    }
+
+    pub fn main() i32 {
+        return f(5) + f(-1);
+    }
+    """
+    check_prog_output(tmp_path, src, "", 7)
+
+
+def test_never_as_bare_statement_terminates_block(tmp_path):
+    # A call to a never-returning function, used as a plain statement
+    # (not a let initializer, return, or other coercion site), still has
+    # to make the rest of its block unreachable - otherwise falling off
+    # the end of the enclosing function looks like a missing return.
+    src = """
+    extern fn exit(code: i32) never;
+
+    pub fn main() i32 {
+        exit(9);
+    }
+    """
+    check_prog_output(tmp_path, src, "", 9)
+
+
+def test_fn_defn_returning_never_via_self_call(tmp_path):
+    src = """
+    fn diverge() never {
+        return diverge();
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    compile_str(tmp_path, src)
+
+
+def test_never_fn_falling_off_end_is_missing_ret(tmp_path):
+    src = """
+    fn f() never {
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(MissingRetError):
+        compile_str(tmp_path, src)
+
+
+def test_never_fn_returning_a_value_is_invalid_ret_typ(tmp_path):
+    src = """
+    fn f() never {
+        return 5;
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(InvalidRetTypError):
+        compile_str(tmp_path, src)
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        # never isn't a nameable type outside return-type position, the
+        # same as void.
+        "fn f(x: never) i32 { return 0; }\npub fn main() i32 { return 0; }",
+        "struct S { a: never }\npub fn main() i32 { return 0; }",
+        "pub fn main() i32 { let x: never = 0; return 0; }",
+    ],
+)
+def test_never_not_nameable_outside_ret_typ(tmp_path, src):
+    with pytest.raises(ItemNotFoundError):
         compile_str(tmp_path, src)
