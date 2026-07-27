@@ -318,6 +318,9 @@ class CfgBuilder:
             see :meth:`build_expr`.
         """
         cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
+        propagated = self._propagate_never(cond, if_ast.condition, ctx)
+        if propagated is not None:
+            return propagated
         if cond.typ != BOOL:
             raise IfCondNotBoolError(
                 if_ast.condition.diag_str(), cond.typ.name, if_ast.condition.span
@@ -380,12 +383,15 @@ class CfgBuilder:
         return VoidValue(if_ast)
 
     def build_while_expr(
-        self, while_ast: ast.WhileExpr, e: Env, _ctx: ExprContext
+        self, while_ast: ast.WhileExpr, e: Env, ctx: ExprContext
     ) -> Value:
         """Lower a ``while`` loop expression.
 
         :param while_ast: The parsed ``while`` expression.
         :param e: The scope to resolve names in.
+        :param ctx: Whether to lower a diverging condition's result for
+            its value or its address; ignored otherwise, since a
+            normally-completing loop is always void.
         :return: A void value.
         :raises WhileCondNotBoolError: If the condition's type isn't
             ``bool``.
@@ -401,6 +407,9 @@ class CfgBuilder:
 
         self.branch(cond_bb, while_ast)
         cond = self.build_expr(while_ast.condition, e, ExprContext.VALUE)
+        propagated = self._propagate_never(cond, while_ast.condition, ctx)
+        if propagated is not None:
+            return propagated
         if cond.typ != BOOL:
             raise WhileCondNotBoolError(
                 while_ast.condition.diag_str(),
@@ -577,6 +586,9 @@ class CfgBuilder:
             return self.build_logic_bin_op_expr(op_ast, e, ctx)
 
         lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
+        propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
+        if propagated is not None:
+            return propagated
         if not isinstance(lhs.typ, IntTyp):
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
@@ -588,6 +600,9 @@ class CfgBuilder:
             )
 
         rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
+        propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
+        if propagated is not None:
+            return propagated
         if lhs.typ != rhs.typ:
             raise IncompatibleBinOpArgTypsError(
                 op_ast.op.name,
@@ -644,6 +659,9 @@ class CfgBuilder:
         """
         is_and = op_ast.op.name == "and"
         lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
+        propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
+        if propagated is not None:
+            return propagated
         if lhs.typ != BOOL:
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
@@ -726,6 +744,9 @@ class CfgBuilder:
                 )
             case "not":
                 operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
+                propagated = self._propagate_never(operand, op_ast.operand, ctx)
+                if propagated is not None:
+                    return propagated
                 if operand.typ != BOOL:
                     raise InvalidUnaryOpArgTypError(
                         op_ast.op.name,
@@ -761,6 +782,9 @@ class CfgBuilder:
                 operand = self.build_expr(
                     op_ast.operand, e, ExprContext.VALUE, expected_typ
                 )
+                propagated = self._propagate_never(operand, op_ast.operand, ctx)
+                if propagated is not None:
+                    return propagated
                 if not isinstance(operand.typ, IntTyp) or operand.typ.signage != SIGNED:
                     raise InvalidUnaryOpArgTypError(
                         op_ast.op.name,
@@ -1332,6 +1356,13 @@ class CfgBuilder:
         """
         if value.typ == target:
             return value
+        if value.typ == NEVER:
+            # A diverging expression never actually produces a value, so
+            # it coerces to any type - by the time a real value would be
+            # read here, control can't have reached this point.
+            if not self.curr_bb.terminated:
+                self.curr_bb.unreachable(ast)
+            return UndefValue(target, ast)
         if not value.typ.coerces_to(target):
             return None
         if isinstance(target, IntTyp):
@@ -1339,6 +1370,30 @@ class CfgBuilder:
         # A *mut T given where a *T is wanted needs nothing emitted: the
         # two have the same representation.
         return value
+
+    def _propagate_never(
+        self, value: Value, ast_node: ast.Ast, ctx: ExprContext
+    ) -> Optional[Value]:
+        """If ``value`` is ``never``-typed, terminate the current block.
+
+        For operators, which don't coerce toward a target type (see
+        :meth:`_coerce`): a diverging operand makes the whole operator
+        expression diverge too, the same way :meth:`build_if_expr`
+        already treats a branch that never reaches its end.
+
+        :param value: The already-built operand to check.
+        :param ast_node: The AST node to attribute a new terminator to.
+        :param ctx: Whether to lower the result for its value or its
+            address.
+        :return: A ``never``-typed result, or ``None`` if ``value`` isn't
+            ``never``-typed, so the caller should proceed with ``value``
+            normally.
+        """
+        if value.typ != NEVER:
+            return None
+        if not self.curr_bb.terminated:
+            self.curr_bb.unreachable(ast_node)
+        return self._in_context(NeverValue(ast_node), ctx)
 
     def _value_to_ptr(self, value: Value) -> Value[PtrTyp]:
         alloca = self.curr_bb.alloca(value.typ, CONST, 1, value.ast)

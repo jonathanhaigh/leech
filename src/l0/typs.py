@@ -617,6 +617,10 @@ class NeverTyp(Typ):
     def name(self) -> str:
         return "never"
 
+    @override
+    def coerces_to(self, target: Typ) -> bool:
+        return True
+
 
 #: The built-in numeric, boolean, string, and control-flow type singletons.
 U8 = IntTyp.get_or_create(8, UNSIGNED)

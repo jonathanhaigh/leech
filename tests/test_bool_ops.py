@@ -250,7 +250,9 @@ def test_invalid_not_operand(tmp_path):
 
 
 @pytest.mark.parametrize("op", ("and", "or"))
-def test_never_lhs_is_invalid(op, tmp_path):
+def test_never_lhs_compiles(op, tmp_path):
+    # A diverging left operand makes the whole and/or expression diverge
+    # too - symmetric with the already-working diverging-rhs case below.
     src = f"""
     fn f() i32 {{
         let a = ({{ return 1; }}) {op} true;
@@ -260,8 +262,7 @@ def test_never_lhs_is_invalid(op, tmp_path):
         return f();
     }}
     """
-    with pytest.raises(InvalidBinOpArgTypError):
-        compile_str(tmp_path, src)
+    check_prog_output(tmp_path, src, "", 1)
 
 
 @pytest.mark.parametrize(
