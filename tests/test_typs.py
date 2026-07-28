@@ -151,7 +151,7 @@ def test_int_lit_infers_declared_let_typ(tmp_path):
         # Every context with a single unambiguous target type.
         ("fn takes(v: u8) u8 { return v; }", "takes(200)"),
         ("struct T { a: u8 }", "T { a: 200 }.a"),
-        ("fn first(a: [u8; 2]) u8 { return a[0]; }", "first([200, 1])"),
+        ("fn first(a: [u8; 2]) u8 { return a.[0]; }", "first([200, 1])"),
         ("fn ret() u8 { return 200; }", "ret()"),
         ("fn tail() u8 { 200 }", "tail()"),
         ("fn cond() u8 { if (true) { 200 } else { 1 } }", "cond()"),

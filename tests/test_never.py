@@ -88,7 +88,7 @@ def test_array_element_diverges(tmp_path):
     src = """
     pub fn main() i32 {
         let a = [1, { return 5; }, 3];
-        return a[0usize] + 100;
+        return a.[0usize] + 100;
     }
     """
     check_prog_output(tmp_path, src, "", 5)
@@ -98,7 +98,7 @@ def test_array_index_diverges(tmp_path):
     src = """
     pub fn main() i32 {
         let a = [1, 2, 3];
-        return a[{ return 5; }] + 100;
+        return a.[{ return 5; }] + 100;
     }
     """
     check_prog_output(tmp_path, src, "", 5)
@@ -222,7 +222,7 @@ def test_array_first_element_diverges(tmp_path):
     src = """
     pub fn main() i32 {
         let a = [{ return 5; }, 2, 3];
-        return a[0usize] + 100;
+        return a.[0usize] + 100;
     }
     """
     check_prog_output(tmp_path, src, "", 5)

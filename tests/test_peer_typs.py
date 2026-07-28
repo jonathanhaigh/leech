@@ -28,7 +28,7 @@ def test_array_elt_typ_independent_of_order(elements, tmp_path):
     fn takes_u8(x: u8) u8 {{ return x; }}
     pub fn main() i32 {{
         let a = [{elements}];
-        return takes_u8(a[1usize]);
+        return takes_u8(a.[1usize]);
     }}
     """
     check_prog_output(tmp_path, src, "", 2)
@@ -38,7 +38,7 @@ def test_array_expected_elt_typ_still_wins(tmp_path):
     src = """
     pub fn main() i32 {
         let a: [u8; 3] = [1, 2, 3];
-        return a[2usize];
+        return a.[2usize];
     }
     """
     check_prog_output(tmp_path, src, "", 3)
@@ -49,7 +49,7 @@ def test_array_all_flexible_falls_back_to_i32(tmp_path):
     fn takes_i32(x: i32) i32 { return x; }
     pub fn main() i32 {
         let a = [1, 2, 3];
-        return takes_i32(a[1usize]);
+        return takes_i32(a.[1usize]);
     }
     """
     check_prog_output(tmp_path, src, "", 2)
@@ -79,7 +79,7 @@ def test_array_elts_widen_when_the_typ_is_declared(elements, tmp_path):
     fn takes_u32(x: u32) u32 {{ return x; }}
     pub fn main() i32 {{
         let a: [u32; 2] = [{elements}];
-        return if (takes_u32(a[1usize]) == 2u32) {{ 7 }} else {{ 0 }};
+        return if (takes_u32(a.[1usize]) == 2u32) {{ 7 }} else {{ 0 }};
     }}
     """
     check_prog_output(tmp_path, src, "", 7)

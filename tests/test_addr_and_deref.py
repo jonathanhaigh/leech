@@ -98,8 +98,8 @@ def test_addr_and_deref_array_elt(tmp_path):
     src = """
     pub fn main() i32 {
         let x = [101, 102, 103];
-        let y = [&x[2usize], &x[1usize], &x[0usize]];
-        return y[1usize].*;
+        let y = [&x.[2usize], &x.[1usize], &x.[0usize]];
+        return y.[1usize].*;
     }
     """
     check_prog_output(tmp_path, src, "", 102)
@@ -108,8 +108,8 @@ def test_addr_and_deref_array_elt(tmp_path):
 def test_addr_and_deref_comptime_array_elt(tmp_path):
     src = """
     let x = [101, 102, 103];
-    let y = [&x[2usize], &x[1usize], &x[0usize]];
-    let z = y[1usize].*;
+    let y = [&x.[2usize], &x.[1usize], &x.[0usize]];
+    let z = y.[1usize].*;
 
     pub fn main() i32 {
         return z;
@@ -128,11 +128,11 @@ def test_addr_and_deref_nested(tmp_path):
     pub fn main() i32 {
         let w = [101, 102, 103];
         let x = T{
-            a: [&w[0usize], &w[1usize], &w[2usize]],
+            a: [&w.[0usize], &w.[1usize], &w.[2usize]],
         };
         let y = [&x];
         let z = &y;
-        let ret = z.*[0usize].*.a[2usize].*;
+        let ret = z.*.[0usize].*.a.[2usize].*;
         return ret;
     }
     """
@@ -148,11 +148,11 @@ def test_addr_and_deref_comptime_nested(tmp_path):
 
     let w = [101, 102, 103];
     let x = T{
-        a: [&w[0usize], &w[1usize], &w[2usize]],
+        a: [&w.[0usize], &w.[1usize], &w.[2usize]],
     };
     let y = [&x];
     let z = &y;
-    let ret = z.*[0usize].*.a[2usize].*;
+    let ret = z.*.[0usize].*.a.[2usize].*;
 
     pub fn main() i32 {
         return ret;

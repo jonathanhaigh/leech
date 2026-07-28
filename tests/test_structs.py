@@ -31,7 +31,7 @@ def test_struct_access(tmp_path):
         let mut t = T { a: 10, b: "abc", c: a};
         puts(t.b);
         t.a = 9;
-        return t.a + t.c[3usize];
+        return t.a + t.c.[3usize];
     }
     """
     check_prog_output(tmp_path, src, "abc\n", 13)

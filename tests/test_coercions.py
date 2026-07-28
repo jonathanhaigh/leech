@@ -77,7 +77,7 @@ def test_mut_ptr_coerces_to_const_ptr_array_element(tmp_path):
     # The element type comes from the parameter, so the elements coerce.
     src = """
     fn first(a: [*i32; 2]) i32 {
-        return a[0usize].*;
+        return a.[0usize].*;
     }
     pub fn main() i32 {
         let mut x = 42;
@@ -312,7 +312,7 @@ def test_widening_int_coercion_struct_field(tmp_path):
 def test_widening_int_coercion_array_element(tmp_path):
     src = """
     fn first(a: [i32; 2]) i32 {
-        return a[0usize];
+        return a.[0usize];
     }
     pub fn main() i32 {
         let small = 42i8;

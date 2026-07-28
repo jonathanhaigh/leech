@@ -18,7 +18,7 @@ def test_mod_array(tmp_path):
     let arr = [a, 10, 11, 12];
     pub fn main() i32 {
         let idx = 0usize;
-        return arr[idx] + arr[1usize];
+        return arr.[idx] + arr.[1usize];
     }
     """
     check_prog_output(tmp_path, src, "", 19)
@@ -27,10 +27,10 @@ def test_mod_array(tmp_path):
 def test_comptime_array_access(tmp_path):
     src = """
     let arr = [1, 2, 3, 4];
-    let x = arr[2usize];
+    let x = arr.[2usize];
     let idx = 3usize;
-    let y = arr[idx];
-    let z = [10, 20, 30][1usize];
+    let y = arr.[idx];
+    let z = [10, 20, 30].[1usize];
 
     pub fn main() i32 {
         return x + y + z;
@@ -45,7 +45,7 @@ def test_array_index_int_lit_infers_usize(tmp_path):
     src = """
     pub fn main() i32 {
         let arr = [10, 20, 30];
-        return arr[0] + arr[2];
+        return arr.[0] + arr.[2];
     }
     """
     check_prog_output(tmp_path, src, "", 40)
@@ -57,7 +57,7 @@ def test_array_index_widens_to_usize(tmp_path):
     pub fn main() i32 {
         let arr = [10, 20, 30];
         let i: u8 = 2;
-        return arr[i];
+        return arr.[i];
     }
     """
     check_prog_output(tmp_path, src, "", 30)
@@ -69,7 +69,7 @@ def test_array_index_signed_is_rejected(tmp_path):
     pub fn main() i32 {
         let arr = [10, 20, 30];
         let i = 1i32;
-        return arr[i];
+        return arr.[i];
     }
     """
     with pytest.raises(InvalidIndexTypError):
@@ -79,7 +79,7 @@ def test_array_index_signed_is_rejected(tmp_path):
 def test_comptime_array_index_int_lit_infers_usize(tmp_path):
     src = """
     let arr = [1, 2, 3, 4];
-    let x = arr[2];
+    let x = arr.[2];
     pub fn main() i32 {
         return x;
     }
@@ -116,7 +116,7 @@ def test_comptime_array_incompatible_typs(tmp_path):
 def test_comptime_array_invalid_index(tmp_path):
     src = """
     let arr = [1, 2];
-    let x = arr[true];
+    let x = arr.[true];
 
     pub fn main() i32 {
         return 0;
@@ -129,7 +129,7 @@ def test_comptime_array_invalid_index(tmp_path):
 def test_comptime_index_into_non_array(tmp_path):
     src = """
     let not_an_arr = 1;
-    let x = not_an_arr[0usize];
+    let x = not_an_arr.[0usize];
 
     pub fn main() i32 {
         return 0;
@@ -145,7 +145,7 @@ def test_local_array(tmp_path):
         let a = 5;
         let arr = [1, 2, 3, 4, a];
         let idx = 3usize;
-        return arr[idx + 1usize];
+        return arr.[idx + 1usize];
     }
     """
     check_prog_output(tmp_path, src, "", 5)
@@ -170,7 +170,7 @@ def test_local_array_invalid_index(tmp_path):
     pub fn main() i32 {
         let arr = [1, 2];
         let idx = true;
-        let x = arr[idx];
+        let x = arr.[idx];
         return 0;
     }
     """
@@ -183,7 +183,7 @@ def test_local_index_into_non_array(tmp_path):
 
     pub fn main() i32 {
         let not_an_arr = 1;
-        let x = not_an_arr[0usize];
+        let x = not_an_arr.[0usize];
         return 0;
     }
     """
@@ -194,11 +194,11 @@ def test_local_index_into_non_array(tmp_path):
 def test_array_ret_typ_and_param_typ(tmp_path):
     src = """
     fn f(a: [i32; 4]) [i32; 2] {
-        [a[2usize], a[3usize]]
+        [a.[2usize], a.[3usize]]
     }
 
     pub fn main() i32 {
-        return f([1, 2, 3, 4])[1usize];
+        return f([1, 2, 3, 4]).[1usize];
     }
     """
     check_prog_output(tmp_path, src, "", 4)

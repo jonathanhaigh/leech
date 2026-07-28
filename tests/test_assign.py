@@ -74,8 +74,8 @@ def test_assign_to_local_arr_element(tmp_path):
     src = """
     pub fn main() i32 {
         let mut a = [1, 2, 3, 4];
-        a[2usize] = 10;
-        return a[2usize] + a[0usize];
+        a.[2usize] = 10;
+        return a.[2usize] + a.[0usize];
     }
     """
     check_prog_output(tmp_path, src, "", 11)
@@ -85,8 +85,8 @@ def test_assign_to_local_nested_arr_element(tmp_path):
     src = """
     pub fn main() i32 {
         let mut a = [[1, 2], [3, 4]];
-        a[1usize][0usize] = 10;
-        return a[1usize][0usize];
+        a.[1usize].[0usize] = 10;
+        return a.[1usize].[0usize];
     }
     """
     check_prog_output(tmp_path, src, "", 10)
@@ -96,8 +96,8 @@ def test_assign_to_const_local_arr_element(tmp_path):
     src = """
     pub fn main() i32 {
         let a = [1, 2, 3, 4];
-        a[2usize] = 10;
-        return a[2usize] + a[0usize];
+        a.[2usize] = 10;
+        return a.[2usize] + a.[0usize];
     }
     """
     with pytest.raises(AssignToConstError):
@@ -108,8 +108,8 @@ def test_assign_to_const_local_nested_arr_element(tmp_path):
     src = """
     pub fn main() i32 {
         let a = [[1, 2], [3, 4]];
-        a[1usize][0usize] = 10;
-        return a[1usize][0usize];
+        a.[1usize].[0usize] = 10;
+        return a.[1usize].[0usize];
     }
     """
     with pytest.raises(AssignToConstError):
@@ -325,7 +325,7 @@ def test_assign_to_temporary(tmp_path):
     }
 
     pub fn main() i32 {
-        f()[0usize] = 10;
+        f().[0usize] = 10;
         return 0;
     }
     """
@@ -340,7 +340,7 @@ def test_assign_evaluates_place_before_value(tmp_path):
     # when it ran. If the place is evaluated before the value (which Leech
     # guarantees; see CfgBuilder.build_assignment_stmt's docstring),
     # `read_order` runs after `mark_place` has already set `order` to 1,
-    # so `arr[0]` ends up holding 1. If it were the other way around,
+    # so `arr.[0]` ends up holding 1. If it were the other way around,
     # `read_order` would still see `order`'s initial value of 0.
     src = """
     let mut order = 0;
@@ -356,8 +356,8 @@ def test_assign_evaluates_place_before_value(tmp_path):
 
     pub fn main() i32 {
         let mut arr = [0, 0];
-        arr[mark_place()] = read_order();
-        return arr[0usize];
+        arr.[mark_place()] = read_order();
+        return arr.[0usize];
     }
     """
     check_prog_output(tmp_path, src, "", 1)

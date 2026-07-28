@@ -176,7 +176,7 @@ COMMENTED_INTS = [
         ("expr", "[]", T("array_expr", "arg_list")),
         (
             "expr",
-            "a[0]",
+            "a.[0]",
             T("array_access_expr").cs(
                 T("var_expr", "path", "ident", Tok("a")),
                 T("int_lit", Tok("0")),
@@ -184,7 +184,7 @@ COMMENTED_INTS = [
         ),
         (
             "expr",
-            "f()[x]",
+            "f().[x]",
             T("array_access_expr").cs(
                 T("call_expr").cs(
                     T("var_expr", "path", "ident", Tok("f")),
@@ -246,7 +246,7 @@ COMMENTED_INTS = [
         ),
         (
             "expr",
-            "arr[10].xyz",
+            "arr.[10].xyz",
             T("struct_access_expr").cs(
                 T("array_access_expr").cs(
                     T("var_expr", "path", "ident", Tok("arr")),
@@ -633,7 +633,7 @@ COMMENTED_INTS = [
         ),
         (
             "stmt",
-            "x[10] = y;",
+            "x.[10] = y;",
             T("stmt", "assignment_stmt").cs(
                 T("array_access_expr").cs(
                     T("var_expr", "path", "ident", Tok("x")),
@@ -644,7 +644,7 @@ COMMENTED_INTS = [
         ),
         (
             "stmt",
-            "f()[1] = 2;",
+            "f().[1] = 2;",
             T("stmt", "assignment_stmt").cs(
                 T("array_access_expr").cs(
                     T("call_expr").cs(
@@ -1038,7 +1038,7 @@ def test_parse(rule, src, expected):
         ("expr", "*a"),
         ("expr", "a < b < c"),
         ("expr", "a.1"),
-        ("expr", "a.[10]"),
+        ("expr", "a[10]"),
         ("expr", ".a"),
         ("expr", "a."),
         ("block_expr", ""),

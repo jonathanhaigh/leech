@@ -117,7 +117,7 @@ call_expr: atom_expr "(" arg_list ")"
 arg_list: _arg_list?
 _arg_list: expr ("," expr)* ","?
 
-array_access_expr: atom_expr "[" expr "]"
+array_access_expr: atom_expr ".[" expr "]"
 
 struct_expr: basic_typ "{" struct_field_expr_list "}"
 struct_field_expr_list: _struct_field_expr_list?
