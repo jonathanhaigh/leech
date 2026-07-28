@@ -33,17 +33,14 @@ from leech.errors import (
     IfElsTypMismatchError,
     IfTypNotVoidError,
     IncompatibleAssignmentTypError,
-    IncompatibleBinOpArgTypsError,
     IncompatibleLetTypError,
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
     InvalidArgTypError,
-    InvalidBinOpArgTypError,
     InvalidIndexTypError,
     InvalidRetTypError,
     InvalidStructFieldError,
-    InvalidUnaryOpArgTypError,
     InvalidVoidRetError,
     LoopLabelNotFoundError,
     MissingFieldInStructExprError,
@@ -62,7 +59,7 @@ from leech.errors import (
     WhileTypNotVoidError,
 )
 from leech.naming import VarNamer
-from leech.opt_util import opt_map, opt_or_default
+from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.typcheck import (
     IntExt,
     Invalid,
@@ -674,13 +671,8 @@ class CfgBuilder:
             either operand's type is already decided, that type is what
             the other has to match.
         :return: The operation's result.
-        :raises InvalidBinOpArgTypError: If either operand's type isn't an
-            integer type.
-        :raises IncompatibleBinOpArgTypsError: If the operands' types
-            don't match.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering either operand; see
-            :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering either operand; see :meth:`build_expr`.
         """
         if op_ast.op.name in ("and", "or"):
             return self.build_logic_bin_op_expr(op_ast, e, ctx)
@@ -723,29 +715,13 @@ class CfgBuilder:
             if propagated is not None:
                 return propagated
 
-        if not isinstance(lhs.typ, IntTyp):
-            raise InvalidBinOpArgTypError(
-                op_ast.op.name,
-                op_ast.op.span,
-                "left",
-                lhs.typ.name,
-                "an integer type",
-                op_ast.lhs.span,
-            )
-        if lhs.typ != rhs.typ:
-            raise IncompatibleBinOpArgTypsError(
-                op_ast.op.name,
-                op_ast.op.span,
-                lhs.typ.name,
-                op_ast.lhs.span,
-                rhs.typ.name,
-                op_ast.rhs.span,
-            )
-
+        # lhs and rhs are already known (by TypCheck) to be equal integer
+        # types by this point.
+        lhs_typ = checked_cast(lhs.typ, IntTyp)
         op = op_ast.op.name
         match op:
             case "<" | "<=" | "==" | "!=" | ">=" | ">":
-                if lhs.typ.signage == SIGNED:
+                if lhs_typ.signage == SIGNED:
                     res = self.curr_bb.icmp_signed(op, lhs, rhs, op_ast)
                 else:
                     res = self.curr_bb.icmp_unsigned(op, lhs, rhs, op_ast)
@@ -756,7 +732,7 @@ class CfgBuilder:
             case "*":
                 res = self.curr_bb.mul(lhs, rhs, op_ast)
             case "/":
-                if lhs.typ.signage == SIGNED:
+                if lhs_typ.signage == SIGNED:
                     res = self.curr_bb.sdiv(lhs, rhs, op_ast)
                 else:
                     res = self.curr_bb.udiv(lhs, rhs, op_ast)
@@ -780,11 +756,8 @@ class CfgBuilder:
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The operation's result.
-        :raises InvalidBinOpArgTypError: If either operand's type isn't
-            ``bool``.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering either operand; see
-            :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering either operand; see :meth:`build_expr`.
         """
         is_and = op_ast.op.name == "and"
         lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
@@ -799,17 +772,8 @@ class CfgBuilder:
         propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
         if propagated is not None:
             return propagated
-        coerced_lhs = self._coerce(lhs, op_ast.lhs)
-        if coerced_lhs is None:
-            raise InvalidBinOpArgTypError(
-                op_ast.op.name,
-                op_ast.op.span,
-                "left",
-                lhs.typ.name,
-                "bool",
-                op_ast.lhs.span,
-            )
-        lhs = coerced_lhs
+        # TypCheck already confirmed lhs coerces to bool.
+        lhs = opt_unwrap(self._coerce(lhs, op_ast.lhs))
 
         rhs_bb = self.add_bb("and_rhs" if is_and else "or_rhs")
         end_bb = self.add_bb("and_end" if is_and else "or_end")
@@ -826,16 +790,8 @@ class CfgBuilder:
         self.set_position(rhs_bb)
         rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
         rhs_last_bb = self.curr_bb  # building the rhs may have moved it
-        coerced_rhs = self._coerce(rhs, op_ast.rhs)
-        if coerced_rhs is None:
-            raise InvalidBinOpArgTypError(
-                op_ast.op.name,
-                op_ast.op.span,
-                "right",
-                rhs.typ.name,
-                "bool",
-                op_ast.rhs.span,
-            )
+        # TypCheck already confirmed rhs coerces to bool.
+        coerced_rhs = opt_unwrap(self._coerce(rhs, op_ast.rhs))
 
         if rhs_last_bb.terminated:
             # The rhs diverged, so only the short-circuit path reaches
@@ -867,10 +823,8 @@ class CfgBuilder:
             if known. Negation preserves its operand's type, so this is
             passed on to the operand; ``&`` and ``not`` ignore it.
         :return: The operation's result.
-        :raises InvalidUnaryOpArgTypError: If ``-``'s operand isn't a
-            signed integer type, or ``not``'s operand isn't ``bool``.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the operand; see :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the operand; see :meth:`build_expr`.
         """
         match op_ast.op.name:
             case "&":
@@ -880,15 +834,8 @@ class CfgBuilder:
                 )
             case "not":
                 operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
-                coerced_operand = self._coerce(operand, op_ast.operand)
-                if coerced_operand is None:
-                    raise InvalidUnaryOpArgTypError(
-                        op_ast.op.name,
-                        op_ast.op.span,
-                        operand.typ.name,
-                        "bool",
-                        op_ast.operand.span,
-                    )
+                # TypCheck already confirmed operand coerces to bool.
+                coerced_operand = opt_unwrap(self._coerce(operand, op_ast.operand))
                 return self._in_context(
                     self.curr_bb.not_(coerced_operand, op_ast), ctx
                 )
@@ -899,15 +846,6 @@ class CfgBuilder:
                 # positive half of the range stops one short of it, so
                 # e.g. the 128 in -128i8 would overflow on its own.
                 if isinstance(op_ast.operand, ast.IntLit):
-                    typ = self.typ_check_results.int_lit_typ(op_ast.operand)
-                    if typ.signage != SIGNED:
-                        raise InvalidUnaryOpArgTypError(
-                            op_ast.op.name,
-                            op_ast.op.span,
-                            typ.name,
-                            "a signed integer type",
-                            op_ast.operand.span,
-                        )
                     return self._in_context(
                         self._build_int_lit(op_ast.operand, True),
                         ctx,
@@ -919,14 +857,6 @@ class CfgBuilder:
                 propagated = self._propagate_never(operand, op_ast.operand, ctx)
                 if propagated is not None:
                     return propagated
-                if not isinstance(operand.typ, IntTyp) or operand.typ.signage != SIGNED:
-                    raise InvalidUnaryOpArgTypError(
-                        op_ast.op.name,
-                        op_ast.op.span,
-                        operand.typ.name,
-                        "a signed integer type",
-                        op_ast.operand.span,
-                    )
                 return self._in_context(self.curr_bb.neg(operand, op_ast), ctx)
             case _:
                 assert False, f"unhandled unary operator {op_ast.op.name!r}"

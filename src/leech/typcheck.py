@@ -8,13 +8,13 @@ the result into a :class:`TypCheckResults` instead. ``CfgBuilder`` will
 then read from that table rather than re-deriving the same facts during
 lowering.
 
-So far, only int-literal typing (and the peer-type resolution it depends
-on) and coercion decisions are genuinely checked and recorded - everything
-else below computes a best-effort type, defensively (never raising past
-what's already a legitimate, pre-existing diagnostic - e.g. an
-unresolvable name), just enough to thread ``expected_typ`` correctly and
-support peer resolution. ``CfgBuilder`` still performs every other check
-unchanged; those will migrate in later steps.
+So far, int-literal typing (and the peer-type resolution it depends on),
+coercion decisions, and operator checking are genuinely checked and
+recorded - everything else below computes a best-effort type, defensively
+(never raising past what's already a legitimate, pre-existing diagnostic -
+e.g. an unresolvable name), just enough to thread ``expected_typ``
+correctly and support peer resolution. ``CfgBuilder`` still performs every
+other check unchanged; those will migrate in later steps.
 """
 
 from dataclasses import dataclass
@@ -24,7 +24,12 @@ from leech import ast
 from leech.ir_env import Env
 from leech.ir_values import Param, Value
 from leech.opt_util import opt_map, opt_or_default, opt_unwrap
-from leech.errors import IntLitOverflowError
+from leech.errors import (
+    IncompatibleBinOpArgTypsError,
+    IntLitOverflowError,
+    InvalidBinOpArgTypError,
+    InvalidUnaryOpArgTypError,
+)
 from leech.typs import (
     BOOL,
     CONST,
@@ -226,9 +231,9 @@ class TypCheck:
 
     Walks the same shape of tree :class:`~leech.ir_builder.CfgBuilder`
     lowers, but only genuinely checks (and records into :attr:`results`)
-    integer-literal typing and coercion decisions so far; every other
-    construct below computes a defensive, best-effort type just to keep
-    that walk going correctly.
+    integer-literal typing, coercion decisions, and operators so far;
+    every other construct below computes a defensive, best-effort type
+    just to keep that walk going correctly.
     """
 
     results: Final[TypCheckResults]
@@ -443,6 +448,11 @@ class TypCheck:
         if op_ast.op.name in ("and", "or"):
             return self.check_logic_bin_op_expr(op_ast, e)
 
+        # Both operands are always checked, even where CfgBuilder itself
+        # would short-circuit on a diverging one (see _propagate_never) -
+        # unreachable code still gets type-checked. never is exempt from
+        # the checks below, rather than short-circuiting them: it stands
+        # in for a value of any type, on either side.
         if is_flexible_int_lit(op_ast.lhs) and not is_flexible_int_lit(op_ast.rhs):
             rhs_typ = self.check_expr(op_ast.rhs, e, None)
             lhs_typ = self.check_expr(op_ast.lhs, e, resolve_peer_typ([rhs_typ]))
@@ -457,15 +467,44 @@ class TypCheck:
                 rhs_hint = resolve_peer_typ([lhs_typ])
             rhs_typ = self.check_expr(op_ast.rhs, e, rhs_hint)
 
+        if lhs_typ != NEVER and not isinstance(lhs_typ, IntTyp):
+            raise InvalidBinOpArgTypError(
+                op_ast.op.name,
+                op_ast.op.span,
+                "left",
+                lhs_typ.name,
+                "an integer type",
+                op_ast.lhs.span,
+            )
+        if lhs_typ != NEVER and rhs_typ != NEVER and lhs_typ != rhs_typ:
+            raise IncompatibleBinOpArgTypsError(
+                op_ast.op.name,
+                op_ast.op.span,
+                lhs_typ.name,
+                op_ast.lhs.span,
+                rhs_typ.name,
+                op_ast.rhs.span,
+            )
+
         if op_ast.op.name in ("<", "<=", "==", "!=", ">=", ">"):
             return BOOL
-        return lhs_typ
+        return lhs_typ if lhs_typ != NEVER else rhs_typ
 
     def check_logic_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env) -> Typ:
+        # Both operands are always checked; never's coercion to bool
+        # always succeeds (see _record_coercion), so it's naturally
+        # exempt from the checks below without a special case.
         lhs_typ = self.check_expr(op_ast.lhs, e, None)
-        self._record_coercion(op_ast.lhs, lhs_typ, BOOL)
+        if isinstance(self._record_coercion(op_ast.lhs, lhs_typ, BOOL), Invalid):
+            raise InvalidBinOpArgTypError(
+                op_ast.op.name, op_ast.op.span, "left", lhs_typ.name, "bool", op_ast.lhs.span
+            )
+
         rhs_typ = self.check_expr(op_ast.rhs, e, None)
-        self._record_coercion(op_ast.rhs, rhs_typ, BOOL)
+        if isinstance(self._record_coercion(op_ast.rhs, rhs_typ, BOOL), Invalid):
+            raise InvalidBinOpArgTypError(
+                op_ast.op.name, op_ast.op.span, "right", rhs_typ.name, "bool", op_ast.rhs.span
+            )
         return BOOL
 
     def check_unary_op_expr(
@@ -473,27 +512,59 @@ class TypCheck:
     ) -> Typ:
         match op_ast.op.name:
             case "&":
-                return self.check_place(op_ast.operand, e)
+                return self._check_addr_of_expr(op_ast, e)
             case "not":
-                operand_typ = self.check_expr(op_ast.operand, e, None)
-                self._record_coercion(op_ast.operand, operand_typ, BOOL)
-                return BOOL
+                return self._check_not_expr(op_ast, e)
             case "-":
-                if isinstance(op_ast.operand, ast.IntLit):
-                    typ = self._infer_int_lit_typ(op_ast.operand, expected_typ)
-                    # A wrong-signedness operand is InvalidUnaryOpArgTypError's
-                    # concern, not this checker's yet - matching the order
-                    # CfgBuilder still checks in, that error preempts an
-                    # overflow check on the negated value ever running.
-                    if typ.signage == SIGNED:
-                        value = -op_ast.operand.value
-                        if not typ.fits(value):
-                            raise IntLitOverflowError(value, typ.name, op_ast.span)
-                    self.results._set_int_lit_typ(op_ast.operand, typ)
-                    return typ
-                return self.check_expr(op_ast.operand, e, expected_typ)
+                return self._check_neg_expr(op_ast, e, expected_typ)
             case _:
                 assert False, f"unhandled unary operator {op_ast.op.name!r}"
+
+    def _check_addr_of_expr(self, op_ast: ast.UnaryOpExpr, e: Env) -> Typ:
+        return self.check_place(op_ast.operand, e)
+
+    def _check_not_expr(self, op_ast: ast.UnaryOpExpr, e: Env) -> Typ:
+        operand_typ = self.check_expr(op_ast.operand, e, None)
+        if isinstance(
+            self._record_coercion(op_ast.operand, operand_typ, BOOL), Invalid
+        ):
+            raise InvalidUnaryOpArgTypError(
+                op_ast.op.name, op_ast.op.span, operand_typ.name, "bool", op_ast.operand.span
+            )
+        return BOOL
+
+    def _check_neg_expr(
+        self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Optional[Typ]
+    ) -> Typ:
+        if isinstance(op_ast.operand, ast.IntLit):
+            typ = self._infer_int_lit_typ(op_ast.operand, expected_typ)
+            if typ.signage != SIGNED:
+                raise InvalidUnaryOpArgTypError(
+                    op_ast.op.name,
+                    op_ast.op.span,
+                    typ.name,
+                    "a signed integer type",
+                    op_ast.operand.span,
+                )
+            value = -op_ast.operand.value
+            if not typ.fits(value):
+                raise IntLitOverflowError(value, typ.name, op_ast.span)
+            self.results._set_int_lit_typ(op_ast.operand, typ)
+            return typ
+
+        operand_typ = self.check_expr(op_ast.operand, e, expected_typ)
+        # never is exempt: it stands in for a value of any type.
+        if operand_typ != NEVER and (
+            not isinstance(operand_typ, IntTyp) or operand_typ.signage != SIGNED
+        ):
+            raise InvalidUnaryOpArgTypError(
+                op_ast.op.name,
+                op_ast.op.span,
+                operand_typ.name,
+                "a signed integer type",
+                op_ast.operand.span,
+            )
+        return operand_typ
 
     def check_var_expr(self, var_ast: ast.VarExpr, e: Env) -> Typ:
         from leech import ir_module
@@ -673,7 +744,9 @@ class TypCheck:
             return expected_typ
         return I32
 
-    def _record_coercion(self, node: ast.Ast, value_typ: Typ, target: Typ) -> None:
+    def _record_coercion(
+        self, node: ast.Ast, value_typ: Typ, target: Typ
+    ) -> Optional[Coercion]:
         """Decide, and record, how a checked expression coerces to a target type.
 
         Mirrors the decision :meth:`~leech.ir_builder.CfgBuilder._coerce`
@@ -685,6 +758,9 @@ class TypCheck:
             later be called with.
         :param value_typ: The expression's checked type.
         :param target: The type its context expects.
+        :return: The recorded decision, for callers that need to check it
+            (e.g. raise if it's :class:`Invalid`) rather than just have it
+            available for lowering later.
         """
         if value_typ == target:
             coercion = None
@@ -697,3 +773,4 @@ class TypCheck:
         else:
             coercion = PtrMutRelax()
         self.results._set_coercion(node, coercion)
+        return coercion
