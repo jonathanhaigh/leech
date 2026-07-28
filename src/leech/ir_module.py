@@ -7,7 +7,7 @@ import enum
 from functools import cached_property
 from typing import ClassVar, Final, Generic, Optional, TypeVar, override
 
-from leech import comptime, ir_builder, ir_env, ir_loader
+from leech import comptime, ir_builder, ir_env, ir_loader, typcheck
 from leech import ast
 from leech.asserts import assert_eq, checked_cast
 from leech.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
@@ -229,11 +229,21 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
     """A function defined with a body in Leech source."""
 
     @cached_property
+    def typ_check_results(self) -> typcheck.TypCheckResults:
+        """This function's body, type-checked into a side table.
+
+        Built lazily, on first access; forced by :attr:`cfg` before
+        lowering begins.
+        """
+        return typcheck.TypCheck().check_fn(opt_unwrap(self.ast), self.env)
+
+    @cached_property
     def cfg(self) -> Cfg:
         """This function's body, lowered to a control-flow graph.
 
         Built lazily, on first access.
         """
+        _ = self.typ_check_results
         builder = ir_builder.CfgBuilder(self)
         builder.build_fn(opt_unwrap(self.ast), self.env)
         return builder.cfg
@@ -333,11 +343,21 @@ class ModVar(ComptimePtr[ast.VarDefn]):
             ModVar._resolving.pop()
 
     @cached_property
+    def typ_check_results(self) -> typcheck.TypCheckResults:
+        """This variable's initializer, type-checked into a side table.
+
+        Built lazily, on first access; forced by :attr:`cfg` before
+        lowering begins.
+        """
+        return typcheck.TypCheck().check_var_initializer(opt_unwrap(self.ast), self.env)
+
+    @cached_property
     def cfg(self) -> Cfg:
         """The initializer expression, lowered to a control-flow graph.
 
         Built lazily, on first access.
         """
+        _ = self.typ_check_results
         builder = ir_builder.CfgBuilder()
         builder.build_var_initializer(opt_unwrap(self.ast), self.env)
         return builder.cfg
