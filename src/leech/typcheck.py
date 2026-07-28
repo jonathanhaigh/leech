@@ -8,27 +8,29 @@ the result into a :class:`TypCheckResults` instead. ``CfgBuilder`` will
 then read from that table rather than re-deriving the same facts during
 lowering.
 
-Only int-literal typing (and the peer-type resolution it depends on) is
-genuinely checked and recorded so far - everything else below computes a
-best-effort type, defensively (never raising past what's already a
-legitimate, pre-existing diagnostic - e.g. an unresolvable name), just
-enough to thread ``expected_typ`` correctly and support peer resolution.
-``CfgBuilder`` still performs every other check unchanged; those will
-migrate in later steps.
+So far, only int-literal typing (and the peer-type resolution it depends
+on) and coercion decisions are genuinely checked and recorded - everything
+else below computes a best-effort type, defensively (never raising past
+what's already a legitimate, pre-existing diagnostic - e.g. an
+unresolvable name), just enough to thread ``expected_typ`` correctly and
+support peer resolution. ``CfgBuilder`` still performs every other check
+unchanged; those will migrate in later steps.
 """
 
+from dataclasses import dataclass
 from typing import Final, Optional
 
 from leech import ast
 from leech.ir_env import Env
 from leech.ir_values import Param, Value
-from leech.opt_util import opt_map, opt_or_default
+from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.errors import IntLitOverflowError
 from leech.typs import (
     BOOL,
     CONST,
     CSTR,
     I32,
+    MUT,
     NEVER,
     SIGNED,
     USIZE,
@@ -112,6 +114,50 @@ def _struct_field_typ(typ: Typ, name: str) -> Optional[Typ]:
     return opt_map(typ.fields.get(name), lambda f: f.typ)
 
 
+class Coercion:
+    """How (if at all) a checked expression coerces to the type its context
+    expects.
+
+    See :meth:`TypCheck._record_coercion` and
+    :meth:`~leech.ir_builder.CfgBuilder._coerce`. ``None`` (rather than a
+    :class:`Coercion`) means the expression's type already matched, so
+    there's nothing to convert.
+    """
+
+
+@dataclass(frozen=True)
+class NeverDiverge(Coercion):
+    """The coerced value is ``never``-typed - already unreachable.
+
+    :param target: The type of the placeholder value to produce in its
+        place, matching what a real value of the target type would have
+        been.
+    """
+
+    target: Typ
+
+
+class PtrMutRelax(Coercion):
+    """A ``*mut T`` value given where a ``*T`` is wanted.
+
+    The two share a representation, so nothing needs to be emitted.
+    """
+
+
+@dataclass(frozen=True)
+class IntExt(Coercion):
+    """Zero/sign-extend an integer value to a wider integer type.
+
+    :param target: The type to extend to.
+    """
+
+    target: IntTyp
+
+
+class Invalid(Coercion):
+    """The value's type doesn't coerce to the target at all."""
+
+
 class _TypedPlace(Value[PtrTyp]):
     """Stands in for a local variable's address during type checking.
 
@@ -138,15 +184,17 @@ class TypCheckResults:
 
     A side table of per-expression-node facts, keyed by AST node identity
     (plain object identity - :class:`~leech.ast.Ast` nodes don't override
-    equality). Only int-literal types are recorded so far; more will be
-    added as further checking logic migrates out of
+    equality). Only int-literal types and coercion decisions are recorded
+    so far; more will be added as further checking logic migrates out of
     :class:`~leech.ir_builder.CfgBuilder`.
     """
 
     _int_lit_typs: Final[dict[ast.IntLit, IntTyp]]
+    _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
 
     def __init__(self) -> None:
         self._int_lit_typs = {}
+        self._coercions = {}
 
     def int_lit_typ(self, node: ast.IntLit) -> IntTyp:
         """The type chosen (and overflow-checked) for an integer literal.
@@ -159,14 +207,28 @@ class TypCheckResults:
     def _set_int_lit_typ(self, node: ast.IntLit, typ: IntTyp) -> None:
         self._int_lit_typs[node] = typ
 
+    def coercion(self, node: ast.Ast) -> Optional[Coercion]:
+        """The coercion decision recorded for ``node``.
+
+        :param node: The AST node the coerced expression was checked
+            against, as recorded by :meth:`TypCheck._record_coercion`.
+        :return: The coercion to apply, or ``None`` if ``node``'s checked
+            type already matched what its context expected.
+        """
+        return self._coercions[node]
+
+    def _set_coercion(self, node: ast.Ast, coercion: Optional[Coercion]) -> None:
+        self._coercions[node] = coercion
+
 
 class TypCheck:
     """Type-checks a function body or module-variable initializer.
 
     Walks the same shape of tree :class:`~leech.ir_builder.CfgBuilder`
     lowers, but only genuinely checks (and records into :attr:`results`)
-    integer-literal typing so far; every other construct below computes a
-    defensive, best-effort type just to keep that walk going correctly.
+    integer-literal typing and coercion decisions so far; every other
+    construct below computes a defensive, best-effort type just to keep
+    that walk going correctly.
     """
 
     results: Final[TypCheckResults]
@@ -192,7 +254,9 @@ class TypCheck:
         for param in params:
             assert param.ast is not None
             e.add_var(param.ast.name.name, _TypedPlace(PtrTyp.get_or_create(param.typ, CONST)))
-        self.check_expr(fn_ast.block, e, ret_typ)
+        block_typ = self.check_expr(fn_ast.block, e, ret_typ)
+        ret_ast = opt_or_default(fn_ast.block.expr, fn_ast.block)
+        self._record_coercion(ret_ast, block_typ, ret_typ)
         return self.results
 
     def check_var_initializer(self, defn_ast: ast.VarDefn, e: Env) -> TypCheckResults:
@@ -206,7 +270,9 @@ class TypCheck:
         e = e.new_child()
         let_ast = defn_ast.let_stmt
         declared_typ = opt_map(let_ast.typ, lambda t: Typ.from_ast(t, e))
-        self.check_expr(let_ast.expr, e, declared_typ)
+        expr_typ = self.check_expr(let_ast.expr, e, declared_typ)
+        if declared_typ is not None:
+            self._record_coercion(let_ast.expr, expr_typ, declared_typ)
         return self.results
 
     def check_expr(
@@ -274,7 +340,8 @@ class TypCheck:
     def check_if_expr(
         self, if_ast: ast.IfExpr, e: Env, expected_typ: Optional[Typ]
     ) -> Typ:
-        self.check_expr(if_ast.condition, e, None)
+        cond_typ = self.check_expr(if_ast.condition, e, None)
+        self._record_coercion(if_ast.condition, cond_typ, BOOL)
 
         if if_ast.els is None:
             self.check_expr(if_ast.then, e, expected_typ)
@@ -309,25 +376,31 @@ class TypCheck:
         return NEVER
 
     def check_while_expr(self, while_ast: ast.WhileExpr, e: Env) -> Typ:
-        self.check_expr(while_ast.condition, e, None)
+        cond_typ = self.check_expr(while_ast.condition, e, None)
+        self._record_coercion(while_ast.condition, cond_typ, BOOL)
         self.check_expr(while_ast.block, e, None)
         return VOID
 
     def check_call_expr(self, call_ast: ast.CallExpr, e: Env) -> Typ:
-        fn_typ, recv_typ = self._resolve_callee(call_ast.callee, e)
+        fn_typ, recv_ast, recv_typ = self._resolve_callee(call_ast.callee, e)
 
         param_typs = fn_typ.param_typs if fn_typ is not None else ()
+        if recv_ast is not None and recv_typ is not None and param_typs:
+            self._record_coercion(recv_ast, recv_typ, param_typs[0])
+
         offset = 1 if recv_typ is not None else 0
         for i, arg_ast in enumerate(call_ast.args, start=offset):
             arg_hint = param_typs[i] if i < len(param_typs) else None
-            self.check_expr(arg_ast, e, arg_hint)
+            arg_typ = self.check_expr(arg_ast, e, arg_hint)
+            if arg_hint is not None:
+                self._record_coercion(arg_ast, arg_typ, arg_hint)
 
         return fn_typ.ret_typ if fn_typ is not None else VOID
 
     def _resolve_callee(
         self, callee_ast: ast.Expr, e: Env
-    ) -> tuple[Optional[CallableTyp], Optional[Typ]]:
-        """The callee's type, and its receiver's type if it's a method call.
+    ) -> tuple[Optional[CallableTyp], Optional[ast.Expr], Optional[Typ]]:
+        """The callee's type, and its receiver's expression and type, if any.
 
         If ``callee_ast`` is written as ``x.name``, ``name`` is looked up
         as a method of ``x``'s struct type first; otherwise (and if
@@ -336,15 +409,19 @@ class TypCheck:
 
         :param callee_ast: The parsed callee expression.
         :param e: The scope to resolve names in.
-        :return: ``(fn_typ, recv_typ)``. ``fn_typ`` is ``None`` if the
-            callee doesn't resolve to a callable type. ``recv_typ`` is
-            ``None`` unless ``callee_ast`` names a method, in which case
-            it's that method's implicit receiver's type.
+        :return: ``(fn_typ, recv_ast, recv_typ)``. ``fn_typ`` is ``None``
+            if the callee doesn't resolve to a callable type. ``recv_ast``
+            and ``recv_typ`` are ``None`` unless ``callee_ast`` names a
+            method, in which case they're the receiver expression and its
+            *place* type (a pointer, with the receiver's own mutability -
+            see :meth:`check_place`, since a method receiver is always
+            passed by pointer).
         """
         if not isinstance(callee_ast, ast.StructAccessExpr):
-            return _callable_typ(self.check_expr(callee_ast, e, None)), None
+            return _callable_typ(self.check_expr(callee_ast, e, None)), None, None
 
-        struct_typ = self.check_expr(callee_ast.struct, e, None)
+        recv_typ = self.check_place(callee_ast.struct, e)
+        struct_typ = recv_typ.pointee_typ if isinstance(recv_typ, PtrTyp) else VOID
         method = (
             struct_typ.get_assoc_fn(callee_ast.field.name)
             if isinstance(struct_typ, StructTyp)
@@ -355,10 +432,10 @@ class TypCheck:
             and method.ast is not None
             and method.ast.receiver is not None
         ):
-            return method.fn_typ, struct_typ
+            return method.fn_typ, callee_ast.struct, recv_typ
 
         field_typ = _struct_field_typ(struct_typ, callee_ast.field.name)
-        return opt_map(field_typ, _callable_typ), None
+        return opt_map(field_typ, _callable_typ), None, None
 
     def check_bin_op_expr(
         self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Optional[Typ]
@@ -385,8 +462,10 @@ class TypCheck:
         return lhs_typ
 
     def check_logic_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env) -> Typ:
-        self.check_expr(op_ast.lhs, e, None)
-        self.check_expr(op_ast.rhs, e, None)
+        lhs_typ = self.check_expr(op_ast.lhs, e, None)
+        self._record_coercion(op_ast.lhs, lhs_typ, BOOL)
+        rhs_typ = self.check_expr(op_ast.rhs, e, None)
+        self._record_coercion(op_ast.rhs, rhs_typ, BOOL)
         return BOOL
 
     def check_unary_op_expr(
@@ -394,11 +473,10 @@ class TypCheck:
     ) -> Typ:
         match op_ast.op.name:
             case "&":
-                return PtrTyp.get_or_create(
-                    self.check_expr(op_ast.operand, e, None), CONST
-                )
+                return self.check_place(op_ast.operand, e)
             case "not":
-                self.check_expr(op_ast.operand, e, None)
+                operand_typ = self.check_expr(op_ast.operand, e, None)
+                self._record_coercion(op_ast.operand, operand_typ, BOOL)
                 return BOOL
             case "-":
                 if isinstance(op_ast.operand, ast.IntLit):
@@ -444,7 +522,10 @@ class TypCheck:
 
         for i, t in enumerate(built):
             if t is None:
-                self.check_expr(arr_expr.elements[i], e, elt_typ)
+                built[i] = self.check_expr(arr_expr.elements[i], e, elt_typ)
+
+        for i, elt_ast in enumerate(arr_expr.elements):
+            self._record_coercion(elt_ast, opt_unwrap(built[i]), elt_typ)
 
         if not arr_expr.elements:
             return ArrayTyp.get_or_create(opt_or_default(expected_elt_typ, VOID), 0)
@@ -452,7 +533,8 @@ class TypCheck:
 
     def check_array_access_expr(self, aa_expr: ast.ArrayAccessExpr, e: Env) -> Typ:
         arr_typ = self.check_expr(aa_expr.array, e, None)
-        self.check_expr(aa_expr.index, e, USIZE)
+        index_typ = self.check_expr(aa_expr.index, e, USIZE)
+        self._record_coercion(aa_expr.index, index_typ, USIZE)
         if isinstance(arr_typ, ArrayTyp):
             return arr_typ.element_typ
         return VOID
@@ -461,7 +543,9 @@ class TypCheck:
         struct_typ = Typ.from_ast(struct_expr.typ, e)
         for field_expr in struct_expr.fields:
             field_typ = _struct_field_typ(struct_typ, field_expr.ident.name)
-            self.check_expr(field_expr.value, e, field_typ)
+            value_typ = self.check_expr(field_expr.value, e, field_typ)
+            if field_typ is not None:
+                self._record_coercion(field_expr.value, value_typ, field_typ)
         return struct_typ
 
     def check_struct_access_expr(self, sa_expr: ast.StructAccessExpr, e: Env) -> Typ:
@@ -473,6 +557,55 @@ class TypCheck:
         if isinstance(ptr_typ, PtrTyp) and not isinstance(ptr_typ.pointee_typ, FnTyp):
             return ptr_typ.pointee_typ
         return VOID
+
+    def check_place(self, expr_ast: ast.Expr, e: Env) -> Typ:
+        """The type of ``&expr_ast`` - the type of ``expr_ast``'s address.
+
+        Only ``&``'s operand needs this: every other context cares about
+        an expression's *value* type, which :meth:`check_expr` already
+        gives (place vs. value is otherwise a lowering-only concern - see
+        :attr:`~leech.ir_builder.ExprContext.PLACE`). For a real place
+        expression (a variable, array access, struct access, or deref)
+        the result's mutability follows the place; for anything else,
+        address-of lowers by copying the value into a fresh ``const``
+        temporary and taking its address (see
+        :meth:`~leech.ir_builder.CfgBuilder._value_to_ptr`), which the
+        fallback here mirrors.
+
+        :param expr_ast: The parsed operand of ``&``.
+        :param e: The scope to resolve names in.
+        :return: The pointer type ``&expr_ast`` produces.
+        """
+        value_typ = self.check_expr(expr_ast, e, None)
+        return PtrTyp.get_or_create(value_typ, self._place_mut(expr_ast, e))
+
+    def _place_mut(self, expr_ast: ast.Expr, e: Env) -> Mutability:
+        """The mutability of ``expr_ast``'s place; see :meth:`check_place`."""
+        match expr_ast:
+            case ast.VarExpr():
+                var = e.resolve_path(Env.Namespace.VARS, expr_ast.path)
+                if isinstance(var.typ, PtrTyp):
+                    return var.typ.mut
+                return CONST
+            case ast.ArrayAccessExpr():
+                return self._place_mut(expr_ast.array, e)
+            case ast.StructAccessExpr():
+                struct_typ = self.check_expr(expr_ast.struct, e, None)
+                field = (
+                    struct_typ.fields.get(expr_ast.field.name)
+                    if isinstance(struct_typ, StructTyp)
+                    else None
+                )
+                if field is not None and field.mut == MUT:
+                    return self._place_mut(expr_ast.struct, e)
+                return CONST
+            case ast.DerefExpr():
+                ptr_typ = self.check_expr(expr_ast.ptr, e, None)
+                if isinstance(ptr_typ, PtrTyp):
+                    return ptr_typ.mut
+                return CONST
+            case _:
+                return CONST
 
     def check_stmt(self, stmt_ast: ast.Stmt, e: Env) -> bool:
         """Check any statement, dispatching to the ``check_*_stmt`` method
@@ -501,11 +634,15 @@ class TypCheck:
 
     def check_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
         if ret_ast.expr is not None:
-            self.check_expr(ret_ast.expr, e, self._ret_typ)
+            expr_typ = self.check_expr(ret_ast.expr, e, self._ret_typ)
+            if self._ret_typ is not None:
+                self._record_coercion(ret_ast.expr, expr_typ, self._ret_typ)
 
     def check_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> bool:
         declared_typ = opt_map(let_ast.typ, lambda t: Typ.from_ast(t, e))
         expr_typ = self.check_expr(let_ast.expr, e, declared_typ)
+        if declared_typ is not None:
+            self._record_coercion(let_ast.expr, expr_typ, declared_typ)
         bound_typ = opt_or_default(declared_typ, expr_typ)
         mut = Mutability.from_ast(let_ast.mut)
         e.add_var(let_ast.ident.name, _TypedPlace(PtrTyp.get_or_create(bound_typ, mut)))
@@ -514,6 +651,7 @@ class TypCheck:
     def check_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> bool:
         place_typ = self.check_expr(ass_ast.place, e, None)
         expr_typ = self.check_expr(ass_ast.expr, e, place_typ)
+        self._record_coercion(ass_ast.expr, expr_typ, place_typ)
         return place_typ == NEVER or expr_typ == NEVER
 
     def _infer_int_lit_typ(
@@ -534,3 +672,28 @@ class TypCheck:
         if isinstance(expected_typ, IntTyp):
             return expected_typ
         return I32
+
+    def _record_coercion(self, node: ast.Ast, value_typ: Typ, target: Typ) -> None:
+        """Decide, and record, how a checked expression coerces to a target type.
+
+        Mirrors the decision :meth:`~leech.ir_builder.CfgBuilder._coerce`
+        used to make itself; that method now just reads the result back
+        (keyed by ``node``) and performs the emission.
+
+        :param node: The AST node the coerced expression was checked
+            against - the same node :meth:`~TypCheckResults.coercion` will
+            later be called with.
+        :param value_typ: The expression's checked type.
+        :param target: The type its context expects.
+        """
+        if value_typ == target:
+            coercion = None
+        elif value_typ == NEVER:
+            coercion = NeverDiverge(target)
+        elif not value_typ.coerces_to(target):
+            coercion = Invalid()
+        elif isinstance(target, IntTyp):
+            coercion = IntExt(target)
+        else:
+            coercion = PtrMutRelax()
+        self.results._set_coercion(node, coercion)

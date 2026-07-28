@@ -63,9 +63,16 @@ from leech.errors import (
 )
 from leech.naming import VarNamer
 from leech.opt_util import opt_map, opt_or_default
-from leech.typcheck import TypCheckResults, is_flexible_int_lit, resolve_peer_typ
+from leech.typcheck import (
+    IntExt,
+    Invalid,
+    NeverDiverge,
+    PtrMutRelax,
+    TypCheckResults,
+    is_flexible_int_lit,
+    resolve_peer_typ,
+)
 from leech.typs import (
-    BOOL,
     CONST,
     I32,
     NEVER,
@@ -193,7 +200,7 @@ class CfgBuilder:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
                 return
-            coerced = self._coerce(block, ret_typ, ret_ast)
+            coerced = self._coerce(block, ret_ast)
             if coerced is None:
                 raise InvalidRetTypError(
                     self.fn.name,
@@ -342,7 +349,7 @@ class CfgBuilder:
             see :meth:`build_expr`.
         """
         cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
-        coerced_cond = self._coerce(cond, BOOL, if_ast.condition)
+        coerced_cond = self._coerce(cond, if_ast.condition)
         if coerced_cond is None:
             raise IfCondNotBoolError(
                 if_ast.condition.diag_str(), cond.typ.name, if_ast.condition.span
@@ -482,7 +489,7 @@ class CfgBuilder:
         self.branch(cond_bb, while_ast)
         self.set_position(cond_bb)
         cond = self.build_expr(while_ast.condition, e, ExprContext.VALUE)
-        coerced_cond = self._coerce(cond, BOOL, while_ast.condition)
+        coerced_cond = self._coerce(cond, while_ast.condition)
         if coerced_cond is None:
             raise WhileCondNotBoolError(
                 while_ast.condition.diag_str(),
@@ -632,7 +639,7 @@ class CfgBuilder:
             )
         coerced_args = []
         for i, arg in enumerate(args):
-            coerced = self._coerce(arg, param_typs[i], arg_asts[i])
+            coerced = self._coerce(arg, arg_asts[i])
             if coerced is None:
                 raise InvalidArgTypError(
                     callee_diag_str,
@@ -792,7 +799,7 @@ class CfgBuilder:
         propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
         if propagated is not None:
             return propagated
-        coerced_lhs = self._coerce(lhs, BOOL, op_ast.lhs)
+        coerced_lhs = self._coerce(lhs, op_ast.lhs)
         if coerced_lhs is None:
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
@@ -819,7 +826,7 @@ class CfgBuilder:
         self.set_position(rhs_bb)
         rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
         rhs_last_bb = self.curr_bb  # building the rhs may have moved it
-        coerced_rhs = self._coerce(rhs, BOOL, op_ast.rhs)
+        coerced_rhs = self._coerce(rhs, op_ast.rhs)
         if coerced_rhs is None:
             raise InvalidBinOpArgTypError(
                 op_ast.op.name,
@@ -873,7 +880,7 @@ class CfgBuilder:
                 )
             case "not":
                 operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
-                coerced_operand = self._coerce(operand, BOOL, op_ast.operand)
+                coerced_operand = self._coerce(operand, op_ast.operand)
                 if coerced_operand is None:
                     raise InvalidUnaryOpArgTypError(
                         op_ast.op.name,
@@ -1033,7 +1040,7 @@ class CfgBuilder:
                 raise IncompatibleTypInArrayExpr(
                     elt.typ.name, i, elt_ast.span, arr_typ.name
                 )
-            coerced = self._coerce(elt, elt_typ, elt_ast)
+            coerced = self._coerce(elt, elt_ast)
             if coerced is None:
                 raise IncompatibleTypInArrayExpr(
                     elt.typ.name, i, elt_ast.span, arr_typ.name
@@ -1073,7 +1080,7 @@ class CfgBuilder:
         # type: a bare literal infers as usize, and a narrower unsigned
         # value widens to it.
         index = self.build_expr(aa_expr.index, e, ExprContext.VALUE, USIZE)
-        coerced_index = self._coerce(index, USIZE, aa_expr.index)
+        coerced_index = self._coerce(index, aa_expr.index)
         if coerced_index is None:
             raise InvalidIndexTypError(index.typ.name, aa_expr.index.span)
         index = coerced_index
@@ -1124,6 +1131,7 @@ class CfgBuilder:
         )
 
         field_values = {}
+        field_value_asts: dict[str, ast.Expr] = {}
         for field_expr in struct_expr.fields:
             if field_expr.ident.name not in struct_typ.fields:
                 raise InvalidStructFieldError(
@@ -1146,6 +1154,7 @@ class CfgBuilder:
             field_values[field_expr.ident.name] = self.build_expr(
                 field_expr.value, e, ExprContext.VALUE, field.typ
             )
+            field_value_asts[field_expr.ident.name] = field_expr.value
 
         for i, field in enumerate(struct_typ.fields.values()):
             if field.name not in field_values:
@@ -1153,7 +1162,7 @@ class CfgBuilder:
                     field.name, field.ast.span, struct_typ.name, struct_expr.span
                 )
             field_value = field_values[field.name]
-            coerced = self._coerce(field_value, field.typ, field_value.ast)
+            coerced = self._coerce(field_value, field_value_asts[field.name])
             if coerced is None:
                 raise IncompatibleStructFieldTypError(
                     field.name,
@@ -1314,7 +1323,7 @@ class CfgBuilder:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
                 return
-            coerced = self._coerce(expr, ret_typ, ret_ast.expr)
+            coerced = self._coerce(expr, ret_ast.expr)
             if coerced is None:
                 raise InvalidRetTypError(
                     self.fn.name,
@@ -1433,7 +1442,7 @@ class CfgBuilder:
         if place_typ.mut == CONST:
             raise AssignToConstError(ass_ast.place.span)
 
-        coerced = self._coerce(expr, place_typ.pointee_typ, ass_ast.expr)
+        coerced = self._coerce(expr, ass_ast.expr)
         if coerced is None:
             raise IncompatibleAssignmentTypError(
                 expr.typ.name,
@@ -1475,7 +1484,7 @@ class CfgBuilder:
             raise VoidVarInitializerError(expr.span)
         if expected_typ is None or declared_typ_ast is None:
             return expr
-        coerced = self._coerce(expr, expected_typ, let_ast.expr)
+        coerced = self._coerce(expr, let_ast.expr)
         if coerced is None:
             raise IncompatibleLetTypError(
                 let_ast.ident.name,
@@ -1502,43 +1511,50 @@ class CfgBuilder:
         value = -lit_ast.value if negated else lit_ast.value
         return ComptimeInt(typ, value, lit_ast)
 
-    def _coerce(
-        self, value: Value, target: Typ, ast: Optional[ast.Ast]
-    ) -> Optional[Value]:
-        """Convert ``value`` to ``target``, if the language allows it implicitly.
+    def _coerce(self, value: Value, node: ast.Ast) -> Optional[Value]:
+        """Convert ``value`` to the type its context expects, if allowed.
 
-        The single place implicit coercion happens. Callers are the
-        handful of sites with an unambiguous target type - call
-        arguments (including a method's receiver), assignment, ``return``
-        and a function's tail expression, struct literal fields, and
-        array literal elements whose type comes from context. Operator
-        operands deliberately don't coerce.
+        The decision - whether a coercion applies, and which kind - was
+        already made while type checking (see
+        :meth:`~leech.typcheck.TypCheck._record_coercion`); this only has
+        to emit it. Callers are the handful of sites with an unambiguous
+        target type - call arguments, assignment, ``return`` and a
+        function's tail expression, struct literal fields, an array
+        access index, and array literal elements whose type comes from
+        context. Operator operands deliberately don't coerce.
 
         Returning ``None`` rather than raising lets each caller report the
         failure with the error class that fits its context.
 
         :param value: The value to convert.
-        :param target: The type to convert it to.
-        :param ast: The AST node to attribute any emitted instruction to.
-        :return: A value of type ``target``, or ``None`` if ``value``'s
+        :param node: The AST node ``value`` was checked against its
+            expected type with (see :meth:`TypCheckResults.coercion`), and
+            to attribute any emitted instruction to.
+        :return: A value of the expected type, or ``None`` if ``value``'s
             type doesn't coerce to it.
         """
-        if value.typ == target:
-            return value
-        if value.typ == NEVER:
-            # A diverging expression never actually produces a value, so
-            # it coerces to any type - by the time a real value would be
-            # read here, control can't have reached this point.
-            if not self.curr_bb.terminated:
-                self.curr_bb.unreachable(ast)
-            return UndefValue(target, ast)
-        if not value.typ.coerces_to(target):
-            return None
-        if isinstance(target, IntTyp):
-            return self.curr_bb.int_ext(value, target, ast)
-        # A *mut T given where a *T is wanted needs nothing emitted: the
-        # two have the same representation.
-        return value
+        coercion = self.typ_check_results.coercion(node)
+        match coercion:
+            case None:
+                return value
+            case Invalid():
+                return None
+            case NeverDiverge(target=target):
+                # A diverging expression never actually produces a value,
+                # so it coerces to any type - by the time a real value
+                # would be read here, control can't have reached this
+                # point.
+                if not self.curr_bb.terminated:
+                    self.curr_bb.unreachable(node)
+                return UndefValue(target, node)
+            case IntExt(target=target):
+                return self.curr_bb.int_ext(value, target, node)
+            case PtrMutRelax():
+                # A *mut T given where a *T is wanted needs nothing
+                # emitted - the two have the same representation.
+                return value
+            case _:
+                assert False, f"unhandled coercion {coercion!r}"
 
     def _propagate_never(
         self, value: Value, ast_node: ast.Ast, ctx: ExprContext
