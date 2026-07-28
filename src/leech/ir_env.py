@@ -5,10 +5,10 @@ import re
 from typing import Any, ChainMap, Optional
 
 from leech import ir_module, ir_values
-from leech import leechast as ast
+from leech import ast
 from leech import typs
 from leech.asserts import assert_ge, checked_cast
-from leech.leecherrors import (
+from leech.errors import (
     DuplicateItemDefnError,
     ItemNotFoundError,
     ModUsedAsTypError,

@@ -1,6 +1,6 @@
 import pytest
 
-from leech.leecherrors import CannotTakeAddressOfComptimeValueError, DerefInvalidTypError
+from leech.errors import CannotTakeAddressOfComptimeValueError, DerefInvalidTypError
 
 from util import check_prog_output, compile_str
 

@@ -9,7 +9,7 @@ from typing import Final, Optional
 
 from leech import ir_module, ir_values
 from leech.asserts import assert_eq, assert_lt, checked_cast
-from leech.leecherrors import (
+from leech.errors import (
     CallExternFnAtComptimeError,
     CannotTakeAddressOfComptimeValueError,
     DivisionByZeroAtComptimeError,

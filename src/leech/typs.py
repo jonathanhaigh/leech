@@ -9,9 +9,9 @@ from typing import ClassVar, Final, Optional, Self, override
 from weakref import WeakValueDictionary
 
 from leech import ir_env, ir_module
-from leech import leechast as ast
+from leech import ast
 from leech.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
-from leech.leecherrors import (
+from leech.errors import (
     DuplicateFieldInStructDefnError,
     DuplicateItemDefnError,
     InfiniteSizeStructError,

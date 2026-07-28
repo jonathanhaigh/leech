@@ -8,10 +8,10 @@ from functools import cached_property
 from typing import ClassVar, Final, Generic, Optional, TypeVar, override
 
 from leech import comptime, ir_builder, ir_env, ir_loader
-from leech import leechast as ast
+from leech import ast
 from leech.asserts import assert_eq, checked_cast
 from leech.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
-from leech.leecherrors import (
+from leech.errors import (
     CircularVarInitializerError,
     ImplForNonLocalStructTypError,
     ImplForNonStructTypError,

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final, Generic, Optional, Self, TypeVar, overr
 from more_itertools import nth
 import networkx as nx
 
-from leech import leechast as ast
+from leech import ast
 from leech.asserts import (
     assert_all_eq,
     assert_eq,
@@ -17,7 +17,7 @@ from leech.asserts import (
     assert_lt,
     checked_cast,
 )
-from leech.leecherrors import UnreachableCodeWarning, register_error
+from leech.errors import UnreachableCodeWarning, register_error
 from leech.opt_util import opt_map, opt_unwrap
 from leech.src import SrcSpan
 from leech.typs import (
@@ -136,8 +136,8 @@ class ComptimeInt(ComptimeValue[IntTyp]):
     already known to fit ``typ`` (e.g. from a source-level integer
     literal, or the result of a compile-time arithmetic operation) are
     responsible for validating it themselves first, and raising the
-    appropriate diagnostic (:class:`~leech.leecherrors.IntLitOverflowError` or
-    :class:`~leech.leecherrors.IntOverflowAtComptimeError` respectively) -
+    appropriate diagnostic (:class:`~leech.errors.IntLitOverflowError` or
+    :class:`~leech.errors.IntOverflowAtComptimeError` respectively) -
     :meth:`~leech.typs.IntTyp.fits` does the check. This constructor only
     asserts that ``value`` fits, as a last-resort invariant check.
 
@@ -360,7 +360,7 @@ class ComptimePtr(Generic[AstT], ComptimeValue[PtrTyp, AstT]):
 
         Used to reject taking the address of, or returning a pointer
         into, a compile-time-only temporary (see
-        :class:`~leech.leecherrors.CannotTakeAddressOfComptimeValueError`).
+        :class:`~leech.errors.CannotTakeAddressOfComptimeValueError`).
         """
 
 
@@ -500,8 +500,8 @@ class Param(Value[Typ, ast.Param | ast.Receiver]):
     :param pos: The parameter's zero-based position in the parameter
         list.
     :param ast: The AST node this value was built from, if any - a
-        :class:`~leech.leechast.Receiver` at position 0 for a method's ``self``,
-        otherwise a :class:`~leech.leechast.Param`.
+        :class:`~leech.ast.Receiver` at position 0 for a method's ``self``,
+        otherwise a :class:`~leech.ast.Param`.
     """
 
     fn: Final[ir_module.FnSpec]

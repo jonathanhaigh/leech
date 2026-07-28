@@ -1,6 +1,6 @@
 import subprocess
 
-from leech.leecherrors import ERROR, NOTE, WARNING
+from leech.errors import ERROR, NOTE, WARNING
 
 
 def run_cli(*args) -> subprocess.CompletedProcess:

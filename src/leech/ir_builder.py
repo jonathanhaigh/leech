@@ -5,7 +5,7 @@ import enum
 from typing import Final, Optional
 
 from leech import ir_module
-from leech import leechast as ast
+from leech import ast
 from leech.asserts import assert_in, checked_cast
 from leech.ir_env import Env
 from leech.ir_values import (
@@ -21,7 +21,7 @@ from leech.ir_values import (
     Value,
     VoidValue,
 )
-from leech.leecherrors import (
+from leech.errors import (
     AssignToConstError,
     BreakNotInLoopError,
     ContinueNotInLoopError,
@@ -133,7 +133,7 @@ class CfgBuilder:
 
     Each ``build_*`` method lowers one AST node kind, performing the
     relevant type checks (raising the corresponding
-    :mod:`~leech.leecherrors` error on failure) and emitting instructions into
+    :mod:`~leech.errors` error on failure) and emitting instructions into
     :attr:`curr_bb` as it goes.
 
     :param fn: The function whose body is being lowered, or ``None`` when
@@ -175,7 +175,7 @@ class CfgBuilder:
             type ``void``.
         :raises IncompatibleLetTypError: If the initializer's type doesn't
             match, and doesn't coerce to, a declared type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the initializer expression; see
             :meth:`build_expr`.
         """
@@ -195,7 +195,7 @@ class CfgBuilder:
         :raises MissingRetError: If the function's declared return type
             isn't ``void`` but the body doesn't end in a return or a
             diverging expression.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the body; see :meth:`build_expr`.
         """
         assert self.fn is not None
@@ -261,7 +261,7 @@ class CfgBuilder:
             or an ``if``'s branches. Operator operands deliberately don't
             receive it; ignored everywhere else.
         :return: The lowered expression's value.
-        :raises leech.leecherrors.UserError: As any of the many subclasses that
+        :raises leech.errors.UserError: As any of the many subclasses that
             the individual ``build_*_expr`` methods (and, transitively,
             any sub-expressions) may raise.
         """
@@ -321,7 +321,7 @@ class CfgBuilder:
         :return: The lowered tail expression's value if the block has one;
             otherwise a void value if its statements complete normally, or
             a never value if they already diverged (e.g. via ``return``).
-        :raises leech.leecherrors.UserError: As any of the many subclasses that
+        :raises leech.errors.UserError: As any of the many subclasses that
             lowering a statement (see :meth:`build_stmt`) or the tail
             expression (see :meth:`build_expr`) may raise.
         """
@@ -360,7 +360,7 @@ class CfgBuilder:
             types don't match.
         :raises IfTypNotVoidError: If there is no ``else`` branch and the
             ``if`` branch's type isn't ``void``.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the condition or either branch;
             see :meth:`build_expr`.
         """
@@ -494,7 +494,7 @@ class CfgBuilder:
             ``bool``.
         :raises WhileTypNotVoidError: If the loop body's type isn't
             ``void`` (or ``never``).
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the condition or the loop body;
             see :meth:`build_expr`.
         """
@@ -570,7 +570,7 @@ class CfgBuilder:
         :raises TooManyArgsError: If too many arguments are given.
         :raises InvalidArgTypError: If an argument's type doesn't match
             the corresponding parameter's type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the callee or an argument; see
             :meth:`build_expr`.
         """
@@ -694,7 +694,7 @@ class CfgBuilder:
             integer type.
         :raises IncompatibleBinOpArgTypsError: If the operands' types
             don't match.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering either operand; see
             :meth:`build_expr`.
         """
@@ -798,7 +798,7 @@ class CfgBuilder:
         :return: The operation's result.
         :raises InvalidBinOpArgTypError: If either operand's type isn't
             ``bool``.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering either operand; see
             :meth:`build_expr`.
         """
@@ -887,7 +887,7 @@ class CfgBuilder:
             signed integer type, or ``not``'s operand isn't ``bool``.
         :raises IntLitOverflowError: If ``-``'s operand is a literal whose
             negation doesn't fit its type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the operand; see :meth:`build_expr`.
         """
         match op_ast.op.name:
@@ -1000,7 +1000,7 @@ class CfgBuilder:
         :raises VoidArrayElementError: If the element type is ``void``.
         :raises IncompatibleTypInArrayExpr: If an element's type doesn't
             match, and doesn't coerce to, the element type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering an element; see :meth:`build_expr`.
         """
         expected_elt_typ = (
@@ -1085,7 +1085,7 @@ class CfgBuilder:
             isn't an array type.
         :raises InvalidIndexTypError: If the index expression's type isn't,
             and doesn't coerce to, ``usize``.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the array or index expression; see
             :meth:`build_expr`.
         """
@@ -1133,7 +1133,7 @@ class CfgBuilder:
             omitted.
         :raises IncompatibleStructFieldTypError: If a field's given value
             has the wrong type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering a field's value expression; see
             :meth:`build_expr`.
         """
@@ -1214,7 +1214,7 @@ class CfgBuilder:
             of the struct type.
         :raises PrivateStructFieldAccessError: If the named field is
             private and ``sa_expr`` isn't in the struct's defining module.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the struct expression; see
             :meth:`build_expr`.
         """
@@ -1278,7 +1278,7 @@ class CfgBuilder:
             ``ctx`` is :attr:`~ExprContext.PLACE`.
         :raises DerefInvalidTypError: If the dereferenced expression's
             type isn't a data pointer type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the pointer expression; see
             :meth:`build_expr`.
         """
@@ -1293,7 +1293,7 @@ class CfgBuilder:
 
         :param stmt_ast: The parsed statement.
         :param e: The scope to resolve names in.
-        :raises leech.leecherrors.UserError: As any of the many subclasses that
+        :raises leech.errors.UserError: As any of the many subclasses that
             the individual ``build_*_stmt`` methods (and, transitively,
             any sub-expressions) may raise.
         """
@@ -1323,7 +1323,7 @@ class CfgBuilder:
             doesn't match the function's declared return type.
         :raises InvalidVoidRetError: If no expression is given but the
             function's declared return type isn't ``void``.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the returned expression; see
             :meth:`build_expr`.
         """
@@ -1416,7 +1416,7 @@ class CfgBuilder:
             type ``void``.
         :raises IncompatibleLetTypError: If the initializer's type doesn't
             match, and doesn't coerce to, a declared type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the initializer expression; see
             :meth:`build_expr`.
         """
@@ -1446,7 +1446,7 @@ class CfgBuilder:
         :raises AssignToConstError: If the assignment target is const.
         :raises IncompatibleAssignmentTypError: If the assigned value's
             type doesn't match, and doesn't coerce to, the place's type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the target or the assigned
             expression; see :meth:`build_expr`.
         """
@@ -1491,7 +1491,7 @@ class CfgBuilder:
             type ``void``.
         :raises IncompatibleLetTypError: If the initializer's type doesn't
             match, and doesn't coerce to, the declared type.
-        :raises leech.leecherrors.UserError: Also raised, as any of many possible
+        :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the initializer expression; see
             :meth:`build_expr`.
         """

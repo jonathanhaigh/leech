@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
 
-from leech import leechast as ast
+from leech import ast as ast
 from leech.main import compile
 from leech.parse import build_parser
 from leech.src import SrcFile

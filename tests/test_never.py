@@ -1,6 +1,6 @@
 import pytest
 
-from leech.leecherrors import (
+from leech.errors import (
     IncompatibleLetTypError,
     InvalidRetTypError,
     ItemNotFoundError,

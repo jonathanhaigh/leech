@@ -5,7 +5,7 @@ import pathlib
 import sys
 
 from leech.codegen import Compiler
-from leech.leecherrors import (
+from leech.errors import (
     ERROR,
     UserError,
     TextErrorRenderer,
@@ -76,7 +76,7 @@ def run() -> None:
 
     On a user-facing compile error, the error is registered and rendered
     to stderr instead of raising; the process then exits with the
-    resulting error level (see :mod:`leech.leecherrors`), writing the compiled
+    resulting error level (see :mod:`leech.errors`), writing the compiled
     output to the ``-o`` path only if no error occurred.
     """
     args = parse_args()

@@ -1,9 +1,9 @@
 import pathlib
 
 import pytest
-from leech import leechast as ast
+from leech import ast as ast
 from leech.ir_env import Env
-from leech.leecherrors import IncompatibleLetTypError, IntLitOverflowError
+from leech.errors import IncompatibleLetTypError, IntLitOverflowError
 from leech.parse import build_parser
 from leech.src import SrcFile
 from leech.typs import Typ

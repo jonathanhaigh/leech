@@ -1,6 +1,6 @@
 import pytest
 
-from leech.leecherrors import DuplicateItemDefnError, ItemNotFoundError
+from leech.errors import DuplicateItemDefnError, ItemNotFoundError
 from util import check_prog_output, compile_str
 
 

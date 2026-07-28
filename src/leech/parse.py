@@ -5,8 +5,8 @@ import os
 
 from lark import Lark, UnexpectedCharacters, UnexpectedToken
 
-from leech import leechast as ast
-from leech.leecherrors import UnexpectedCharacterError, UnexpectedTokenError
+from leech import ast
+from leech.errors import UnexpectedCharacterError, UnexpectedTokenError
 from leech.src import SrcFile, SrcSpan
 
 GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "leech.lark")

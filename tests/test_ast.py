@@ -1,4 +1,4 @@
-from leech import leechast as ast
+from leech import ast as ast
 from util import parse_mod
 
 
