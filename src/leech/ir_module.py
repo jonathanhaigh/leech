@@ -235,7 +235,9 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         Built lazily, on first access; forced by :attr:`cfg` before
         lowering begins.
         """
-        return typcheck.TypCheck().check_fn(opt_unwrap(self.ast), self.env)
+        return typcheck.TypCheck().check_fn(
+            opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
+        )
 
     @cached_property
     def cfg(self) -> Cfg:
@@ -243,8 +245,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
 
         Built lazily, on first access.
         """
-        _ = self.typ_check_results
-        builder = ir_builder.CfgBuilder(self)
+        builder = ir_builder.CfgBuilder(self.typ_check_results, self)
         builder.build_fn(opt_unwrap(self.ast), self.env)
         return builder.cfg
 
@@ -357,8 +358,7 @@ class ModVar(ComptimePtr[ast.VarDefn]):
 
         Built lazily, on first access.
         """
-        _ = self.typ_check_results
-        builder = ir_builder.CfgBuilder()
+        builder = ir_builder.CfgBuilder(self.typ_check_results)
         builder.build_var_initializer(opt_unwrap(self.ast), self.env)
         return builder.cfg
 

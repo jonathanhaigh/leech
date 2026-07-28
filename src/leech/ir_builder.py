@@ -38,7 +38,6 @@ from leech.errors import (
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
-    IntLitOverflowError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     InvalidIndexTypError,
@@ -64,7 +63,7 @@ from leech.errors import (
 )
 from leech.naming import VarNamer
 from leech.opt_util import opt_map, opt_or_default
-from leech.src import SrcSpan
+from leech.typcheck import TypCheckResults, is_flexible_int_lit, resolve_peer_typ
 from leech.typs import (
     BOOL,
     CONST,
@@ -96,37 +95,6 @@ class ExprContext(enum.Enum):
     VALUE = 1
 
 
-def _is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
-    """Whether an expression's type isn't decided by the expression itself.
-
-    True only for an integer literal written without a type suffix, or
-    the negation of one: those take their type from context (see
-    :meth:`CfgBuilder._int_lit_typ`), so where several expressions have
-    to agree on a type, they're the ones that can adapt.
-
-    Such a literal is also pure - lowering it emits no instructions at
-    all - so it can be lowered later than its source position without
-    reordering anything observable.
-
-    :param expr_ast: The parsed expression to classify.
-    :return: Whether the expression's type is still open.
-    """
-    if isinstance(expr_ast, ast.IntLit):
-        return expr_ast.explicit_typ is None
-    if isinstance(expr_ast, ast.UnaryOpExpr) and expr_ast.op.name == "-":
-        return _is_flexible_int_lit(expr_ast.operand)
-    if isinstance(expr_ast, ast.BlockExpr):
-        # A block's value is its tail expression's, so a block that does
-        # nothing else is as flexible as that expression. Statements are
-        # excluded so that only a block with nothing to emit qualifies.
-        return (
-            not expr_ast.stmts
-            and expr_ast.expr is not None
-            and _is_flexible_int_lit(expr_ast.expr)
-        )
-    return False
-
-
 class CfgBuilder:
     """Lowers a single function body or module-variable initializer to a
     :class:`~leech.ir_values.Cfg`.
@@ -136,6 +104,8 @@ class CfgBuilder:
     :mod:`~leech.errors` error on failure) and emitting instructions into
     :attr:`curr_bb` as it goes.
 
+    :param typ_check_results: The already-computed type-checking facts for
+        the body being lowered (see :mod:`~leech.typcheck`).
     :param fn: The function whose body is being lowered, or ``None`` when
         lowering a module-variable initializer (which isn't part of any
         function).
@@ -150,6 +120,7 @@ class CfgBuilder:
         end_bb: BasicBlock
 
     fn: Optional[ir_module.FnSpec]
+    typ_check_results: Final[TypCheckResults]
     cfg: Final[Cfg]
     curr_bb: BasicBlock
     _generate_bb_name: Final[VarNamer]
@@ -157,8 +128,13 @@ class CfgBuilder:
     #: to resolve unlabeled and labeled ``break``/``continue`` targets.
     _loop_stack: Final[list["CfgBuilder._LoopCtx"]]
 
-    def __init__(self, fn: Optional[ir_module.FnSpec] = None) -> None:
+    def __init__(
+        self,
+        typ_check_results: TypCheckResults,
+        fn: Optional[ir_module.FnSpec] = None,
+    ) -> None:
         self.fn = fn
+        self.typ_check_results = typ_check_results
         self.cfg = Cfg()
         self._generate_bb_name = VarNamer()
         self.cfg._entry = self.add_bb("entry")
@@ -256,7 +232,8 @@ class CfgBuilder:
             declared parameter type). Consulted by expressions that can't
             otherwise infer their own type - an empty array literal, and
             an integer literal written without a type suffix (see
-            :meth:`_int_lit_typ`) - and passed on by the constructs that
+            :meth:`~leech.typcheck.TypCheck._infer_int_lit_typ`) - and passed
+            on by the constructs that
             merely pass a value through, such as a block's tail expression
             or an ``if``'s branches. Operator operands deliberately don't
             receive it; ignored everywhere else.
@@ -282,7 +259,7 @@ class CfgBuilder:
                 return self._in_context(ComptimeCStr(expr_ast.value, expr_ast), ctx)
             case ast.IntLit():
                 return self._in_context(
-                    self._build_int_lit(expr_ast, expected_typ, False, expr_ast.span),
+                    self._build_int_lit(expr_ast, False),
                     ctx,
                 )
             case ast.BoolLit():
@@ -398,8 +375,8 @@ class CfgBuilder:
         # lowered first doesn't change what the program does.
         if (
             expected_typ is None
-            and _is_flexible_int_lit(if_ast.then)
-            and not _is_flexible_int_lit(els_ast)
+            and is_flexible_int_lit(if_ast.then)
+            and not is_flexible_int_lit(els_ast)
         ):
             els, els_last_bb, have_els_value = self._build_if_arm(
                 els_ast, els_bb, end_bb, e, ctx, expected_typ
@@ -410,7 +387,7 @@ class CfgBuilder:
                 end_bb,
                 e,
                 ctx,
-                self._resolve_peer_typ([els.typ]) if have_els_value else expected_typ,
+                resolve_peer_typ([els.typ]) if have_els_value else expected_typ,
             )
         else:
             then, then_last_bb, have_then_value = self._build_if_arm(
@@ -420,9 +397,9 @@ class CfgBuilder:
             if (
                 expected_typ is None
                 and have_then_value
-                and _is_flexible_int_lit(els_ast)
+                and is_flexible_int_lit(els_ast)
             ):
-                els_hint = self._resolve_peer_typ([then.typ])
+                els_hint = resolve_peer_typ([then.typ])
             els, els_last_bb, have_els_value = self._build_if_arm(
                 els_ast, els_bb, end_bb, e, ctx, els_hint
             )
@@ -706,7 +683,7 @@ class CfgBuilder:
         # a bare integer literal on either side take its type from it.
         # The deferred operand is always such a literal, which emits no
         # instructions, so left-to-right evaluation is unaffected.
-        if _is_flexible_int_lit(op_ast.lhs) and not _is_flexible_int_lit(op_ast.rhs):
+        if is_flexible_int_lit(op_ast.lhs) and not is_flexible_int_lit(op_ast.rhs):
             rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
             propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
             if propagated is not None:
@@ -714,14 +691,14 @@ class CfgBuilder:
             # A bare integer literal always ends up with an integer type,
             # so the left operand needs no separate check here.
             lhs = self.build_expr(
-                op_ast.lhs, e, ExprContext.VALUE, self._resolve_peer_typ([rhs.typ])
+                op_ast.lhs, e, ExprContext.VALUE, resolve_peer_typ([rhs.typ])
             )
         else:
             lhs = self.build_expr(
                 op_ast.lhs,
                 e,
                 ExprContext.VALUE,
-                expected_typ if _is_flexible_int_lit(op_ast.lhs) else None,
+                expected_typ if is_flexible_int_lit(op_ast.lhs) else None,
             )
             propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
             if propagated is not None:
@@ -731,8 +708,8 @@ class CfgBuilder:
                 op_ast.rhs,
                 e,
                 ExprContext.VALUE,
-                self._resolve_peer_typ([lhs.typ])
-                if _is_flexible_int_lit(op_ast.rhs)
+                resolve_peer_typ([lhs.typ])
+                if is_flexible_int_lit(op_ast.rhs)
                 else None,
             )
             propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
@@ -885,8 +862,6 @@ class CfgBuilder:
         :return: The operation's result.
         :raises InvalidUnaryOpArgTypError: If ``-``'s operand isn't a
             signed integer type, or ``not``'s operand isn't ``bool``.
-        :raises IntLitOverflowError: If ``-``'s operand is a literal whose
-            negation doesn't fit its type.
         :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering the operand; see :meth:`build_expr`.
         """
@@ -917,7 +892,7 @@ class CfgBuilder:
                 # positive half of the range stops one short of it, so
                 # e.g. the 128 in -128i8 would overflow on its own.
                 if isinstance(op_ast.operand, ast.IntLit):
-                    typ = self._int_lit_typ(op_ast.operand, expected_typ)
+                    typ = self.typ_check_results.int_lit_typ(op_ast.operand)
                     if typ.signage != SIGNED:
                         raise InvalidUnaryOpArgTypError(
                             op_ast.op.name,
@@ -927,9 +902,7 @@ class CfgBuilder:
                             op_ast.operand.span,
                         )
                     return self._in_context(
-                        self._build_int_lit(
-                            op_ast.operand, expected_typ, True, op_ast.span
-                        ),
+                        self._build_int_lit(op_ast.operand, True),
                         ctx,
                     )
 
@@ -1016,7 +989,7 @@ class CfgBuilder:
         # second can't reorder any of the others' effects.
         built: list[Optional[Value]] = [None] * len(arr_expr.elements)
         for i, elt_ast in enumerate(arr_expr.elements):
-            if not _is_flexible_int_lit(elt_ast):
+            if not is_flexible_int_lit(elt_ast):
                 built[i] = self.build_expr(
                     elt_ast, e, ExprContext.VALUE, expected_elt_typ
                 )
@@ -1027,7 +1000,7 @@ class CfgBuilder:
         if expected_elt_typ is not None:
             elt_typ = expected_elt_typ
         else:
-            elt_typ = self._resolve_peer_typ([v.typ for v in built if v is not None])
+            elt_typ = resolve_peer_typ([v.typ for v in built if v is not None])
 
         elts = [
             v
@@ -1513,88 +1486,20 @@ class CfgBuilder:
             )
         return coerced
 
-    def _resolve_peer_typ(self, fixed_typs: list[Typ]) -> Typ:
-        """The type a group of peer expressions should agree on.
-
-        "Peers" are expressions that have to end up with one shared type
-        - an array literal's elements, an ``if``/``else``'s two arms, an
-        operator's two operands. ``fixed_typs`` are the types of the
-        peers whose type the expression itself decides (everything that
-        isn't a bare integer literal - see :func:`_is_flexible_int_lit`),
-        in source order.
-
-        The first such type wins, so a bare literal peer adapts to it
-        wherever it sits, rather than the peers' order deciding whose
-        type is used. A ``never`` peer never gets a say: a diverging
-        expression says nothing about what type the others should have.
-        With no fixed peers at all, everything is a bare literal and
-        ``i32`` is the fallback, as for any other unconstrained literal.
-
-        This is deliberately not full unification: peers whose types
-        genuinely disagree aren't reconciled here, they just fail their
-        caller's own compatibility check as before.
-
-        :param fixed_typs: The already-decided peers' types, in source
-            order.
-        :return: The type to lower the flexible peers with.
-        """
-        for typ in fixed_typs:
-            if typ != NEVER:
-                return typ
-        return I32
-
-    def _int_lit_typ(
-        self, lit_ast: ast.IntLit, expected_typ: Optional[Typ]
-    ) -> IntTyp:
-        """Choose an integer literal's type.
-
-        A literal written with a type suffix always has that type. One
-        written without takes the type the surrounding context expects,
-        if that's an integer type, and falls back to ``i32`` otherwise.
-
-        This is inference, not coercion: an ``i32`` value never converts
-        to a ``u8`` (see :meth:`_coerce`), but a literal that hasn't been
-        given a type yet can simply be a ``u8``. Contexts that have no
-        single expected type - operator operands above all - pass
-        ``None`` here, which is what keeps ``1 + 1`` from inferring.
-
-        :param lit_ast: The parsed integer literal.
-        :param expected_typ: The type the context expects, if known.
-        :return: The type to give the literal.
-        """
-        if lit_ast.explicit_typ is not None:
-            return lit_ast.explicit_typ
-        if isinstance(expected_typ, IntTyp):
-            return expected_typ
-        return I32
-
-    def _build_int_lit(
-        self,
-        lit_ast: ast.IntLit,
-        expected_typ: Optional[Typ],
-        negated: bool,
-        span: Optional[SrcSpan],
-    ) -> Value:
+    def _build_int_lit(self, lit_ast: ast.IntLit, negated: bool) -> Value:
         """Lower an integer literal to a compile-time-known value.
 
+        Its type was already chosen and overflow-checked while type
+        checking (see :meth:`~leech.typcheck.TypCheck._infer_int_lit_typ`);
+        this only has to read that decision back and build the value.
+
         :param lit_ast: The parsed integer literal.
-        :param expected_typ: The type the context expects, if known; see
-            :meth:`_int_lit_typ`.
         :param negated: Whether the literal is the operand of a unary
-            minus, and so denotes the negation of its written value. The
-            negated value is what's range-checked, which is what lets a
-            signed type's minimum value (e.g. ``-128i8``) be written at
-            all: ``128`` on its own doesn't fit ``i8``.
-        :param span: The span to attribute an overflow diagnostic to -
-            the whole negation expression when ``negated``, so that the
-            reported literal and the highlighted source agree.
+            minus, and so denotes the negation of its written value.
         :return: The literal's value.
-        :raises IntLitOverflowError: If the value doesn't fit its type.
         """
-        typ = self._int_lit_typ(lit_ast, expected_typ)
+        typ = self.typ_check_results.int_lit_typ(lit_ast)
         value = -lit_ast.value if negated else lit_ast.value
-        if not typ.fits(value):
-            raise IntLitOverflowError(value, typ.name, span)
         return ComptimeInt(typ, value, lit_ast)
 
     def _coerce(

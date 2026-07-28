@@ -302,8 +302,8 @@ class IntLit(Expr):
 
     A type suffix, if written, fixes the literal's type as
     :attr:`explicit_typ`. Without one the type is left open here and
-    chosen during lowering, from the type the surrounding context
-    expects (see :meth:`leech.ir_builder.CfgBuilder._int_lit_typ`).
+    chosen during type checking, from the type the surrounding context
+    expects (see :meth:`leech.typcheck.TypCheck._infer_int_lit_typ`).
     """
 
     token: Token
