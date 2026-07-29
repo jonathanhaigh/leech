@@ -1,4 +1,5 @@
 import pytest
+from util import compile_str
 
 from leech.errors import (
     CallExternFnAtComptimeError,
@@ -7,7 +8,6 @@ from leech.errors import (
     NotEnoughArgsError,
     TooManyArgsError,
 )
-from util import compile_str
 
 
 def test_not_callable(tmp_path):

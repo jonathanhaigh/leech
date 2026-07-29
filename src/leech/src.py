@@ -20,7 +20,7 @@ class SrcFile:
     @cached_property
     def src(self) -> str:
         """The full contents of the file, read and cached on first access."""
-        with open(self.path, "r", encoding="utf-8") as f:
+        with self.path.open(encoding="utf-8") as f:
             return f.read()
 
     @cached_property

@@ -1,15 +1,14 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import (
     EmptyArrayTypUnknownError,
-    IncompatibleTypInArrayExpr,
+    IncompatibleTypInArrayExprError,
     IndexIntoInvalidTypError,
     InvalidArgTypError,
     InvalidIndexTypError,
     VoidArrayElementError,
 )
-
-from util import check_prog_output, compile_str
 
 
 def test_mod_array(tmp_path):
@@ -109,7 +108,7 @@ def test_comptime_array_incompatible_typs(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleTypInArrayExpr):
+    with pytest.raises(IncompatibleTypInArrayExprError):
         compile_str(tmp_path, src)
 
 
@@ -160,7 +159,7 @@ def test_local_array_incompatible_typs(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleTypInArrayExpr):
+    with pytest.raises(IncompatibleTypInArrayExprError):
         compile_str(tmp_path, src)
 
 

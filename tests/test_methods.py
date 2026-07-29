@@ -1,4 +1,5 @@
 import pytest
+from util import check_prog_output, compile_modules, compile_str
 
 from leech.errors import (
     InvalidArgTypError,
@@ -7,7 +8,6 @@ from leech.errors import (
     PrivateItemAccessError,
     SelfParamOutsideImplError,
 )
-from util import check_prog_output, compile_modules, compile_str
 
 
 def test_const_ptr_method_call(tmp_path):

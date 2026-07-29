@@ -1,11 +1,11 @@
 """Leech's type system: type representations, caching, and construction from AST."""
 
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod  # noqa: I001 - import order below works around a circular import
 from collections.abc import Hashable
 from enum import Enum
 from functools import cached_property
 from types import MappingProxyType
-from typing import ClassVar, Final, Optional, Self, override
+from typing import ClassVar, Final, Self, override
 from weakref import WeakValueDictionary
 
 from leech import ir_env, ir_module
@@ -26,7 +26,7 @@ class Mutability(Enum):
     MUT = 1
 
     @staticmethod
-    def from_ast(mut_ast: Optional[ast.Mutability]) -> Mutability:
+    def from_ast(mut_ast: ast.Mutability | None) -> Mutability:
         """Determine mutability from an optional ``mut`` keyword in the AST.
 
         :param mut_ast: The parsed ``mut`` keyword node, or ``None`` if
@@ -160,18 +160,18 @@ class Typ(ABC):
         """
         match typ_ast:
             case ast.BasicTyp():
-                typ = e.resolve_typ(typ_ast.path)
-                return typ
+                return e.resolve_typ(typ_ast.path)
             case ast.PtrTyp():
                 return PtrTyp.get_or_create(
-                    Typ.from_ast(typ_ast.pointee_typ, e), Mutability.from_ast(typ_ast.mut)
+                    Typ.from_ast(typ_ast.pointee_typ, e),
+                    Mutability.from_ast(typ_ast.mut),
                 )
             case ast.ArrayTyp():
                 return ArrayTyp.get_or_create(
                     Typ.from_ast(typ_ast.element_typ, e), typ_ast.length.value
                 )
             case _:
-                assert False, f"unhandled type ast node {typ_ast}"
+                raise AssertionError(f"unhandled type ast node {typ_ast}")
 
 
 class IntTyp(Typ):
@@ -455,7 +455,7 @@ class StructTyp(Typ):
         return self.ast.ident.name
 
     @staticmethod
-    def _member_ident_span(member: StructField | ir_module.Fn) -> Optional[SrcSpan]:
+    def _member_ident_span(member: StructField | ir_module.Fn) -> SrcSpan | None:
         """The span of ``member``'s name, for duplicate-member diagnostics.
 
         Points at the identifier rather than the whole declaration, since
@@ -523,7 +523,7 @@ class StructTyp(Typ):
         self._add_member(fn)
         self.env.add_var(fn.name, fn)
 
-    def get_assoc_fn(self, name: str) -> Optional[ir_module.Fn]:
+    def get_assoc_fn(self, name: str) -> ir_module.Fn | None:
         """Find this struct's associated function called ``name``.
 
         A field of that name is deliberately *not* a match: fields are
@@ -560,7 +560,7 @@ class StructTyp(Typ):
     def _check_finite_size(
         self,
         visiting: list[StructTyp],
-        hops: list[tuple[str, str, Optional[SrcSpan], str]],
+        hops: list[tuple[str, str, SrcSpan | None, str]],
     ) -> None:
         """Raise if this struct is reachable from itself by value.
 

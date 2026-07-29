@@ -1,12 +1,11 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import (
     IfElsTypMismatchError,
     IncompatibleBinOpArgTypsError,
-    IncompatibleTypInArrayExpr,
+    IncompatibleTypInArrayExprError,
 )
-from util import check_prog_output, compile_str
-
 
 # --- Array literals: a bare literal takes its type from its siblings
 # wherever it sits, rather than the first element deciding for everyone ---
@@ -67,7 +66,7 @@ def test_array_two_decided_elts_must_agree(elements, tmp_path):
         return 0;
     }}
     """
-    with pytest.raises(IncompatibleTypInArrayExpr):
+    with pytest.raises(IncompatibleTypInArrayExprError):
         compile_str(tmp_path, src)
 
 

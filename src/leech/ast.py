@@ -1,10 +1,10 @@
 """The parsed AST: one node class per grammar rule, built from Lark parse trees."""
 
-from abc import ABC, abstractmethod
 import ast as python_ast
-from collections.abc import Callable
 import re
-from typing import Any, Optional, override
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from typing import Any, override
 
 from lark import Token
 from lark.tree import Branch, ParseTree, Tree
@@ -142,7 +142,7 @@ class Expr(Ast):
     """Base class for every expression node."""
 
     @staticmethod
-    def _child_ctors() -> dict["str", Callable[[SrcFile, Tree], Expr]]:
+    def _child_ctors() -> dict[str, Callable[[SrcFile, Tree], Expr]]:
         return {
             "block_expr": BlockExpr,
             "if_expr": IfExpr,
@@ -208,7 +208,7 @@ class BlockExpr(Expr):
     """A ``{ stmt; ...; tail_expr }`` block expression."""
 
     stmts: list[Stmt]
-    expr: Optional[Expr]
+    expr: Expr | None
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "block_expr")
@@ -240,7 +240,7 @@ class IfExpr(Expr):
 
     condition: Expr
     then: BlockExpr
-    els: Optional[BlockExpr]
+    els: BlockExpr | None
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "if_expr")
@@ -264,7 +264,7 @@ class IfExpr(Expr):
 class WhileExpr(Expr):
     """A ``[label:] while (condition) { ... }`` loop expression."""
 
-    label: Optional[Ident]
+    label: Ident | None
     condition: Expr
     block: BlockExpr
 
@@ -308,7 +308,7 @@ class IntLit(Expr):
 
     token: Token
     value: int
-    explicit_typ: Optional[typs.IntTyp]
+    explicit_typ: typs.IntTyp | None
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "int_lit")
@@ -320,10 +320,7 @@ class IntLit(Expr):
 
         if m[2] is not None:
             signage = SIGNED if m[2] == "i" else UNSIGNED
-            if m[3] == "size":
-                width = ADDR_SIZE
-            else:
-                width = int(m[3])
+            width = ADDR_SIZE if m[3] == "size" else int(m[3])
             self.explicit_typ = typs.IntTyp.get_or_create(width, signage)
         else:
             self.explicit_typ = None
@@ -365,7 +362,7 @@ class BoolLit(Expr):
         (token,) = tree.children
         self.token = as_token(token)
         assert_in(token, {"true", "false"})
-        self.value = True if token == "true" else False
+        self.value = token == "true"
 
     @override
     def diag_str(self) -> str:
@@ -615,7 +612,7 @@ class ExprStmt(Stmt):
 class RetStmt(Stmt):
     """A ``return`` statement, with or without a value."""
 
-    expr: Optional[Expr]
+    expr: Expr | None
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "ret_stmt")
@@ -631,7 +628,7 @@ class RetStmt(Stmt):
 class BreakStmt(Stmt):
     """A ``break`` statement, with or without a target loop label."""
 
-    label: Optional[Ident]
+    label: Ident | None
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "break_stmt")
@@ -647,7 +644,7 @@ class BreakStmt(Stmt):
 class ContinueStmt(Stmt):
     """A ``continue`` statement, with or without a target loop label."""
 
-    label: Optional[Ident]
+    label: Ident | None
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "continue_stmt")
@@ -663,9 +660,9 @@ class ContinueStmt(Stmt):
 class LetStmt(Stmt):
     """A local ``let`` binding statement, with an optional declared type."""
 
-    mut: Optional[Mutability]
+    mut: Mutability | None
     ident: Ident
-    typ: Optional["Typ"]
+    typ: Typ | None
     expr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -748,7 +745,7 @@ class BasicTyp(Typ):
 class PtrTyp(Typ):
     """A pointer type expression, e.g. ``*i32`` or ``*mut i32``."""
 
-    mut: Optional[Mutability]
+    mut: Mutability | None
     pointee_typ: Typ
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -809,7 +806,7 @@ class Receiver(Ast):
     """
 
     name: Ident
-    mut: Optional[Mutability]
+    mut: Mutability | None
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "receiver")
@@ -861,9 +858,9 @@ class FnSpec(Defn):
     """
 
     name: Ident
-    receiver: Optional[Receiver]
+    receiver: Receiver | None
     params: list[Param]
-    ret_typ: Optional[Typ]
+    ret_typ: Typ | None
 
     def __init__(
         self,
@@ -871,7 +868,7 @@ class FnSpec(Defn):
         tree: ParseTree,
         ident: ParseTree,
         param_list: ParseTree,
-        ret_typ: Optional[ParseTree],
+        ret_typ: ParseTree | None,
     ) -> None:
         super().__init__(SrcSpan(file, tree.meta))
         self.name = Ident(file, ident)
@@ -905,7 +902,7 @@ class FnDecl(FnSpec):
 class FnDefn(FnSpec):
     """A function defined with a body."""
 
-    access: Optional[Access]
+    access: Access | None
     block: BlockExpr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -925,7 +922,7 @@ class FnDefn(FnSpec):
 class VarDefn(Defn):
     """A module-level ``let`` variable definition."""
 
-    access: Optional[Access]
+    access: Access | None
     let_stmt: LetStmt
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -943,7 +940,7 @@ class VarDefn(Defn):
 class StructDefn(Defn):
     """A struct type definition."""
 
-    access: Optional[Access]
+    access: Access | None
     ident: Ident
     fields: list[StructFieldDefn]
 
@@ -967,8 +964,8 @@ class StructDefn(Defn):
 class StructFieldDefn(Ast):
     """A single field declaration within a :class:`StructDefn`."""
 
-    access: Optional[Access]
-    mut: Optional[Mutability]
+    access: Access | None
+    mut: Mutability | None
     ident: Ident
     typ: Typ
 
@@ -1033,7 +1030,7 @@ class Access(Ast):
         self.value = as_token(child)
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Optional[Access]:
+    def from_tree(file: SrcFile, tree: ParseTree) -> Access | None:
         """Build an :class:`Access` from a parse tree, if it has one present.
 
         :param file: The source file ``tree`` was parsed from.
@@ -1045,8 +1042,7 @@ class Access(Ast):
         (child,) = tree.children
         if child is not None:
             return Access(file, tree)
-        else:
-            return None
+        return None
 
     @override
     def diag_str(self) -> str:
@@ -1065,7 +1061,7 @@ class Mutability(Ast):
         self.value = as_token(child)
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Optional[Mutability]:
+    def from_tree(file: SrcFile, tree: ParseTree) -> Mutability | None:
         """Build a :class:`Mutability` from a parse tree, if it has one present.
 
         :param file: The source file ``tree`` was parsed from.
@@ -1077,8 +1073,7 @@ class Mutability(Ast):
         (child,) = tree.children
         if child is not None:
             return Mutability(file, tree)
-        else:
-            return None
+        return None
 
     @override
     def diag_str(self) -> str:
@@ -1100,7 +1095,7 @@ class Mod(Ast):
         return "module"
 
 
-def opt_ast(obj: Any) -> Optional[Ast]:
+def opt_ast(obj: Any) -> Ast | None:
     """Get ``obj``'s ``ast`` attribute, if it has one and it's an :class:`Ast`.
 
     :param obj: The object to inspect (typically an
@@ -1113,7 +1108,7 @@ def opt_ast(obj: Any) -> Optional[Ast]:
     return None
 
 
-def opt_span(obj: Any) -> Optional[SrcSpan]:
+def opt_span(obj: Any) -> SrcSpan | None:
     """Get the source span of ``obj``'s ``ast`` attribute, if it has one.
 
     :param obj: The object to inspect (typically an

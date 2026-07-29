@@ -1,15 +1,16 @@
 import pytest
+from util import compile_modules, compile_str, find_pos
 
 from leech.errors import (
     CircularVarInitializerError,
     DuplicateItemDefnError,
-    ModUsedAsTypError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
     InfiniteSizeStructError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     LoopLabelNotFoundError,
+    ModUsedAsTypError,
     NotCallableError,
     PrivateItemAccessError,
     PrivateStructFieldAccessError,
@@ -18,7 +19,6 @@ from leech.errors import (
     VoidVarInitializerError,
     WhileCondNotBoolError,
 )
-from util import compile_modules, compile_str, find_pos
 
 
 def test_unexpected_character_message(tmp_path):

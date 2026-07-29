@@ -18,7 +18,7 @@ class ModLoader:
     :class:`~leech.typs.StructTyp` instances, which are compared by identity.
 
     A loader is single-use in practice: one per invocation of
-    :func:`leech.main.compile`.
+    :func:`leech.main.compile_to_llvm_ir`.
     """
 
     _mods: Final[dict[Path, ir_module.Mod]]

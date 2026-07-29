@@ -1,11 +1,11 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import (
     BreakNotInLoopError,
     ContinueNotInLoopError,
     LoopLabelNotFoundError,
 )
-from util import check_prog_output, compile_str
 
 
 def test_break(tmp_path):

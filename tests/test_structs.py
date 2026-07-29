@@ -1,18 +1,17 @@
 import pytest
+from util import check_prog_output, compile_str, write_whole_file
 
 from leech.errors import (
-    DuplicateFieldInStructExprError,
     DuplicateFieldInStructDefnError,
+    DuplicateFieldInStructExprError,
     FieldAccessIntoInvalidTypError,
     IncompatibleStructFieldTypError,
     InfiniteSizeStructError,
     InvalidStructFieldError,
-    MissingFieldInStructExprError,
     ItemNotFoundError,
+    MissingFieldInStructExprError,
     TypeOfStructExprNotStructError,
 )
-
-from util import check_prog_output, compile_str, write_whole_file
 
 
 def test_struct_access(tmp_path):

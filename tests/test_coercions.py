@@ -1,4 +1,5 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import (
     IncompatibleAssignmentTypError,
@@ -8,7 +9,6 @@ from leech.errors import (
     InvalidArgTypError,
     InvalidRetTypError,
 )
-from util import check_prog_output, compile_str
 
 
 def test_mut_ptr_coerces_to_const_ptr_arg(tmp_path):

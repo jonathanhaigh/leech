@@ -26,7 +26,38 @@ dev = [
 ]
 
 [tool.basedpyright]
-typeCheckingMode = "basic"
+typeCheckingMode = "standard"
 
 [tool.pytest.ini_options]
 xfail_strict = true
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle / pyflakes (default set, kept explicit)
+    "A",             # flake8-builtins: don't shadow builtins
+    "B",             # flake8-bugbear: likely bugs and design issues
+    "C4",            # flake8-comprehensions
+    "I",             # isort
+    "N",             # pep8-naming
+    "PIE",           # misc lint rules
+    "PLC", "PLE", "PLW",  # pylint checks ported to ruff (excl. PLR: complexity/refactor, too noisy for now)
+    "PTH",           # prefer pathlib over os.path
+    "RET",           # return/else simplifications
+    "RUF",           # ruff-specific checks
+    "SIM",           # flake8-simplify
+    "T20",           # no stray print()
+    "UP",            # pyupgrade, enforced against target-version
+]
+# UP046: several classes still use `Generic[T]` instead of PEP 695 type
+# parameters. Left as a deliberate follow-up - the TypeVars they use
+# (e.g. FnAstT_co) are shared across class hierarchies, so migrating needs
+# a dedicated pass rather than a one-line fix.
+ignore = ["UP046"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["T20"]
+"src/leech/main.py" = ["T20"]
+"src/leech/errors.py" = ["T20"]

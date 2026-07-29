@@ -27,5 +27,4 @@ class VarNamer:
         self._counters[basename] += 1
         if counter == 1:
             return basename
-        else:
-            return f"{basename}.{counter}"
+        return f"{basename}.{counter}"

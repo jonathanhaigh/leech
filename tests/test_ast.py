@@ -1,5 +1,6 @@
-from leech import ast as ast
 from util import parse_mod
+
+from leech import ast
 
 
 def test_impl_defn_basic_typ(tmp_path):

@@ -1,8 +1,8 @@
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
-from leech import ast as ast
-from leech.main import compile
+from leech import ast
+from leech.main import compile_to_llvm_ir
 from leech.parse import build_parser
 from leech.src import SrcFile
 
@@ -17,7 +17,7 @@ def find_pos(src: str, substr: str) -> tuple[int, int]:
 
 
 def write_whole_file(path: Path, content: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    with path.open("w", encoding="utf-8") as f:
         f.write(content)
 
     print(f"{path}:\n")
@@ -25,7 +25,7 @@ def write_whole_file(path: Path, content: str) -> None:
 
 
 def compile_file(path: Path) -> Path:
-    llir = compile(SrcFile(path))
+    llir = compile_to_llvm_ir(SrcFile(path))
     llir_path = path.with_suffix(".ll")
     write_whole_file(llir_path, llir)
     return llir_path
@@ -49,7 +49,7 @@ def compile_modules(tmp_path: Path, **modules: str) -> list[Path]:
     for mod_name, mod_src in modules.items():
         write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
 
-    return [compile_file(tmp_path / f"{mod_name}.leech") for mod_name in modules.keys()]
+    return [compile_file(tmp_path / f"{mod_name}.leech") for mod_name in modules]
 
 
 def check_prog_output(
@@ -65,7 +65,8 @@ def check_prog_output(
         ["lli", llir_path],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        universal_newlines=True,
+        text=True,
+        check=False,
     )
     assert proc.stdout == f"{expected_output}"
     assert proc.returncode == expected_exit_status

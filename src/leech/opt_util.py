@@ -1,10 +1,9 @@
 """Helper functions for working with ``Optional`` values."""
 
 from collections.abc import Callable
-from typing import Optional
 
 
-def opt_map[T, R](o: Optional[T], fn: Callable[[T], R]) -> Optional[R]:
+def opt_map[T, R](o: T | None, fn: Callable[[T], R]) -> R | None:
     """Apply ``fn`` to ``o`` if it is present.
 
     :param o: The optional value.
@@ -16,7 +15,7 @@ def opt_map[T, R](o: Optional[T], fn: Callable[[T], R]) -> Optional[R]:
     return fn(o)
 
 
-def opt_or_else[T](o: Optional[T], fn: Callable[[], T]) -> T:
+def opt_or_else[T](o: T | None, fn: Callable[[], T]) -> T:
     """Return ``o`` if present, otherwise the result of calling ``fn``.
 
     :param o: The optional value.
@@ -29,7 +28,7 @@ def opt_or_else[T](o: Optional[T], fn: Callable[[], T]) -> T:
     return fn()
 
 
-def opt_or_default[T](o: Optional[T], v: T) -> T:
+def opt_or_default[T](o: T | None, v: T) -> T:
     """Return ``o`` if present, otherwise a default value.
 
     :param o: The optional value.
@@ -41,7 +40,7 @@ def opt_or_default[T](o: Optional[T], v: T) -> T:
     return v
 
 
-def opt_unwrap[T](o: Optional[T]) -> T:
+def opt_unwrap[T](o: T | None) -> T:
     """Assert that ``o`` is present and return it.
 
     :param o: The optional value, which must not be ``None``.

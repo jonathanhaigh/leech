@@ -12,9 +12,9 @@ which of two call/field-access candidates applies, and so on) rather
 than re-deriving them.
 """
 
+import enum  # noqa: I001 - import order below works around a circular import
 from dataclasses import dataclass
-import enum
-from typing import Final, Optional
+from typing import Final
 
 from leech import ir_module
 from leech import ast
@@ -96,23 +96,23 @@ class CfgBuilder:
     class _LoopCtx:
         """The ``break``/``continue`` targets for one enclosing ``while`` loop."""
 
-        label: Optional[str]
+        label: str | None
         cond_bb: BasicBlock
         end_bb: BasicBlock
 
-    fn: Optional[ir_module.FnSpec]
+    fn: ir_module.FnSpec | None
     typ_check_results: Final[TypCheckResults]
     cfg: Final[Cfg]
     curr_bb: BasicBlock
     _generate_bb_name: Final[VarNamer]
     #: The ``while`` loops currently being lowered, innermost last - used
     #: to resolve unlabeled and labeled ``break``/``continue`` targets.
-    _loop_stack: Final[list["CfgBuilder._LoopCtx"]]
+    _loop_stack: Final[list[CfgBuilder._LoopCtx]]
 
     def __init__(
         self,
         typ_check_results: TypCheckResults,
-        fn: Optional[ir_module.FnSpec] = None,
+        fn: ir_module.FnSpec | None = None,
     ) -> None:
         self.fn = fn
         self.typ_check_results = typ_check_results
@@ -177,7 +177,7 @@ class CfgBuilder:
         expr_ast: ast.Expr,
         e: Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
+        expected_typ: Typ | None = None,
     ) -> Value:
         """Lower any expression, dispatching to the ``build_*_expr`` method
         matching its AST node kind.
@@ -233,14 +233,14 @@ class CfgBuilder:
             case ast.DerefExpr():
                 return self.build_deref_expr(expr_ast, e, ctx)
             case _:
-                assert False, f"unhandled expression kind {expr_ast}"
+                raise AssertionError(f"unhandled expression kind {expr_ast}")
 
     def build_block_expr(
         self,
         block_ast: ast.BlockExpr,
         e: Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
+        expected_typ: Typ | None = None,
     ) -> Value:
         """Lower a ``{ ... }`` block expression.
 
@@ -270,7 +270,7 @@ class CfgBuilder:
         if_ast: ast.IfExpr,
         e: Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
+        expected_typ: Typ | None = None,
     ) -> Value:
         """Lower an ``if``/``else`` expression.
 
@@ -366,7 +366,7 @@ class CfgBuilder:
         end_bb: BasicBlock,
         e: Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ],
+        expected_typ: Typ | None,
     ) -> tuple[Value, BasicBlock, bool]:
         """Lower one arm of an ``if``/``else`` into its own basic block.
 
@@ -460,12 +460,12 @@ class CfgBuilder:
         :return: The call's result.
         """
         callee_ast = call_ast.callee
-        recv_ast: Optional[ast.Expr] = None
-        recv_arg: Optional[Value] = None
+        recv_ast: ast.Expr | None = None
+        recv_arg: Value | None = None
 
         if isinstance(callee_ast, ast.StructAccessExpr):
             recv_place = self.build_expr(callee_ast.struct, e, ExprContext.PLACE)
-            method: Optional[ir_module.Fn] = None
+            method: ir_module.Fn | None = None
             if isinstance(recv_place.typ, PtrTyp) and isinstance(
                 recv_place.typ.pointee_typ, StructTyp
             ):
@@ -511,7 +511,7 @@ class CfgBuilder:
         op_ast: ast.BinOpExpr,
         e: Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
+        expected_typ: Typ | None = None,
     ) -> Value:
         """Lower a binary operator expression (arithmetic or comparison).
 
@@ -589,7 +589,7 @@ class CfgBuilder:
                 else:
                     res = self.curr_bb.udiv(lhs, rhs, op_ast)
             case _:
-                assert False, f"unhandled binary operator {op!r}"
+                raise AssertionError(f"unhandled binary operator {op!r}")
 
         return self._in_context(res, ctx)
 
@@ -661,7 +661,7 @@ class CfgBuilder:
         op_ast: ast.UnaryOpExpr,
         e: Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
+        expected_typ: Typ | None = None,
     ) -> Value:
         """Lower a unary operator expression (``&``, ``-``, or ``not``).
 
@@ -707,7 +707,7 @@ class CfgBuilder:
                     return propagated
                 return self._in_context(self.curr_bb.neg(operand, op_ast), ctx)
             case _:
-                assert False, f"unhandled unary operator {op_ast.op.name!r}"
+                raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
     def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
         """Lower a (possibly qualified) variable or function reference.
@@ -733,7 +733,7 @@ class CfgBuilder:
         arr_expr: ast.ArrayExpr,
         e: Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
+        expected_typ: Typ | None = None,
     ) -> Value:
         """Lower an array literal expression.
 
@@ -763,7 +763,7 @@ class CfgBuilder:
         # element deciding for everyone. The deferred elements are all
         # bare literals, which emit no instructions, so lowering them
         # second can't reorder any of the others' effects.
-        built: list[Optional[Value]] = [None] * len(arr_expr.elements)
+        built: list[Value | None] = [None] * len(arr_expr.elements)
         for i, elt_ast in enumerate(arr_expr.elements):
             if not is_flexible_int_lit(elt_ast):
                 built[i] = self.build_expr(
@@ -866,7 +866,9 @@ class CfgBuilder:
 
         for i, field in enumerate(struct_typ.fields.values()):
             field_value = field_values[field.name]
-            coerced = opt_unwrap(self._coerce(field_value, field_value_asts[field.name]))
+            coerced = opt_unwrap(
+                self._coerce(field_value, field_value_asts[field.name])
+            )
             field_index = ComptimeInt(I32, i, field_value.ast)
             struct = self.curr_bb.insert_value(
                 struct, coerced, (field_index,), field_value.ast
@@ -996,7 +998,7 @@ class CfgBuilder:
         target = self._resolve_loop_label(continue_ast.label)
         self.branch(target.cond_bb, continue_ast)
 
-    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> "CfgBuilder._LoopCtx":
+    def _resolve_loop_label(self, label: ast.Ident | None) -> CfgBuilder._LoopCtx:
         """Find the loop a ``break``/``continue`` targets.
 
         TypCheck already confirmed :attr:`_loop_stack` is non-empty and,
@@ -1012,7 +1014,7 @@ class CfgBuilder:
         for ctx in reversed(self._loop_stack):
             if ctx.label == label.name:
                 return ctx
-        assert False, f"unresolved loop label {label.name!r}"
+        raise AssertionError(f"unresolved loop label {label.name!r}")
 
     def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
         """Lower a local ``let`` statement.
@@ -1097,7 +1099,7 @@ class CfgBuilder:
         value = -lit_ast.value if negated else lit_ast.value
         return ComptimeInt(typ, value, lit_ast)
 
-    def _coerce(self, value: Value, node: ast.Ast) -> Optional[Value]:
+    def _coerce(self, value: Value, node: ast.Ast) -> Value | None:
         """Convert ``value`` to the type its context expects, if allowed.
 
         The decision - whether a coercion applies, and which kind - was
@@ -1140,11 +1142,11 @@ class CfgBuilder:
                 # emitted - the two have the same representation.
                 return value
             case _:
-                assert False, f"unhandled coercion {coercion!r}"
+                raise AssertionError(f"unhandled coercion {coercion!r}")
 
     def _propagate_never(
         self, value: Value, ast_node: ast.Ast, ctx: ExprContext
-    ) -> Optional[Value]:
+    ) -> Value | None:
         """If ``value`` is ``never``-typed, terminate the current block.
 
         For operators, which don't coerce toward a target type (see
@@ -1174,16 +1176,14 @@ class CfgBuilder:
     def _in_context(self, value: Value, ctx: ExprContext) -> Value:
         if ctx == ExprContext.PLACE:
             return self._value_to_ptr(value)
-        else:
-            return value
+        return value
 
     def _deref_in_context(
-        self, ptr: Value, ctx: ExprContext, ast: Optional[ast.Ast]
+        self, ptr: Value, ctx: ExprContext, ast: ast.Ast | None
     ) -> Value:
         if ctx == ExprContext.PLACE:
             return ptr
-        else:
-            return self.curr_bb.load(ptr, ast)
+        return self.curr_bb.load(ptr, ast)
 
     def add_bb(self, basename: str) -> BasicBlock:
         """Create a new, empty basic block and add it to :attr:`cfg`.
@@ -1250,7 +1250,7 @@ class CfgBuilder:
         self.cfg.add_edge(self.curr_bb, true_target)
         self.cfg.add_edge(self.curr_bb, false_target)
 
-    def ret(self, value: Value, ast: Optional[ast.Ast]) -> None:
+    def ret(self, value: Value, ast: ast.Ast | None) -> None:
         """Terminate :attr:`curr_bb` with a return of ``value``.
 
         :param value: The value to return.

@@ -1,7 +1,7 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import DuplicateItemDefnError, ItemNotFoundError
-from util import check_prog_output, compile_str
 
 
 def test_param_typ_not_defined(tmp_path):

@@ -1,4 +1,5 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import (
     IncompatibleLetTypError,
@@ -7,7 +8,6 @@ from leech.errors import (
     MissingRetError,
 )
 from leech.typs import BOOL, I32, NEVER
-from util import check_prog_output, compile_str
 
 
 def test_never_coerces_to_any_type():

@@ -1,4 +1,5 @@
 import pytest
+from util import check_prog_output, compile_modules, compile_str
 
 from leech.errors import (
     DuplicateItemDefnError,
@@ -7,7 +8,6 @@ from leech.errors import (
     ItemNotFoundError,
     PrivateItemAccessError,
 )
-from util import check_prog_output, compile_modules, compile_str
 
 
 def test_assoc_fn_call(tmp_path):

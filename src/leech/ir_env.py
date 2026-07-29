@@ -1,8 +1,9 @@
 """Scope and name resolution for variables, types and modules."""
 
-import enum
+import enum  # noqa: I001 - import order below works around a circular import
 import re
-from typing import Any, ChainMap, Optional
+from collections import ChainMap
+from typing import Any
 
 from leech import ir_module, ir_values
 from leech import ast
@@ -60,7 +61,7 @@ class Env:
     #: to this Env alone, mirroring ``items.maps[0]``.
     _spans: dict[tuple[Env.Namespace, str], SrcSpan]
 
-    def __init__(self, parent: Optional[Env] = None) -> None:
+    def __init__(self, parent: Env | None = None) -> None:
         if parent is None:
             self.items = ChainMap()
         else:
@@ -104,7 +105,7 @@ class Env:
         ns: Env.Namespace,
         name: str,
         item: Any,
-        span: Optional[SrcSpan] = None,
+        span: SrcSpan | None = None,
     ) -> None:
         """Bind ``name`` to ``item`` in ``ns``, in this scope only.
 
@@ -135,7 +136,7 @@ class Env:
         self,
         name: str,
         var: ir_values.Value[typs.PtrTyp],
-        span: Optional[SrcSpan] = None,
+        span: SrcSpan | None = None,
     ) -> None:
         """Bind a variable name in this scope.
 
@@ -148,7 +149,7 @@ class Env:
         return self.add(Env.Namespace.VARS, name, var, span)
 
     def add_container(
-        self, name: str, item: Container, span: Optional[SrcSpan] = None
+        self, name: str, item: Container, span: SrcSpan | None = None
     ) -> None:
         """Bind a type or module name in this scope.
 
@@ -163,7 +164,7 @@ class Env:
     @staticmethod
     def _private_item_diag_info(
         value: ir_values.Value[typs.PtrTyp] | Container,
-    ) -> Optional[tuple[str, Optional[SrcSpan]]]:
+    ) -> tuple[str, SrcSpan | None] | None:
         """A human-readable kind and definition span for a private-item
         diagnostic, if one applies.
 

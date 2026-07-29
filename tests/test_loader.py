@@ -1,10 +1,10 @@
+from util import write_whole_file
+
 from leech.asserts import checked_cast
 from leech.ir_env import Env
 from leech.ir_loader import ModLoader
 from leech.ir_module import Mod
 from leech.typs import StructTyp
-
-from util import write_whole_file
 
 
 def load_main(tmp_path, **modules):

@@ -1,13 +1,13 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import (
     InvalidRetTypError,
     InvalidVoidRetError,
-    MissingRetError,
     ItemNotFoundError,
+    MissingRetError,
     RetNotInFnError,
 )
-from util import check_prog_output, compile_str
 
 
 def test_tail_expr_return(tmp_path):

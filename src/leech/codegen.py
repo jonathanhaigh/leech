@@ -3,7 +3,7 @@
 from collections import ChainMap
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Optional
+
 from llvmlite import ir as ll
 from networkx import dfs_postorder_nodes
 
@@ -73,9 +73,7 @@ class Compiler:
         def __init__(
             self,
             compiler: Compiler,
-            values: Optional[
-                ChainMap[ir_values.Value | Typ, ll.Value | ll.Type]
-            ] = None,
+            values: ChainMap[ir_values.Value | Typ, ll.Value | ll.Type] | None = None,
         ) -> None:
             super().__init__()
             self.compiler = compiler
@@ -204,9 +202,10 @@ class Compiler:
                     (self._ll_mod_items.get(param_typ) for param_typ in typ.param_typs),
                 )
             case PtrTyp():
-                # Typed pointers are deprecated in llvmlite (and LLVM IR) but llvmlite seems to
-                # rely on pointer types in a bunch of places (call instruction, gep instruction)
-                # that's a pain to try to work around, so just use typed pointers for now.
+                # Typed pointers are deprecated in llvmlite (and LLVM IR) but
+                # llvmlite seems to rely on pointer types in a bunch of places
+                # (call instruction, gep instruction) that's a pain to try to
+                # work around, so just use typed pointers for now.
                 return ll.PointerType(pointee=self._ll_mod_items.get(typ.pointee_typ))
             case ArrayTyp():
                 return ll.ArrayType(self._ll_mod_items.get(typ.element_typ), typ.length)
@@ -222,9 +221,9 @@ class Compiler:
                 )
                 return checked_cast(self._ll_mod_items.items[typ], ll.Type)
             case NeverTyp():
-                assert False, "a never-typed value shouldn't need an LLVM type"
+                raise AssertionError("a never-typed value shouldn't need an LLVM type")
             case _:
-                assert False, f"unhandled type {typ}"
+                raise AssertionError(f"unhandled type {typ}")
 
     def _declare_mod_item(self, item: ir_module.ModItem):
         match item.value:
@@ -239,7 +238,7 @@ class Compiler:
                 # An import (ir_module.Mod) is the only other possible
                 # item value, and _program_items() - the only source of
                 # items passed here - filters those out.
-                assert False, f"unhandled module item {item}"
+                raise AssertionError(f"unhandled module item {item}")
 
     def _compile_mod_item(self, item: ir_module.ModItem) -> None:
         match item.value:
@@ -248,18 +247,18 @@ class Compiler:
             case ir_module.Fn():
                 return self._compile_mod_fn(item, item.value)
             case ir_module.FnDecl():
-                return
+                return None
             case StructTyp():
                 # Already compiled, along with every other module's, by
                 # the struct-body phase of compile().
-                return
+                return None
             case ir_module.Mod():
                 # An import contributes no symbols of its own; the
                 # imported module's items are handled by compile()'s walk
                 # over the whole program.
-                return
+                return None
             case _:
-                assert False, f"unhandled module item {item}"
+                raise AssertionError(f"unhandled module item {item}")
 
     def _declare_mod_var(
         self, item: ir_module.ModItem, var: ir_module.ModVar
@@ -296,7 +295,7 @@ class Compiler:
         )
 
         ll_fn = checked_cast(self._ll_mod_items.get(fn), ll.Function)
-        for param, ll_param in zip(fn.params, ll_fn.args):
+        for param, ll_param in zip(fn.params, ll_fn.args, strict=True):
             ctx.ll_values.set(param, ll_param)
 
         # Reverse postorder, not a plain BFS: a phi's block must be
@@ -441,14 +440,16 @@ class Compiler:
             case ir_values.UnreachableInstr():
                 return ctx.ll_builder.unreachable()
             case _:
-                assert False, f"unhandled instruction {instr}"
+                raise AssertionError(f"unhandled instruction {instr}")
 
     def _compile_comptime_value(self, value: ir_values.ComptimeValue) -> ll.Value:
         match value:
             case ir_values.UndefValue():
                 return ll.Constant(self._ll_mod_items.get(value.typ), ll.Undefined)
             case ir_values.VoidValue():
-                assert False, "a void value should never need a runtime representation"
+                raise AssertionError(
+                    "a void value should never need a runtime representation"
+                )
             case ir_values.ComptimeInt():
                 return ll.Constant(self._ll_mod_items.get(value.typ), value.value)
             case ir_values.ComptimeBool():
@@ -490,4 +491,4 @@ class Compiler:
                 # always true, so it can never escape the interpreter as
                 # a value in its own right (see
                 # CannotTakeAddressOfComptimeValueError).
-                assert False, f"unhandled comptime value {value}"
+                raise AssertionError(f"unhandled comptime value {value}")

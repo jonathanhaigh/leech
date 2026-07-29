@@ -5,13 +5,13 @@ includes a pretty-printed dump of the operand(s), which is more useful for
 debugging than the bare condition a plain ``assert`` would report.
 """
 
-from collections.abc import Callable, Sequence
 import operator
+from collections.abc import Callable, Sequence
 from pprint import pformat
-from typing import Any, Optional
+from typing import Any
 
 
-def _message_str(message: Optional[str]) -> str:
+def _message_str(message: str | None) -> str:
     return "" if message is None else f"\n{message}"
 
 
@@ -20,14 +20,15 @@ def _assert_op(
     op_name: str,
     lhs: Any,
     rhs: Any,
-    message: Optional[str] = None,
+    message: str | None = None,
 ) -> None:
     assert op(lhs, rhs), (
-        f"not(lhs {op_name} rhs)\nlhs={pformat(lhs)}\nrhs={pformat(rhs)}{_message_str(message)}"
+        f"not(lhs {op_name} rhs)\nlhs={pformat(lhs)}\nrhs={pformat(rhs)}"
+        f"{_message_str(message)}"
     )
 
 
-def assert_eq(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
+def assert_eq(lhs: Any, rhs: Any, message: str | None = None) -> None:
     """Assert that ``lhs == rhs``.
 
     :param lhs: The left-hand operand.
@@ -38,7 +39,7 @@ def assert_eq(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
     _assert_op(operator.eq, "==", lhs, rhs, message)
 
 
-def assert_gt(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
+def assert_gt(lhs: Any, rhs: Any, message: str | None = None) -> None:
     """Assert that ``lhs > rhs``.
 
     :param lhs: The left-hand operand.
@@ -49,7 +50,7 @@ def assert_gt(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
     _assert_op(operator.gt, ">", lhs, rhs, message)
 
 
-def assert_ge(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
+def assert_ge(lhs: Any, rhs: Any, message: str | None = None) -> None:
     """Assert that ``lhs >= rhs``.
 
     :param lhs: The left-hand operand.
@@ -60,7 +61,7 @@ def assert_ge(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
     _assert_op(operator.ge, ">=", lhs, rhs, message)
 
 
-def assert_lt(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
+def assert_lt(lhs: Any, rhs: Any, message: str | None = None) -> None:
     """Assert that ``lhs < rhs``.
 
     :param lhs: The left-hand operand.
@@ -71,7 +72,7 @@ def assert_lt(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
     _assert_op(operator.lt, "<", lhs, rhs, message)
 
 
-def assert_le(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
+def assert_le(lhs: Any, rhs: Any, message: str | None = None) -> None:
     """Assert that ``lhs <= rhs``.
 
     :param lhs: The left-hand operand.
@@ -82,7 +83,7 @@ def assert_le(lhs: Any, rhs: Any, message: Optional[str] = None) -> None:
     _assert_op(operator.le, "<=", lhs, rhs, message)
 
 
-def checked_cast[T](obj: Any, typ: type[T], message: Optional[str] = None) -> T:
+def checked_cast[T](obj: Any, typ: type[T], message: str | None = None) -> T:
     """Assert that ``obj`` is an instance of ``typ`` and return it as such.
 
     Useful for narrowing a value's static type after a runtime check, in
@@ -106,7 +107,7 @@ def checked_cast[T](obj: Any, typ: type[T], message: Optional[str] = None) -> T:
 
 
 def assert_all_eq(
-    seq: Sequence[Any], value: Any, message: Optional[str] = None
+    seq: Sequence[Any], value: Any, message: str | None = None
 ) -> None:
     """Assert that every element of ``seq`` equals ``value``.
 
@@ -126,7 +127,7 @@ def assert_all_eq(
         )
 
 
-def assert_in(obj: Any, container: Any, message: Optional[str] = None) -> None:
+def assert_in(obj: Any, container: Any, message: str | None = None) -> None:
     """Assert that ``obj in container``.
 
     :param obj: The value to look for.
@@ -142,7 +143,7 @@ def assert_in(obj: Any, container: Any, message: Optional[str] = None) -> None:
     )
 
 
-def assert_not_in(obj: Any, container: Any, message: Optional[str] = None) -> None:
+def assert_not_in(obj: Any, container: Any, message: str | None = None) -> None:
     """Assert that ``obj not in container``.
 
     :param obj: The value to look for.

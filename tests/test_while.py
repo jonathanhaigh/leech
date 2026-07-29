@@ -1,7 +1,7 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import WhileCondNotBoolError, WhileTypNotVoidError
-from util import check_prog_output, compile_str
 
 
 def test_while(tmp_path):

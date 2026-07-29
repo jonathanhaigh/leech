@@ -1,11 +1,11 @@
 import pytest
+from util import check_prog_output, compile_str
 
 from leech.errors import (
     AssignToConstError,
     IncompatibleAssignmentTypError,
     SetNonLocalVarAtComptimeError,
 )
-from util import check_prog_output, compile_str
 
 
 def test_assign_to_local_var(tmp_path):

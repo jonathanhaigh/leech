@@ -8,6 +8,7 @@ def run_cli(*args) -> subprocess.CompletedProcess:
         ["leech", *(str(a) for a in args)],
         capture_output=True,
         text=True,
+        check=False,
     )
 
 

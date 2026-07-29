@@ -23,12 +23,9 @@ handling throughout the ``check_*`` methods below.
 """
 
 from dataclasses import dataclass
-from typing import Final, Optional
+from typing import Final
 
 from leech import ast
-from leech.ir_env import Env
-from leech.ir_values import Param, Value
-from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.errors import (
     AssignToConstError,
     BreakNotInLoopError,
@@ -44,7 +41,7 @@ from leech.errors import (
     IncompatibleBinOpArgTypsError,
     IncompatibleLetTypError,
     IncompatibleStructFieldTypError,
-    IncompatibleTypInArrayExpr,
+    IncompatibleTypInArrayExprError,
     IndexIntoInvalidTypError,
     IntLitOverflowError,
     InvalidArgTypError,
@@ -70,6 +67,9 @@ from leech.errors import (
     WhileCondNotBoolError,
     WhileTypNotVoidError,
 )
+from leech.ir_env import Env
+from leech.ir_values import Param, Value
+from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.src import SrcSpan
 from leech.typs import (
     BOOL,
@@ -135,7 +135,7 @@ def resolve_peer_typ(fixed_typs: list[Typ]) -> Typ:
     return I32
 
 
-def _callable_typ(typ: Typ) -> Optional[CallableTyp]:
+def _callable_typ(typ: Typ) -> CallableTyp | None:
     """``typ``, unwrapped to the type it's callable as, if it's one.
 
     :param typ: The type to check.
@@ -147,7 +147,7 @@ def _callable_typ(typ: Typ) -> Optional[CallableTyp]:
     return None
 
 
-def _struct_field_typ(typ: Typ, name: str) -> Optional[Typ]:
+def _struct_field_typ(typ: Typ, name: str) -> Typ | None:
     """The type of ``typ``'s field called ``name``, if it has one.
 
     :param typ: The type to look ``name`` up on.
@@ -236,7 +236,7 @@ class TypCheckResults:
     """
 
     _int_lit_typs: Final[dict[ast.IntLit, IntTyp]]
-    _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
+    _coercions: Final[dict[ast.Ast, Coercion | None]]
 
     def __init__(self) -> None:
         self._int_lit_typs = {}
@@ -253,7 +253,7 @@ class TypCheckResults:
     def _set_int_lit_typ(self, node: ast.IntLit, typ: IntTyp) -> None:
         self._int_lit_typs[node] = typ
 
-    def coercion(self, node: ast.Ast) -> Optional[Coercion]:
+    def coercion(self, node: ast.Ast) -> Coercion | None:
         """The coercion decision recorded for ``node``.
 
         :param node: The AST node the coerced expression was checked
@@ -263,7 +263,7 @@ class TypCheckResults:
         """
         return self._coercions[node]
 
-    def _set_coercion(self, node: ast.Ast, coercion: Optional[Coercion]) -> None:
+    def _set_coercion(self, node: ast.Ast, coercion: Coercion | None) -> None:
         self._coercions[node] = coercion
 
 
@@ -276,13 +276,13 @@ class TypCheck:
     """
 
     results: Final[TypCheckResults]
-    _ret_typ: Optional[Typ]
-    _ret_typ_span: Optional[SrcSpan]
-    _fn_name: Optional[str]
+    _ret_typ: Typ | None
+    _ret_typ_span: SrcSpan | None
+    _fn_name: str | None
     #: The enclosing ``while`` loops' labels, innermost last - mirrors
     #: :attr:`~leech.ir_builder.CfgBuilder._loop_stack`, minus the basic
     #: blocks (a lowering-only concern).
-    _loop_labels: list[Optional[str]]
+    _loop_labels: list[str | None]
 
     def __init__(self) -> None:
         self.results = TypCheckResults()
@@ -360,7 +360,7 @@ class TypCheck:
         return self.results
 
     def check_expr(
-        self, expr_ast: ast.Expr, e: Env, expected_typ: Optional[Typ]
+        self, expr_ast: ast.Expr, e: Env, expected_typ: Typ | None
     ) -> Typ:
         """Check any expression, dispatching to the ``check_*_expr`` method
         matching its AST node kind.
@@ -407,10 +407,10 @@ class TypCheck:
             case ast.DerefExpr():
                 return self.check_deref_expr(expr_ast, e)
             case _:
-                assert False, f"unhandled expression kind {expr_ast}"
+                raise AssertionError(f"unhandled expression kind {expr_ast}")
 
     def check_block_expr(
-        self, block_ast: ast.BlockExpr, e: Env, expected_typ: Optional[Typ]
+        self, block_ast: ast.BlockExpr, e: Env, expected_typ: Typ | None
     ) -> Typ:
         e = e.new_child()
         diverged = False
@@ -422,7 +422,7 @@ class TypCheck:
         return self.check_expr(block_ast.expr, e, expected_typ)
 
     def check_if_expr(
-        self, if_ast: ast.IfExpr, e: Env, expected_typ: Optional[Typ]
+        self, if_ast: ast.IfExpr, e: Env, expected_typ: Typ | None
     ) -> Typ:
         cond_typ = self.check_expr(if_ast.condition, e, None)
         cond_coercion = self._record_coercion(if_ast.condition, cond_typ, BOOL)
@@ -542,7 +542,7 @@ class TypCheck:
 
     def _resolve_callee(
         self, callee_ast: ast.Expr, e: Env
-    ) -> tuple[CallableTyp, Optional[ast.Expr], Optional[Typ]]:
+    ) -> tuple[CallableTyp, ast.Expr | None, Typ | None]:
         """The callee's type, and its receiver's expression and type, if any.
 
         If ``callee_ast`` is written as ``x.name``, ``name`` is looked up
@@ -611,7 +611,7 @@ class TypCheck:
         return fn_typ, None, None
 
     def check_bin_op_expr(
-        self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Optional[Typ]
+        self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Typ | None
     ) -> Typ:
         if op_ast.op.name in ("and", "or"):
             return self.check_logic_bin_op_expr(op_ast, e)
@@ -688,7 +688,7 @@ class TypCheck:
         return BOOL
 
     def check_unary_op_expr(
-        self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Optional[Typ]
+        self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Typ | None
     ) -> Typ:
         match op_ast.op.name:
             case "&":
@@ -698,7 +698,7 @@ class TypCheck:
             case "-":
                 return self._check_neg_expr(op_ast, e, expected_typ)
             case _:
-                assert False, f"unhandled unary operator {op_ast.op.name!r}"
+                raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
     def _check_addr_of_expr(self, op_ast: ast.UnaryOpExpr, e: Env) -> Typ:
         return self.check_place(op_ast.operand, e)
@@ -717,7 +717,7 @@ class TypCheck:
         return BOOL
 
     def _check_neg_expr(
-        self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Optional[Typ]
+        self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Typ | None
     ) -> Typ:
         if isinstance(op_ast.operand, ast.IntLit):
             typ = self._infer_int_lit_typ(op_ast.operand, expected_typ)
@@ -750,7 +750,11 @@ class TypCheck:
         return operand_typ
 
     def check_var_expr(self, var_ast: ast.VarExpr, e: Env) -> Typ:
-        from leech import ir_module
+        # Real circular import: `ir_module` imports `typcheck` at module
+        # level, and the `isinstance` check below needs the actual class
+        # object at runtime, so this can't be deferred to a TYPE_CHECKING
+        # guard the way an annotation-only reference could be.
+        from leech import ir_module  # noqa: PLC0415
 
         var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
         if isinstance(var, ir_module.FnSpec):
@@ -758,7 +762,7 @@ class TypCheck:
         return var.typ.pointee_typ
 
     def check_array_expr(
-        self, arr_expr: ast.ArrayExpr, e: Env, expected_typ: Optional[Typ]
+        self, arr_expr: ast.ArrayExpr, e: Env, expected_typ: Typ | None
     ) -> Typ:
         expected_elt_typ = (
             expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
@@ -766,7 +770,7 @@ class TypCheck:
         if not arr_expr.elements and expected_elt_typ is None:
             raise EmptyArrayTypUnknownError(arr_expr.span)
 
-        built: list[Optional[Typ]] = [None] * len(arr_expr.elements)
+        built: list[Typ | None] = [None] * len(arr_expr.elements)
         for i, elt_ast in enumerate(arr_expr.elements):
             if not is_flexible_int_lit(elt_ast):
                 built[i] = self.check_expr(elt_ast, e, expected_elt_typ)
@@ -797,12 +801,12 @@ class TypCheck:
             # diverging element is exempt - it stands in for a value of
             # any type.
             if expected_elt_typ is None and elt_typ_i not in (elt_typ, NEVER):
-                raise IncompatibleTypInArrayExpr(
+                raise IncompatibleTypInArrayExprError(
                     elt_typ_i.name, i, elt_ast.span, arr_typ.name
                 )
             coercion = self._record_coercion(elt_ast, elt_typ_i, elt_typ)
             if isinstance(coercion, Invalid):
-                raise IncompatibleTypInArrayExpr(
+                raise IncompatibleTypInArrayExprError(
                     elt_typ_i.name, i, elt_ast.span, arr_typ.name
                 )
 
@@ -970,7 +974,7 @@ class TypCheck:
                 self.check_continue_stmt(stmt_ast)
                 return True
             case _:
-                assert False, f"unhandled statement kind {stmt_ast}"
+                raise AssertionError(f"unhandled statement kind {stmt_ast}")
 
     def check_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
         if self._ret_typ is None:
@@ -1009,7 +1013,7 @@ class TypCheck:
             raise ContinueNotInLoopError(continue_ast.span)
         self._resolve_loop_label(continue_ast.label)
 
-    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> None:
+    def _resolve_loop_label(self, label: ast.Ident | None) -> None:
         """Confirm a ``break``/``continue`` label names an enclosing loop.
 
         Mirrors :meth:`~leech.ir_builder.CfgBuilder._resolve_loop_label`,
@@ -1039,7 +1043,7 @@ class TypCheck:
 
     def _check_let_initializer(
         self, let_ast: ast.LetStmt, e: Env
-    ) -> tuple[Typ, Optional[Typ]]:
+    ) -> tuple[Typ, Typ | None]:
         """Check a ``let`` initializer, shared by :meth:`check_let_stmt`
         and :meth:`check_var_initializer` - mirrors
         :meth:`~leech.ir_builder.CfgBuilder._build_let_initializer`.
@@ -1089,7 +1093,7 @@ class TypCheck:
         return place_typ == NEVER or expr_typ == NEVER
 
     def _infer_int_lit_typ(
-        self, lit_ast: ast.IntLit, expected_typ: Optional[Typ]
+        self, lit_ast: ast.IntLit, expected_typ: Typ | None
     ) -> IntTyp:
         """Choose an integer literal's type.
 
@@ -1109,7 +1113,7 @@ class TypCheck:
 
     def _record_coercion(
         self, node: ast.Ast, value_typ: Typ, target: Typ
-    ) -> Optional[Coercion]:
+    ) -> Coercion | None:
         """Decide, and record, how a checked expression coerces to a target type.
 
         Mirrors the decision :meth:`~leech.ir_builder.CfgBuilder._coerce`

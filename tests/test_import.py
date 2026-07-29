@@ -1,4 +1,6 @@
 import pytest
+from util import check_prog_output, compile_modules
+
 from leech.errors import (
     DuplicateItemDefnError,
     ModDoesNotExistError,
@@ -7,7 +9,6 @@ from leech.errors import (
     PrivateStructFieldAccessError,
     UnexpectedTokenError,
 )
-from util import check_prog_output, compile_modules
 
 
 def test_import_of_module_with_syntax_error(tmp_path):

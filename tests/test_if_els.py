@@ -1,7 +1,7 @@
 import pytest
-
-from leech.errors import IfCondNotBoolError, IfTypNotVoidError, IfElsTypMismatchError
 from util import check_prog_output, compile_str
+
+from leech.errors import IfCondNotBoolError, IfElsTypMismatchError, IfTypNotVoidError
 
 
 def test_if_false_else_expr_val(tmp_path):
@@ -114,7 +114,7 @@ def test_if_ret_else_ret_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         if (true) {
-            return 1; 
+            return 1;
         } else {
             return 2;
         };
@@ -127,7 +127,7 @@ def test_if_ret_expr_val(tmp_path):
     src = """
     pub fn main() i32 {
         if (true) {
-            return 1; 
+            return 1;
         };
         return 0;
     }
@@ -139,7 +139,7 @@ def test_if_with_tail_expr(tmp_path):
     src = """
     pub fn main() i32 {
         if (true) {
-            1 
+            1
         };
         return 0;
     }

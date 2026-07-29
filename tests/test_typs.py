@@ -1,13 +1,14 @@
 import pathlib
 
 import pytest
-from leech import ast as ast
-from leech.ir_env import Env
+from util import check_prog_output, compile_str, find_pos
+
+from leech import ast
 from leech.errors import IncompatibleLetTypError, IntLitOverflowError
+from leech.ir_env import Env
 from leech.parse import build_parser
 from leech.src import SrcFile
 from leech.typs import Typ
-from util import check_prog_output, compile_str, find_pos
 
 
 @pytest.mark.parametrize(

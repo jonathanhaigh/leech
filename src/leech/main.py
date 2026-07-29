@@ -4,16 +4,16 @@ import argparse
 import pathlib
 import sys
 
+from leech import ir_module
 from leech.codegen import Compiler
 from leech.errors import (
     ERROR,
-    UserError,
     TextErrorRenderer,
+    UserError,
     error_level,
     errors,
     register_error,
 )
-from leech import ir_module
 from leech.ir_loader import ModLoader
 from leech.src import SrcFile
 
@@ -33,7 +33,7 @@ def compile_to_ir(file: SrcFile) -> ir_module.Mod:
     return ModLoader().load(file.path)
 
 
-def compile(file: SrcFile) -> str:
+def compile_to_llvm_ir(file: SrcFile) -> str:
     """Compile a source file all the way down to textual LLVM IR.
 
     :param file: The source file to compile.
@@ -82,8 +82,9 @@ def run() -> None:
     args = parse_args()
     file = SrcFile(args.filename)
 
+    output = ""
     try:
-        output = compile(file)
+        output = compile_to_llvm_ir(file)
     except UserError as err:
         register_error(err)
 
@@ -92,7 +93,7 @@ def run() -> None:
         renderer.display_errors(errors())
 
     if error_level() < ERROR:
-        with open(args.o, "w", encoding="utf-8") as f:
+        with pathlib.Path(args.o).open("w", encoding="utf-8") as f:
             f.write(output)
 
     sys.exit(error_level())

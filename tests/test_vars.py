@@ -1,4 +1,5 @@
 import pytest
+from util import check_prog_output, compile_modules, compile_str
 
 from leech.errors import (
     CircularVarInitializerError,
@@ -6,7 +7,6 @@ from leech.errors import (
     ItemNotFoundError,
     VoidVarInitializerError,
 )
-from util import check_prog_output, compile_modules, compile_str
 
 
 def test_int_mod_var_ref_in_fn(tmp_path):

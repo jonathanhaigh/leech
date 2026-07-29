@@ -5,7 +5,7 @@ Used to evaluate module-level ``let`` initializers (see
 generated code.
 """
 
-from typing import Final, Optional
+from typing import Final
 
 from leech import ir_module, ir_values
 from leech.asserts import assert_eq, assert_lt, checked_cast
@@ -34,9 +34,9 @@ class Interpreter:
     registers: Final[dict[ir_values.Value, ir_values.ComptimeValue]]
     cfg: Final[ir_values.Cfg]
     curr_bb: ir_values.BasicBlock
-    prev_bb: Optional[ir_values.BasicBlock]
+    prev_bb: ir_values.BasicBlock | None
     curr_instr_index: int
-    ret_value: Optional[ir_values.ComptimeValue]
+    ret_value: ir_values.ComptimeValue | None
 
     def __init__(
         self,
@@ -45,7 +45,7 @@ class Interpreter:
         args: tuple[ir_values.ComptimeValue, ...],
     ) -> None:
         self.cfg = cfg
-        self.registers = {param: arg for param, arg in zip(params, args, strict=True)}
+        self.registers = dict(zip(params, args, strict=True))
         self.curr_bb = self.cfg.entry
         self.prev_bb = None
         self.curr_instr_index = 0
@@ -89,7 +89,7 @@ class Interpreter:
     def _check_not_temporary(self, value: ir_values.ComptimeValue) -> None:
         if isinstance(value, ir_values.ComptimePtr) and value.is_temporary():
             raise CannotTakeAddressOfComptimeValueError(value.span)
-        elif isinstance(value, ir_values.ComptimeAggregate):
+        if isinstance(value, ir_values.ComptimeAggregate):
             for elt in value.values():
                 self._check_not_temporary(elt)
 
@@ -115,7 +115,7 @@ class Interpreter:
                             raise DivisionByZeroAtComptimeError(instr.span)
                         ret = lhs.value // rhs.value
                     case _:
-                        assert False, f"invalid bin op instr {instr}"
+                        raise AssertionError(f"invalid bin op instr {instr}")
                 # TODO: sdiv vs udiv?
                 if not lhs.typ.fits(ret):
                     raise IntOverflowAtComptimeError(ret, lhs.typ.name, instr.span)
@@ -128,7 +128,9 @@ class Interpreter:
                 ret = -operand.value
                 if not operand.typ.fits(ret):
                     raise IntOverflowAtComptimeError(ret, operand.typ.name, instr.span)
-                self.registers[instr] = ir_values.ComptimeInt(operand.typ, ret, instr.ast)
+                self.registers[instr] = ir_values.ComptimeInt(
+                    operand.typ, ret, instr.ast
+                )
 
             case ir_values.NotInstr():
                 operand = checked_cast(
@@ -159,6 +161,8 @@ class Interpreter:
                         ret = lhs.value >= rhs.value
                     case ">":
                         ret = lhs.value > rhs.value
+                    case _:
+                        raise AssertionError(f"invalid icmp op {instr.op!r}")
                 # TODO: signed vs unsigned?
                 self.registers[instr] = ir_values.ComptimeBool(ret, instr.ast)
 
@@ -235,6 +239,6 @@ class Interpreter:
             case ir_values.RetInstr():
                 self.ret_value = self._get_comptime_value(instr.value)
             case ir_values.UnreachableInstr():
-                assert False, "Should never reach unreachable instruction"
+                raise AssertionError("Should never reach unreachable instruction")
             case _:
-                assert False, f"Invalid instruction {instr}"
+                raise AssertionError(f"Invalid instruction {instr}")

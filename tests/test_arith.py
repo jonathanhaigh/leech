@@ -1,4 +1,6 @@
 import pytest
+from util import check_prog_output, compile_str
+
 from leech.errors import (
     DivisionByZeroAtComptimeError,
     IncompatibleBinOpArgTypsError,
@@ -7,7 +9,6 @@ from leech.errors import (
     InvalidBinOpArgTypError,
     InvalidUnaryOpArgTypError,
 )
-from util import check_prog_output, compile_str
 
 
 def test_int_arith(tmp_path):

@@ -1,16 +1,15 @@
 """Module/program structure: functions, module-level variables, and modules."""
 
+import enum  # noqa: I001 - import order below works around a circular import
 from abc import abstractmethod
 from collections.abc import Collection
 from dataclasses import dataclass
-import enum
 from functools import cached_property
-from typing import ClassVar, Final, Generic, Optional, TypeVar, override
+from typing import ClassVar, Final, Generic, TypeVar, override
 
 from leech import comptime, ir_builder, ir_env, ir_loader, typcheck
 from leech import ast
 from leech.asserts import assert_eq, checked_cast
-from leech.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
 from leech.errors import (
     CircularVarInitializerError,
     ImplForNonLocalStructTypError,
@@ -18,6 +17,7 @@ from leech.errors import (
     ModDoesNotExistError,
     SelfParamOutsideImplError,
 )
+from leech.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
 from leech.opt_util import opt_unwrap
 from leech.src import SrcFile, SrcSpan
 from leech.typs import (
@@ -34,7 +34,7 @@ from leech.typs import (
     Typ,
 )
 
-FnAstT = TypeVar("FnAstT", bound=ast.FnSpec, covariant=True)
+FnAstT_co = TypeVar("FnAstT_co", bound=ast.FnSpec, covariant=True)
 
 
 class Access(enum.Enum):
@@ -44,7 +44,7 @@ class Access(enum.Enum):
     PUBLIC = 1
 
     @staticmethod
-    def from_ast(ast: Optional[ast.Access]) -> Access:
+    def from_ast(ast: ast.Access | None) -> Access:
         """Determine access from an optional ``pub`` keyword in the AST.
 
         :param ast: The parsed ``pub`` keyword node, or ``None`` if
@@ -105,11 +105,10 @@ class ModItem:
         """
         if self.qualify_name:
             return f"{self.mod.name}.{self.name}"
-        else:
-            return self.name
+        return self.name
 
 
-class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
+class FnSpec(Generic[FnAstT_co], ComptimePtr[FnAstT_co]):
     """Base class for anything callable that can appear as a module item.
 
     A function pointer that can never be dereferenced to a plain value -
@@ -118,11 +117,11 @@ class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
 
     @override
     def load(self) -> ComptimeValue:
-        assert False, "Can't dereference a function pointer"
+        raise AssertionError("Can't dereference a function pointer")
 
     @override
     def store(self, value: ComptimeValue) -> None:
-        assert False, "Can't dereference a function pointer"
+        raise AssertionError("Can't dereference a function pointer")
 
     @override
     def is_temporary(self) -> bool:
@@ -148,7 +147,7 @@ class FnSpec(Generic[FnAstT], ComptimePtr[FnAstT]):
         return checked_cast(self.typ.pointee_typ, FnTyp)
 
 
-class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
+class NonBuiltinFnSpec(Generic[FnAstT_co], FnSpec[FnAstT_co]):
     """Base class for functions declared or defined in Leech source.
 
     :param ast: The parsed function declaration or definition.
@@ -161,14 +160,14 @@ class NonBuiltinFnSpec(Generic[FnAstT], FnSpec[FnAstT]):
     """
 
     env: Final[ir_env.Env]
-    recv_struct_typ: Final[Optional[StructTyp]]
+    recv_struct_typ: Final[StructTyp | None]
 
     @override
     def __init__(
         self,
-        ast: FnAstT,
+        ast: FnAstT_co,
         e: ir_env.Env,
-        recv_struct_typ: Optional[StructTyp] = None,
+        recv_struct_typ: StructTyp | None = None,
     ) -> None:
         super().__init__(ast)
         self.env = e.new_child()
@@ -313,7 +312,7 @@ class ModVar(ComptimePtr[ast.VarDefn]):
 
     @override
     def store(self, value: ComptimeValue) -> None:
-        assert False, "Cannot set mod var at comptime"
+        raise AssertionError("Cannot set mod var at comptime")
 
     @override
     def is_temporary(self) -> bool:
@@ -368,7 +367,8 @@ class ModVar(ComptimePtr[ast.VarDefn]):
 
 
 class Mod:
-    """A compiled Leech module: the functions, variables, types, and imports it declares.
+    """A compiled Leech module: the functions, variables, types, and imports it
+    declares.
 
     A module is *not* a type, and can't be used as one. It can head a
     qualified path (``some_mod::foo``) because
@@ -452,7 +452,7 @@ class Mod:
         """Every item this module declares, in declaration order."""
         return self._items.values()
 
-    def get_item(self, ns: ir_env.Env.Namespace, name: str) -> Optional[ModItem]:
+    def get_item(self, ns: ir_env.Env.Namespace, name: str) -> ModItem | None:
         """Find the item this module declares as ``name`` in ``ns``.
 
         :param ns: The namespace to look in. A value and a type of the
@@ -507,7 +507,7 @@ class Mod:
             case _:
                 # ImplDefn is the only other Defn subclass; the caller
                 # (Mod.build) filters those out before calling here.
-                assert False, f"unhandled definition {defn_ast}"
+                raise AssertionError(f"unhandled definition {defn_ast}")
 
     def _build_impl_defn(self, impl_ast: ast.ImplDefn) -> None:
         impl_typ_ast = impl_ast.typ
@@ -536,7 +536,7 @@ class Mod:
         access: Access,
         value: Value[PtrTyp] | ir_env.Container,
         qualify_name: bool = True,
-        span: Optional[SrcSpan] = None,
+        span: SrcSpan | None = None,
     ) -> None:
         item = ModItem(self, name, access, value, qualify_name)
         # Bind in env before recording the item: Env.add is what rejects a

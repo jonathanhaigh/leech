@@ -1,7 +1,7 @@
 """Turning source text into an AST: grammar loading and parse-error reporting."""
 
 from collections.abc import Iterable
-import os
+from pathlib import Path
 
 from lark import Lark, UnexpectedCharacters, UnexpectedToken
 
@@ -9,7 +9,7 @@ from leech import ast
 from leech.errors import UnexpectedCharacterError, UnexpectedTokenError
 from leech.src import SrcFile, SrcSpan
 
-GRAMMAR_PATH = os.path.join(os.path.dirname(__file__), "leech.lark")
+GRAMMAR_PATH = Path(__file__).parent / "leech.lark"
 
 
 def build_parser(start_rule: str) -> Lark:
@@ -19,7 +19,7 @@ def build_parser(start_rule: str) -> Lark:
     :return: A configured, ready-to-use parser.
     """
     return Lark.open(
-        GRAMMAR_PATH,
+        str(GRAMMAR_PATH),
         start=start_rule,
         strict=True,
         propagate_positions=True,
