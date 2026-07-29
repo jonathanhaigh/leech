@@ -7,7 +7,7 @@ defn: fn_defn
   | impl_defn
   | import
 
-fn_defn: access _fn_prototype block_expr
+fn_defn: access "fn" ident [generic_params] "(" param_list ")" [typ] block_expr
 _fn_prototype: "fn" ident "(" param_list ")" [typ]
 !access: ["pub"]
 param_list: _param_list?
@@ -29,11 +29,19 @@ impl_defn: "impl" typ "{" fn_defn* "}"
 
 import: "import" ident ";"
 
+generic_params: "[" _generic_param_list "]"
+_generic_param_list: generic_param ("," generic_param)* ","?
+generic_param: ident (":" bound_list)?
+bound_list: path ("+" path)*
+
+generic_args: "[" _generic_arg_list "]"
+_generic_arg_list: typ ("," typ)* ","?
+
 ?typ: basic_typ
   | ptr_typ
   | array_typ
 
-basic_typ: path
+basic_typ: path [generic_args]
 ptr_typ: "*" mut typ
 array_typ: "[" typ ";" array_length "]"
 array_length: NONNEG_INT
@@ -138,7 +146,7 @@ deref_expr: atom_expr ".*"
 str_lit: STR_LIT
 int_lit: INT_LIT
 !bool_lit: "true" | "false"
-var_expr: path
+var_expr: path [generic_args]
 path: ident ("::" ident)*
 ident: IDENT
 array_expr: "[" arg_list "]"

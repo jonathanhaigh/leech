@@ -71,6 +71,61 @@ def test_impl_defn_empty(tmp_path):
     assert impl.fns == []
 
 
+def test_fn_defn_generic_params(tmp_path):
+    src = """
+    fn id[T: Show](x: T) T { return x; }
+    """
+    mod = parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+
+    (param,) = fn.generic_params
+    assert param.ident.name == "T"
+    assert [b.str() for b in param.bounds] == ["Show"]
+
+
+def test_fn_defn_no_generic_params(tmp_path):
+    src = """
+    fn f() {}
+    """
+    mod = parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    assert fn.generic_params == []
+
+
+def test_basic_typ_generic_args(tmp_path):
+    src = """
+    fn f(x: Pair[i32, bool]) {}
+    """
+    mod = parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+
+    (param,) = fn.params
+    assert isinstance(param.typ, ast.BasicTyp)
+    arg_names = [t.path.str() for t in param.typ.generic_args if isinstance(t, ast.BasicTyp)]
+    assert arg_names == ["i32", "bool"]
+
+
+def test_var_expr_generic_args(tmp_path):
+    src = """
+    fn f() { g[i32](); }
+    """
+    mod = parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+
+    stmt = fn.block.stmts[0]
+    assert isinstance(stmt, ast.ExprStmt)
+    call = stmt.expr
+    assert isinstance(call, ast.CallExpr)
+    assert isinstance(call.callee, ast.VarExpr)
+    (arg,) = call.callee.generic_args
+    assert isinstance(arg, ast.BasicTyp)
+    assert arg.path.str() == "i32"
+
+
 def test_impl_defn_multiple_fns(tmp_path):
     src = """
     struct Foo {}

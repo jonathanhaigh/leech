@@ -368,14 +368,26 @@ class BoolLit(Expr):
 
 
 class VarExpr(PlaceExpr):
-    """A (possibly qualified) variable or function reference, e.g. ``some_mod::x``."""
+    """A (possibly qualified) variable or function reference, e.g. ``some_mod::x``.
+
+    ``generic_args`` holds an explicit type application, e.g. the ``[i32]``
+    in ``f[i32](x)``; empty when the callee's type parameters (if any) are
+    left to be inferred.
+    """
 
     path: Path
+    generic_args: list[Typ]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         super().__init__(SrcSpan(file, tree.meta))
-        (path,) = tree.children
+        path, generic_args = tree.children
         self.path = Path(file, as_tree(path))
+        if generic_args is not None:
+            self.generic_args = [
+                Typ.from_tree(file, as_tree(c)) for c in as_tree(generic_args).children
+            ]
+        else:
+            self.generic_args = []
 
     @override
     def diag_str(self) -> str:
@@ -719,15 +731,25 @@ class Typ(Ast):
 
 
 class BasicTyp(Typ):
-    """A named type, e.g. ``i32`` or ``some_mod::Foo``."""
+    """A named type, e.g. ``i32`` or ``some_mod::Foo``, optionally applied to
+    generic arguments, e.g. ``Vec[i32]``. ``generic_args`` is empty for a
+    non-generic type.
+    """
 
     path: Path
+    generic_args: list[Typ]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "basic_typ")
         super().__init__(SrcSpan(file, tree.meta))
-        (path,) = tree.children
+        path, generic_args = tree.children
         self.path = Path(file, as_tree(path))
+        if generic_args is not None:
+            self.generic_args = [
+                Typ.from_tree(file, as_tree(c)) for c in as_tree(generic_args).children
+            ]
+        else:
+            self.generic_args = []
 
     @override
     def diag_str(self) -> str:
@@ -812,6 +834,34 @@ class Receiver(Ast):
         return '"self" receiver'
 
 
+class GenericParam(Ast):
+    """A single type parameter in a generic item's parameter list, e.g. the
+    ``T`` in ``fn id[T](x: T) T``, or the ``T: Show`` in
+    ``fn show_it[T: Show](x: T)``.
+
+    ``bounds`` parses now but means nothing until traits exist to check it
+    against.
+    """
+
+    ident: Ident
+    bounds: list[Path]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert_eq(tree.data, "generic_param")
+        super().__init__(SrcSpan(file, tree.meta))
+        ident, *rest = list(map(as_tree, tree.children))
+        self.ident = Ident(file, ident)
+        if rest:
+            (bound_list,) = rest
+            self.bounds = [Path(file, as_tree(p)) for p in bound_list.children]
+        else:
+            self.bounds = []
+
+    @override
+    def diag_str(self) -> str:
+        return f'generic parameter "{self.ident.name}"'
+
+
 class Defn(Ast):
     """Base class for every top-level module item definition."""
 
@@ -844,12 +894,18 @@ class FnSpec(Defn):
     :param tree: The declaration's or definition's own parse tree, used
         only for its source span.
     :param ident: The parse tree for the function's name.
+    :param generic_params: The parse tree for the function's ``[...]``
+        type parameter list, or ``None`` if it has none - always ``None``
+        for a :class:`FnDecl`, since an ``extern`` function can't be
+        generic.
     :param param_list: The parse tree for the function's parameter list.
     :param ret_typ: The parse tree for the function's return type, or
         ``None`` if unspecified (i.e. ``void``).
     """
 
     name: Ident
+    #: Empty for a non-generic function.
+    generic_params: list[GenericParam]
     receiver: Receiver | None
     params: list[Param]
     ret_typ: Typ | None
@@ -859,11 +915,16 @@ class FnSpec(Defn):
         file,
         tree: ParseTree,
         ident: ParseTree,
+        generic_params: ParseTree | None,
         param_list: ParseTree,
         ret_typ: ParseTree | None,
     ) -> None:
         super().__init__(SrcSpan(file, tree.meta))
         self.name = Ident(file, ident)
+        if generic_params is not None:
+            self.generic_params = [GenericParam(file, as_tree(c)) for c in generic_params.children]
+        else:
+            self.generic_params = []
         self.ret_typ = opt_map(ret_typ, lambda x: Typ.from_tree(file, x))
 
         assert_eq(param_list.data, "param_list")
@@ -877,12 +938,17 @@ class FnSpec(Defn):
 
 
 class FnDecl(FnSpec):
-    """A function declared without a body (e.g. an external/builtin function)."""
+    """A function declared without a body (e.g. an external/builtin function).
+
+    Never generic - an ``extern`` function has no body to monomorphize.
+    """
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "fn_decl")
         ident, param_list, ret_typ = tree.children
-        super().__init__(file, tree, as_tree(ident), as_tree(param_list), opt_map(ret_typ, as_tree))
+        super().__init__(
+            file, tree, as_tree(ident), None, as_tree(param_list), opt_map(ret_typ, as_tree)
+        )
 
     @override
     def diag_str(self) -> str:
@@ -897,8 +963,15 @@ class FnDefn(FnSpec):
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "fn_defn")
-        access, ident, param_list, ret_typ, block = tree.children
-        super().__init__(file, tree, as_tree(ident), as_tree(param_list), opt_map(ret_typ, as_tree))
+        access, ident, generic_params, param_list, ret_typ, block = tree.children
+        super().__init__(
+            file,
+            tree,
+            as_tree(ident),
+            opt_map(generic_params, as_tree),
+            as_tree(param_list),
+            opt_map(ret_typ, as_tree),
+        )
         self.access = Access.from_tree(file, as_tree(access))
         self.block = BlockExpr(file, as_tree(block))
 
