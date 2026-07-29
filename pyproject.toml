@@ -51,11 +51,6 @@ select = [
     "T20",           # no stray print()
     "UP",            # pyupgrade, enforced against target-version
 ]
-# UP046: several classes still use `Generic[T]` instead of PEP 695 type
-# parameters. Left as a deliberate follow-up - the TypeVars they use
-# (e.g. FnAstT_co) are shared across class hierarchies, so migrating needs
-# a dedicated pass rather than a one-line fix.
-ignore = ["UP046"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["T20"]

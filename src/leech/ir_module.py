@@ -5,7 +5,7 @@ from abc import abstractmethod
 from collections.abc import Collection
 from dataclasses import dataclass
 from functools import cached_property
-from typing import ClassVar, Final, Generic, TypeVar, override
+from typing import ClassVar, Final, override
 
 from leech import comptime, ir_builder, ir_env, ir_loader, typcheck
 from leech import ast
@@ -33,8 +33,6 @@ from leech.typs import (
     StructTyp,
     Typ,
 )
-
-FnAstT_co = TypeVar("FnAstT_co", bound=ast.FnSpec, covariant=True)
 
 
 class Access(enum.Enum):
@@ -108,7 +106,7 @@ class ModItem:
         return self.name
 
 
-class FnSpec(Generic[FnAstT_co], ComptimePtr[FnAstT_co]):
+class FnSpec[FnAstT_co: ast.FnSpec](ComptimePtr[FnAstT_co]):
     """Base class for anything callable that can appear as a module item.
 
     A function pointer that can never be dereferenced to a plain value -
@@ -147,7 +145,7 @@ class FnSpec(Generic[FnAstT_co], ComptimePtr[FnAstT_co]):
         return checked_cast(self.typ.pointee_typ, FnTyp)
 
 
-class NonBuiltinFnSpec(Generic[FnAstT_co], FnSpec[FnAstT_co]):
+class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
     """Base class for functions declared or defined in Leech source.
 
     :param ast: The parsed function declaration or definition.

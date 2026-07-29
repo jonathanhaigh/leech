@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from functools import cached_property
-from typing import TYPE_CHECKING, Final, Generic, Self, TypeVar, override
+from typing import TYPE_CHECKING, Final, Self, override
 
 import networkx as nx
 from more_itertools import nth
@@ -49,9 +49,6 @@ if TYPE_CHECKING:
     # annotation available to the type checker.
     from leech import ir_module
 
-TypT_co = TypeVar("TypT_co", bound=Typ, covariant=True, default=Typ)
-AstT_co = TypeVar("AstT_co", bound=ast.Ast, covariant=True, default=ast.Ast)
-
 
 def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
     """Compute the pointer type produced by indexing into ``base_typ``.
@@ -87,7 +84,7 @@ def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
     return PtrTyp.get_or_create(typ, mut)
 
 
-class Value(ABC, Generic[TypT_co, AstT_co]):
+class Value[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](ABC):
     """Base class for anything that has a type and a source location: IR
     values, instructions, and function parameters.
 
@@ -115,7 +112,9 @@ class Value(ABC, Generic[TypT_co, AstT_co]):
         """Compute this value's type; backs the cached :attr:`typ` property."""
 
 
-class ComptimeValue(Generic[TypT_co, AstT_co], Value[TypT_co, AstT_co]):
+class ComptimeValue[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](
+    Value[TypT_co, AstT_co]
+):
     """Base class for values whose contents are known at compile time."""
 
     def copy(self) -> Self:
@@ -199,7 +198,9 @@ class ComptimeCStr(ComptimeValue[PtrTyp]):
         return CSTR
 
 
-class ComptimeAggregate(Generic[TypT_co, AstT_co], ComptimeValue[TypT_co, AstT_co]):
+class ComptimeAggregate[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](
+    ComptimeValue[TypT_co, AstT_co]
+):
     """Base class for compile-time-known array and struct values."""
 
     @abstractmethod
@@ -334,7 +335,7 @@ class ComptimeStruct(ComptimeAggregate[StructTyp]):
         )
 
 
-class ComptimePtr(Generic[AstT_co], ComptimeValue[PtrTyp, AstT_co]):
+class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[PtrTyp, AstT_co]):
     """Base class for compile-time-known pointer values.
 
     Unlike a runtime pointer (see :class:`AllocaInstr`), a compile-time
@@ -521,7 +522,7 @@ class Param(Value[Typ, ast.Param | ast.Receiver]):
         return self.fn.fn_typ.param_typs[self.pos]
 
 
-class Instr(Value[TypT_co, AstT_co], Generic[TypT_co, AstT_co]):
+class Instr[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT_co, AstT_co]):
     """Base class for a single instruction within a :class:`BasicBlock`.
 
     :param bb: The basic block this instruction belongs to.
