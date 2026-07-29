@@ -25,16 +25,29 @@ from leech.ir_env import Env
 from leech.ir_values import Param, Value
 from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.errors import (
+    DerefInvalidTypError,
+    DuplicateFieldInStructExprError,
+    EmptyArrayTypUnknownError,
+    FieldAccessIntoInvalidTypError,
     IncompatibleBinOpArgTypsError,
+    IncompatibleStructFieldTypError,
+    IncompatibleTypInArrayExpr,
+    IndexIntoInvalidTypError,
     IntLitOverflowError,
     InvalidArgTypError,
     InvalidBinOpArgTypError,
+    InvalidIndexTypError,
+    InvalidStructFieldError,
     InvalidUnaryOpArgTypError,
+    MissingFieldInStructExprError,
     NotAMethodError,
     NotCallableError,
     NotEnoughArgsError,
     PrivateItemAccessError,
+    PrivateStructFieldAccessError,
     TooManyArgsError,
+    TypeOfStructExprNotStructError,
+    VoidArrayElementError,
 )
 from leech.typs import (
     BOOL,
@@ -643,6 +656,8 @@ class TypCheck:
         expected_elt_typ = (
             expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
         )
+        if not arr_expr.elements and expected_elt_typ is None:
+            raise EmptyArrayTypUnknownError(arr_expr.span)
 
         built: list[Optional[Typ]] = [None] * len(arr_expr.elements)
         for i, elt_ast in enumerate(arr_expr.elements):
@@ -658,39 +673,110 @@ class TypCheck:
             if t is None:
                 built[i] = self.check_expr(arr_expr.elements[i], e, elt_typ)
 
-        for i, elt_ast in enumerate(arr_expr.elements):
-            self._record_coercion(elt_ast, opt_unwrap(built[i]), elt_typ)
+        if elt_typ == VOID:
+            first_span = arr_expr.elements[0].span if arr_expr.elements else arr_expr.span
+            raise VoidArrayElementError(first_span)
 
-        if not arr_expr.elements:
-            return ArrayTyp.get_or_create(opt_or_default(expected_elt_typ, VOID), 0)
-        return ArrayTyp.get_or_create(elt_typ, len(arr_expr.elements))
+        arr_typ = ArrayTyp.get_or_create(elt_typ, len(arr_expr.elements))
+        for i, elt_ast in enumerate(arr_expr.elements):
+            elt_typ_i = opt_unwrap(built[i])
+            # Elements only coerce towards an element type the context
+            # supplied, which is an unambiguous target. When the elements
+            # settled on one between themselves it isn't: coercing to it
+            # would let their order decide whether a narrower element is
+            # accepted, so they have to agree exactly instead. A
+            # diverging element is exempt - it stands in for a value of
+            # any type.
+            if expected_elt_typ is None and elt_typ_i not in (elt_typ, NEVER):
+                raise IncompatibleTypInArrayExpr(
+                    elt_typ_i.name, i, elt_ast.span, arr_typ.name
+                )
+            coercion = self._record_coercion(elt_ast, elt_typ_i, elt_typ)
+            if isinstance(coercion, Invalid):
+                raise IncompatibleTypInArrayExpr(
+                    elt_typ_i.name, i, elt_ast.span, arr_typ.name
+                )
+
+        return arr_typ
 
     def check_array_access_expr(self, aa_expr: ast.ArrayAccessExpr, e: Env) -> Typ:
         arr_typ = self.check_expr(aa_expr.array, e, None)
+        if not isinstance(arr_typ, ArrayTyp):
+            raise IndexIntoInvalidTypError(arr_typ.name, aa_expr.array.span)
+
         index_typ = self.check_expr(aa_expr.index, e, USIZE)
-        self._record_coercion(aa_expr.index, index_typ, USIZE)
-        if isinstance(arr_typ, ArrayTyp):
-            return arr_typ.element_typ
-        return VOID
+        if isinstance(self._record_coercion(aa_expr.index, index_typ, USIZE), Invalid):
+            raise InvalidIndexTypError(index_typ.name, aa_expr.index.span)
+
+        return arr_typ.element_typ
 
     def check_struct_expr(self, struct_expr: ast.StructExpr, e: Env) -> Typ:
         struct_typ = Typ.from_ast(struct_expr.typ, e)
+        if not isinstance(struct_typ, StructTyp):
+            raise TypeOfStructExprNotStructError(struct_typ.name, struct_expr.typ.span)
+
+        field_value_asts: dict[str, ast.Expr] = {}
+        field_value_typs: dict[str, Typ] = {}
         for field_expr in struct_expr.fields:
-            field_typ = _struct_field_typ(struct_typ, field_expr.ident.name)
-            value_typ = self.check_expr(field_expr.value, e, field_typ)
-            if field_typ is not None:
-                self._record_coercion(field_expr.value, value_typ, field_typ)
+            name = field_expr.ident.name
+            field = struct_typ.fields.get(name)
+            if field is None:
+                raise InvalidStructFieldError(
+                    name, field_expr.ident.span, struct_typ.name, struct_typ.span
+                )
+            if not field.is_accessible_from(struct_expr.span.file):
+                raise PrivateStructFieldAccessError(
+                    field.name, field_expr.ident.span, struct_typ.name, field.ast.span
+                )
+            if name in field_value_asts:
+                raise DuplicateFieldInStructExprError(
+                    name, field_expr.ident.span, field_value_asts[name].span
+                )
+            field_value_asts[name] = field_expr.value
+            field_value_typs[name] = self.check_expr(field_expr.value, e, field.typ)
+
+        for field in struct_typ.fields.values():
+            if field.name not in field_value_asts:
+                raise MissingFieldInStructExprError(
+                    field.name, field.ast.span, struct_typ.name, struct_expr.span
+                )
+            value_ast = field_value_asts[field.name]
+            value_typ = field_value_typs[field.name]
+            coercion = self._record_coercion(value_ast, value_typ, field.typ)
+            if isinstance(coercion, Invalid):
+                raise IncompatibleStructFieldTypError(
+                    field.name,
+                    struct_typ.name,
+                    value_typ.name,
+                    value_ast.span,
+                    field.typ.name,
+                    field.ast.span,
+                )
+
         return struct_typ
 
     def check_struct_access_expr(self, sa_expr: ast.StructAccessExpr, e: Env) -> Typ:
         struct_typ = self.check_expr(sa_expr.struct, e, None)
-        return opt_or_default(_struct_field_typ(struct_typ, sa_expr.field.name), VOID)
+        if not isinstance(struct_typ, StructTyp):
+            raise FieldAccessIntoInvalidTypError(struct_typ.name, sa_expr.struct.span)
+
+        field_name = sa_expr.field.name
+        field = struct_typ.fields.get(field_name)
+        if field is None:
+            raise InvalidStructFieldError(
+                field_name, sa_expr.field.span, struct_typ.name, struct_typ.span
+            )
+        if not field.is_accessible_from(sa_expr.span.file):
+            raise PrivateStructFieldAccessError(
+                field_name, sa_expr.field.span, struct_typ.name, field.ast.span
+            )
+        return field.typ
 
     def check_deref_expr(self, d_expr: ast.DerefExpr, e: Env) -> Typ:
         ptr_typ = self.check_expr(d_expr.ptr, e, None)
-        if isinstance(ptr_typ, PtrTyp) and not isinstance(ptr_typ.pointee_typ, FnTyp):
-            return ptr_typ.pointee_typ
-        return VOID
+        if not isinstance(ptr_typ, PtrTyp) or isinstance(ptr_typ.pointee_typ, FnTyp):
+            raise DerefInvalidTypError(ptr_typ.name, d_expr.ptr.span)
+        return ptr_typ.pointee_typ
 
     def check_place(self, expr_ast: ast.Expr, e: Env) -> Typ:
         """The type of ``&expr_ast`` - the type of ``expr_ast``'s address.
@@ -710,6 +796,14 @@ class TypCheck:
         :param e: The scope to resolve names in.
         :return: The pointer type ``&expr_ast`` produces.
         """
+        if isinstance(expr_ast, ast.VarExpr):
+            # A variable's own type already *is* its place's pointer type
+            # (see check_var_expr) - a function reference doubly so, since
+            # taking its address is a no-op rather than an extra
+            # indirection (see CfgBuilder.build_var_expr's PLACE case).
+            var = e.resolve_path(Env.Namespace.VARS, expr_ast.path)
+            return var.typ
+
         value_typ = self.check_expr(expr_ast, e, None)
         return PtrTyp.get_or_create(value_typ, self._place_mut(expr_ast, e))
 

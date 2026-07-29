@@ -25,29 +25,16 @@ from leech.errors import (
     AssignToConstError,
     BreakNotInLoopError,
     ContinueNotInLoopError,
-    DerefInvalidTypError,
-    DuplicateFieldInStructExprError,
-    EmptyArrayTypUnknownError,
-    FieldAccessIntoInvalidTypError,
     IfCondNotBoolError,
     IfElsTypMismatchError,
     IfTypNotVoidError,
     IncompatibleAssignmentTypError,
     IncompatibleLetTypError,
-    IncompatibleStructFieldTypError,
-    IncompatibleTypInArrayExpr,
-    IndexIntoInvalidTypError,
-    InvalidIndexTypError,
     InvalidRetTypError,
-    InvalidStructFieldError,
     InvalidVoidRetError,
     LoopLabelNotFoundError,
-    MissingFieldInStructExprError,
     MissingRetError,
-    PrivateStructFieldAccessError,
     RetNotInFnError,
-    TypeOfStructExprNotStructError,
-    VoidArrayElementError,
     VoidVarInitializerError,
     WhileCondNotBoolError,
     WhileTypNotVoidError,
@@ -72,7 +59,6 @@ from leech.typs import (
     VOID,
     ArrayTyp,
     CallableTyp,
-    FnTyp,
     IntTyp,
     Mutability,
     PtrTyp,
@@ -844,19 +830,12 @@ class CfgBuilder:
         :param expected_typ: This array literal's expected type, if known
             from the surrounding context.
         :return: The constructed array value.
-        :raises EmptyArrayTypUnknownError: If the array literal is empty
-            and ``expected_typ`` isn't a known array type.
-        :raises VoidArrayElementError: If the element type is ``void``.
-        :raises IncompatibleTypInArrayExpr: If an element's type doesn't
-            match, and doesn't coerce to, the element type.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering an element; see :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering an element; see :meth:`build_expr`.
         """
         expected_elt_typ = (
             expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
         )
-        if not arr_expr.elements and expected_elt_typ is None:
-            raise EmptyArrayTypUnknownError(arr_expr.span)
 
         # Two passes, so that a bare integer literal takes its type from
         # its sibling elements wherever it sits, rather than the first
@@ -887,8 +866,6 @@ class CfgBuilder:
             for i, v in enumerate(built)
         ]
 
-        if elt_typ == VOID:
-            raise VoidArrayElementError(elts[0].span if elts else arr_expr.span)
         arr_typ = ArrayTyp.get_or_create(elt_typ, len(elts))
         arr = ComptimeArray(
             arr_typ,
@@ -896,24 +873,10 @@ class CfgBuilder:
             arr_expr,
         )
 
+        # TypCheck already confirmed every element coerces to elt_typ.
         for i, elt in enumerate(elts):
             elt_ast = arr_expr.elements[i]
-            # Elements only coerce towards an element type the context
-            # supplied, which is an unambiguous target. When the elements
-            # settled on one between themselves it isn't: coercing to it
-            # would let their order decide whether a narrower element is
-            # accepted, so they have to agree exactly instead. A
-            # diverging element is exempt - it produces no value to
-            # convert, and says nothing about what the type should be.
-            if expected_elt_typ is None and elt.typ not in (elt_typ, NEVER):
-                raise IncompatibleTypInArrayExpr(
-                    elt.typ.name, i, elt_ast.span, arr_typ.name
-                )
-            coerced = self._coerce(elt, elt_ast)
-            if coerced is None:
-                raise IncompatibleTypInArrayExpr(
-                    elt.typ.name, i, elt_ast.span, arr_typ.name
-                )
+            coerced = opt_unwrap(self._coerce(elt, elt_ast))
             elt_index = ComptimeInt(USIZE, i, elt_ast)
             arr = self.curr_bb.insert_value(arr, coerced, (elt_index,), elt_ast)
 
@@ -930,29 +893,17 @@ class CfgBuilder:
             address.
         :return: The indexed element, or a pointer to it if ``ctx`` is
             :attr:`~ExprContext.PLACE`.
-        :raises IndexIntoInvalidTypError: If the indexed expression's type
-            isn't an array type.
-        :raises InvalidIndexTypError: If the index expression's type isn't,
-            and doesn't coerce to, ``usize``.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the array or index expression; see
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the array or index expression; see
             :meth:`build_expr`.
         """
         arr_ptr = self.build_expr(aa_expr.array, e, ExprContext.PLACE)
-        arr_ptr_typ = checked_cast(arr_ptr.typ, PtrTyp)
-        if not isinstance(arr_ptr_typ.pointee_typ, ArrayTyp):
-            raise IndexIntoInvalidTypError(
-                arr_ptr_typ.pointee_typ.name, aa_expr.array.span
-            )
 
         # An index is a coercion point like any other unambiguous target
         # type: a bare literal infers as usize, and a narrower unsigned
-        # value widens to it.
+        # value widens to it. TypCheck already confirmed it coerces.
         index = self.build_expr(aa_expr.index, e, ExprContext.VALUE, USIZE)
-        coerced_index = self._coerce(index, aa_expr.index)
-        if coerced_index is None:
-            raise InvalidIndexTypError(index.typ.name, aa_expr.index.span)
-        index = coerced_index
+        index = opt_unwrap(self._coerce(index, aa_expr.index))
 
         # TODO: bounds check
 
@@ -970,25 +921,11 @@ class CfgBuilder:
             address.
         :return: The constructed struct value.
         :raises ItemNotFoundError: If the named type cannot be resolved.
-        :raises TypeOfStructExprNotStructError: If the named type isn't a
-            struct type.
-        :raises InvalidStructFieldError: If a given field name isn't a
-            field of the struct type.
-        :raises PrivateStructFieldAccessError: If a given field is private
-            and ``struct_expr`` isn't in the struct's defining module.
-        :raises DuplicateFieldInStructExprError: If a field is given a
-            value more than once.
-        :raises MissingFieldInStructExprError: If a required field is
-            omitted.
-        :raises IncompatibleStructFieldTypError: If a field's given value
-            has the wrong type.
         :raises leech.errors.UserError: Also raised, as any of many possible
             subclasses, while lowering a field's value expression; see
             :meth:`build_expr`.
         """
-        struct_typ = Typ.from_ast(struct_expr.typ, e)
-        if not isinstance(struct_typ, StructTyp):
-            raise TypeOfStructExprNotStructError(struct_typ.name, struct_expr.typ.span)
+        struct_typ = checked_cast(Typ.from_ast(struct_expr.typ, e), StructTyp)
 
         struct = ComptimeStruct(
             struct_typ,
@@ -999,48 +936,21 @@ class CfgBuilder:
             struct_expr,
         )
 
-        field_values = {}
+        # TypCheck already confirmed every given field name is real,
+        # accessible and given only once, and that every field of
+        # struct_typ is given a value that coerces to its type.
+        field_values: dict[str, Value] = {}
         field_value_asts: dict[str, ast.Expr] = {}
         for field_expr in struct_expr.fields:
-            if field_expr.ident.name not in struct_typ.fields:
-                raise InvalidStructFieldError(
-                    field_expr.ident.name,
-                    field_expr.ident.span,
-                    struct_typ.name,
-                    struct_typ.span,
-                )
             field = struct_typ.fields[field_expr.ident.name]
-            if not field.is_accessible_from(struct_expr.span.file):
-                raise PrivateStructFieldAccessError(
-                    field.name, field_expr.ident.span, struct_typ.name, field.ast.span
-                )
-            if field_expr.ident.name in field_values:
-                raise DuplicateFieldInStructExprError(
-                    field_expr.ident.name,
-                    field_expr.ident.span,
-                    field_values[field_expr.ident.name].span,
-                )
             field_values[field_expr.ident.name] = self.build_expr(
                 field_expr.value, e, ExprContext.VALUE, field.typ
             )
             field_value_asts[field_expr.ident.name] = field_expr.value
 
         for i, field in enumerate(struct_typ.fields.values()):
-            if field.name not in field_values:
-                raise MissingFieldInStructExprError(
-                    field.name, field.ast.span, struct_typ.name, struct_expr.span
-                )
             field_value = field_values[field.name]
-            coerced = self._coerce(field_value, field_value_asts[field.name])
-            if coerced is None:
-                raise IncompatibleStructFieldTypError(
-                    field.name,
-                    struct_typ.name,
-                    field_value.typ.name,
-                    field_value.span,
-                    field.typ.name,
-                    field.ast.span,
-                )
+            coerced = opt_unwrap(self._coerce(field_value, field_value_asts[field.name]))
             field_index = ComptimeInt(I32, i, field_value.ast)
             struct = self.curr_bb.insert_value(
                 struct, coerced, (field_index,), field_value.ast
@@ -1059,15 +969,8 @@ class CfgBuilder:
             address.
         :return: The field's value, or a pointer to it if ``ctx`` is
             :attr:`~ExprContext.PLACE`.
-        :raises FieldAccessIntoInvalidTypError: If the accessed
-            expression's type isn't a struct type.
-        :raises InvalidStructFieldError: If the named field isn't a field
-            of the struct type.
-        :raises PrivateStructFieldAccessError: If the named field is
-            private and ``sa_expr`` isn't in the struct's defining module.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the struct expression; see
-            :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the struct expression; see :meth:`build_expr`.
         """
         struct_ptr = self.build_expr(sa_expr.struct, e, ExprContext.PLACE)
         return self._build_struct_field_access(struct_ptr, sa_expr, ctx)
@@ -1080,7 +983,9 @@ class CfgBuilder:
         Split out of :meth:`build_struct_access_expr` so
         :meth:`build_call_expr` can fall back to plain field access
         (e.g. a struct field that happens to hold a callable value)
-        without re-lowering ``sa_expr.struct`` a second time.
+        without re-lowering ``sa_expr.struct`` a second time. TypCheck
+        already confirmed ``struct_ptr``'s pointee is a struct type with
+        an accessible field named ``sa_expr.field``.
 
         :param struct_ptr: ``sa_expr.struct`` already lowered in
             :attr:`~ExprContext.PLACE` context.
@@ -1089,28 +994,9 @@ class CfgBuilder:
             address.
         :return: The field's value, or a pointer to it if ``ctx`` is
             :attr:`~ExprContext.PLACE`.
-        :raises FieldAccessIntoInvalidTypError: If ``struct_ptr``'s
-            pointee type isn't a struct type.
-        :raises InvalidStructFieldError: If the named field isn't a field
-            of the struct type.
-        :raises PrivateStructFieldAccessError: If the named field is
-            private and ``sa_expr`` isn't in the struct's defining module.
         """
-        struct_ptr_typ = checked_cast(struct_ptr.typ, PtrTyp)
-        struct_typ = struct_ptr_typ.pointee_typ
-        if not isinstance(struct_typ, StructTyp):
-            raise FieldAccessIntoInvalidTypError(struct_typ.name, sa_expr.struct.span)
-
-        field_name = sa_expr.field.name
-        if field_name not in struct_typ.fields:
-            raise InvalidStructFieldError(
-                field_name, sa_expr.field.span, struct_typ.name, struct_typ.span
-            )
-        field = struct_typ.fields[field_name]
-        if not field.is_accessible_from(sa_expr.span.file):
-            raise PrivateStructFieldAccessError(
-                field_name, sa_expr.field.span, struct_typ.name, field.ast.span
-            )
+        struct_typ = checked_cast(checked_cast(struct_ptr.typ, PtrTyp).pointee_typ, StructTyp)
+        field = struct_typ.fields[sa_expr.field.name]
 
         index = ComptimeInt(I32, field.index, sa_expr)
         field_ptr = self.curr_bb.gep(struct_ptr, index, sa_expr)
@@ -1127,15 +1013,10 @@ class CfgBuilder:
             address.
         :return: The pointee's value, or the pointer itself unchanged if
             ``ctx`` is :attr:`~ExprContext.PLACE`.
-        :raises DerefInvalidTypError: If the dereferenced expression's
-            type isn't a data pointer type.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the pointer expression; see
-            :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the pointer expression; see :meth:`build_expr`.
         """
         ptr = self.build_expr(d_expr.ptr, e, ExprContext.VALUE)
-        if not isinstance(ptr.typ, PtrTyp) or isinstance(ptr.typ.pointee_typ, FnTyp):
-            raise DerefInvalidTypError(ptr.typ.name, d_expr.ptr.span)
         return self._deref_in_context(ptr, ctx, d_expr)
 
     def build_stmt(self, stmt_ast: ast.Stmt, e: Env) -> None:
