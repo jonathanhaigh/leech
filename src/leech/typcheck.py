@@ -27,8 +27,14 @@ from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.errors import (
     IncompatibleBinOpArgTypsError,
     IntLitOverflowError,
+    InvalidArgTypError,
     InvalidBinOpArgTypError,
     InvalidUnaryOpArgTypError,
+    NotAMethodError,
+    NotCallableError,
+    NotEnoughArgsError,
+    PrivateItemAccessError,
+    TooManyArgsError,
 )
 from leech.typs import (
     BOOL,
@@ -388,23 +394,51 @@ class TypCheck:
 
     def check_call_expr(self, call_ast: ast.CallExpr, e: Env) -> Typ:
         fn_typ, recv_ast, recv_typ = self._resolve_callee(call_ast.callee, e)
+        callee_diag_str = call_ast.callee.diag_str()
+        param_typs = fn_typ.param_typs
 
-        param_typs = fn_typ.param_typs if fn_typ is not None else ()
-        if recv_ast is not None and recv_typ is not None and param_typs:
-            self._record_coercion(recv_ast, recv_typ, param_typs[0])
+        num_args = len(call_ast.args) + (1 if recv_typ is not None else 0)
+        num_params = len(param_typs)
+        if num_args < num_params:
+            raise NotEnoughArgsError(callee_diag_str, call_ast.span, num_args, num_params)
+        if num_args > num_params:
+            raise TooManyArgsError(
+                callee_diag_str,
+                call_ast.span,
+                call_ast.args[-1].span,
+                num_args,
+                num_params,
+            )
+
+        if recv_ast is not None and recv_typ is not None:
+            if isinstance(self._record_coercion(recv_ast, recv_typ, param_typs[0]), Invalid):
+                raise InvalidArgTypError(
+                    callee_diag_str,
+                    call_ast.span,
+                    1,
+                    recv_typ.name,
+                    param_typs[0].name,
+                    recv_ast.span,
+                )
 
         offset = 1 if recv_typ is not None else 0
         for i, arg_ast in enumerate(call_ast.args, start=offset):
-            arg_hint = param_typs[i] if i < len(param_typs) else None
-            arg_typ = self.check_expr(arg_ast, e, arg_hint)
-            if arg_hint is not None:
-                self._record_coercion(arg_ast, arg_typ, arg_hint)
+            arg_typ = self.check_expr(arg_ast, e, param_typs[i])
+            if isinstance(self._record_coercion(arg_ast, arg_typ, param_typs[i]), Invalid):
+                raise InvalidArgTypError(
+                    callee_diag_str,
+                    call_ast.span,
+                    i + 1,
+                    arg_typ.name,
+                    param_typs[i].name,
+                    arg_ast.span,
+                )
 
-        return fn_typ.ret_typ if fn_typ is not None else VOID
+        return fn_typ.ret_typ
 
     def _resolve_callee(
         self, callee_ast: ast.Expr, e: Env
-    ) -> tuple[Optional[CallableTyp], Optional[ast.Expr], Optional[Typ]]:
+    ) -> tuple[CallableTyp, Optional[ast.Expr], Optional[Typ]]:
         """The callee's type, and its receiver's expression and type, if any.
 
         If ``callee_ast`` is written as ``x.name``, ``name`` is looked up
@@ -414,16 +448,29 @@ class TypCheck:
 
         :param callee_ast: The parsed callee expression.
         :param e: The scope to resolve names in.
-        :return: ``(fn_typ, recv_ast, recv_typ)``. ``fn_typ`` is ``None``
-            if the callee doesn't resolve to a callable type. ``recv_ast``
-            and ``recv_typ`` are ``None`` unless ``callee_ast`` names a
+        :return: ``(fn_typ, recv_ast, recv_typ)``. ``recv_ast`` and
+            ``recv_typ`` are ``None`` unless ``callee_ast`` names a
             method, in which case they're the receiver expression and its
             *place* type (a pointer, with the receiver's own mutability -
             see :meth:`check_place`, since a method receiver is always
             passed by pointer).
+        :raises NotAMethodError: If ``callee_ast`` is ``x.name`` and
+            ``name`` names a real associated function of ``x``'s struct
+            type that has no ``self`` receiver.
+        :raises PrivateItemAccessError: If ``callee_ast`` is ``x.name``
+            and ``name`` names a private method, called from outside the
+            module its struct is defined in.
+        :raises NotCallableError: If the callee doesn't resolve to a
+            callable type.
         """
         if not isinstance(callee_ast, ast.StructAccessExpr):
-            return _callable_typ(self.check_expr(callee_ast, e, None)), None, None
+            callee_typ = self.check_expr(callee_ast, e, None)
+            fn_typ = _callable_typ(callee_typ)
+            if fn_typ is None:
+                raise NotCallableError(
+                    callee_ast.diag_str(), callee_typ.name, callee_ast.span
+                )
+            return fn_typ, None, None
 
         recv_typ = self.check_place(callee_ast.struct, e)
         struct_typ = recv_typ.pointee_typ if isinstance(recv_typ, PtrTyp) else VOID
@@ -432,15 +479,31 @@ class TypCheck:
             if isinstance(struct_typ, StructTyp)
             else None
         )
-        if (
-            method is not None
-            and method.ast is not None
-            and method.ast.receiver is not None
-        ):
+        if method is not None:
+            if not method.is_accessible_from(callee_ast.span.file):
+                raise PrivateItemAccessError(
+                    "function",
+                    callee_ast.field.name,
+                    callee_ast.field.span,
+                    method.span,
+                )
+            assert method.ast is not None
+            if method.ast.receiver is None:
+                raise NotAMethodError(
+                    callee_ast.field.name,
+                    struct_typ.name,
+                    callee_ast.field.span,
+                    method.span,
+                )
             return method.fn_typ, callee_ast.struct, recv_typ
 
-        field_typ = _struct_field_typ(struct_typ, callee_ast.field.name)
-        return opt_map(field_typ, _callable_typ), None, None
+        callee_typ = opt_or_default(_struct_field_typ(struct_typ, callee_ast.field.name), VOID)
+        fn_typ = _callable_typ(callee_typ)
+        if fn_typ is None:
+            raise NotCallableError(
+                callee_ast.diag_str(), callee_typ.name, callee_ast.span
+            )
+        return fn_typ, None, None
 
     def check_bin_op_expr(
         self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Optional[Typ]

@@ -37,7 +37,6 @@ from leech.errors import (
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
-    InvalidArgTypError,
     InvalidIndexTypError,
     InvalidRetTypError,
     InvalidStructFieldError,
@@ -45,13 +44,8 @@ from leech.errors import (
     LoopLabelNotFoundError,
     MissingFieldInStructExprError,
     MissingRetError,
-    NotAMethodError,
-    NotCallableError,
-    NotEnoughArgsError,
-    PrivateItemAccessError,
     PrivateStructFieldAccessError,
     RetNotInFnError,
-    TooManyArgsError,
     TypeOfStructExprNotStructError,
     VoidArrayElementError,
     VoidVarInitializerError,
@@ -534,25 +528,19 @@ class CfgBuilder:
         is a field, isn't a member of the struct at all, or ``x`` isn't
         struct-typed.
 
+        TypCheck has already confirmed the callee resolves to a method or
+        a callable field, that a resolved method is accessible and has a
+        receiver, and that argument count and types are valid; this only
+        has to make the same method-or-field-fallback decision (to know
+        how to lower the callee) and emit.
+
         :param call_ast: The parsed call expression.
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The call's result.
-        :raises NotAMethodError: If ``x.name(...)`` names a real
-            associated function of ``x``'s struct type that has no
-            ``self`` receiver.
-        :raises PrivateItemAccessError: If ``x.name(...)`` names a private
-            method, called from outside the module its struct is defined
-            in.
-        :raises NotCallableError: If the callee's type isn't a function
-            pointer.
-        :raises NotEnoughArgsError: If too few arguments are given.
-        :raises TooManyArgsError: If too many arguments are given.
-        :raises InvalidArgTypError: If an argument's type doesn't match
-            the corresponding parameter's type.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the callee or an argument; see
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the callee or an argument; see
             :meth:`build_expr`.
         """
         callee_ast = call_ast.callee
@@ -566,24 +554,7 @@ class CfgBuilder:
                 recv_place.typ.pointee_typ, StructTyp
             ):
                 struct_typ = recv_place.typ.pointee_typ
-                candidate = struct_typ.get_assoc_fn(callee_ast.field.name)
-                if candidate is not None:
-                    if not candidate.is_accessible_from(callee_ast.span.file):
-                        raise PrivateItemAccessError(
-                            "function",
-                            callee_ast.field.name,
-                            callee_ast.field.span,
-                            candidate.span,
-                        )
-                    assert candidate.ast is not None
-                    if candidate.ast.receiver is None:
-                        raise NotAMethodError(
-                            callee_ast.field.name,
-                            struct_typ.name,
-                            callee_ast.field.span,
-                            candidate.span,
-                        )
-                    method = candidate
+                method = struct_typ.get_assoc_fn(callee_ast.field.name)
 
             if method is not None:
                 recv_arg = recv_place
@@ -596,60 +567,28 @@ class CfgBuilder:
         else:
             callee = self.build_expr(callee_ast, e, ExprContext.VALUE)
 
-        callee_diag_str = callee_ast.diag_str()
-        if not (
-            isinstance(callee.typ, PtrTyp)
-            and isinstance(callee.typ.pointee_typ, CallableTyp)
-        ):
-            raise NotCallableError(callee_diag_str, callee.typ.name, callee_ast.span)
-
-        fn_typ = callee.typ.pointee_typ
+        fn_typ = checked_cast(
+            checked_cast(callee.typ, PtrTyp).pointee_typ, CallableTyp
+        )
         param_typs = fn_typ.param_typs
         offset = 1 if recv_ast is not None else 0
         arg_asts: list[ast.Expr] = (
             [recv_ast] if recv_ast is not None else []
         ) + list(call_ast.args)
         lowered_args = tuple(
-            self.build_expr(
-                arg_ast,
-                e,
-                ExprContext.VALUE,
-                param_typs[i] if i < len(param_typs) else None,
-            )
+            self.build_expr(arg_ast, e, ExprContext.VALUE, param_typs[i])
             for i, arg_ast in enumerate(call_ast.args, start=offset)
         )
         args = ((recv_arg,) if recv_arg is not None else ()) + lowered_args
 
-        num_args = len(args)
-        num_params = len(param_typs)
-        if num_args < num_params:
-            raise NotEnoughArgsError(
-                callee_diag_str, call_ast.span, num_args, num_params
-            )
-        if num_args > num_params:
-            raise TooManyArgsError(
-                callee_diag_str,
-                call_ast.span,
-                call_ast.args[-1].span,
-                num_args,
-                num_params,
-            )
-        coerced_args = []
-        for i, arg in enumerate(args):
-            coerced = self._coerce(arg, arg_asts[i])
-            if coerced is None:
-                raise InvalidArgTypError(
-                    callee_diag_str,
-                    call_ast.span,
-                    i + 1,
-                    arg.typ.name,
-                    param_typs[i].name,
-                    arg_asts[i].span,
-                )
-            coerced_args.append(coerced)
+        # TypCheck already confirmed each argument (including the
+        # receiver, if any) coerces to its parameter's type.
+        coerced_args = tuple(
+            opt_unwrap(self._coerce(arg, arg_asts[i])) for i, arg in enumerate(args)
+        )
 
         return self._in_context(
-            self.curr_bb.call(callee, tuple(coerced_args), call_ast), ctx
+            self.curr_bb.call(callee, coerced_args, call_ast), ctx
         )
 
     def build_bin_op_expr(
