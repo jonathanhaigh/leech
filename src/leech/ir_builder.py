@@ -1,4 +1,16 @@
-"""AST-to-IR lowering, with type checking performed inline as it goes."""
+"""AST-to-IR lowering, assuming an already type-checked program.
+
+Type checking happens beforehand, as its own pass (see
+:mod:`~leech.typcheck`), forced by :attr:`~leech.ir_module.Fn.cfg` and
+:attr:`~leech.ir_module.ModVar.cfg` before either ever constructs a
+:class:`CfgBuilder`. Everything below trusts the result: it doesn't
+validate that a program is well-typed, only emits IR under the
+assumption that it is - reading back decisions
+(:class:`~leech.typcheck.TypCheckResults`) that ``TypCheck`` already
+made (an integer literal's type, whether and how a value coerces,
+which of two call/field-access candidates applies, and so on) rather
+than re-deriving them.
+"""
 
 from dataclasses import dataclass
 import enum
@@ -21,12 +33,6 @@ from leech.ir_values import (
     Value,
     VoidValue,
 )
-from leech.errors import (
-    AssignToConstError,
-    IncompatibleAssignmentTypError,
-    IncompatibleLetTypError,
-    VoidVarInitializerError,
-)
 from leech.naming import VarNamer
 from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.typcheck import (
@@ -41,6 +47,7 @@ from leech.typcheck import (
 from leech.typs import (
     CONST,
     I32,
+    MUT,
     NEVER,
     SIGNED,
     USIZE,
@@ -71,10 +78,12 @@ class CfgBuilder:
     """Lowers a single function body or module-variable initializer to a
     :class:`~leech.ir_values.Cfg`.
 
-    Each ``build_*`` method lowers one AST node kind, performing the
-    relevant type checks (raising the corresponding
-    :mod:`~leech.errors` error on failure) and emitting instructions into
-    :attr:`curr_bb` as it goes.
+    Each ``build_*`` method lowers one AST node kind, emitting
+    instructions into :attr:`curr_bb` as it goes. The program is already
+    known to be well-typed by this point (see the module docstring), so
+    these methods don't validate it - where a decision was made while
+    type checking, they read it back from :attr:`typ_check_results`
+    rather than re-deriving it.
 
     :param typ_check_results: The already-computed type-checking facts for
         the body being lowered (see :mod:`~leech.typcheck`).
@@ -119,13 +128,6 @@ class CfgBuilder:
 
         :param defn_ast: The parsed variable declaration.
         :param e: The scope to resolve names in.
-        :raises VoidVarInitializerError: If the initializer expression has
-            type ``void``.
-        :raises IncompatibleLetTypError: If the initializer's type doesn't
-            match, and doesn't coerce to, a declared type.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the initializer expression; see
-            :meth:`build_expr`.
         """
         assert self.fn is None
         e = e.new_child()
@@ -138,8 +140,6 @@ class CfgBuilder:
 
         :param fn_ast: The parsed function definition.
         :param e: The scope to resolve names in.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the body; see :meth:`build_expr`.
         """
         assert self.fn is not None
         e = e.new_child()
@@ -197,9 +197,6 @@ class CfgBuilder:
             or an ``if``'s branches. Operator operands deliberately don't
             receive it; ignored everywhere else.
         :return: The lowered expression's value.
-        :raises leech.errors.UserError: As any of the many subclasses that
-            the individual ``build_*_expr`` methods (and, transitively,
-            any sub-expressions) may raise.
         """
         match expr_ast:
             case ast.BlockExpr():
@@ -257,9 +254,6 @@ class CfgBuilder:
         :return: The lowered tail expression's value if the block has one;
             otherwise a void value if its statements complete normally, or
             a never value if they already diverged (e.g. via ``return``).
-        :raises leech.errors.UserError: As any of the many subclasses that
-            lowering a statement (see :meth:`build_stmt`) or the tail
-            expression (see :meth:`build_expr`) may raise.
         """
         e = e.new_child()
         for stmt_ast in block_ast.stmts:
@@ -290,9 +284,6 @@ class CfgBuilder:
             which is always ``bool``).
         :return: The value of whichever branch is taken, merged via a phi
             instruction if both branches complete normally.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the condition or either branch; see
-            :meth:`build_expr`.
         """
         cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
         # TypCheck already confirmed cond coerces to bool.
@@ -408,9 +399,6 @@ class CfgBuilder:
         :param while_ast: The parsed ``while`` expression.
         :param e: The scope to resolve names in.
         :return: A void value.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the condition or the loop body; see
-            :meth:`build_expr`.
         """
         cond_bb = self.add_bb("while_cond")
         loop_bb = self.add_bb("while_loop")
@@ -470,9 +458,6 @@ class CfgBuilder:
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The call's result.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the callee or an argument; see
-            :meth:`build_expr`.
         """
         callee_ast = call_ast.callee
         recv_ast: Optional[ast.Expr] = None
@@ -540,8 +525,6 @@ class CfgBuilder:
             either operand's type is already decided, that type is what
             the other has to match.
         :return: The operation's result.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering either operand; see :meth:`build_expr`.
         """
         if op_ast.op.name in ("and", "or"):
             return self.build_logic_bin_op_expr(op_ast, e, ctx)
@@ -625,8 +608,6 @@ class CfgBuilder:
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The operation's result.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering either operand; see :meth:`build_expr`.
         """
         is_and = op_ast.op.name == "and"
         lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE)
@@ -692,8 +673,6 @@ class CfgBuilder:
             if known. Negation preserves its operand's type, so this is
             passed on to the operand; ``&`` and ``not`` ignore it.
         :return: The operation's result.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the operand; see :meth:`build_expr`.
         """
         match op_ast.op.name:
             case "&":
@@ -774,8 +753,6 @@ class CfgBuilder:
         :param expected_typ: This array literal's expected type, if known
             from the surrounding context.
         :return: The constructed array value.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering an element; see :meth:`build_expr`.
         """
         expected_elt_typ = (
             expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
@@ -837,9 +814,6 @@ class CfgBuilder:
             address.
         :return: The indexed element, or a pointer to it if ``ctx`` is
             :attr:`~ExprContext.PLACE`.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the array or index expression; see
-            :meth:`build_expr`.
         """
         arr_ptr = self.build_expr(aa_expr.array, e, ExprContext.PLACE)
 
@@ -865,9 +839,6 @@ class CfgBuilder:
             address.
         :return: The constructed struct value.
         :raises ItemNotFoundError: If the named type cannot be resolved.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering a field's value expression; see
-            :meth:`build_expr`.
         """
         resolved_typ = Typ.from_ast(struct_expr.typ, e)
         struct_typ = checked_cast(resolved_typ, StructTyp)
@@ -914,8 +885,6 @@ class CfgBuilder:
             address.
         :return: The field's value, or a pointer to it if ``ctx`` is
             :attr:`~ExprContext.PLACE`.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the struct expression; see :meth:`build_expr`.
         """
         struct_ptr = self.build_expr(sa_expr.struct, e, ExprContext.PLACE)
         return self._build_struct_field_access(struct_ptr, sa_expr, ctx)
@@ -959,8 +928,6 @@ class CfgBuilder:
             address.
         :return: The pointee's value, or the pointer itself unchanged if
             ``ctx`` is :attr:`~ExprContext.PLACE`.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the pointer expression; see :meth:`build_expr`.
         """
         ptr = self.build_expr(d_expr.ptr, e, ExprContext.VALUE)
         return self._deref_in_context(ptr, ctx, d_expr)
@@ -971,9 +938,6 @@ class CfgBuilder:
 
         :param stmt_ast: The parsed statement.
         :param e: The scope to resolve names in.
-        :raises leech.errors.UserError: As any of the many subclasses that
-            the individual ``build_*_stmt`` methods (and, transitively,
-            any sub-expressions) may raise.
         """
         match stmt_ast:
             case ast.ExprStmt():
@@ -996,8 +960,6 @@ class CfgBuilder:
 
         :param ret_ast: The parsed return statement.
         :param e: The scope to resolve names in.
-        :raises leech.errors.UserError: As any of many possible subclasses,
-            while lowering the returned expression; see :meth:`build_expr`.
         """
         assert self.fn is not None
         ret_typ = self.fn.fn_typ.ret_typ
@@ -1058,13 +1020,6 @@ class CfgBuilder:
         :param let_ast: The parsed ``let`` statement.
         :param e: The scope to resolve names in, and to bind the new
             variable in.
-        :raises VoidVarInitializerError: If the initializer expression has
-            type ``void``.
-        :raises IncompatibleLetTypError: If the initializer's type doesn't
-            match, and doesn't coerce to, a declared type.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the initializer expression; see
-            :meth:`build_expr`.
         """
         expr = self._build_let_initializer(let_ast, e, ExprContext.VALUE)
         name = let_ast.ident.name
@@ -1089,12 +1044,6 @@ class CfgBuilder:
 
         :param ass_ast: The parsed assignment statement.
         :param e: The scope to resolve names in.
-        :raises AssignToConstError: If the assignment target is const.
-        :raises IncompatibleAssignmentTypError: If the assigned value's
-            type doesn't match, and doesn't coerce to, the place's type.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the target or the assigned
-            expression; see :meth:`build_expr`.
         """
         place = self.build_expr(ass_ast.place, e, ExprContext.PLACE)
         place_typ = checked_cast(place.typ, PtrTyp)
@@ -1103,20 +1052,10 @@ class CfgBuilder:
             ass_ast.expr, e, ExprContext.VALUE, place_typ.pointee_typ
         )
 
-        if place_typ.mut == CONST:
-            raise AssignToConstError(ass_ast.place.span)
-
-        coerced = self._coerce(expr, ass_ast.expr)
-        if coerced is None:
-            raise IncompatibleAssignmentTypError(
-                expr.typ.name,
-                place_typ.pointee_typ.name,
-                ass_ast.expr.span,
-                ass_ast.place.span,
-            )
-        expr = coerced
-
-        self.curr_bb.store(expr, place, ass_ast)
+        # TypCheck already confirmed place isn't const and expr coerces.
+        assert_eq(place_typ.mut, MUT)
+        coerced = opt_unwrap(self._coerce(expr, ass_ast.expr))
+        self.curr_bb.store(coerced, place, ass_ast)
 
     def _build_let_initializer(
         self, let_ast: ast.LetStmt, e: Env, ctx: ExprContext
@@ -1133,31 +1072,14 @@ class CfgBuilder:
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The (possibly coerced) initializer's value.
-        :raises VoidVarInitializerError: If the initializer expression has
-            type ``void``.
-        :raises IncompatibleLetTypError: If the initializer's type doesn't
-            match, and doesn't coerce to, the declared type.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the initializer expression; see
-            :meth:`build_expr`.
         """
         declared_typ_ast = let_ast.typ
         expected_typ = opt_map(declared_typ_ast, lambda t: Typ.from_ast(t, e))
         expr = self.build_expr(let_ast.expr, e, ctx, expected_typ)
-        if expr.typ == VOID:
-            raise VoidVarInitializerError(expr.span)
-        if expected_typ is None or declared_typ_ast is None:
+        if declared_typ_ast is None:
             return expr
-        coerced = self._coerce(expr, let_ast.expr)
-        if coerced is None:
-            raise IncompatibleLetTypError(
-                let_ast.ident.name,
-                expected_typ.name,
-                expr.typ.name,
-                let_ast.expr.span,
-                declared_typ_ast.span,
-            )
-        return coerced
+        # TypCheck already confirmed expr coerces to expected_typ.
+        return opt_unwrap(self._coerce(expr, let_ast.expr))
 
     def _build_int_lit(self, lit_ast: ast.IntLit, negated: bool) -> Value:
         """Lower an integer literal to a compile-time-known value.

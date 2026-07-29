@@ -1,20 +1,25 @@
 """Type checking of Leech code, kept separate from lowering to LLVM IR.
 
-:class:`TypCheck` mirrors :class:`~leech.ir_builder.CfgBuilder`'s ``build_*``
-method structure one-for-one: as checking logic migrates out of
-``CfgBuilder``, each ``check_*`` method here will take over the checks its
-same-named ``build_*`` counterpart currently performs inline, recording
-the result into a :class:`TypCheckResults` instead. ``CfgBuilder`` will
-then read from that table rather than re-deriving the same facts during
-lowering.
+:class:`TypCheck` mirrors :class:`~leech.ir_builder.CfgBuilder`'s former
+``build_*`` method structure one-for-one: each ``check_*`` method here
+performs the checks its same-named ``build_*`` counterpart used to
+perform inline, recording anything ``CfgBuilder`` still needs (an integer
+literal's type, a coercion decision, a resolved call target, and so on)
+into a :class:`TypCheckResults` side table instead of a lowered value.
+``CfgBuilder`` reads from that table rather than re-deriving the same
+facts, and no longer validates anything itself - see its module
+docstring.
 
-So far, int-literal typing (and the peer-type resolution it depends on),
-coercion decisions, and operator checking are genuinely checked and
-recorded - everything else below computes a best-effort type, defensively
-(never raising past what's already a legitimate, pre-existing diagnostic -
-e.g. an unresolvable name), just enough to thread ``expected_typ``
-correctly and support peer resolution. ``CfgBuilder`` still performs every
-other check unchanged; those will migrate in later steps.
+A function body or module-variable initializer is checked as a whole,
+in one pass, before any of it is lowered (forced by
+:attr:`~leech.ir_module.Fn.cfg`/:attr:`~leech.ir_module.ModVar.cfg` via
+:attr:`~leech.ir_module.Fn.typ_check_results`/
+:attr:`~leech.ir_module.ModVar.typ_check_results`). One consequence:
+unreachable code is still fully type-checked, unlike
+:class:`~leech.ir_builder.CfgBuilder`'s own control-flow handling, which
+short-circuits lowering (and so instruction emission) for a
+``never``-typed branch - see :func:`resolve_peer_typ` and the ``never``
+handling throughout the ``check_*`` methods below.
 """
 
 from dataclasses import dataclass
@@ -25,6 +30,7 @@ from leech.ir_env import Env
 from leech.ir_values import Param, Value
 from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.errors import (
+    AssignToConstError,
     BreakNotInLoopError,
     ContinueNotInLoopError,
     DerefInvalidTypError,
@@ -34,7 +40,9 @@ from leech.errors import (
     IfCondNotBoolError,
     IfElsTypMismatchError,
     IfTypNotVoidError,
+    IncompatibleAssignmentTypError,
     IncompatibleBinOpArgTypsError,
+    IncompatibleLetTypError,
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
     IndexIntoInvalidTypError,
@@ -58,6 +66,7 @@ from leech.errors import (
     TooManyArgsError,
     TypeOfStructExprNotStructError,
     VoidArrayElementError,
+    VoidVarInitializerError,
     WhileCondNotBoolError,
     WhileTypNotVoidError,
 )
@@ -262,10 +271,8 @@ class TypCheck:
     """Type-checks a function body or module-variable initializer.
 
     Walks the same shape of tree :class:`~leech.ir_builder.CfgBuilder`
-    lowers, but only genuinely checks (and records into :attr:`results`)
-    integer-literal typing, coercion decisions, and operators so far;
-    every other construct below computes a defensive, best-effort type
-    just to keep that walk going correctly.
+    lowers, checking it fully and recording into :attr:`results` whatever
+    ``CfgBuilder`` needs back to lower it without re-deriving anything.
     """
 
     results: Final[TypCheckResults]
@@ -340,16 +347,16 @@ class TypCheck:
         :param defn_ast: The parsed variable declaration.
         :param e: The scope to resolve names in.
         :return: :attr:`results`.
+        :raises VoidVarInitializerError: If the initializer expression has
+            type ``void``.
+        :raises IncompatibleLetTypError: If the initializer's type doesn't
+            match, and doesn't coerce to, a declared type.
         """
         self._ret_typ = None
         self._ret_typ_span = None
         self._fn_name = None
         e = e.new_child()
-        let_ast = defn_ast.let_stmt
-        declared_typ = opt_map(let_ast.typ, lambda t: Typ.from_ast(t, e))
-        expr_typ = self.check_expr(let_ast.expr, e, declared_typ)
-        if declared_typ is not None:
-            self._record_coercion(let_ast.expr, expr_typ, declared_typ)
+        self._check_let_initializer(defn_ast.let_stmt, e)
         return self.results
 
     def check_expr(
@@ -1023,20 +1030,62 @@ class TypCheck:
         raise LoopLabelNotFoundError(label.name, label.span)
 
     def check_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> bool:
-        declared_typ = opt_map(let_ast.typ, lambda t: Typ.from_ast(t, e))
-        expr_typ = self.check_expr(let_ast.expr, e, declared_typ)
-        if declared_typ is not None:
-            self._record_coercion(let_ast.expr, expr_typ, declared_typ)
+        expr_typ, declared_typ = self._check_let_initializer(let_ast, e)
         bound_typ = opt_or_default(declared_typ, expr_typ)
         mut = Mutability.from_ast(let_ast.mut)
         place_typ = PtrTyp.get_or_create(bound_typ, mut)
         e.add_var(let_ast.ident.name, _TypedPlace(place_typ))
         return expr_typ == NEVER
 
+    def _check_let_initializer(
+        self, let_ast: ast.LetStmt, e: Env
+    ) -> tuple[Typ, Optional[Typ]]:
+        """Check a ``let`` initializer, shared by :meth:`check_let_stmt`
+        and :meth:`check_var_initializer` - mirrors
+        :meth:`~leech.ir_builder.CfgBuilder._build_let_initializer`.
+
+        :param let_ast: The parsed ``let`` statement.
+        :param e: The scope to resolve names in.
+        :return: ``(expr_typ, declared_typ)`` - the initializer's own
+            checked type, and the ``let``'s declared type, if it has one.
+        :raises VoidVarInitializerError: If the initializer expression has
+            type ``void``.
+        :raises IncompatibleLetTypError: If the initializer's type doesn't
+            match, and doesn't coerce to, a declared type.
+        """
+        declared_typ_ast = let_ast.typ
+        declared_typ = opt_map(declared_typ_ast, lambda t: Typ.from_ast(t, e))
+        expr_typ = self.check_expr(let_ast.expr, e, declared_typ)
+        if expr_typ == VOID:
+            raise VoidVarInitializerError(let_ast.expr.span)
+        if declared_typ_ast is None:
+            return expr_typ, None
+
+        assert declared_typ is not None
+        coercion = self._record_coercion(let_ast.expr, expr_typ, declared_typ)
+        if isinstance(coercion, Invalid):
+            raise IncompatibleLetTypError(
+                let_ast.ident.name,
+                declared_typ.name,
+                expr_typ.name,
+                let_ast.expr.span,
+                declared_typ_ast.span,
+            )
+        return expr_typ, declared_typ
+
     def check_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> bool:
         place_typ = self.check_expr(ass_ast.place, e, None)
+        place_mut = self._place_mut(ass_ast.place, e)
         expr_typ = self.check_expr(ass_ast.expr, e, place_typ)
-        self._record_coercion(ass_ast.expr, expr_typ, place_typ)
+
+        if place_mut == CONST:
+            raise AssignToConstError(ass_ast.place.span)
+
+        coercion = self._record_coercion(ass_ast.expr, expr_typ, place_typ)
+        if isinstance(coercion, Invalid):
+            raise IncompatibleAssignmentTypError(
+                expr_typ.name, place_typ.name, ass_ast.expr.span, ass_ast.place.span
+            )
         return place_typ == NEVER or expr_typ == NEVER
 
     def _infer_int_lit_typ(
