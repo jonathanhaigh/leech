@@ -1,13 +1,11 @@
 """Scope and name resolution for variables, types and modules."""
 
-import enum  # noqa: I001 - import order below works around a circular import
+import enum
 import re
 from collections import ChainMap
 from typing import Any
 
-from leech import ir_module, ir_values
-from leech import ast
-from leech import typs
+from leech import ast, ir_module, ir_values, typs
 from leech.asserts import assert_ge, checked_cast
 from leech.errors import (
     DuplicateItemDefnError,

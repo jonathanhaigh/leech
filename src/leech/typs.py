@@ -1,6 +1,6 @@
 """Leech's type system: type representations, caching, and construction from AST."""
 
-from abc import ABC, abstractmethod  # noqa: I001 - import order below works around a circular import
+from abc import ABC, abstractmethod
 from collections.abc import Hashable
 from enum import Enum
 from functools import cached_property
@@ -8,14 +8,14 @@ from types import MappingProxyType
 from typing import ClassVar, Final, Self, override
 from weakref import WeakValueDictionary
 
-from leech import ir_env, ir_module
-from leech import ast
+from leech import ast, ir_env, ir_module
 from leech.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
 from leech.errors import (
     DuplicateFieldInStructDefnError,
     DuplicateItemDefnError,
     InfiniteSizeStructError,
 )
+from leech.signage import ADDR_SIZE, SIGNED, UNSIGNED, Signage
 from leech.src import SrcFile, SrcSpan
 
 
@@ -42,17 +42,6 @@ class Mutability(Enum):
 
 CONST = Mutability.CONST
 MUT = Mutability.MUT
-
-
-class Signage(Enum):
-    """Whether an integer type is signed or unsigned."""
-
-    SIGNED = 0
-    UNSIGNED = 1
-
-
-SIGNED = Signage.SIGNED
-UNSIGNED = Signage.UNSIGNED
 
 
 class Typ(ABC):
@@ -627,7 +616,6 @@ U8 = IntTyp.get_or_create(8, UNSIGNED)
 I8 = IntTyp.get_or_create(8, SIGNED)
 U32 = IntTyp.get_or_create(32, UNSIGNED)
 I32 = IntTyp.get_or_create(32, SIGNED)
-ADDR_SIZE = 64
 USIZE = IntTyp.get_or_create(ADDR_SIZE, UNSIGNED)
 ISIZE = IntTyp.get_or_create(ADDR_SIZE, SIGNED)
 CINT = I32

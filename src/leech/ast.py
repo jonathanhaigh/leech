@@ -4,16 +4,24 @@ import ast as python_ast
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, override
 
 from lark import Token
 from lark.tree import Branch, ParseTree, Tree
 
-from leech import typs
 from leech.asserts import assert_eq, assert_in, checked_cast
 from leech.opt_util import opt_map
+from leech.signage import ADDR_SIZE, SIGNED, UNSIGNED
 from leech.src import SrcFile, SrcSpan
-from leech.typs import ADDR_SIZE, SIGNED, UNSIGNED
+
+if TYPE_CHECKING:
+    # `typs.IntTyp` (used only in a type annotation below, in `IntLit`) would
+    # otherwise be a real circular import: `typs` needs the real `ast` node
+    # classes at runtime (e.g. `match typ_ast: case ast.BasicTyp(): ...`), so
+    # `ast` can't import `typs` back at module level too. The one place this
+    # module needs an actual `typs.IntTyp` - resolving a literal's suffix - is
+    # deferred to a local import instead (see `IntLit.__init__`).
+    from leech import typs
 
 
 def as_token(branch: Branch[Token]) -> Token:
@@ -319,6 +327,9 @@ class IntLit(Expr):
         assert m is not None
 
         if m[2] is not None:
+            # Deferred to avoid a circular import; see the TYPE_CHECKING block above.
+            from leech import typs  # noqa: PLC0415
+
             signage = SIGNED if m[2] == "i" else UNSIGNED
             width = ADDR_SIZE if m[3] == "size" else int(m[3])
             self.explicit_typ = typs.IntTyp.get_or_create(width, signage)

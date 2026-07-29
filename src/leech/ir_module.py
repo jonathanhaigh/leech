@@ -1,14 +1,13 @@
 """Module/program structure: functions, module-level variables, and modules."""
 
-import enum  # noqa: I001 - import order below works around a circular import
+import enum
 from abc import abstractmethod
 from collections.abc import Collection
 from dataclasses import dataclass
 from functools import cached_property
 from typing import ClassVar, Final, override
 
-from leech import comptime, ir_builder, ir_env, ir_loader, typcheck
-from leech import ast
+from leech import ast, comptime, ir_builder, ir_env, ir_loader, typcheck
 from leech.asserts import assert_eq, checked_cast
 from leech.errors import (
     CircularVarInitializerError,

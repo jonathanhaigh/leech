@@ -12,12 +12,11 @@ which of two call/field-access candidates applies, and so on) rather
 than re-deriving them.
 """
 
-import enum  # noqa: I001 - import order below works around a circular import
+import enum
 from dataclasses import dataclass
 from typing import Final
 
-from leech import ir_module
-from leech import ast
+from leech import ast, ir_module
 from leech.asserts import assert_eq, assert_in, checked_cast
 from leech.ir_env import Env
 from leech.ir_values import (
