@@ -51,14 +51,11 @@ class Ast(ABC):
     def _pretty_child(child_name: str, child_val: Any, indent: str, level: int) -> str:
         match child_val:
             case Ast():
-                return (
-                    f"{indent * level}{child_name}: {child_val.pretty(indent, level)}"
-                )
+                return f"{indent * level}{child_name}: {child_val.pretty(indent, level)}"
             case list():
                 next_level = level + 1
                 elts = "".join(
-                    f"\n{indent * next_level}{x.pretty(indent, level + 1)}"
-                    for x in child_val
+                    f"\n{indent * next_level}{x.pretty(indent, level + 1)}" for x in child_val
                 )
                 return f"{indent * level}{child_name}:{elts}"
             case _:
@@ -73,9 +70,7 @@ class Ast(ABC):
         """
         cls_name = type(self).__name__
         child_attrs = ((k, v) for k, v in vars(self).items() if k != "span")
-        child_strs = "\n".join(
-            Ast._pretty_child(k, v, indent, level + 1) for k, v in child_attrs
-        )
+        child_strs = "\n".join(Ast._pretty_child(k, v, indent, level + 1) for k, v in child_attrs)
         return f"{cls_name}\n{child_strs}"
 
     @abstractmethod
@@ -415,9 +410,7 @@ class ArrayExpr(Expr):
         super().__init__(SrcSpan(file, tree.meta))
         (arg_list,) = map(as_tree, tree.children)
         assert_eq(arg_list.data, "arg_list")
-        self.elements = [
-            Expr.from_tree(file, as_tree(child)) for child in arg_list.children
-        ]
+        self.elements = [Expr.from_tree(file, as_tree(child)) for child in arg_list.children]
 
     @override
     def diag_str(self) -> str:
@@ -437,9 +430,7 @@ class StructExpr(Expr):
         self.typ = BasicTyp(file, typ)
 
         assert_eq(field_list.data, "struct_field_expr_list")
-        self.fields = [
-            StructFieldExpr(file, as_tree(child)) for child in field_list.children
-        ]
+        self.fields = [StructFieldExpr(file, as_tree(child)) for child in field_list.children]
 
     @override
     def diag_str(self) -> str:
@@ -511,9 +502,7 @@ class CallExpr(Expr):
         self.callee = Expr.from_tree(file, callee)
 
         assert_eq(arg_list.data, "arg_list")
-        self.args = [
-            Expr.from_tree(file, as_tree(child)) for child in arg_list.children
-        ]
+        self.args = [Expr.from_tree(file, as_tree(child)) for child in arg_list.children]
 
     @override
     def diag_str(self) -> str:
@@ -893,9 +882,7 @@ class FnDecl(FnSpec):
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "fn_decl")
         ident, param_list, ret_typ = tree.children
-        super().__init__(
-            file, tree, as_tree(ident), as_tree(param_list), opt_map(ret_typ, as_tree)
-        )
+        super().__init__(file, tree, as_tree(ident), as_tree(param_list), opt_map(ret_typ, as_tree))
 
     @override
     def diag_str(self) -> str:
@@ -911,9 +898,7 @@ class FnDefn(FnSpec):
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "fn_defn")
         access, ident, param_list, ret_typ, block = tree.children
-        super().__init__(
-            file, tree, as_tree(ident), as_tree(param_list), opt_map(ret_typ, as_tree)
-        )
+        super().__init__(file, tree, as_tree(ident), as_tree(param_list), opt_map(ret_typ, as_tree))
         self.access = Access.from_tree(file, as_tree(access))
         self.block = BlockExpr(file, as_tree(block))
 
@@ -955,9 +940,7 @@ class StructDefn(Defn):
         self.ident = Ident(file, ident)
 
         assert_eq(field_defn_list.data, "struct_field_defn_list")
-        self.fields = [
-            StructFieldDefn(file, as_tree(child)) for child in field_defn_list.children
-        ]
+        self.fields = [StructFieldDefn(file, as_tree(child)) for child in field_defn_list.children]
 
     @override
     def diag_str(self) -> str:

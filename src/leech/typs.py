@@ -483,12 +483,8 @@ class StructTyp(Typ):
                 # the enclosing module builds any impl block, so the only
                 # thing a field can collide with is another field.
                 assert isinstance(existing, StructField)
-                raise DuplicateFieldInStructDefnError(
-                    member.name, span, existing_span
-                )
-            raise DuplicateItemDefnError(
-                "associated function", member.name, span, existing_span
-            )
+                raise DuplicateFieldInStructDefnError(member.name, span, existing_span)
+            raise DuplicateItemDefnError("associated function", member.name, span, existing_span)
         self._members[member.name] = member
 
     def add_assoc_fn(self, fn: ir_module.Fn) -> None:

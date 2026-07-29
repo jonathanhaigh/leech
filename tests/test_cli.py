@@ -54,10 +54,7 @@ def test_cli_ll_suffix_requires_explicit_o(tmp_path):
 
     assert proc.returncode == 2
     assert proc.stdout == ""
-    assert (
-        proc.stderr
-        == "-o option must be given if source file name ends in '.ll'\n"
-    )
+    assert proc.stderr == "-o option must be given if source file name ends in '.ll'\n"
 
 
 def test_cli_error_renders_message_and_does_not_write_output(tmp_path):
@@ -95,11 +92,7 @@ def test_cli_warning_still_writes_output(tmp_path):
 
     assert proc.returncode == WARNING
     assert proc.stdout == ""
-    assert proc.stderr == (
-        "WARNING: return statement is unreachable\n"
-        "3|     return 2;\n"
-        "-------^\n"
-    )
+    assert proc.stderr == ("WARNING: return statement is unreachable\n3|     return 2;\n-------^\n")
     ll_path = src_path.with_suffix(".ll")
     assert ll_path.exists()
     assert "ret i32 1" in ll_path.read_text()
@@ -117,9 +110,7 @@ def test_cli_unexpected_character_error(tmp_path):
     assert proc.returncode == ERROR
     assert proc.stdout == ""
     assert proc.stderr == (
-        'ERROR: Unexpected character "@"\n'
-        "2|     return 0 @ 1;\n"
-        "----------------^\n"
+        'ERROR: Unexpected character "@"\n2|     return 0 @ 1;\n----------------^\n'
     )
     assert not src_path.with_suffix(".ll").exists()
 
@@ -135,12 +126,7 @@ def test_cli_unexpected_token_error(tmp_path):
 
     assert proc.returncode == ERROR
     assert proc.stdout == ""
-    assert proc.stderr == (
-        'ERROR: Unexpected token "}"\n'
-        "3| }\n"
-        "---^\n"
-        'NOTE: Expected one of: ";"\n'
-    )
+    assert proc.stderr == ('ERROR: Unexpected token "}"\n3| }\n---^\nNOTE: Expected one of: ";"\n')
     assert not src_path.with_suffix(".ll").exists()
 
 
@@ -179,8 +165,4 @@ def test_cli_warning_fires_once_for_multiple_dead_statements(tmp_path):
 
     assert proc.returncode == WARNING
     assert proc.stdout == ""
-    assert proc.stderr == (
-        "WARNING: let statement is unreachable\n"
-        "3|     let y = 2;\n"
-        "-------^\n"
-    )
+    assert proc.stderr == ("WARNING: let statement is unreachable\n3|     let y = 2;\n-------^\n")

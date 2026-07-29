@@ -96,12 +96,8 @@ class Interpreter:
     def _eval_instr(self, instr: ir_values.Instr) -> None:
         match instr:
             case ir_values.BinOpInstr():
-                lhs = checked_cast(
-                    self._get_comptime_value(instr.lhs), ir_values.ComptimeInt
-                )
-                rhs = checked_cast(
-                    self._get_comptime_value(instr.rhs), ir_values.ComptimeInt
-                )
+                lhs = checked_cast(self._get_comptime_value(instr.lhs), ir_values.ComptimeInt)
+                rhs = checked_cast(self._get_comptime_value(instr.rhs), ir_values.ComptimeInt)
                 assert_eq(lhs.typ, rhs.typ)
                 match instr:
                     case ir_values.AddInstr():
@@ -128,25 +124,17 @@ class Interpreter:
                 ret = -operand.value
                 if not operand.typ.fits(ret):
                     raise IntOverflowAtComptimeError(ret, operand.typ.name, instr.span)
-                self.registers[instr] = ir_values.ComptimeInt(
-                    operand.typ, ret, instr.ast
-                )
+                self.registers[instr] = ir_values.ComptimeInt(operand.typ, ret, instr.ast)
 
             case ir_values.NotInstr():
                 operand = checked_cast(
                     self._get_comptime_value(instr.operand), ir_values.ComptimeBool
                 )
-                self.registers[instr] = ir_values.ComptimeBool(
-                    not operand.value, instr.ast
-                )
+                self.registers[instr] = ir_values.ComptimeBool(not operand.value, instr.ast)
 
             case ir_values.IcmpSignedInstr() | ir_values.IcmpUnsignedInstr():
-                lhs = checked_cast(
-                    self._get_comptime_value(instr.lhs), ir_values.ComptimeInt
-                )
-                rhs = checked_cast(
-                    self._get_comptime_value(instr.rhs), ir_values.ComptimeInt
-                )
+                lhs = checked_cast(self._get_comptime_value(instr.lhs), ir_values.ComptimeInt)
+                rhs = checked_cast(self._get_comptime_value(instr.rhs), ir_values.ComptimeInt)
                 assert_eq(lhs.typ, rhs.typ)
                 match instr.op:
                     case "<":
@@ -167,9 +155,7 @@ class Interpreter:
                 self.registers[instr] = ir_values.ComptimeBool(ret, instr.ast)
 
             case ir_values.LoadInstr():
-                src = checked_cast(
-                    self._get_comptime_value(instr.src), ir_values.ComptimePtr
-                )
+                src = checked_cast(self._get_comptime_value(instr.src), ir_values.ComptimePtr)
                 self.registers[instr] = src.load()
             case ir_values.IntExtInstr():
                 # Widening never changes the value, only the type it's
@@ -177,28 +163,20 @@ class Interpreter:
                 int_value = checked_cast(
                     self._get_comptime_value(instr.value), ir_values.ComptimeInt
                 )
-                self.registers[instr] = ir_values.ComptimeInt(
-                    instr.typ, int_value.value, instr.ast
-                )
+                self.registers[instr] = ir_values.ComptimeInt(instr.typ, int_value.value, instr.ast)
             case ir_values.AllocaInstr():
                 self.registers[instr] = ir_values.ComptimeAlloc(
                     instr.allocated_typ, instr.mut, instr.ast
                 )
             case ir_values.StoreInstr():
-                dest = checked_cast(
-                    self._get_comptime_value(instr.dest), ir_values.ComptimePtr
-                )
+                dest = checked_cast(self._get_comptime_value(instr.dest), ir_values.ComptimePtr)
                 if not dest.is_temporary():
                     raise SetNonLocalVarAtComptimeError(instr.span)
                 value = self._get_comptime_value(instr.value)
                 dest.store(value)
             case ir_values.GepInstr():
-                base = checked_cast(
-                    self._get_comptime_value(instr.base), ir_values.ComptimePtr
-                )
-                index = checked_cast(
-                    self._get_comptime_value(instr.index), ir_values.ComptimeInt
-                )
+                base = checked_cast(self._get_comptime_value(instr.base), ir_values.ComptimePtr)
+                index = checked_cast(self._get_comptime_value(instr.index), ir_values.ComptimeInt)
                 self.registers[instr] = ir_values.ComptimeGep(base, index, instr.ast)
             case ir_values.InsertValueInstr():
                 value = self._get_comptime_value(instr.value)
@@ -212,9 +190,7 @@ class Interpreter:
                 agg.set_element(value, instr.indeces[-1].value)
                 self.registers[instr] = base_agg
             case ir_values.CallInstr():
-                callee = checked_cast(
-                    self._get_comptime_value(instr.callee), ir_module.FnSpec
-                )
+                callee = checked_cast(self._get_comptime_value(instr.callee), ir_module.FnSpec)
                 cfg = getattr(callee, "cfg", None)
                 if cfg is None:
                     raise CallExternFnAtComptimeError(callee.span)
@@ -222,9 +198,7 @@ class Interpreter:
                 self.registers[instr] = Interpreter(cfg, callee.params, args).eval()
             case ir_values.PhiInstr():
                 assert self.prev_bb is not None
-                self.registers[instr] = self._get_comptime_value(
-                    instr.incoming[self.prev_bb]
-                )
+                self.registers[instr] = self._get_comptime_value(instr.incoming[self.prev_bb])
             case ir_values.BranchInstr():
                 self.prev_bb = self.curr_bb
                 self.curr_bb = instr.target

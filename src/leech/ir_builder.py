@@ -329,11 +329,7 @@ class CfgBuilder:
                 if_ast.then, then_bb, end_bb, e, ctx, expected_typ
             )
             els_hint = expected_typ
-            if (
-                expected_typ is None
-                and have_then_value
-                and is_flexible_int_lit(els_ast)
-            ):
+            if expected_typ is None and have_then_value and is_flexible_int_lit(els_ast):
                 els_hint = resolve_peer_typ([then.typ])
             els, els_last_bb, have_els_value = self._build_if_arm(
                 els_ast, els_bb, end_bb, e, ctx, els_hint
@@ -344,9 +340,7 @@ class CfgBuilder:
             # type - the phi below requires it.
             assert_eq(then.typ, els.typ)
             self.set_position(end_bb)
-            return self.curr_bb.phi(
-                {els_last_bb: els, then_last_bb: then}, if_ast
-            )
+            return self.curr_bb.phi({els_last_bb: els, then_last_bb: then}, if_ast)
 
         self.set_position(end_bb)
         if have_then_value:
@@ -390,9 +384,7 @@ class CfgBuilder:
             self.branch(end_bb, arm_ast)
         return value, last_bb, have_value
 
-    def build_while_expr(
-        self, while_ast: ast.WhileExpr, e: Env, _ctx: ExprContext
-    ) -> Value:
+    def build_while_expr(self, while_ast: ast.WhileExpr, e: Env, _ctx: ExprContext) -> Value:
         """Lower a ``while`` loop expression.
 
         :param while_ast: The parsed ``while`` expression.
@@ -429,9 +421,7 @@ class CfgBuilder:
         self.set_position(end_bb)
         return VoidValue(while_ast)
 
-    def build_call_expr(
-        self, call_ast: ast.CallExpr, e: Env, ctx: ExprContext
-    ) -> Value:
+    def build_call_expr(self, call_ast: ast.CallExpr, e: Env, ctx: ExprContext) -> Value:
         """Lower a function call expression.
 
         If the callee is written as ``x.name``, ``name`` is looked up as a
@@ -476,9 +466,7 @@ class CfgBuilder:
                 recv_ast = callee_ast.struct
                 callee: Value = method
             else:
-                callee = self._build_struct_field_access(
-                    recv_place, callee_ast, ExprContext.VALUE
-                )
+                callee = self._build_struct_field_access(recv_place, callee_ast, ExprContext.VALUE)
         else:
             callee = self.build_expr(callee_ast, e, ExprContext.VALUE)
 
@@ -486,9 +474,9 @@ class CfgBuilder:
         fn_typ = checked_cast(callee_ptr_typ.pointee_typ, CallableTyp)
         param_typs = fn_typ.param_typs
         offset = 1 if recv_ast is not None else 0
-        arg_asts: list[ast.Expr] = (
-            [recv_ast] if recv_ast is not None else []
-        ) + list(call_ast.args)
+        arg_asts: list[ast.Expr] = ([recv_ast] if recv_ast is not None else []) + list(
+            call_ast.args
+        )
         lowered_args = tuple(
             self.build_expr(arg_ast, e, ExprContext.VALUE, param_typs[i])
             for i, arg_ast in enumerate(call_ast.args, start=offset)
@@ -501,9 +489,7 @@ class CfgBuilder:
             opt_unwrap(self._coerce(arg, arg_asts[i])) for i, arg in enumerate(args)
         )
 
-        return self._in_context(
-            self.curr_bb.call(callee, coerced_args, call_ast), ctx
-        )
+        return self._in_context(self.curr_bb.call(callee, coerced_args, call_ast), ctx)
 
     def build_bin_op_expr(
         self,
@@ -540,9 +526,7 @@ class CfgBuilder:
                 return propagated
             # A bare integer literal always ends up with an integer type,
             # so the left operand needs no separate check here.
-            lhs = self.build_expr(
-                op_ast.lhs, e, ExprContext.VALUE, resolve_peer_typ([rhs.typ])
-            )
+            lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE, resolve_peer_typ([rhs.typ]))
         else:
             lhs = self.build_expr(
                 op_ast.lhs,
@@ -558,9 +542,7 @@ class CfgBuilder:
                 op_ast.rhs,
                 e,
                 ExprContext.VALUE,
-                resolve_peer_typ([lhs.typ])
-                if is_flexible_int_lit(op_ast.rhs)
-                else None,
+                resolve_peer_typ([lhs.typ]) if is_flexible_int_lit(op_ast.rhs) else None,
             )
             propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
             if propagated is not None:
@@ -592,9 +574,7 @@ class CfgBuilder:
 
         return self._in_context(res, ctx)
 
-    def build_logic_bin_op_expr(
-        self, op_ast: ast.BinOpExpr, e: Env, ctx: ExprContext
-    ) -> Value:
+    def build_logic_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env, ctx: ExprContext) -> Value:
         """Lower a short-circuiting ``and``/``or`` expression.
 
         Modelled on :meth:`build_if_expr`: the right operand is only
@@ -650,9 +630,7 @@ class CfgBuilder:
 
         self.branch(end_bb, op_ast.rhs)
         self.set_position(end_bb)
-        res = self.curr_bb.phi(
-            {lhs_last_bb: short_circuit, rhs_last_bb: coerced_rhs}, op_ast
-        )
+        res = self.curr_bb.phi({lhs_last_bb: short_circuit, rhs_last_bb: coerced_rhs}, op_ast)
         return self._in_context(res, ctx)
 
     def build_unary_op_expr(
@@ -683,9 +661,7 @@ class CfgBuilder:
                 operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
                 # TypCheck already confirmed operand coerces to bool.
                 coerced_operand = opt_unwrap(self._coerce(operand, op_ast.operand))
-                return self._in_context(
-                    self.curr_bb.not_(coerced_operand, op_ast), ctx
-                )
+                return self._in_context(self.curr_bb.not_(coerced_operand, op_ast), ctx)
             case "-":
                 # A literal operand is folded into a single negative
                 # constant rather than being built and then negated, so
@@ -698,9 +674,7 @@ class CfgBuilder:
                         ctx,
                     )
 
-                operand = self.build_expr(
-                    op_ast.operand, e, ExprContext.VALUE, expected_typ
-                )
+                operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE, expected_typ)
                 propagated = self._propagate_never(operand, op_ast.operand, ctx)
                 if propagated is not None:
                     return propagated
@@ -753,9 +727,7 @@ class CfgBuilder:
             from the surrounding context.
         :return: The constructed array value.
         """
-        expected_elt_typ = (
-            expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
-        )
+        expected_elt_typ = expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
 
         # Two passes, so that a bare integer literal takes its type from
         # its sibling elements wherever it sits, rather than the first
@@ -765,9 +737,7 @@ class CfgBuilder:
         built: list[Value | None] = [None] * len(arr_expr.elements)
         for i, elt_ast in enumerate(arr_expr.elements):
             if not is_flexible_int_lit(elt_ast):
-                built[i] = self.build_expr(
-                    elt_ast, e, ExprContext.VALUE, expected_elt_typ
-                )
+                built[i] = self.build_expr(elt_ast, e, ExprContext.VALUE, expected_elt_typ)
 
         # An element type the surrounding context supplied is what the
         # whole array has to coerce to, so it wins over the elements'
@@ -780,9 +750,7 @@ class CfgBuilder:
         elts = [
             v
             if v is not None
-            else self.build_expr(
-                arr_expr.elements[i], e, ExprContext.VALUE, elt_typ
-            )
+            else self.build_expr(arr_expr.elements[i], e, ExprContext.VALUE, elt_typ)
             for i, v in enumerate(built)
         ]
 
@@ -827,9 +795,7 @@ class CfgBuilder:
         elt_ptr = self.curr_bb.gep(arr_ptr, index, aa_expr)
         return self._deref_in_context(elt_ptr, ctx, aa_expr)
 
-    def build_struct_expr(
-        self, struct_expr: ast.StructExpr, e: Env, ctx: ExprContext
-    ) -> Value:
+    def build_struct_expr(self, struct_expr: ast.StructExpr, e: Env, ctx: ExprContext) -> Value:
         """Lower a struct literal expression.
 
         :param struct_expr: The parsed struct expression.
@@ -844,10 +810,7 @@ class CfgBuilder:
 
         struct = ComptimeStruct(
             struct_typ,
-            {
-                f.name: UndefValue(f.typ, struct_expr)
-                for f in struct_typ.fields.values()
-            },
+            {f.name: UndefValue(f.typ, struct_expr) for f in struct_typ.fields.values()},
             struct_expr,
         )
 
@@ -865,13 +828,9 @@ class CfgBuilder:
 
         for i, field in enumerate(struct_typ.fields.values()):
             field_value = field_values[field.name]
-            coerced = opt_unwrap(
-                self._coerce(field_value, field_value_asts[field.name])
-            )
+            coerced = opt_unwrap(self._coerce(field_value, field_value_asts[field.name]))
             field_index = ComptimeInt(I32, i, field_value.ast)
-            struct = self.curr_bb.insert_value(
-                struct, coerced, (field_index,), field_value.ast
-            )
+            struct = self.curr_bb.insert_value(struct, coerced, (field_index,), field_value.ast)
 
         return self._in_context(struct, ctx)
 
@@ -918,9 +877,7 @@ class CfgBuilder:
         field_ptr = self.curr_bb.gep(struct_ptr, index, sa_expr)
         return self._deref_in_context(field_ptr, ctx, sa_expr)
 
-    def build_deref_expr(
-        self, d_expr: ast.DerefExpr, e: Env, ctx: ExprContext
-    ) -> Value:
+    def build_deref_expr(self, d_expr: ast.DerefExpr, e: Env, ctx: ExprContext) -> Value:
         """Lower a pointer dereference expression (``ptr.*``).
 
         :param d_expr: The parsed dereference expression.
@@ -1049,18 +1006,14 @@ class CfgBuilder:
         place = self.build_expr(ass_ast.place, e, ExprContext.PLACE)
         place_typ = checked_cast(place.typ, PtrTyp)
         assert place_typ.pointee_typ != VOID, "assignment place cannot be void"
-        expr = self.build_expr(
-            ass_ast.expr, e, ExprContext.VALUE, place_typ.pointee_typ
-        )
+        expr = self.build_expr(ass_ast.expr, e, ExprContext.VALUE, place_typ.pointee_typ)
 
         # TypCheck already confirmed place isn't const and expr coerces.
         assert_eq(place_typ.mut, MUT)
         coerced = opt_unwrap(self._coerce(expr, ass_ast.expr))
         self.curr_bb.store(coerced, place, ass_ast)
 
-    def _build_let_initializer(
-        self, let_ast: ast.LetStmt, e: Env, ctx: ExprContext
-    ) -> Value:
+    def _build_let_initializer(self, let_ast: ast.LetStmt, e: Env, ctx: ExprContext) -> Value:
         """Lower a ``let`` statement's initializer expression, shared by
         :meth:`build_let_stmt` and :meth:`build_var_initializer`.
 
@@ -1143,9 +1096,7 @@ class CfgBuilder:
             case _:
                 raise AssertionError(f"unhandled coercion {coercion!r}")
 
-    def _propagate_never(
-        self, value: Value, ast_node: ast.Ast, ctx: ExprContext
-    ) -> Value | None:
+    def _propagate_never(self, value: Value, ast_node: ast.Ast, ctx: ExprContext) -> Value | None:
         """If ``value`` is ``never``-typed, terminate the current block.
 
         For operators, which don't coerce toward a target type (see
@@ -1177,9 +1128,7 @@ class CfgBuilder:
             return self._value_to_ptr(value)
         return value
 
-    def _deref_in_context(
-        self, ptr: Value, ctx: ExprContext, ast: ast.Ast | None
-    ) -> Value:
+    def _deref_in_context(self, ptr: Value, ctx: ExprContext, ast: ast.Ast | None) -> Value:
         if ctx == ExprContext.PLACE:
             return ptr
         return self.curr_bb.load(ptr, ast)

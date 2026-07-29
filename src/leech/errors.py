@@ -93,9 +93,7 @@ class UnexpectedTokenError(UserError):
         ``found`` is known.
     """
 
-    def __init__(
-        self, found: str, span: SrcSpan, expected: Collection[str]
-    ) -> None:
+    def __init__(self, found: str, span: SrcSpan, expected: Collection[str]) -> None:
         super().__init__(ERROR, f"Unexpected {found}", span)
         if expected:
             self.add_extra(NOTE, f"Expected one of: {', '.join(expected)}", None)
@@ -121,13 +119,9 @@ class PrivateItemAccessError(UserError):
         access_span: SrcSpan | None,
         defn_span: SrcSpan | None,
     ) -> None:
-        super().__init__(
-            ERROR, f'{item_kind.capitalize()} "{name}" is private', access_span
-        )
+        super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" is private', access_span)
         if defn_span is not None:
-            self.add_extra(
-                NOTE, f'{item_kind.capitalize()} "{name}" defined here', defn_span
-            )
+            self.add_extra(NOTE, f'{item_kind.capitalize()} "{name}" defined here', defn_span)
 
 
 class AssignToConstError(UserError):
@@ -149,8 +143,7 @@ class IncompatibleAssignmentTypError(UserError):
     ) -> None:
         super().__init__(
             ERROR,
-            f'Cannot assign value of type "{given_typ}" to place of type'
-            f' "{place_typ}"',
+            f'Cannot assign value of type "{given_typ}" to place of type "{place_typ}"',
             span,
         )
         if place_span is not None:
@@ -178,9 +171,7 @@ class IncompatibleLetTypError(UserError):
             given_span,
         )
         if declared_span is not None:
-            self.add_extra(
-                NOTE, f'Declared with type "{declared_typ}" here', declared_span
-            )
+            self.add_extra(NOTE, f'Declared with type "{declared_typ}" here', declared_span)
 
 
 class DuplicateItemDefnError(UserError):
@@ -202,9 +193,7 @@ class NotCallableError(UserError):
     """Raised when calling a value whose type isn't a function pointer."""
 
     def __init__(self, callee_diag: str, given_typ: str, span: SrcSpan | None):
-        super().__init__(
-            ERROR, f'{callee_diag} of type "{given_typ}" is not callable', span
-        )
+        super().__init__(ERROR, f'{callee_diag} of type "{given_typ}" is not callable', span)
 
 
 class InvalidArgTypError(UserError):
@@ -293,8 +282,7 @@ class IncompatibleBinOpArgTypsError(UserError):
     ) -> None:
         super().__init__(
             ERROR,
-            f'Left and right operands to binary operation "{op}" have incompatible'
-            " types",
+            f'Left and right operands to binary operation "{op}" have incompatible types',
             op_span,
         )
         self.add_extra(NOTE, f'Left operand type is "{lhs_typ}"', lhs_span)
@@ -314,10 +302,7 @@ class TooManyArgsError(UserError):
     ):
         super().__init__(
             ERROR,
-            (
-                f'Too many args in call to callable "{callee_diag}":'
-                f" got {got}, expected {expected}"
-            ),
+            (f'Too many args in call to callable "{callee_diag}": got {got}, expected {expected}'),
             arg_span,
         )
 
@@ -382,8 +367,7 @@ class InvalidVoidRetError(UserError):
     ) -> None:
         super().__init__(
             ERROR,
-            f'Cannot return without a value in function "{fn_name}" that returns'
-            f' "{ret_typ}"',
+            f'Cannot return without a value in function "{fn_name}" that returns "{ret_typ}"',
             ret_stmt_span,
         )
         if ret_typ_span is not None:
@@ -489,9 +473,7 @@ class EmptyArrayTypUnknownError(UserError):
     """
 
     def __init__(self, span: SrcSpan | None) -> None:
-        super().__init__(
-            ERROR, "Cannot infer element type of empty array expression", span
-        )
+        super().__init__(ERROR, "Cannot infer element type of empty array expression", span)
 
 
 class ModUsedAsTypError(UserError):
@@ -502,9 +484,7 @@ class ModUsedAsTypError(UserError):
     """
 
     def __init__(self, mod_name: str, span: SrcSpan | None) -> None:
-        super().__init__(
-            ERROR, f'Module "{mod_name}" cannot be used as a type', span
-        )
+        super().__init__(ERROR, f'Module "{mod_name}" cannot be used as a type', span)
         self.add_extra(
             NOTE,
             f'A module name can only qualify a path, e.g. "{mod_name}::SomeTyp"',
@@ -556,8 +536,7 @@ class SelfParamOutsideImplError(UserError):
     def __init__(self, span: SrcSpan | None) -> None:
         super().__init__(
             ERROR,
-            '"self" parameter is only allowed on functions defined inside'
-            ' an "impl" block',
+            '"self" parameter is only allowed on functions defined inside an "impl" block',
             span,
         )
 
@@ -661,8 +640,7 @@ class MissingFieldInStructExprError(UserError):
     ) -> None:
         super().__init__(
             ERROR,
-            f'Missing field "{field_name}" in struct expression of type'
-            f' "{struct_name}"',
+            f'Missing field "{field_name}" in struct expression of type "{struct_name}"',
             struct_expr_span,
         )
         if field_span is not None:
@@ -736,14 +714,11 @@ class InfiniteSizeStructError(UserError):
             ``(containing_struct, field_name, field_span, contained_struct)``
             tuples, in containment order, ending back at ``struct_name``.
         """
-        super().__init__(
-            ERROR, f'Struct "{struct_name}" has infinite size', struct_span
-        )
+        super().__init__(ERROR, f'Struct "{struct_name}" has infinite size', struct_span)
         for containing, field_name, field_span, contained in cycle:
             self.add_extra(
                 NOTE,
-                f'Field "{field_name}" of struct "{containing}" contains '
-                f'"{contained}" by value',
+                f'Field "{field_name}" of struct "{containing}" contains "{contained}" by value',
                 field_span,
             )
 
@@ -788,13 +763,10 @@ class IfTypNotVoidError(UserError):
 class IfCondNotBoolError(UserError):
     """Raised when an ``if`` condition's type isn't ``bool``."""
 
-    def __init__(
-        self, expr_diag: str, expr_typ: str, expr_span: SrcSpan | None
-    ) -> None:
+    def __init__(self, expr_diag: str, expr_typ: str, expr_span: SrcSpan | None) -> None:
         super().__init__(
             ERROR,
-            f'"if" condition must have type "bool", found {expr_diag} of type'
-            f' "{expr_typ}"',
+            f'"if" condition must have type "bool", found {expr_diag} of type "{expr_typ}"',
             expr_span,
         )
 
@@ -809,8 +781,7 @@ class WhileTypNotVoidError(UserError):
     ) -> None:
         super().__init__(
             ERROR,
-            f'block expression for "while" loop must have type "void", found'
-            f' "{block_typ}"',
+            f'block expression for "while" loop must have type "void", found "{block_typ}"',
             block_span,
         )
 
@@ -818,13 +789,10 @@ class WhileTypNotVoidError(UserError):
 class WhileCondNotBoolError(UserError):
     """Raised when a ``while`` loop's condition's type isn't ``bool``."""
 
-    def __init__(
-        self, expr_diag: str, expr_typ: str, expr_span: SrcSpan | None
-    ) -> None:
+    def __init__(self, expr_diag: str, expr_typ: str, expr_span: SrcSpan | None) -> None:
         super().__init__(
             ERROR,
-            f'"while" condition must have type "bool", found {expr_diag} of type'
-            f' "{expr_typ}"',
+            f'"while" condition must have type "bool", found {expr_diag} of type "{expr_typ}"',
             expr_span,
         )
 
@@ -858,9 +826,7 @@ class IntLitOverflowError(UserError):
     """Raised when an integer literal doesn't fit in its type's width."""
 
     def __init__(self, value: int, typ: str, span: SrcSpan | None) -> None:
-        super().__init__(
-            ERROR, f'Integer literal {value} does not fit in type "{typ}"', span
-        )
+        super().__init__(ERROR, f'Integer literal {value} does not fit in type "{typ}"', span)
 
 
 class IntOverflowAtComptimeError(UserError):
@@ -875,8 +841,7 @@ class IntOverflowAtComptimeError(UserError):
     def __init__(self, value: int, typ: str, span: SrcSpan | None) -> None:
         super().__init__(
             ERROR,
-            f'Result of compile-time integer operation ({value}) does not fit'
-            f' in type "{typ}"',
+            f'Result of compile-time integer operation ({value}) does not fit in type "{typ}"',
             span,
         )
 
@@ -914,9 +879,7 @@ class CircularVarInitializerError(UserError):
             pairs, in dependency order, starting and ending at
             ``var_name``.
         """
-        super().__init__(
-            ERROR, f'Initializer of variable "{var_name}" depends on itself', var_span
-        )
+        super().__init__(ERROR, f'Initializer of variable "{var_name}" depends on itself', var_span)
         for name, span in cycle:
             self.add_extra(NOTE, f'Variable "{name}" defined here', span)
 

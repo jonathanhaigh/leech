@@ -23,8 +23,7 @@ def _assert_op(
     message: str | None = None,
 ) -> None:
     assert op(lhs, rhs), (
-        f"not(lhs {op_name} rhs)\nlhs={pformat(lhs)}\nrhs={pformat(rhs)}"
-        f"{_message_str(message)}"
+        f"not(lhs {op_name} rhs)\nlhs={pformat(lhs)}\nrhs={pformat(rhs)}{_message_str(message)}"
     )
 
 
@@ -106,9 +105,7 @@ def checked_cast[T](obj: Any, typ: type[T], message: str | None = None) -> T:
     return obj
 
 
-def assert_all_eq(
-    seq: Sequence[Any], value: Any, message: str | None = None
-) -> None:
+def assert_all_eq(seq: Sequence[Any], value: Any, message: str | None = None) -> None:
     """Assert that every element of ``seq`` equals ``value``.
 
     :param seq: The sequence to check.

@@ -146,9 +146,7 @@ class Env:
         """
         return self.add(Env.Namespace.VARS, name, var, span)
 
-    def add_container(
-        self, name: str, item: Container, span: SrcSpan | None = None
-    ) -> None:
+    def add_container(self, name: str, item: Container, span: SrcSpan | None = None) -> None:
         """Bind a type or module name in this scope.
 
         :param name: The name to bind.
@@ -200,26 +198,18 @@ class Env:
                         res = None
                     else:
                         item_kind, defn_span = diag_info
-                        raise PrivateItemAccessError(
-                            item_kind, ident.name, ident.span, defn_span
-                        )
+                        raise PrivateItemAccessError(item_kind, ident.name, ident.span, defn_span)
             case typs.StructTyp():
                 # A struct's members share one namespace and are all values,
                 # never types, so a type lookup can't name one. Of those
                 # members only associated functions are reachable by path:
                 # `SomeStruct::x` is not a way to name a field, so a field
                 # falls through to "not found" below.
-                res = (
-                    scope.get_assoc_fn(ident.name)
-                    if ns == Env.Namespace.VARS
-                    else None
-                )
+                res = scope.get_assoc_fn(ident.name) if ns == Env.Namespace.VARS else None
                 # Private associated functions are invisible outside the
                 # struct's own module, same as private Mod items above.
                 if res is not None and not res.is_accessible_from(ident.span.file):
-                    raise PrivateItemAccessError(
-                        "function", ident.name, ident.span, res.span
-                    )
+                    raise PrivateItemAccessError("function", ident.name, ident.span, res.span)
 
         if res is None:
             raise ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
@@ -269,8 +259,6 @@ class Env:
 
         scope = self
         for ident in path.idents[:-1]:
-            scope = Env._resolve_path_segment(
-                Env.Namespace.CONTAINERS, scope, ident
-            )
+            scope = Env._resolve_path_segment(Env.Namespace.CONTAINERS, scope, ident)
 
         return Env._resolve_path_segment(ns, scope, path.idents[-1])

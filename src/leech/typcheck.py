@@ -109,9 +109,7 @@ def is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
         return is_flexible_int_lit(expr_ast.operand)
     if isinstance(expr_ast, ast.BlockExpr):
         return (
-            not expr_ast.stmts
-            and expr_ast.expr is not None
-            and is_flexible_int_lit(expr_ast.expr)
+            not expr_ast.stmts and expr_ast.expr is not None and is_flexible_int_lit(expr_ast.expr)
         )
     return False
 
@@ -335,9 +333,7 @@ class TypCheck:
                     ret_ast.span,
                 )
         elif ret_typ != VOID:
-            raise MissingRetError(
-                self._fn_name, fn_ast.span, ret_typ.name, ret_typ_ast_span
-            )
+            raise MissingRetError(self._fn_name, fn_ast.span, ret_typ.name, ret_typ_ast_span)
 
         return self.results
 
@@ -359,9 +355,7 @@ class TypCheck:
         self._check_let_initializer(defn_ast.let_stmt, e)
         return self.results
 
-    def check_expr(
-        self, expr_ast: ast.Expr, e: Env, expected_typ: Typ | None
-    ) -> Typ:
+    def check_expr(self, expr_ast: ast.Expr, e: Env, expected_typ: Typ | None) -> Typ:
         """Check any expression, dispatching to the ``check_*_expr`` method
         matching its AST node kind.
 
@@ -409,9 +403,7 @@ class TypCheck:
             case _:
                 raise AssertionError(f"unhandled expression kind {expr_ast}")
 
-    def check_block_expr(
-        self, block_ast: ast.BlockExpr, e: Env, expected_typ: Typ | None
-    ) -> Typ:
+    def check_block_expr(self, block_ast: ast.BlockExpr, e: Env, expected_typ: Typ | None) -> Typ:
         e = e.new_child()
         diverged = False
         for stmt_ast in block_ast.stmts:
@@ -421,9 +413,7 @@ class TypCheck:
             return NEVER if diverged else VOID
         return self.check_expr(block_ast.expr, e, expected_typ)
 
-    def check_if_expr(
-        self, if_ast: ast.IfExpr, e: Env, expected_typ: Typ | None
-    ) -> Typ:
+    def check_if_expr(self, if_ast: ast.IfExpr, e: Env, expected_typ: Typ | None) -> Typ:
         cond_typ = self.check_expr(if_ast.condition, e, None)
         cond_coercion = self._record_coercion(if_ast.condition, cond_typ, BOOL)
         if isinstance(cond_coercion, Invalid):
@@ -453,18 +443,12 @@ class TypCheck:
         else:
             then_typ = self.check_expr(if_ast.then, e, expected_typ)
             els_hint = expected_typ
-            if (
-                expected_typ is None
-                and then_typ != NEVER
-                and is_flexible_int_lit(els_ast)
-            ):
+            if expected_typ is None and then_typ != NEVER and is_flexible_int_lit(els_ast):
                 els_hint = resolve_peer_typ([then_typ])
             els_typ = self.check_expr(els_ast, e, els_hint)
 
         if then_typ != NEVER and els_typ != NEVER and then_typ != els_typ:
-            raise IfElsTypMismatchError(
-                then_typ.name, if_ast.then.span, els_typ.name, els_ast.span
-            )
+            raise IfElsTypMismatchError(then_typ.name, if_ast.then.span, els_typ.name, els_ast.span)
 
         if then_typ != NEVER:
             return then_typ
@@ -500,9 +484,7 @@ class TypCheck:
         num_args = len(call_ast.args) + (1 if recv_typ is not None else 0)
         num_params = len(param_typs)
         if num_args < num_params:
-            raise NotEnoughArgsError(
-                callee_diag_str, call_ast.span, num_args, num_params
-            )
+            raise NotEnoughArgsError(callee_diag_str, call_ast.span, num_args, num_params)
         if num_args > num_params:
             raise TooManyArgsError(
                 callee_diag_str,
@@ -571,9 +553,7 @@ class TypCheck:
             callee_typ = self.check_expr(callee_ast, e, None)
             fn_typ = _callable_typ(callee_typ)
             if fn_typ is None:
-                raise NotCallableError(
-                    callee_ast.diag_str(), callee_typ.name, callee_ast.span
-                )
+                raise NotCallableError(callee_ast.diag_str(), callee_typ.name, callee_ast.span)
             return fn_typ, None, None
 
         recv_typ = self.check_place(callee_ast.struct, e)
@@ -605,14 +585,10 @@ class TypCheck:
         callee_typ = opt_or_default(field_typ, VOID)
         fn_typ = _callable_typ(callee_typ)
         if fn_typ is None:
-            raise NotCallableError(
-                callee_ast.diag_str(), callee_typ.name, callee_ast.span
-            )
+            raise NotCallableError(callee_ast.diag_str(), callee_typ.name, callee_ast.span)
         return fn_typ, None, None
 
-    def check_bin_op_expr(
-        self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Typ | None
-    ) -> Typ:
+    def check_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Typ | None) -> Typ:
         if op_ast.op.name in ("and", "or"):
             return self.check_logic_bin_op_expr(op_ast, e)
 
@@ -687,9 +663,7 @@ class TypCheck:
             )
         return BOOL
 
-    def check_unary_op_expr(
-        self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Typ | None
-    ) -> Typ:
+    def check_unary_op_expr(self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Typ | None) -> Typ:
         match op_ast.op.name:
             case "&":
                 return self._check_addr_of_expr(op_ast, e)
@@ -716,9 +690,7 @@ class TypCheck:
             )
         return BOOL
 
-    def _check_neg_expr(
-        self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Typ | None
-    ) -> Typ:
+    def _check_neg_expr(self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Typ | None) -> Typ:
         if isinstance(op_ast.operand, ast.IntLit):
             typ = self._infer_int_lit_typ(op_ast.operand, expected_typ)
             if typ.signage != SIGNED:
@@ -761,12 +733,8 @@ class TypCheck:
             return var.typ
         return var.typ.pointee_typ
 
-    def check_array_expr(
-        self, arr_expr: ast.ArrayExpr, e: Env, expected_typ: Typ | None
-    ) -> Typ:
-        expected_elt_typ = (
-            expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
-        )
+    def check_array_expr(self, arr_expr: ast.ArrayExpr, e: Env, expected_typ: Typ | None) -> Typ:
+        expected_elt_typ = expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
         if not arr_expr.elements and expected_elt_typ is None:
             raise EmptyArrayTypUnknownError(arr_expr.span)
 
@@ -801,14 +769,10 @@ class TypCheck:
             # diverging element is exempt - it stands in for a value of
             # any type.
             if expected_elt_typ is None and elt_typ_i not in (elt_typ, NEVER):
-                raise IncompatibleTypInArrayExprError(
-                    elt_typ_i.name, i, elt_ast.span, arr_typ.name
-                )
+                raise IncompatibleTypInArrayExprError(elt_typ_i.name, i, elt_ast.span, arr_typ.name)
             coercion = self._record_coercion(elt_ast, elt_typ_i, elt_typ)
             if isinstance(coercion, Invalid):
-                raise IncompatibleTypInArrayExprError(
-                    elt_typ_i.name, i, elt_ast.span, arr_typ.name
-                )
+                raise IncompatibleTypInArrayExprError(elt_typ_i.name, i, elt_ast.span, arr_typ.name)
 
         return arr_typ
 
@@ -999,9 +963,7 @@ class TypCheck:
             return
 
         if ret_typ != VOID:
-            raise InvalidVoidRetError(
-                fn_name, ret_typ.name, self._ret_typ_span, ret_ast.span
-            )
+            raise InvalidVoidRetError(fn_name, ret_typ.name, self._ret_typ_span, ret_ast.span)
 
     def check_break_stmt(self, break_ast: ast.BreakStmt) -> None:
         if not self._loop_labels:
@@ -1041,9 +1003,7 @@ class TypCheck:
         e.add_var(let_ast.ident.name, _TypedPlace(place_typ))
         return expr_typ == NEVER
 
-    def _check_let_initializer(
-        self, let_ast: ast.LetStmt, e: Env
-    ) -> tuple[Typ, Typ | None]:
+    def _check_let_initializer(self, let_ast: ast.LetStmt, e: Env) -> tuple[Typ, Typ | None]:
         """Check a ``let`` initializer, shared by :meth:`check_let_stmt`
         and :meth:`check_var_initializer` - mirrors
         :meth:`~leech.ir_builder.CfgBuilder._build_let_initializer`.
@@ -1092,9 +1052,7 @@ class TypCheck:
             )
         return place_typ == NEVER or expr_typ == NEVER
 
-    def _infer_int_lit_typ(
-        self, lit_ast: ast.IntLit, expected_typ: Typ | None
-    ) -> IntTyp:
+    def _infer_int_lit_typ(self, lit_ast: ast.IntLit, expected_typ: Typ | None) -> IntTyp:
         """Choose an integer literal's type.
 
         A literal written with a type suffix always has that type. One
@@ -1107,16 +1065,12 @@ class TypCheck:
         """
         if lit_ast.explicit_width is not None:
             assert lit_ast.explicit_signage is not None
-            return IntTyp.get_or_create(
-                lit_ast.explicit_width, lit_ast.explicit_signage
-            )
+            return IntTyp.get_or_create(lit_ast.explicit_width, lit_ast.explicit_signage)
         if isinstance(expected_typ, IntTyp):
             return expected_typ
         return I32
 
-    def _record_coercion(
-        self, node: ast.Ast, value_typ: Typ, target: Typ
-    ) -> Coercion | None:
+    def _record_coercion(self, node: ast.Ast, value_typ: Typ, target: Typ) -> Coercion | None:
         """Decide, and record, how a checked expression coerces to a target type.
 
         Mirrors the decision :meth:`~leech.ir_builder.CfgBuilder._coerce`

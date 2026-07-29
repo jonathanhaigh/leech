@@ -110,10 +110,7 @@ COMMENTED_INTS = [
     [("expr", src, T("int_lit", Tok(src.strip()))) for src in INT_LITS]
     + [("expr", src, T("int_lit", Tok("8"))) for src in COMMENTED_INTS]
     + [("expr", src, T("str_lit", Tok(src.strip()))) for src in STR_LITS]
-    + [
-        ("expr", src, T("var_expr", "path", "ident", Tok(src.strip())))
-        for src in IDENTS
-    ]
+    + [("expr", src, T("var_expr", "path", "ident", Tok(src.strip()))) for src in IDENTS]
     + [
         (
             "expr",
@@ -141,18 +138,14 @@ COMMENTED_INTS = [
                     T("int_lit", Tok("123")),
                     T("str_lit", Tok('"xyz"')),
                     T("var_expr", "path", "ident", Tok("abc_def")),
-                    T("call_expr").cs(
-                        T("var_expr", "path", "ident", Tok("f")), T("arg_list")
-                    ),
+                    T("call_expr").cs(T("var_expr", "path", "ident", Tok("f")), T("arg_list")),
                 ),
             ),
         ),
         (
             "expr",
             "abc()",
-            T("call_expr").cs(
-                T("var_expr", "path", "ident", Tok("abc")), T("arg_list")
-            ),
+            T("call_expr").cs(T("var_expr", "path", "ident", Tok("abc")), T("arg_list")),
         ),
         (
             "expr",
@@ -305,9 +298,7 @@ COMMENTED_INTS = [
             T("arith_expr").cs(
                 T("var_expr", "path", "ident", Tok("a")),
                 T("add_op", Tok("+")),
-                T("call_expr").cs(
-                    T("var_expr", "path", "ident", Tok("f")), T("arg_list")
-                ),
+                T("call_expr").cs(T("var_expr", "path", "ident", Tok("f")), T("arg_list")),
             ),
         ),
         (
@@ -618,9 +609,7 @@ COMMENTED_INTS = [
         (
             "expr",
             "lbl: while (true) {}",
-            T("while_expr").cs(
-                T("ident", Tok("lbl")), T("bool_lit", Tok("true")), T("block_expr")
-            ),
+            T("while_expr").cs(T("ident", Tok("lbl")), T("bool_lit", Tok("true")), T("block_expr")),
         ),
         (
             "stmt",
@@ -646,9 +635,7 @@ COMMENTED_INTS = [
             "f().[1] = 2;",
             T("stmt", "assignment_stmt").cs(
                 T("array_access_expr").cs(
-                    T("call_expr").cs(
-                        T("var_expr", "path", "ident", Tok("f")), T("arg_list")
-                    ),
+                    T("call_expr").cs(T("var_expr", "path", "ident", Tok("f")), T("arg_list")),
                     T("int_lit", Tok("1")),
                 ),
                 T("int_lit", Tok("2")),
@@ -707,16 +694,12 @@ COMMENTED_INTS = [
         (
             "typ",
             "*u8",
-            T("ptr_typ").cs(
-                T("mut", Tok(None)), T("basic_typ", "path", "ident", Tok("u8"))
-            ),
+            T("ptr_typ").cs(T("mut", Tok(None)), T("basic_typ", "path", "ident", Tok("u8"))),
         ),
         (
             "typ",
             "*mut u8",
-            T("ptr_typ").cs(
-                T("mut", Tok("mut")), T("basic_typ", "path", "ident", Tok("u8"))
-            ),
+            T("ptr_typ").cs(T("mut", Tok("mut")), T("basic_typ", "path", "ident", Tok("u8"))),
         ),
         (
             "typ",
@@ -765,9 +748,7 @@ COMMENTED_INTS = [
         (
             "param",
             "x: i32",
-            T("param").cs(
-                T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
-            ),
+            T("param").cs(T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))),
         ),
         (
             "param_list",
@@ -784,9 +765,7 @@ COMMENTED_INTS = [
             "*self, x: i32",
             T("param_list").cs(
                 T("receiver", "mut", Tok(None)),
-                T("param").cs(
-                    T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
-                ),
+                T("param").cs(T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))),
             ),
         ),
         (
@@ -796,23 +775,17 @@ COMMENTED_INTS = [
             # ordinary param name, "self" still lexes as IDENT.
             "param",
             "self: i32",
-            T("param").cs(
-                T("ident", Tok("self")), T("basic_typ", "path", "ident", Tok("i32"))
-            ),
+            T("param").cs(T("ident", Tok("self")), T("basic_typ", "path", "ident", Tok("i32"))),
         ),
         (
             "param",
             "x :i32",
-            T("param").cs(
-                T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
-            ),
+            T("param").cs(T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))),
         ),
         (
             "param",
             "x : i32",
-            T("param").cs(
-                T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))
-            ),
+            T("param").cs(T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("i32"))),
         ),
         (
             "defn",
@@ -843,12 +816,8 @@ COMMENTED_INTS = [
                 T("access", Tok("pub")),
                 T("ident", Tok("ab_cd")),
                 T("param_list").cs(
-                    T("param").cs(
-                        T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("a"))
-                    ),
-                    T("param").cs(
-                        T("ident", Tok("y")), T("basic_typ", "path", "ident", Tok("b"))
-                    ),
+                    T("param").cs(T("ident", Tok("x")), T("basic_typ", "path", "ident", Tok("a"))),
+                    T("param").cs(T("ident", Tok("y")), T("basic_typ", "path", "ident", Tok("b"))),
                 ),
                 T("basic_typ", "path", "ident", Tok("_rt")),
                 T("block_expr", "stmt", "ret_stmt", "int_lit", Tok("9")),
@@ -905,9 +874,7 @@ COMMENTED_INTS = [
             "defn",
             "impl *Foo {}",
             T("defn", "impl_defn").cs(
-                T("ptr_typ").cs(
-                    T("mut", Tok(None)), T("basic_typ", "path", "ident", Tok("Foo"))
-                ),
+                T("ptr_typ").cs(T("mut", Tok(None)), T("basic_typ", "path", "ident", Tok("Foo"))),
             ),
         ),
         (

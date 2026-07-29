@@ -194,17 +194,14 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
             )
             param_typs.insert(0, recv_typ)
 
-        return PtrTyp.get_or_create(
-            FnTyp.get_or_create(ret_typ, tuple(param_typs)), CONST
-        )
+        return PtrTyp.get_or_create(FnTyp.get_or_create(ret_typ, tuple(param_typs)), CONST)
 
     @override
     def calculate_params(self) -> tuple[Param, ...]:
         assert self.ast is not None
         offset = 1 if self.ast.receiver is not None else 0
         params = [
-            Param(self, pos + offset, param_ast)
-            for pos, param_ast in enumerate(self.ast.params)
+            Param(self, pos + offset, param_ast) for pos, param_ast in enumerate(self.ast.params)
         ]
         if self.ast.receiver is not None:
             params.insert(0, Param(self, 0, self.ast.receiver))
@@ -263,10 +260,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         :return: Whether this function is accessible from ``file``.
         """
         assert self.ast is not None
-        return (
-            Access.from_ast(self.ast.access) == PUBLIC
-            or self.ast.span.file.path == file.path
-        )
+        return Access.from_ast(self.ast.access) == PUBLIC or self.ast.span.file.path == file.path
 
 
 class ModVar(ComptimePtr[ast.VarDefn]):
@@ -396,9 +390,7 @@ class Mod:
     env: Final[ir_env.Env]
     loader: Final[ir_loader.ModLoader]
 
-    def __init__(
-        self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader
-    ) -> None:
+    def __init__(self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader) -> None:
         builtin_env = ir_env.Env()
         self._name = name
         self.ast = mod_ast
@@ -516,16 +508,12 @@ class Mod:
             raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         if len(impl_typ_ast.path.idents) > 1:
-            raise ImplForNonLocalStructTypError(
-                impl_typ_ast.diag_str(), impl_typ_ast.span
-            )
+            raise ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         for fn_ast in impl_ast.fns:
             fn = Fn(fn_ast, typ.env, recv_struct_typ=typ)
             typ.add_assoc_fn(fn)
-            self._add_item(
-                f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn
-            )
+            self._add_item(f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn)
 
     def _add_item(
         self,

@@ -26,9 +26,7 @@ from leech.typs import (
 )
 
 
-def set_linkage(
-    ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access
-) -> None:
+def set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access) -> None:
     """Set an LLVM global's linkage to match a Leech item's access.
 
     :param ll_global: The LLVM global variable or function to set linkage
@@ -216,9 +214,7 @@ class Compiler:
                 # (and cached here) by the earlier declare-types phase,
                 # so LLItems.get() should never fall through to this
                 # method for one - if it does, that phase missed it.
-                assert typ in self._ll_mod_items.items, (
-                    f'struct "{typ.name}" was never declared'
-                )
+                assert typ in self._ll_mod_items.items, f'struct "{typ.name}" was never declared'
                 return checked_cast(self._ll_mod_items.items[typ], ll.Type)
             case NeverTyp():
                 raise AssertionError("a never-typed value shouldn't need an LLVM type")
@@ -260,9 +256,7 @@ class Compiler:
             case _:
                 raise AssertionError(f"unhandled module item {item}")
 
-    def _declare_mod_var(
-        self, item: ir_module.ModItem, var: ir_module.ModVar
-    ) -> ll.Value:
+    def _declare_mod_var(self, item: ir_module.ModItem, var: ir_module.ModVar) -> ll.Value:
         ll_val = ll.GlobalVariable(
             self.ll_mod,
             self._ll_mod_items.get(var.typ.pointee_typ),
@@ -276,12 +270,8 @@ class Compiler:
         ll_init = self._ll_mod_items.get(var.initializer)
         self._ll_mod_items.get(var).initializer = ll_init  # type: ignore
 
-    def _declare_mod_fn(
-        self, item: ir_module.ModItem, fn: ir_module.FnSpec
-    ) -> ll.Value:
-        ll_fn = ll.Function(
-            self.ll_mod, self._ll_mod_items.get(fn.fn_typ), item.qualified_name
-        )
+    def _declare_mod_fn(self, item: ir_module.ModItem, fn: ir_module.FnSpec) -> ll.Value:
+        ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(fn.fn_typ), item.qualified_name)
         self._ll_mod_items.set(fn, ll_fn)
         # TODO: linkage for FnDecls?
         set_linkage(ll_fn, item.access)
@@ -318,20 +308,14 @@ class Compiler:
 
     def _compile_mod_struct(self, item: ir_module.ModItem, typ: StructTyp) -> None:
         ll_typ = self.ll_mod.context.get_identified_type(item.qualified_name)
-        ll_typ.set_body(
-            *(self._ll_mod_items.get(field.typ) for field in typ.fields.values())
-        )
+        ll_typ.set_body(*(self._ll_mod_items.get(field.typ) for field in typ.fields.values()))
 
-    def _compile_bb(
-        self, bb: ir_values.BasicBlock, ctx: Compiler._FnBuilderContext
-    ) -> None:
+    def _compile_bb(self, bb: ir_values.BasicBlock, ctx: Compiler._FnBuilderContext) -> None:
         ctx.ll_builder.position_at_start(ctx.ll_bbs[bb])
         for instr in bb.instrs:
             ctx.ll_values.set(instr, self._compile_instr(instr, ctx))
 
-    def _compile_instr(
-        self, instr: ir_values.Instr, ctx: Compiler._FnBuilderContext
-    ) -> ll.Value:
+    def _compile_instr(self, instr: ir_values.Instr, ctx: Compiler._FnBuilderContext) -> ll.Value:
         match instr:
             case ir_values.AddInstr():
                 return ctx.ll_builder.add(  # type: ignore
@@ -387,19 +371,13 @@ class Compiler:
                 # signed value's sign bit has to be replicated to keep
                 # its value, an unsigned one's must not be.
                 src_typ = checked_cast(instr.value.typ, IntTyp)
-                extend = (
-                    ctx.ll_builder.sext
-                    if src_typ.signage == SIGNED
-                    else ctx.ll_builder.zext
-                )
+                extend = ctx.ll_builder.sext if src_typ.signage == SIGNED else ctx.ll_builder.zext
                 return extend(  # type: ignore
                     ctx.ll_values.get(instr.value),
                     self._ll_mod_items.get(instr.typ),
                 )
             case ir_values.AllocaInstr():
-                return ctx.ll_builder.alloca(
-                    self._ll_mod_items.get(instr.allocated_typ)
-                )
+                return ctx.ll_builder.alloca(self._ll_mod_items.get(instr.allocated_typ))
             case ir_values.StoreInstr():
                 return ctx.ll_builder.store(
                     ctx.ll_values.get(instr.value),
@@ -408,9 +386,7 @@ class Compiler:
             case ir_values.GepInstr():
                 zero = ll.Constant(self._ll_mod_items.get(USIZE), 0)
                 ll_index = ctx.ll_values.get(instr.index)
-                return ctx.ll_builder.gep(
-                    ctx.ll_values.get(instr.base), [zero, ll_index]
-                )
+                return ctx.ll_builder.gep(ctx.ll_values.get(instr.base), [zero, ll_index])
             case ir_values.InsertValueInstr():
                 return ctx.ll_builder.insert_value(
                     ctx.ll_values.get(instr.aggregate),
@@ -447,15 +423,11 @@ class Compiler:
             case ir_values.UndefValue():
                 return ll.Constant(self._ll_mod_items.get(value.typ), ll.Undefined)
             case ir_values.VoidValue():
-                raise AssertionError(
-                    "a void value should never need a runtime representation"
-                )
+                raise AssertionError("a void value should never need a runtime representation")
             case ir_values.ComptimeInt():
                 return ll.Constant(self._ll_mod_items.get(value.typ), value.value)
             case ir_values.ComptimeBool():
-                return ll.Constant(
-                    self._ll_mod_items.get(value.typ), 1 if value.value else 0
-                )
+                return ll.Constant(self._ll_mod_items.get(value.typ), 1 if value.value else 0)
             case ir_values.ComptimeCStr():
                 ll_val = ll.GlobalVariable(
                     self.ll_mod,
@@ -472,10 +444,7 @@ class Compiler:
                 elts = (self._ll_mod_items.get(elt) for elt in value.elements)
                 return ll.Constant(self._ll_mod_items.get(value.typ), elts)
             case ir_values.ComptimeStruct():
-                fields = (
-                    self._ll_mod_items.get(value.fields[fname])
-                    for fname in value.typ.fields
-                )
+                fields = (self._ll_mod_items.get(value.fields[fname]) for fname in value.typ.fields)
                 return ll.Constant(self._ll_mod_items.get(value.typ), fields)
             case ir_values.ComptimeGep():
                 zero = ll.Constant(self._ll_mod_items.get(USIZE), 0)

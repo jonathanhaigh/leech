@@ -548,11 +548,7 @@ def test_if_els_typ_mismatch_message(tmp_path):
     then_note, els_note = exc_info.value.extra
     assert '"i32"' in then_note.message
     assert then_note.span is not None
-    assert (then_note.span.start_line, then_note.span.start_col) == find_pos(
-        src, "{ 1 }"
-    )
+    assert (then_note.span.start_line, then_note.span.start_col) == find_pos(src, "{ 1 }")
     assert '"*u8"' in els_note.message
     assert els_note.span is not None
-    assert (els_note.span.start_line, els_note.span.start_col) == find_pos(
-        src, '{ "abc" }'
-    )
+    assert (els_note.span.start_line, els_note.span.start_col) == find_pos(src, '{ "abc" }')

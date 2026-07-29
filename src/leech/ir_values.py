@@ -67,14 +67,10 @@ def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
         case ArrayTyp():
             typ = typ.element_typ
         case StructTyp():
-            index = checked_cast(
-                index, ComptimeInt, "struct indeces must be comptime known"
-            )
+            index = checked_cast(index, ComptimeInt, "struct indeces must be comptime known")
 
             field = nth(typ.fields.values(), index.value)
-            assert field is not None, (
-                f"invalid field index {index.value} into {typ.name}"
-            )
+            assert field is not None, f"invalid field index {index.value} into {typ.name}"
             if field.mut == CONST:
                 mut = CONST
             typ = field.typ
@@ -112,9 +108,7 @@ class Value[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](ABC):
         """Compute this value's type; backs the cached :attr:`typ` property."""
 
 
-class ComptimeValue[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](
-    Value[TypT_co, AstT_co]
-):
+class ComptimeValue[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT_co, AstT_co]):
     """Base class for values whose contents are known at compile time."""
 
     def copy(self) -> Self:
@@ -250,9 +244,7 @@ class ComptimeArray(ComptimeAggregate[ArrayTyp]):
     _typ: Final[ArrayTyp]
 
     @override
-    def __init__(
-        self, typ: ArrayTyp, elements: list[ComptimeValue], ast: ast.Ast | None
-    ) -> None:
+    def __init__(self, typ: ArrayTyp, elements: list[ComptimeValue], ast: ast.Ast | None) -> None:
         assert_eq(typ.length, len(elements))
         assert_all_eq([elt.typ for elt in elements], typ.element_typ)
         super().__init__(ast)
@@ -330,9 +322,7 @@ class ComptimeStruct(ComptimeAggregate[StructTyp]):
 
     @override
     def copy(self) -> ComptimeStruct:
-        return ComptimeStruct(
-            self._typ, {k: v.copy() for k, v in self.fields.items()}, self.ast
-        )
+        return ComptimeStruct(self._typ, {k: v.copy() for k, v in self.fields.items()}, self.ast)
 
 
 class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[PtrTyp, AstT_co]):
@@ -412,9 +402,7 @@ class ComptimeGep(ComptimePtr):
     index: Final[ComptimeInt]
 
     @override
-    def __init__(
-        self, base: ComptimePtr, index: ComptimeInt, ast: ast.Ast | None
-    ) -> None:
+    def __init__(self, base: ComptimePtr, index: ComptimeInt, ast: ast.Ast | None) -> None:
         super().__init__(ast)
         self.base = base
         self.index = index
@@ -558,9 +546,7 @@ class BinOpInstr(Instr):
     rhs: Final[Value]
 
     @override
-    def __init__(
-        self, bb: BasicBlock, lhs: Value, rhs: Value, ast: ast.Ast | None
-    ) -> None:
+    def __init__(self, bb: BasicBlock, lhs: Value, rhs: Value, ast: ast.Ast | None) -> None:
         super().__init__(bb, ast)
         self.lhs = lhs
         self.rhs = rhs
@@ -707,14 +693,10 @@ class IntExtInstr(Instr[IntTyp]):
     _typ: Final[IntTyp]
 
     @override
-    def __init__(
-        self, bb: BasicBlock, value: Value, typ: IntTyp, ast: ast.Ast | None
-    ) -> None:
+    def __init__(self, bb: BasicBlock, value: Value, typ: IntTyp, ast: ast.Ast | None) -> None:
         super().__init__(bb, ast)
         src_typ = checked_cast(value.typ, IntTyp)
-        assert src_typ.coerces_to(typ), (
-            f'"{src_typ.name}" does not widen to "{typ.name}"'
-        )
+        assert src_typ.coerces_to(typ), f'"{src_typ.name}" does not widen to "{typ.name}"'
         self.value = value
         self._typ = typ
 
@@ -769,9 +751,7 @@ class StoreInstr(Instr[VoidTyp]):
     dest: Final[Value]
 
     @override
-    def __init__(
-        self, bb: BasicBlock, value: Value, dest: Value, ast: ast.Ast | None
-    ) -> None:
+    def __init__(self, bb: BasicBlock, value: Value, dest: Value, ast: ast.Ast | None) -> None:
         super().__init__(bb, ast)
         dest_typ = checked_cast(dest.typ, PtrTyp)
         assert_eq(value.typ, dest_typ.pointee_typ)
@@ -923,9 +903,7 @@ class BranchInstr(Instr[NeverTyp]):
     target: Final[BasicBlock]
 
     @override
-    def __init__(
-        self, bb: BasicBlock, target: BasicBlock, ast: ast.Ast | None
-    ) -> None:
+    def __init__(self, bb: BasicBlock, target: BasicBlock, ast: ast.Ast | None) -> None:
         super().__init__(bb, ast)
         self.target = target
 
@@ -1038,12 +1016,8 @@ class BasicBlock:
     def _add_instr[T: Instr](self, instr: T, terminate: bool = False) -> T:
         if self.terminated:
             if not self.warned_unreachable:
-                assert instr.ast is not None, (
-                    "Shouldn't get unreachable code in builtins"
-                )
-                register_error(
-                    UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.span)
-                )
+                assert instr.ast is not None, "Shouldn't get unreachable code in builtins"
+                register_error(UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.span))
                 self.warned_unreachable = True
 
             return instr
@@ -1080,9 +1054,7 @@ class BasicBlock:
         """Append a :class:`NotInstr` to this block."""
         return self._add_instr(NotInstr(self, operand, ast))
 
-    def icmp_signed(
-        self, op: str, lhs: Value, rhs: Value, ast: ast.Ast | None
-    ) -> IcmpSignedInstr:
+    def icmp_signed(self, op: str, lhs: Value, rhs: Value, ast: ast.Ast | None) -> IcmpSignedInstr:
         """Append an :class:`IcmpSignedInstr` to this block."""
         return self._add_instr(IcmpSignedInstr(self, op, lhs, rhs, ast))
 
@@ -1092,9 +1064,7 @@ class BasicBlock:
         """Append an :class:`IcmpUnsignedInstr` to this block."""
         return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast))
 
-    def phi(
-        self, incoming: dict[BasicBlock, Value], ast: ast.Ast | None
-    ) -> PhiInstr:
+    def phi(self, incoming: dict[BasicBlock, Value], ast: ast.Ast | None) -> PhiInstr:
         """Append a :class:`PhiInstr` to this block."""
         return self._add_instr(PhiInstr(self, incoming, ast))
 
@@ -1102,15 +1072,11 @@ class BasicBlock:
         """Append a :class:`LoadInstr` to this block."""
         return self._add_instr(LoadInstr(self, src, ast))
 
-    def int_ext(
-        self, value: Value, typ: IntTyp, ast: ast.Ast | None
-    ) -> IntExtInstr:
+    def int_ext(self, value: Value, typ: IntTyp, ast: ast.Ast | None) -> IntExtInstr:
         """Append an :class:`IntExtInstr` to this block."""
         return self._add_instr(IntExtInstr(self, value, typ, ast))
 
-    def alloca(
-        self, typ: Typ, mut: Mutability, count: int, ast: ast.Ast | None
-    ) -> AllocaInstr:
+    def alloca(self, typ: Typ, mut: Mutability, count: int, ast: ast.Ast | None) -> AllocaInstr:
         """Append an :class:`AllocaInstr` to this block."""
         return self._add_instr(AllocaInstr(self, typ, mut, count, ast))
 
@@ -1132,9 +1098,7 @@ class BasicBlock:
         """Append an :class:`InsertValueInstr` to this block."""
         return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast))
 
-    def call(
-        self, callee: Value, args: tuple[Value, ...], ast: ast.CallExpr | None
-    ) -> CallInstr:
+    def call(self, callee: Value, args: tuple[Value, ...], ast: ast.CallExpr | None) -> CallInstr:
         """Append a :class:`CallInstr` to this block."""
         return self._add_instr(CallInstr(self, callee, args, ast))
 
