@@ -4,24 +4,16 @@ import ast as python_ast
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, override
+from typing import Any, override
 
 from lark import Token
 from lark.tree import Branch, ParseTree, Tree
 
 from leech.asserts import assert_eq, assert_in, checked_cast
 from leech.opt_util import opt_map
-from leech.signage import ADDR_SIZE, SIGNED, UNSIGNED
+from leech.signage import SIGNED, UNSIGNED, Signage
 from leech.src import SrcFile, SrcSpan
-
-if TYPE_CHECKING:
-    # `typs.IntTyp` (used only in a type annotation below, in `IntLit`) would
-    # otherwise be a real circular import: `typs` needs the real `ast` node
-    # classes at runtime (e.g. `match typ_ast: case ast.BasicTyp(): ...`), so
-    # `ast` can't import `typs` back at module level too. The one place this
-    # module needs an actual `typs.IntTyp` - resolving a literal's suffix - is
-    # deferred to a local import instead (see `IntLit.__init__`).
-    from leech import typs
+from leech.target import ADDR_SIZE
 
 
 def as_token(branch: Branch[Token]) -> Token:
@@ -308,15 +300,18 @@ class StrLit(Expr):
 class IntLit(Expr):
     """An integer literal, e.g. ``42``, ``5i8``, or ``3usize``.
 
-    A type suffix, if written, fixes the literal's type as
-    :attr:`explicit_typ`. Without one the type is left open here and
-    chosen during type checking, from the type the surrounding context
-    expects (see :meth:`leech.typcheck.TypCheck._infer_int_lit_typ`).
+    A type suffix, if written, fixes the literal's width and signedness
+    (:attr:`explicit_width`, :attr:`explicit_signage`). Without one, the
+    type is left open here and chosen during type checking, from the type
+    the surrounding context expects (see
+    :meth:`leech.typcheck.TypCheck._infer_int_lit_typ`) - see that method
+    for where the two are turned into a :class:`~leech.typs.IntTyp`.
     """
 
     token: Token
     value: int
-    explicit_typ: typs.IntTyp | None
+    explicit_width: int | None
+    explicit_signage: Signage | None
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "int_lit")
@@ -327,14 +322,11 @@ class IntLit(Expr):
         assert m is not None
 
         if m[2] is not None:
-            # Deferred to avoid a circular import; see the TYPE_CHECKING block above.
-            from leech import typs  # noqa: PLC0415
-
-            signage = SIGNED if m[2] == "i" else UNSIGNED
-            width = ADDR_SIZE if m[3] == "size" else int(m[3])
-            self.explicit_typ = typs.IntTyp.get_or_create(width, signage)
+            self.explicit_signage = SIGNED if m[2] == "i" else UNSIGNED
+            self.explicit_width = ADDR_SIZE if m[3] == "size" else int(m[3])
         else:
-            self.explicit_typ = None
+            self.explicit_signage = None
+            self.explicit_width = None
 
         self.value = int(m[1])
 

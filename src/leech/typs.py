@@ -15,8 +15,9 @@ from leech.errors import (
     DuplicateItemDefnError,
     InfiniteSizeStructError,
 )
-from leech.signage import ADDR_SIZE, SIGNED, UNSIGNED, Signage
+from leech.signage import SIGNED, UNSIGNED, Signage
 from leech.src import SrcFile, SrcSpan
+from leech.target import ADDR_SIZE
 
 
 class Mutability(Enum):

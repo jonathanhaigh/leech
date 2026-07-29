@@ -104,7 +104,7 @@ def is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
     :return: Whether the expression's type is still open.
     """
     if isinstance(expr_ast, ast.IntLit):
-        return expr_ast.explicit_typ is None
+        return expr_ast.explicit_width is None
     if isinstance(expr_ast, ast.UnaryOpExpr) and expr_ast.op.name == "-":
         return is_flexible_int_lit(expr_ast.operand)
     if isinstance(expr_ast, ast.BlockExpr):
@@ -1105,8 +1105,11 @@ class TypCheck:
         :param expected_typ: The type the context expects, if known.
         :return: The type to give the literal.
         """
-        if lit_ast.explicit_typ is not None:
-            return lit_ast.explicit_typ
+        if lit_ast.explicit_width is not None:
+            assert lit_ast.explicit_signage is not None
+            return IntTyp.get_or_create(
+                lit_ast.explicit_width, lit_ast.explicit_signage
+            )
         if isinstance(expected_typ, IntTyp):
             return expected_typ
         return I32
