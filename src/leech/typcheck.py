@@ -25,10 +25,15 @@ from leech.ir_env import Env
 from leech.ir_values import Param, Value
 from leech.opt_util import opt_map, opt_or_default, opt_unwrap
 from leech.errors import (
+    BreakNotInLoopError,
+    ContinueNotInLoopError,
     DerefInvalidTypError,
     DuplicateFieldInStructExprError,
     EmptyArrayTypUnknownError,
     FieldAccessIntoInvalidTypError,
+    IfCondNotBoolError,
+    IfElsTypMismatchError,
+    IfTypNotVoidError,
     IncompatibleBinOpArgTypsError,
     IncompatibleStructFieldTypError,
     IncompatibleTypInArrayExpr,
@@ -37,18 +42,26 @@ from leech.errors import (
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     InvalidIndexTypError,
+    InvalidRetTypError,
     InvalidStructFieldError,
     InvalidUnaryOpArgTypError,
+    InvalidVoidRetError,
+    LoopLabelNotFoundError,
     MissingFieldInStructExprError,
+    MissingRetError,
     NotAMethodError,
     NotCallableError,
     NotEnoughArgsError,
     PrivateItemAccessError,
     PrivateStructFieldAccessError,
+    RetNotInFnError,
     TooManyArgsError,
     TypeOfStructExprNotStructError,
     VoidArrayElementError,
+    WhileCondNotBoolError,
+    WhileTypNotVoidError,
 )
+from leech.src import SrcSpan
 from leech.typs import (
     BOOL,
     CONST,
@@ -257,10 +270,19 @@ class TypCheck:
 
     results: Final[TypCheckResults]
     _ret_typ: Optional[Typ]
+    _ret_typ_span: Optional[SrcSpan]
+    _fn_name: Optional[str]
+    #: The enclosing ``while`` loops' labels, innermost last - mirrors
+    #: :attr:`~leech.ir_builder.CfgBuilder._loop_stack`, minus the basic
+    #: blocks (a lowering-only concern).
+    _loop_labels: list[Optional[str]]
 
     def __init__(self) -> None:
         self.results = TypCheckResults()
         self._ret_typ = None
+        self._ret_typ_span = None
+        self._fn_name = None
+        self._loop_labels = []
 
     def check_fn(
         self, fn_ast: ast.FnDefn, e: Env, ret_typ: Typ, params: tuple[Param, ...]
@@ -272,15 +294,44 @@ class TypCheck:
         :param ret_typ: The function's declared return type.
         :param params: The function's formal parameters.
         :return: :attr:`results`.
+        :raises InvalidRetTypError: If the body's tail expression's type
+            doesn't match ``ret_typ``.
+        :raises MissingRetError: If ``ret_typ`` isn't ``void`` but the
+            body doesn't end in a return or a diverging expression.
         """
         self._ret_typ = ret_typ
+        # Matches CfgBuilder.build_ret_stmt's own (whole-function, not
+        # return-type-annotation) span, for consistency with it.
+        self._ret_typ_span = fn_ast.span
+        self._fn_name = fn_ast.name.name
+
         e = e.new_child()
         for param in params:
             assert param.ast is not None
-            e.add_var(param.ast.name.name, _TypedPlace(PtrTyp.get_or_create(param.typ, CONST)))
+            param_typ = PtrTyp.get_or_create(param.typ, CONST)
+            e.add_var(param.ast.name.name, _TypedPlace(param_typ))
         block_typ = self.check_expr(fn_ast.block, e, ret_typ)
         ret_ast = opt_or_default(fn_ast.block.expr, fn_ast.block)
-        self._record_coercion(ret_ast, block_typ, ret_typ)
+
+        ret_typ_ast_span = opt_map(fn_ast.ret_typ, lambda t: t.span)
+        if block_typ != VOID:
+            # never is exempt here too - it's recorded (as NeverDiverge)
+            # but that's never Invalid, matching CfgBuilder's own
+            # never-typed early return, which skips coercion entirely.
+            coercion = self._record_coercion(ret_ast, block_typ, ret_typ)
+            if isinstance(coercion, Invalid):
+                raise InvalidRetTypError(
+                    self._fn_name,
+                    ret_typ.name,
+                    ret_typ_ast_span,
+                    block_typ.name,
+                    ret_ast.span,
+                )
+        elif ret_typ != VOID:
+            raise MissingRetError(
+                self._fn_name, fn_ast.span, ret_typ.name, ret_typ_ast_span
+            )
+
         return self.results
 
     def check_var_initializer(self, defn_ast: ast.VarDefn, e: Env) -> TypCheckResults:
@@ -291,6 +342,8 @@ class TypCheck:
         :return: :attr:`results`.
         """
         self._ret_typ = None
+        self._ret_typ_span = None
+        self._fn_name = None
         e = e.new_child()
         let_ast = defn_ast.let_stmt
         declared_typ = opt_map(let_ast.typ, lambda t: Typ.from_ast(t, e))
@@ -365,10 +418,18 @@ class TypCheck:
         self, if_ast: ast.IfExpr, e: Env, expected_typ: Optional[Typ]
     ) -> Typ:
         cond_typ = self.check_expr(if_ast.condition, e, None)
-        self._record_coercion(if_ast.condition, cond_typ, BOOL)
+        cond_coercion = self._record_coercion(if_ast.condition, cond_typ, BOOL)
+        if isinstance(cond_coercion, Invalid):
+            raise IfCondNotBoolError(
+                if_ast.condition.diag_str(),
+                cond_typ.name,
+                if_ast.condition.span,
+            )
 
         if if_ast.els is None:
-            self.check_expr(if_ast.then, e, expected_typ)
+            then_typ = self.check_expr(if_ast.then, e, expected_typ)
+            if then_typ != NEVER and then_typ != VOID:
+                raise IfTypNotVoidError(then_typ.name, if_ast.then.span)
             return VOID
 
         els_ast = if_ast.els
@@ -393,6 +454,11 @@ class TypCheck:
                 els_hint = resolve_peer_typ([then_typ])
             els_typ = self.check_expr(els_ast, e, els_hint)
 
+        if then_typ != NEVER and els_typ != NEVER and then_typ != els_typ:
+            raise IfElsTypMismatchError(
+                then_typ.name, if_ast.then.span, els_typ.name, els_ast.span
+            )
+
         if then_typ != NEVER:
             return then_typ
         if els_typ != NEVER:
@@ -401,8 +467,22 @@ class TypCheck:
 
     def check_while_expr(self, while_ast: ast.WhileExpr, e: Env) -> Typ:
         cond_typ = self.check_expr(while_ast.condition, e, None)
-        self._record_coercion(while_ast.condition, cond_typ, BOOL)
-        self.check_expr(while_ast.block, e, None)
+        cond_coercion = self._record_coercion(while_ast.condition, cond_typ, BOOL)
+        if isinstance(cond_coercion, Invalid):
+            raise WhileCondNotBoolError(
+                while_ast.condition.diag_str(),
+                cond_typ.name,
+                while_ast.condition.span,
+            )
+
+        self._loop_labels.append(opt_map(while_ast.label, lambda x: x.name))
+        try:
+            block_typ = self.check_expr(while_ast.block, e, None)
+        finally:
+            self._loop_labels.pop()
+        if block_typ not in (NEVER, VOID):
+            raise WhileTypNotVoidError(block_typ.name, while_ast.block.span)
+
         return VOID
 
     def check_call_expr(self, call_ast: ast.CallExpr, e: Env) -> Typ:
@@ -413,7 +493,9 @@ class TypCheck:
         num_args = len(call_ast.args) + (1 if recv_typ is not None else 0)
         num_params = len(param_typs)
         if num_args < num_params:
-            raise NotEnoughArgsError(callee_diag_str, call_ast.span, num_args, num_params)
+            raise NotEnoughArgsError(
+                callee_diag_str, call_ast.span, num_args, num_params
+            )
         if num_args > num_params:
             raise TooManyArgsError(
                 callee_diag_str,
@@ -424,7 +506,8 @@ class TypCheck:
             )
 
         if recv_ast is not None and recv_typ is not None:
-            if isinstance(self._record_coercion(recv_ast, recv_typ, param_typs[0]), Invalid):
+            recv_coercion = self._record_coercion(recv_ast, recv_typ, param_typs[0])
+            if isinstance(recv_coercion, Invalid):
                 raise InvalidArgTypError(
                     callee_diag_str,
                     call_ast.span,
@@ -437,7 +520,8 @@ class TypCheck:
         offset = 1 if recv_typ is not None else 0
         for i, arg_ast in enumerate(call_ast.args, start=offset):
             arg_typ = self.check_expr(arg_ast, e, param_typs[i])
-            if isinstance(self._record_coercion(arg_ast, arg_typ, param_typs[i]), Invalid):
+            arg_coercion = self._record_coercion(arg_ast, arg_typ, param_typs[i])
+            if isinstance(arg_coercion, Invalid):
                 raise InvalidArgTypError(
                     callee_diag_str,
                     call_ast.span,
@@ -510,7 +594,8 @@ class TypCheck:
                 )
             return method.fn_typ, callee_ast.struct, recv_typ
 
-        callee_typ = opt_or_default(_struct_field_typ(struct_typ, callee_ast.field.name), VOID)
+        field_typ = _struct_field_typ(struct_typ, callee_ast.field.name)
+        callee_typ = opt_or_default(field_typ, VOID)
         fn_typ = _callable_typ(callee_typ)
         if fn_typ is None:
             raise NotCallableError(
@@ -571,15 +656,27 @@ class TypCheck:
         # always succeeds (see _record_coercion), so it's naturally
         # exempt from the checks below without a special case.
         lhs_typ = self.check_expr(op_ast.lhs, e, None)
-        if isinstance(self._record_coercion(op_ast.lhs, lhs_typ, BOOL), Invalid):
+        lhs_coercion = self._record_coercion(op_ast.lhs, lhs_typ, BOOL)
+        if isinstance(lhs_coercion, Invalid):
             raise InvalidBinOpArgTypError(
-                op_ast.op.name, op_ast.op.span, "left", lhs_typ.name, "bool", op_ast.lhs.span
+                op_ast.op.name,
+                op_ast.op.span,
+                "left",
+                lhs_typ.name,
+                "bool",
+                op_ast.lhs.span,
             )
 
         rhs_typ = self.check_expr(op_ast.rhs, e, None)
-        if isinstance(self._record_coercion(op_ast.rhs, rhs_typ, BOOL), Invalid):
+        rhs_coercion = self._record_coercion(op_ast.rhs, rhs_typ, BOOL)
+        if isinstance(rhs_coercion, Invalid):
             raise InvalidBinOpArgTypError(
-                op_ast.op.name, op_ast.op.span, "right", rhs_typ.name, "bool", op_ast.rhs.span
+                op_ast.op.name,
+                op_ast.op.span,
+                "right",
+                rhs_typ.name,
+                "bool",
+                op_ast.rhs.span,
             )
         return BOOL
 
@@ -601,11 +698,14 @@ class TypCheck:
 
     def _check_not_expr(self, op_ast: ast.UnaryOpExpr, e: Env) -> Typ:
         operand_typ = self.check_expr(op_ast.operand, e, None)
-        if isinstance(
-            self._record_coercion(op_ast.operand, operand_typ, BOOL), Invalid
-        ):
+        coercion = self._record_coercion(op_ast.operand, operand_typ, BOOL)
+        if isinstance(coercion, Invalid):
             raise InvalidUnaryOpArgTypError(
-                op_ast.op.name, op_ast.op.span, operand_typ.name, "bool", op_ast.operand.span
+                op_ast.op.name,
+                op_ast.op.span,
+                operand_typ.name,
+                "bool",
+                op_ast.operand.span,
             )
         return BOOL
 
@@ -674,7 +774,9 @@ class TypCheck:
                 built[i] = self.check_expr(arr_expr.elements[i], e, elt_typ)
 
         if elt_typ == VOID:
-            first_span = arr_expr.elements[0].span if arr_expr.elements else arr_expr.span
+            first_span = arr_expr.span
+            if arr_expr.elements:
+                first_span = arr_expr.elements[0].span
             raise VoidArrayElementError(first_span)
 
         arr_typ = ArrayTyp.get_or_create(elt_typ, len(arr_expr.elements))
@@ -705,7 +807,8 @@ class TypCheck:
             raise IndexIntoInvalidTypError(arr_typ.name, aa_expr.array.span)
 
         index_typ = self.check_expr(aa_expr.index, e, USIZE)
-        if isinstance(self._record_coercion(aa_expr.index, index_typ, USIZE), Invalid):
+        index_coercion = self._record_coercion(aa_expr.index, index_typ, USIZE)
+        if isinstance(index_coercion, Invalid):
             raise InvalidIndexTypError(index_typ.name, aa_expr.index.span)
 
         return arr_typ.element_typ
@@ -854,17 +957,70 @@ class TypCheck:
             case ast.AssignmentStmt():
                 return self.check_assignment_stmt(stmt_ast, e)
             case ast.BreakStmt():
+                self.check_break_stmt(stmt_ast)
                 return True
             case ast.ContinueStmt():
+                self.check_continue_stmt(stmt_ast)
                 return True
             case _:
                 assert False, f"unhandled statement kind {stmt_ast}"
 
     def check_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
+        if self._ret_typ is None:
+            raise RetNotInFnError(ret_ast.span)
+        ret_typ = self._ret_typ
+        fn_name = opt_unwrap(self._fn_name)
+
         if ret_ast.expr is not None:
-            expr_typ = self.check_expr(ret_ast.expr, e, self._ret_typ)
-            if self._ret_typ is not None:
-                self._record_coercion(ret_ast.expr, expr_typ, self._ret_typ)
+            expr_typ = self.check_expr(ret_ast.expr, e, ret_typ)
+            # never is exempt (recorded as NeverDiverge, never Invalid),
+            # matching CfgBuilder.build_ret_stmt's own never-typed early
+            # return, which skips coercion entirely.
+            coercion = self._record_coercion(ret_ast.expr, expr_typ, ret_typ)
+            if isinstance(coercion, Invalid):
+                raise InvalidRetTypError(
+                    fn_name,
+                    ret_typ.name,
+                    self._ret_typ_span,
+                    expr_typ.name,
+                    ret_ast.expr.span,
+                )
+            return
+
+        if ret_typ != VOID:
+            raise InvalidVoidRetError(
+                fn_name, ret_typ.name, self._ret_typ_span, ret_ast.span
+            )
+
+    def check_break_stmt(self, break_ast: ast.BreakStmt) -> None:
+        if not self._loop_labels:
+            raise BreakNotInLoopError(break_ast.span)
+        self._resolve_loop_label(break_ast.label)
+
+    def check_continue_stmt(self, continue_ast: ast.ContinueStmt) -> None:
+        if not self._loop_labels:
+            raise ContinueNotInLoopError(continue_ast.span)
+        self._resolve_loop_label(continue_ast.label)
+
+    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> None:
+        """Confirm a ``break``/``continue`` label names an enclosing loop.
+
+        Mirrors :meth:`~leech.ir_builder.CfgBuilder._resolve_loop_label`,
+        minus finding the actual target - callers there trust this
+        already succeeded and just need the block to branch to.
+
+        :param label: The target label, or ``None`` for the innermost
+            enclosing loop (always found - callers check
+            :attr:`_loop_labels` is non-empty first).
+        :raises LoopLabelNotFoundError: If ``label`` is given but no
+            enclosing loop has it.
+        """
+        if label is None:
+            return
+        for loop_label in reversed(self._loop_labels):
+            if loop_label == label.name:
+                return
+        raise LoopLabelNotFoundError(label.name, label.span)
 
     def check_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> bool:
         declared_typ = opt_map(let_ast.typ, lambda t: Typ.from_ast(t, e))
@@ -873,7 +1029,8 @@ class TypCheck:
             self._record_coercion(let_ast.expr, expr_typ, declared_typ)
         bound_typ = opt_or_default(declared_typ, expr_typ)
         mut = Mutability.from_ast(let_ast.mut)
-        e.add_var(let_ast.ident.name, _TypedPlace(PtrTyp.get_or_create(bound_typ, mut)))
+        place_typ = PtrTyp.get_or_create(bound_typ, mut)
+        e.add_var(let_ast.ident.name, _TypedPlace(place_typ))
         return expr_typ == NEVER
 
     def check_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> bool:

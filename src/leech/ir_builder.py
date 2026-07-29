@@ -6,7 +6,7 @@ from typing import Final, Optional
 
 from leech import ir_module
 from leech import ast
-from leech.asserts import assert_in, checked_cast
+from leech.asserts import assert_eq, assert_in, checked_cast
 from leech.ir_env import Env
 from leech.ir_values import (
     BasicBlock,
@@ -23,21 +23,9 @@ from leech.ir_values import (
 )
 from leech.errors import (
     AssignToConstError,
-    BreakNotInLoopError,
-    ContinueNotInLoopError,
-    IfCondNotBoolError,
-    IfElsTypMismatchError,
-    IfTypNotVoidError,
     IncompatibleAssignmentTypError,
     IncompatibleLetTypError,
-    InvalidRetTypError,
-    InvalidVoidRetError,
-    LoopLabelNotFoundError,
-    MissingRetError,
-    RetNotInFnError,
     VoidVarInitializerError,
-    WhileCondNotBoolError,
-    WhileTypNotVoidError,
 )
 from leech.naming import VarNamer
 from leech.opt_util import opt_map, opt_or_default, opt_unwrap
@@ -150,13 +138,8 @@ class CfgBuilder:
 
         :param fn_ast: The parsed function definition.
         :param e: The scope to resolve names in.
-        :raises InvalidRetTypError: If the body's tail expression's type
-            doesn't match the function's declared return type.
-        :raises MissingRetError: If the function's declared return type
-            isn't ``void`` but the body doesn't end in a return or a
-            diverging expression.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the body; see :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the body; see :meth:`build_expr`.
         """
         assert self.fn is not None
         e = e.new_child()
@@ -169,7 +152,6 @@ class CfgBuilder:
 
         ret_typ = self.fn.fn_typ.ret_typ
         block = self.build_expr(fn_ast.block, e, ExprContext.VALUE, ret_typ)
-        ret_typ_span = opt_map(fn_ast.ret_typ, lambda x: x.span)
         ret_ast = opt_or_default(fn_ast.block.expr, fn_ast.block)
 
         if block.typ != VOID:
@@ -177,24 +159,17 @@ class CfgBuilder:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
                 return
-            coerced = self._coerce(block, ret_ast)
-            if coerced is None:
-                raise InvalidRetTypError(
-                    self.fn.name,
-                    ret_typ.name,
-                    ret_typ_span,
-                    block.typ.name,
-                    ret_ast.span,
-                )
+            # TypCheck already confirmed block coerces to ret_typ.
+            coerced = opt_unwrap(self._coerce(block, ret_ast))
             self.ret(coerced, ret_ast)
             return
 
         if self.curr_bb.terminated:
             return
 
-        if ret_typ != VOID:
-            raise MissingRetError(self.fn.name, fn_ast.span, ret_typ.name, ret_typ_span)
-
+        # TypCheck already confirmed a void body only reaches here when
+        # ret_typ is void too (else it would have raised MissingRetError).
+        assert_eq(ret_typ, VOID)
         self.ret(VoidValue(ret_ast), ret_ast)
 
     def build_expr(
@@ -315,23 +290,13 @@ class CfgBuilder:
             which is always ``bool``).
         :return: The value of whichever branch is taken, merged via a phi
             instruction if both branches complete normally.
-        :raises IfCondNotBoolError: If the condition's type isn't
-            ``bool``.
-        :raises IfElsTypMismatchError: If the ``if`` and ``else`` branches'
-            types don't match.
-        :raises IfTypNotVoidError: If there is no ``else`` branch and the
-            ``if`` branch's type isn't ``void``.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the condition or either branch;
-            see :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the condition or either branch; see
+            :meth:`build_expr`.
         """
         cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
-        coerced_cond = self._coerce(cond, if_ast.condition)
-        if coerced_cond is None:
-            raise IfCondNotBoolError(
-                if_ast.condition.diag_str(), cond.typ.name, if_ast.condition.span
-            )
-        cond = coerced_cond
+        # TypCheck already confirmed cond coerces to bool.
+        cond = opt_unwrap(self._coerce(cond, if_ast.condition))
         then_bb = self.add_bb("if")
         end_bb = self.add_bb("endif")
         els_bb = None
@@ -342,11 +307,7 @@ class CfgBuilder:
             self.cbranch(cond, then_bb, end_bb, if_ast)
 
         if els_bb is None:
-            then, _, have_then_value = self._build_if_arm(
-                if_ast.then, then_bb, end_bb, e, ctx, expected_typ
-            )
-            if have_then_value and then.typ != VOID:
-                raise IfTypNotVoidError(then.typ.name, if_ast.then.span)
+            self._build_if_arm(if_ast.then, then_bb, end_bb, e, ctx, expected_typ)
             self.set_position(end_bb)
             return VoidValue(if_ast)
 
@@ -389,13 +350,9 @@ class CfgBuilder:
             )
 
         if have_then_value and have_els_value:
-            if then.typ != els.typ:
-                raise IfElsTypMismatchError(
-                    then.typ.name,
-                    if_ast.then.span,
-                    els.typ.name,
-                    els_ast.span,
-                )
+            # TypCheck already confirmed then and els have the same
+            # type - the phi below requires it.
+            assert_eq(then.typ, els.typ)
             self.set_position(end_bb)
             return self.curr_bb.phi(
                 {els_last_bb: els, then_last_bb: then}, if_ast
@@ -451,13 +408,9 @@ class CfgBuilder:
         :param while_ast: The parsed ``while`` expression.
         :param e: The scope to resolve names in.
         :return: A void value.
-        :raises WhileCondNotBoolError: If the condition's type isn't
-            ``bool``.
-        :raises WhileTypNotVoidError: If the loop body's type isn't
-            ``void`` (or ``never``).
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the condition or the loop body;
-            see :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the condition or the loop body; see
+            :meth:`build_expr`.
         """
         cond_bb = self.add_bb("while_cond")
         loop_bb = self.add_bb("while_loop")
@@ -466,14 +419,8 @@ class CfgBuilder:
         self.branch(cond_bb, while_ast)
         self.set_position(cond_bb)
         cond = self.build_expr(while_ast.condition, e, ExprContext.VALUE)
-        coerced_cond = self._coerce(cond, while_ast.condition)
-        if coerced_cond is None:
-            raise WhileCondNotBoolError(
-                while_ast.condition.diag_str(),
-                cond.typ.name,
-                while_ast.condition.span,
-            )
-        cond = coerced_cond
+        # TypCheck already confirmed cond coerces to bool.
+        cond = opt_unwrap(self._coerce(cond, while_ast.condition))
 
         self.cbranch(cond, loop_bb, end_bb, while_ast)
         self.set_position(loop_bb)
@@ -485,11 +432,9 @@ class CfgBuilder:
             )
         )
         try:
-            block = self.build_expr(while_ast.block, e, ExprContext.VALUE)
+            self.build_expr(while_ast.block, e, ExprContext.VALUE)
         finally:
             self._loop_stack.pop()
-        if block.typ not in (NEVER, VOID):
-            raise WhileTypNotVoidError(block.typ.name, while_ast.block.span)
 
         if not self.curr_bb.terminated:
             self.branch(cond_bb, while_ast.block)
@@ -553,9 +498,8 @@ class CfgBuilder:
         else:
             callee = self.build_expr(callee_ast, e, ExprContext.VALUE)
 
-        fn_typ = checked_cast(
-            checked_cast(callee.typ, PtrTyp).pointee_typ, CallableTyp
-        )
+        callee_ptr_typ = checked_cast(callee.typ, PtrTyp)
+        fn_typ = checked_cast(callee_ptr_typ.pointee_typ, CallableTyp)
         param_typs = fn_typ.param_typs
         offset = 1 if recv_ast is not None else 0
         arg_asts: list[ast.Expr] = (
@@ -925,7 +869,8 @@ class CfgBuilder:
             subclasses, while lowering a field's value expression; see
             :meth:`build_expr`.
         """
-        struct_typ = checked_cast(Typ.from_ast(struct_expr.typ, e), StructTyp)
+        resolved_typ = Typ.from_ast(struct_expr.typ, e)
+        struct_typ = checked_cast(resolved_typ, StructTyp)
 
         struct = ComptimeStruct(
             struct_typ,
@@ -995,7 +940,8 @@ class CfgBuilder:
         :return: The field's value, or a pointer to it if ``ctx`` is
             :attr:`~ExprContext.PLACE`.
         """
-        struct_typ = checked_cast(checked_cast(struct_ptr.typ, PtrTyp).pointee_typ, StructTyp)
+        struct_ptr_typ = checked_cast(struct_ptr.typ, PtrTyp)
+        struct_typ = checked_cast(struct_ptr_typ.pointee_typ, StructTyp)
         field = struct_typ.fields[sa_expr.field.name]
 
         index = ComptimeInt(I32, field.index, sa_expr)
@@ -1050,22 +996,11 @@ class CfgBuilder:
 
         :param ret_ast: The parsed return statement.
         :param e: The scope to resolve names in.
-        :raises RetNotInFnError: If not currently lowering a function body.
-        :raises InvalidRetTypError: If the returned expression's type
-            doesn't match the function's declared return type.
-        :raises InvalidVoidRetError: If no expression is given but the
-            function's declared return type isn't ``void``.
-        :raises leech.errors.UserError: Also raised, as any of many possible
-            subclasses, while lowering the returned expression; see
-            :meth:`build_expr`.
+        :raises leech.errors.UserError: As any of many possible subclasses,
+            while lowering the returned expression; see :meth:`build_expr`.
         """
-        if self.fn is None:
-            raise RetNotInFnError(ret_ast.span)
-
+        assert self.fn is not None
         ret_typ = self.fn.fn_typ.ret_typ
-        ret_typ_span = None
-        if self.fn.ast is not None and self.fn.ast.span is not None:
-            ret_typ_span = self.fn.ast.span
 
         if ret_ast.expr is not None:
             expr = self.build_expr(ret_ast.expr, e, ExprContext.VALUE, ret_typ)
@@ -1073,35 +1008,21 @@ class CfgBuilder:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
                 return
-            coerced = self._coerce(expr, ret_ast.expr)
-            if coerced is None:
-                raise InvalidRetTypError(
-                    self.fn.name,
-                    ret_typ.name,
-                    ret_typ_span,
-                    expr.typ.name,
-                    ret_ast.expr.span,
-                )
+            # TypCheck already confirmed expr coerces to ret_typ.
+            coerced = opt_unwrap(self._coerce(expr, ret_ast.expr))
             self.ret(coerced, ret_ast)
             return
 
-        if ret_typ != VOID:
-            raise InvalidVoidRetError(
-                self.fn.name, ret_typ.name, ret_typ_span, ret_ast.span
-            )
-
+        # TypCheck already confirmed a bare `return;` only appears where
+        # ret_typ is void (else it would have raised InvalidVoidRetError).
+        assert_eq(ret_typ, VOID)
         self.ret(VoidValue(ret_ast), ret_ast)
 
     def build_break_stmt(self, break_ast: ast.BreakStmt) -> None:
         """Lower a ``break`` statement.
 
         :param break_ast: The parsed break statement.
-        :raises BreakNotInLoopError: If not currently lowering a loop body.
-        :raises LoopLabelNotFoundError: If a label is given but no
-            enclosing loop has it.
         """
-        if not self._loop_stack:
-            raise BreakNotInLoopError(break_ast.span)
         target = self._resolve_loop_label(break_ast.label)
         self.branch(target.end_bb, break_ast)
 
@@ -1109,34 +1030,27 @@ class CfgBuilder:
         """Lower a ``continue`` statement.
 
         :param continue_ast: The parsed continue statement.
-        :raises ContinueNotInLoopError: If not currently lowering a loop
-            body.
-        :raises LoopLabelNotFoundError: If a label is given but no
-            enclosing loop has it.
         """
-        if not self._loop_stack:
-            raise ContinueNotInLoopError(continue_ast.span)
         target = self._resolve_loop_label(continue_ast.label)
         self.branch(target.cond_bb, continue_ast)
 
     def _resolve_loop_label(self, label: Optional[ast.Ident]) -> "CfgBuilder._LoopCtx":
         """Find the loop a ``break``/``continue`` targets.
 
+        TypCheck already confirmed :attr:`_loop_stack` is non-empty and,
+        if ``label`` is given, that some enclosing loop has it.
+
         :param label: The target label, or ``None`` for the innermost
-            enclosing loop. :attr:`_loop_stack` is assumed non-empty -
-            callers check that first, since an empty stack means "not in
-            a loop at all", a different error from "label not found".
+            enclosing loop.
         :return: The named loop, or the innermost one if ``label`` is
             ``None``.
-        :raises LoopLabelNotFoundError: If ``label`` is given but no
-            enclosing loop has it.
         """
         if label is None:
             return self._loop_stack[-1]
         for ctx in reversed(self._loop_stack):
             if ctx.label == label.name:
                 return ctx
-        raise LoopLabelNotFoundError(label.name, label.span)
+        assert False, f"unresolved loop label {label.name!r}"
 
     def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
         """Lower a local ``let`` statement.
