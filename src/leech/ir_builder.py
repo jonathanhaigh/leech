@@ -480,19 +480,10 @@ class CfgBuilder:
         generic_call = self.typ_check_results.generic_call(call_ast)
         if generic_call is not None:
             # TypCheck already resolved which generic function this calls
-            # and its type arguments (inferred or explicit) - but against
-            # the callED generic declaration's own signature, so a type
-            # argument can itself be a type parameter (e.g. a generic
-            # function recursing on its own type parameter). Substituting
-            # for this lowering's own type arguments (a no-op outside a
-            # generic instance) resolves that down to this instantiation's
-            # concrete types before asking for the instance itself -
-            # building it, if this is the first call site to need it.
-            fn, typ_args = generic_call
-            concrete_typ_args = tuple(
-                typ_arg.substitute_typ_params(self.typ_arg_mapping) for typ_arg in typ_args
-            )
-            callee: Value = fn.instance(concrete_typ_args)
+            # and its type arguments (inferred or explicit); this just
+            # has to get (building, if this is the first call site to
+            # need it) the one instance that pairs them.
+            callee: Value = self._resolve_fn_instance(*generic_call)
         elif isinstance(callee_ast, ast.StructAccessExpr):
             recv_place = self.build_expr(callee_ast.struct, e, ExprContext.PLACE)
             method: ir_module.Fn | None = None
@@ -723,8 +714,42 @@ class CfgBuilder:
             case _:
                 raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
+    def _resolve_fn_instance(
+        self, fn: ir_module.Fn, typ_args: tuple[Typ, ...]
+    ) -> ir_module.FnInstance:
+        """Get the concrete instance a generic call or reference resolves to.
+
+        Shared by :meth:`build_call_expr` and :meth:`build_var_expr`:
+        TypCheck records ``(fn, typ_args)`` the same way for a call and a
+        bare (explicitly-applied) reference alike, so lowering either
+        only has to turn that pair into the one instance it names.
+
+        :param fn: The generic function TypCheck resolved.
+        :param typ_args: Its type arguments as TypCheck recorded them -
+            against ``fn``'s own declaration, so possibly still
+            containing a type parameter (e.g. a generic function
+            recursing on its own type parameter, or naming another
+            generic item applied to its own type parameter). Substituted
+            here against this lowering's own type arguments (a no-op
+            outside a generic instance) to resolve down to concrete
+            types before asking for the instance itself.
+        :return: The (possibly newly-built, possibly cached) instance.
+        """
+        concrete_typ_args = tuple(
+            typ_arg.substitute_typ_params(self.typ_arg_mapping) for typ_arg in typ_args
+        )
+        return fn.instance(concrete_typ_args)
+
     def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
         """Lower a (possibly qualified) variable or function reference.
+
+        If ``var_ast`` names a generic function applied to explicit type
+        arguments (e.g. the ``id[i32]`` in ``let f = id[i32];``), the
+        result is that instance itself, usable as an ordinary function
+        pointer from here on - TypCheck already resolved which one (see
+        :meth:`~leech.typcheck.TypCheck.check_var_expr`), so this only has
+        to fetch (or build) it, the same way :meth:`build_call_expr` does
+        for a generic call.
 
         :param var_ast: The parsed variable expression.
         :param e: The scope to resolve the path in.
@@ -734,6 +759,13 @@ class CfgBuilder:
         :return: The referenced variable or function.
         :raises ItemNotFoundError: If the path cannot be resolved.
         """
+        generic_ref = self.typ_check_results.generic_var_ref(var_ast)
+        if generic_ref is not None:
+            # TypCheck already resolved which generic function this names
+            # and its explicit type arguments; this just has to get
+            # (building, if needed) the instance they name.
+            return self._resolve_fn_instance(*generic_ref)
+
         var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
         if isinstance(var, ir_module.FnSpec):
             return var

@@ -189,6 +189,74 @@ def test_address_of_generic_fn_requires_typ_args(tmp_path):
     assert '"id"' in str(exc_info.value)
 
 
+def test_generic_fn_instance_as_function_pointer(tmp_path):
+    # id[i32], applied but never called directly, is itself a value - an
+    # ordinary function pointer from here on.
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        let f = id[i32];
+        return f(5) - 5;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_fn_instance_pointer_called_multiple_times(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        let f = id[i32];
+        let a = f(3);
+        let b = f(4);
+        return (a + b) - 7;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_address_of_explicit_generic_fn_instance_is_a_noop(tmp_path):
+    # Taking the address of a function reference is a no-op (it's
+    # already a pointer) - true of an explicitly-applied generic one too.
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        let f = &id[i32];
+        return f(5) - 5;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_wrong_number_of_explicit_typ_args_on_bare_generic_fn_reference(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+    pub fn main() i32 {
+        let g = id[i32, bool];
+        return 0;
+    }
+    """
+    with pytest.raises(WrongNumberOfTypArgsError) as exc_info:
+        compile_str(tmp_path, src)
+    assert '"id"' in str(exc_info.value)
+
+
+def test_explicit_typ_args_on_non_generic_fn_reference(tmp_path):
+    src = """
+    fn f(x: i32) i32 { return x; }
+    pub fn main() i32 {
+        let g = f[i32];
+        return 0;
+    }
+    """
+    with pytest.raises(TypArgsOnNonGenericItemError) as exc_info:
+        compile_str(tmp_path, src)
+    assert '"f"' in str(exc_info.value)
+
+
 def test_calling_generic_fn_infers_typ_args_from_argument(tmp_path):
     src = """
     fn id[T](x: T) T { return x; }
@@ -261,6 +329,123 @@ def test_generic_fn_instance_merges_across_modules(tmp_path):
     }
     """
     check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+
+
+def test_multiple_typ_args_coexist_for_the_same_generic_fn(tmp_path):
+    # id[i32] and id[bool] are different instances of the same generic
+    # function, each with their own body and symbol name - using both in
+    # the same program shouldn't let one clobber the other.
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        let n = id[i32](5);
+        let b = id[bool](true);
+        if (b) { return n - 5; };
+        return 99;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_fn_over_pointer_typ_param(tmp_path):
+    src = """
+    fn deref[T](p: *T) T { return p.*; }
+
+    pub fn main() i32 {
+        let n: i32 = 42;
+        return deref(&n) - 42;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_fn_with_struct_typ_arg(tmp_path):
+    # Structs aren't generic themselves, but a struct type can still be
+    # used as the concrete type argument applying a generic function.
+    src = """
+    struct Point { x: i32, y: i32 }
+
+    fn id[T](v: T) T { return v; }
+
+    pub fn main() i32 {
+        let p = id(Point { x: 3, y: 4 });
+        return (p.x + p.y) - 7;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_fn_recursion_runtime_output(tmp_path):
+    src = """
+    fn depth[T](x: T, n: i32) T {
+        if (n <= 0) {
+            return x;
+        };
+        return depth(x, n - 1);
+    }
+
+    pub fn main() i32 {
+        let start: i32 = 11;
+        return depth(start, 3) - 11;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_mod_var_initializer_calls_generic_fn_with_explicit_typ_args(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    let x = id[i32](5);
+
+    pub fn main() i32 {
+        return x - 5;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_mod_var_initializer_calls_generic_fn_with_inferred_typ_args(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    let n: i32 = 5;
+    let x = id(n);
+
+    pub fn main() i32 {
+        return x - 5;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_mod_var_initializer_stores_generic_fn_instance_as_function_pointer(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    let f = id[i32];
+
+    pub fn main() i32 {
+        return f(5) - 5;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_two_mod_var_initializers_use_different_typ_args_of_same_generic_fn(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    let x = id[i32](5);
+    let b = id[bool](true);
+
+    pub fn main() i32 {
+        if (b) { return x - 5; };
+        return 99;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
 
 
 def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(tmp_path):

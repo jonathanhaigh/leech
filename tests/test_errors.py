@@ -2,6 +2,7 @@ import pytest
 from util import compile_modules, compile_str, find_pos
 
 from leech.errors import (
+    CannotInferTypArgError,
     CircularVarInitializerError,
     DuplicateItemDefnError,
     IfCondNotBoolError,
@@ -10,14 +11,17 @@ from leech.errors import (
     InvalidArgTypError,
     InvalidBinOpArgTypError,
     LoopLabelNotFoundError,
+    MissingTypArgsError,
     ModUsedAsTypError,
     NotCallableError,
     PrivateItemAccessError,
     PrivateStructFieldAccessError,
+    TypArgsOnNonGenericItemError,
     UnexpectedCharacterError,
     UnexpectedTokenError,
     VoidVarInitializerError,
     WhileCondNotBoolError,
+    WrongNumberOfTypArgsError,
 )
 
 
@@ -552,3 +556,85 @@ def test_if_els_typ_mismatch_message(tmp_path):
     assert '"*u8"' in els_note.message
     assert els_note.span is not None
     assert (els_note.span.start_line, els_note.span.start_col) == find_pos(src, '{ "abc" }')
+
+
+def test_missing_typ_args_message(tmp_path):
+    src = """fn id[T](x: T) T { return x; }
+pub fn main() i32 {
+    let f = id;
+    return 0;
+}
+"""
+    with pytest.raises(MissingTypArgsError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"id"' in msg
+    assert "without required type arguments" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "id;")
+
+
+def test_cannot_infer_typ_arg_message(tmp_path):
+    src = """fn id[T](x: T) T { return x; }
+pub fn main() i32 {
+    id(5);
+    return 0;
+}
+"""
+    with pytest.raises(CannotInferTypArgError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"T"' in msg
+    assert '"id"' in msg
+    assert "Cannot infer type argument" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "id(5)")
+
+    assert len(exc_info.value.extra) == 1
+    note = exc_info.value.extra[0]
+    assert '"id[' in note.message
+
+
+def test_wrong_number_of_typ_args_message(tmp_path):
+    src = """fn id[T](x: T) T { return x; }
+pub fn main() i32 {
+    id[i32, bool](5);
+    return 0;
+}
+"""
+    with pytest.raises(WrongNumberOfTypArgsError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"id"' in msg
+    assert "got 2" in msg
+    assert "expected 1" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "id[i32, bool](5)")
+
+
+def test_typ_args_on_non_generic_item_message(tmp_path):
+    src = """fn f(x: i32) i32 { return x; }
+pub fn main() i32 {
+    f[i32](5);
+    return 0;
+}
+"""
+    with pytest.raises(TypArgsOnNonGenericItemError) as exc_info:
+        compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"f"' in msg
+    assert "not generic" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == find_pos(src, "f[i32](5)")

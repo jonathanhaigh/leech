@@ -249,11 +249,13 @@ class TypCheckResults:
     _int_lit_typs: Final[dict[ast.IntLit, IntTyp]]
     _coercions: Final[dict[ast.Ast, Coercion | None]]
     _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.Fn, tuple[Typ, ...]]]]
+    _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.Fn, tuple[Typ, ...]]]]
 
     def __init__(self) -> None:
         self._int_lit_typs = {}
         self._coercions = {}
         self._generic_calls = {}
+        self._generic_var_refs = {}
 
     def int_lit_typ(self, node: ast.IntLit) -> IntTyp:
         """The type chosen (and overflow-checked) for an integer literal.
@@ -294,6 +296,24 @@ class TypCheckResults:
         self, node: ast.CallExpr, fn: ir_module.Fn, typ_args: tuple[Typ, ...]
     ) -> None:
         self._generic_calls[node] = (fn, typ_args)
+
+    def generic_var_ref(self, node: ast.VarExpr) -> tuple[ir_module.Fn, tuple[Typ, ...]] | None:
+        """The resolved function and type arguments for an explicitly
+        applied generic function named as a value, e.g. the ``id[i32]``
+        in ``let f = id[i32];`` - not called, just referenced.
+
+        :param node: The variable expression's AST node, as checked by
+            :meth:`TypCheck.check_var_expr`.
+        :return: The generic function and its resolved type arguments (in
+            declaration order), or ``None`` if ``node`` doesn't reference
+            one this way.
+        """
+        return self._generic_var_refs.get(node)
+
+    def _set_generic_var_ref(
+        self, node: ast.VarExpr, fn: ir_module.Fn, typ_args: tuple[Typ, ...]
+    ) -> None:
+        self._generic_var_refs[node] = (fn, typ_args)
 
 
 class TypCheck:
@@ -641,7 +661,8 @@ class TypCheck:
         """Resolve a call to a generic function to its concrete instantiated type.
 
         Explicit type arguments (``f[i32](x)``) are resolved positionally
-        against ``fn``'s own type parameters; without any, each type
+        against ``fn``'s own type parameters (see
+        :meth:`_resolve_explicit_typ_args`); without any, each type
         parameter is instead inferred from the call's arguments (see
         :meth:`_infer_typ_args`). The two aren't mixed - a call gives type
         arguments entirely explicitly or leaves them entirely inferred.
@@ -660,29 +681,56 @@ class TypCheck:
         """
         callee_ast = call_ast.callee
         assert isinstance(callee_ast, ast.VarExpr)
-        fn_ast = opt_unwrap(fn.ast)
-        typ_params = [
-            TypParamTyp.get_or_create(fn_ast, i, p) for i, p in enumerate(fn_ast.generic_params)
-        ]
+        typ_params = self._typ_params_of(fn)
 
         if callee_ast.generic_args:
-            if len(callee_ast.generic_args) != len(typ_params):
-                raise WrongNumberOfTypArgsError(
-                    fn.name,
-                    len(callee_ast.generic_args),
-                    len(typ_params),
-                    callee_ast.span,
-                )
-            mapping = {
-                typ_param: Typ.from_ast(arg_ast, e)
-                for typ_param, arg_ast in zip(typ_params, callee_ast.generic_args, strict=True)
-            }
+            mapping = self._resolve_explicit_typ_args(
+                fn, typ_params, callee_ast.generic_args, callee_ast.span, e
+            )
         else:
             mapping = self._infer_typ_args(fn, call_ast, e, typ_params)
 
         typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
         self.results._set_generic_call(call_ast, fn, typ_args)
         return checked_cast(fn.fn_typ.substitute_typ_params(mapping), FnTyp)
+
+    def _typ_params_of(self, fn: ir_module.Fn) -> list[TypParamTyp]:
+        """``fn``'s own type parameters, as interned type parameter types,
+        in declaration order."""
+        fn_ast = opt_unwrap(fn.ast)
+        return [
+            TypParamTyp.get_or_create(fn_ast, i, param_ast)
+            for i, param_ast in enumerate(fn_ast.generic_params)
+        ]
+
+    def _resolve_explicit_typ_args(
+        self,
+        fn: ir_module.Fn,
+        typ_params: list[TypParamTyp],
+        generic_args: list[ast.Typ],
+        span: SrcSpan | None,
+        e: Env,
+    ) -> dict[TypParamTyp, Typ]:
+        """Resolve a generic item's explicit type arguments against its
+        own type parameters, positionally.
+
+        :param fn: The generic function ``generic_args`` apply to.
+        :param typ_params: ``fn``'s own type parameters, in declaration
+            order (see :meth:`_typ_params_of`).
+        :param generic_args: The explicit type arguments written at the
+            reference or call site, in the same order.
+        :param span: Where to attribute a count mismatch.
+        :param e: The scope to resolve ``generic_args`` in.
+        :return: The resolved type-parameter-to-concrete-type map.
+        :raises WrongNumberOfTypArgsError: If ``generic_args``'s length
+            doesn't match ``typ_params``'s.
+        """
+        if len(generic_args) != len(typ_params):
+            raise WrongNumberOfTypArgsError(fn.name, len(generic_args), len(typ_params), span)
+        return {
+            typ_param: Typ.from_ast(arg_ast, e)
+            for typ_param, arg_ast in zip(typ_params, generic_args, strict=True)
+        }
 
     def _infer_typ_args(
         self,
@@ -864,7 +912,21 @@ class TypCheck:
 
         var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
         if isinstance(var, ir_module.GenericFn):
-            raise MissingTypArgsError(var.name, var_ast.span)
+            if not var_ast.generic_args:
+                raise MissingTypArgsError(var.name, var_ast.span)
+            # Named with explicit type arguments but never called - e.g.
+            # `let f = id[i32];` - so there's no call to infer from, but
+            # applying it explicitly is still enough to make it a value:
+            # its type is its instance's, same as an ordinary function
+            # reference's is that function's (see the FnSpec case below).
+            typ_params = self._typ_params_of(var.fn)
+            mapping = self._resolve_explicit_typ_args(
+                var.fn, typ_params, var_ast.generic_args, var_ast.span, e
+            )
+            typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
+            self.results._set_generic_var_ref(var_ast, var.fn, typ_args)
+            substituted = checked_cast(var.fn.fn_typ.substitute_typ_params(mapping), FnTyp)
+            return PtrTyp.get_or_create(substituted, CONST)
         if var_ast.generic_args:
             raise TypArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
         if isinstance(var, ir_module.FnSpec):
@@ -1021,10 +1083,13 @@ class TypCheck:
             # A variable's own type already *is* its place's pointer type
             # (see check_var_expr) - a function reference doubly so, since
             # taking its address is a no-op rather than an extra
-            # indirection (see CfgBuilder.build_var_expr's PLACE case).
+            # indirection (see CfgBuilder.build_var_expr's PLACE case) -
+            # true of an explicitly-applied generic one too, so delegate
+            # to check_var_expr for that case (including its
+            # MissingTypArgsError if it's named bare instead).
             var = e.resolve_path(Env.Namespace.VARS, expr_ast.path)
             if isinstance(var, ir_module.GenericFn):
-                raise MissingTypArgsError(var.name, expr_ast.span)
+                return self.check_var_expr(expr_ast, e)
             return var.typ
 
         value_typ = self.check_expr(expr_ast, e, None)
@@ -1034,7 +1099,18 @@ class TypCheck:
         """The mutability of ``expr_ast``'s place; see :meth:`check_place`."""
         match expr_ast:
             case ast.VarExpr():
+                # Real circular import; see check_var_expr.
+                from leech import ir_module  # noqa: PLC0415
+
                 var = e.resolve_path(Env.Namespace.VARS, expr_ast.path)
+                # An (explicitly-applied, since this is only reached once
+                # an earlier check_expr/check_place pass over the same
+                # node has already succeeded) GenericFn has no .typ of
+                # its own to check - but like any other function
+                # reference (see the isinstance(var.typ, PtrTyp) case
+                # below), its place is const regardless.
+                if isinstance(var, ir_module.GenericFn):
+                    return CONST
                 if isinstance(var.typ, PtrTyp):
                     return var.typ.mut
                 return CONST
