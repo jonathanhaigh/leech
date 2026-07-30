@@ -198,7 +198,7 @@ def test_calling_generic_fn_infers_typ_args_from_argument(tmp_path):
         return id(n) - 5;
     }
     """
-    _lower_main(tmp_path, src)
+    check_prog_output(tmp_path, src, "", 0)
 
 
 def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
@@ -209,7 +209,7 @@ def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
         return id[i32](5) - 5;
     }
     """
-    _lower_main(tmp_path, src)
+    check_prog_output(tmp_path, src, "", 0)
 
 
 def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
@@ -224,7 +224,43 @@ def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
         return pair_first(a, b) - 3;
     }
     """
-    _lower_main(tmp_path, src)
+    check_prog_output(tmp_path, src, "", 0)
+
+
+def test_calling_generic_fn_from_another_module(tmp_path):
+    a_src = "pub fn id[T](x: T) T { return x; }"
+    main_src = """
+    import a;
+
+    pub fn main() i32 {
+        let n: i32 = 7;
+        return a::id(n) - 7;
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+
+
+def test_generic_fn_instance_merges_across_modules(tmp_path):
+    # Both a (compiled as its own root, since it's given as a separate
+    # module below) and main independently request id[i32] - each emits
+    # its own linkonce_odr copy, and the linker has to merge them rather
+    # than reject the pair as a duplicate definition.
+    a_src = """
+    pub fn id[T](x: T) T { return x; }
+
+    pub fn use_id_internally() i32 {
+        return id[i32](9) - 9;
+    }
+    """
+    main_src = """
+    import a;
+
+    pub fn main() i32 {
+        let n: i32 = 7;
+        return (a::id(n) - 7) + a::use_id_internally();
+    }
+    """
+    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
 def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(tmp_path):

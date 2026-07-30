@@ -283,8 +283,17 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         return Access.from_ast(self.ast.access) == PUBLIC or self.ast.span.file.path == file.path
 
     @cached_property
-    def _instances(self) -> dict[tuple[Typ, ...], FnInstance]:
+    def _instance_cache(self) -> dict[tuple[Typ, ...], FnInstance]:
         return {}
+
+    @property
+    def instances(self) -> Collection[FnInstance]:
+        """Every instantiation of this function requested so far.
+
+        Used by codegen to discover instances to emit - see
+        :meth:`~leech.codegen.Compiler.compile`.
+        """
+        return self._instance_cache.values()
 
     def instance(self, typ_args: tuple[Typ, ...]) -> FnInstance:
         """Get this function's instantiation for ``typ_args``, building it if needed.
@@ -299,10 +308,10 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
             for a non-generic function.
         :return: The (possibly newly-built, possibly cached) instantiation.
         """
-        inst = self._instances.get(typ_args)
+        inst = self._instance_cache.get(typ_args)
         if inst is None:
             inst = FnInstance(self, typ_args)
-            self._instances[typ_args] = inst
+            self._instance_cache[typ_args] = inst
         return inst
 
 

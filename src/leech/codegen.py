@@ -124,7 +124,7 @@ class Compiler:
     def compile(self) -> None:
         """Compile :attr:`mod` into :attr:`ll_mod`.
 
-        Runs in four phases over every module in the program - not just
+        Runs in phases over every module in the program - not just
         :attr:`mod` - taken from the loader, which has already
         deduplicated modules reached by more than one import path.
         Declaring everything up front means forward references between
@@ -142,6 +142,17 @@ class Compiler:
         separately-compiled output at link time. Struct *bodies* are the
         exception - :attr:`mod` needs imported structs' layouts to index
         into them.
+
+        A generic function instance is different again: it has no
+        ``ModItem`` of its own anywhere (see
+        :class:`~leech.ir_module.GenericFn`) - a call to one only creates
+        it, on demand, while :attr:`mod`'s own bodies are being lowered.
+        So every instance any of those calls could possibly request is
+        discovered first (see :meth:`_discover_fn_instances`, which lowers
+        those bodies itself, ahead of the compiled-into-LLVM-IR pass
+        below, purely to find them) and declared, alongside everything
+        else, before any body - an ordinary function's or an instance's
+        own - is compiled into LLVM IR and might need to call it.
         """
         self.ll_mod.triple = "x86_64-linux-gnu"
 
@@ -157,10 +168,17 @@ class Compiler:
             if isinstance(item.value, StructTyp):
                 self._compile_mod_struct(item, item.value)
 
+        instances = self._discover_fn_instances()
+        for inst in instances:
+            self._declare_fn_instance(inst)
+
         for item in self.mod.items:
             if isinstance(item.value, ir_module.GenericFn):
                 continue
             self._compile_mod_item(item)
+
+        for inst in instances:
+            self._compile_fn_instance(inst)
 
     def _program_items(self) -> Iterator[ir_module.ModItem]:
         """Every item of every module in the program that needs an LLVM symbol.
@@ -170,8 +188,7 @@ class Compiler:
         themselves imported modules are skipped: this walk already covers
         every module, so recursing into them would be redundant. A
         generic function is skipped too - it has no LLVM symbol of its
-        own, only its instances do (see
-        :class:`~leech.ir_module.GenericFn`), and nothing emits those yet.
+        own, only its instances do (see :meth:`_discover_fn_instances`).
 
         :return: The items, grouped by module in load order.
         """
@@ -181,6 +198,54 @@ class Compiler:
                     continue
                 if mod is self.mod or item.access == ir_module.PUBLIC:
                     yield item
+
+    def _discover_fn_instances(self) -> list[ir_module.FnInstance]:
+        """Find every generic function instance a call anywhere in the
+        program could request.
+
+        An instance is created only as a side effect of lowering (see
+        :attr:`~leech.ir_module.Fn.cfg`) a body that calls one - and
+        lowering one instance's own body can request further instances of
+        the same or another generic function (a nested or recursive
+        generic call). So this forces every one of :attr:`mod`'s own
+        functions to be lowered first, seeding the search, then keeps
+        lowering whatever instances that turns up - regardless of which
+        module's generic function they instantiate - until a full sweep
+        turns up nothing new.
+
+        This is pure IR-building, with no LLVM involved: an instance's
+        own :attr:`~leech.ir_module.Fn.cfg` is looked up (and, on first
+        use, built) here purely to complete the search, well before
+        :meth:`_compile_fn_instance` compiles it into LLVM IR.
+
+        :return: Every instance discovered, in discovery order.
+        """
+        instances: list[ir_module.FnInstance] = []
+        seen: set[ir_module.FnInstance] = set()
+
+        def newly_requested() -> list[ir_module.FnInstance]:
+            new = []
+            for mod in self.mod.loader.mods:
+                for item in mod.items:
+                    if isinstance(item.value, ir_module.GenericFn):
+                        for inst in item.value.fn.instances:
+                            if inst not in seen:
+                                seen.add(inst)
+                                new.append(inst)
+            return new
+
+        for item in self.mod.items:
+            if isinstance(item.value, (ir_module.Fn, ir_module.ModVar)):
+                _ = item.value.cfg
+
+        pending = newly_requested()
+        while pending:
+            instances.extend(pending)
+            for inst in pending:
+                _ = inst.cfg
+            pending = newly_requested()
+
+        return instances
 
     def _ll_typ(self, typ: Typ) -> ll.Type:
         match typ:
@@ -283,14 +348,46 @@ class Compiler:
         return ll_fn
 
     def _compile_mod_fn(self, _item: ir_module.ModItem, fn: ir_module.Fn) -> None:
+        self._compile_fn_body(fn, fn.params, fn.cfg)
+
+    def _declare_fn_instance(self, inst: ir_module.FnInstance) -> ll.Value:
+        ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(inst.fn_typ), inst.qualified_name)
+        self._ll_mod_items.set(inst, ll_fn)
+        # An instance emitted here because *this* module calls it may be
+        # emitted again, identically, wherever else it's called (another
+        # module, or this one compiled as its own root) - linkonce_odr
+        # tells the linker every such copy is interchangeable, so it can
+        # keep one and discard the rest instead of rejecting the file as
+        # a duplicate definition.
+        ll_fn.linkage = "linkonce_odr"
+        return ll_fn
+
+    def _compile_fn_instance(self, inst: ir_module.FnInstance) -> None:
+        self._compile_fn_body(inst, inst.params, inst.cfg)
+
+    def _compile_fn_body(
+        self,
+        fn_value: ir_values.Value,
+        params: tuple[ir_values.Param, ...],
+        cfg: ir_values.Cfg,
+    ) -> None:
+        """Compile a function's or generic function instance's lowered
+        body into its already-declared LLVM function.
+
+        :param fn_value: The ``Fn`` or ``FnInstance`` :meth:`_declare_mod_fn`
+            or :meth:`_declare_fn_instance` already declared an LLVM
+            function for.
+        :param params: Its formal parameters, in declaration order.
+        :param cfg: Its lowered control-flow graph.
+        """
         ctx = Compiler._FnBuilderContext(
             ll_builder=ll.IRBuilder(),
             ll_values=self._ll_mod_items.new_child(),
             ll_bbs=ChainMap(),
         )
 
-        ll_fn = checked_cast(self._ll_mod_items.get(fn), ll.Function)
-        for param, ll_param in zip(fn.params, ll_fn.args, strict=True):
+        ll_fn = checked_cast(self._ll_mod_items.get(fn_value), ll.Function)
+        for param, ll_param in zip(params, ll_fn.args, strict=True):
             ctx.ll_values.set(param, ll_param)
 
         # Reverse postorder, not a plain BFS: a phi's block must be
@@ -302,8 +399,8 @@ class Compiler:
         # chain evaluating its right operand. RPO guarantees it for any
         # edge that isn't a loop back-edge, and loop back-edges never
         # carry a phi in this compiler (`while` produces no merged
-        # value), so this is safe even though `fn.cfg` can have cycles.
-        bb_order = reversed(list(dfs_postorder_nodes(fn.cfg, fn.cfg.entry)))
+        # value), so this is safe even though `cfg` can have cycles.
+        bb_order = reversed(list(dfs_postorder_nodes(cfg, cfg.entry)))
         bb_order = [bb for bb in bb_order if bb.name != "exit"]
         for bb in bb_order:
             ctx.ll_bbs[bb] = ll_fn.append_basic_block(bb.name)
