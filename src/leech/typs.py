@@ -1,7 +1,7 @@
 """Leech's type system: type representations, caching, and construction from AST."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Hashable
+from collections.abc import Hashable, Mapping
 from enum import Enum
 from functools import cached_property
 from types import MappingProxyType
@@ -133,6 +133,28 @@ class Typ(ABC):
         """
         return self == target
 
+    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+        """Replace every type parameter within this type with its mapped type.
+
+        Rebuilds through the same interning constructors (``get_or_create``)
+        that ordinary type construction uses, so the result is always the
+        canonical interned instance for its shape - never a fresh,
+        non-interned lookalike.
+
+        This base implementation has no type parameter to replace and
+        nothing to recurse into, so it returns ``self`` unchanged - the
+        right answer for every type that can't be built from a type
+        parameter (including a struct type - structs aren't generic yet).
+        :class:`TypParamTyp` itself, and the types that wrap another type
+        (:class:`PtrTyp`, :class:`ArrayTyp`, :class:`FnTyp`), override it.
+
+        :param mapping: The concrete type to substitute for each type
+            parameter that may appear in this type.
+        :return: This type with every type parameter present in
+            ``mapping`` replaced by its mapped type.
+        """
+        return self
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -254,6 +276,13 @@ class FnTyp(CallableTyp):
         param_strs = ", ".join(typ.name for typ in self.param_typs)
         return f"fn({param_strs}) {self.ret_typ.name}"
 
+    @override
+    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+        return FnTyp.get_or_create(
+            self.ret_typ.substitute_typ_params(mapping),
+            tuple(param_typ.substitute_typ_params(mapping) for param_typ in self.param_typs),
+        )
+
 
 class PtrTyp(Typ):
     """A pointer type, e.g. ``*i32`` or ``*mut i32``.
@@ -288,6 +317,10 @@ class PtrTyp(Typ):
             self.mut == MUT and self.new_with_mut(CONST) == target
         )
 
+    @override
+    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+        return PtrTyp.get_or_create(self.pointee_typ.substitute_typ_params(mapping), self.mut)
+
     def new_with_mut(self, mut: Mutability) -> PtrTyp:
         """Return the pointer type with the same pointee but different mutability.
 
@@ -316,6 +349,67 @@ class ArrayTyp(Typ):
     @override
     def name(self) -> str:
         return f"[{self.element_typ.name}; {self.length}]"
+
+    @override
+    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+        return ArrayTyp.get_or_create(self.element_typ.substitute_typ_params(mapping), self.length)
+
+
+class TypParamTyp(Typ):
+    """A generic item's type parameter, e.g. the ``T`` in ``fn id[T](x: T) T``.
+
+    Interned by the declaring item's AST node together with the
+    parameter's position in its parameter list (:meth:`cache_key`), not by
+    name: two parameters called ``T`` on two different generic items - or
+    two parameters of the same item - are never the same type, preserving
+    the identity-equality invariant every other :class:`Typ` relies on.
+
+    Stands for an as-yet-unknown type: it has no LLVM representation of
+    its own, since a generic body is never lowered directly (see
+    :meth:`substitute_typ_params` and :meth:`~leech.ir_module.Fn.instance`)
+    - :meth:`~leech.codegen.Compiler._ll_typ` asserts it never has to
+    translate one.
+
+    :param owner_ast: The AST node of the generic item that declares this
+        parameter.
+    :param index: The parameter's position in ``owner_ast``'s
+        ``generic_params``.
+    :param param_ast: The parameter's own declaration, i.e.
+        ``owner_ast.generic_params[index]`` - passed separately rather
+        than looked up, since only ``owner_ast`` and ``index`` identify
+        the type (see :meth:`cache_key`).
+    """
+
+    owner_ast: Final[ast.Ast]
+    index: Final[int]
+    ast: Final[ast.GenericParam]
+
+    def __init__(self, owner_ast: ast.Ast, index: int, param_ast: ast.GenericParam) -> None:
+        self.owner_ast = owner_ast
+        self.index = index
+        self.ast = param_ast
+
+    @override
+    @classmethod
+    def cache_key(cls, *args: Hashable) -> Hashable:
+        """Key type parameters by their declaring item and position alone.
+
+        :param args: The arguments passed to :meth:`~Typ.create` or
+            :meth:`~Typ.get_or_create`; ``args[0]`` must be the owning
+            item's AST node and ``args[1]`` the parameter's index.
+        :return: The cache key.
+        """
+        assert_gt(len(args), 1)
+        return (cls, args[0], args[1])
+
+    @property
+    @override
+    def name(self) -> str:
+        return self.ast.ident.name
+
+    @override
+    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+        return mapping.get(self, self)
 
 
 class StructField:

@@ -1,14 +1,14 @@
 import pathlib
 
 import pytest
-from util import check_prog_output, compile_str, find_pos
+from util import check_prog_output, compile_str, find_pos, parse_mod
 
 from leech import ast
 from leech.errors import IncompatibleLetTypError, IntLitOverflowError
 from leech.ir_env import Env
 from leech.parse import build_parser
 from leech.src import SrcFile
-from leech.typs import Typ
+from leech.typs import BOOL, I32, MUT, ArrayTyp, FnTyp, PtrTyp, Typ, TypParamTyp
 
 
 @pytest.mark.parametrize(
@@ -264,3 +264,78 @@ def test_ptr_typ_name_matches_source_syntax(src, expected):
     tree = build_parser("typ").parse(src)
     typ = Typ.from_ast(ast.Typ.from_tree(file, tree), Env())
     assert typ.name == expected
+
+
+def test_typ_param_typ_interns_by_owner_and_index(tmp_path):
+    mod = parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+
+    t0 = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    t0_again = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    t1 = TypParamTyp.get_or_create(fn, 1, fn.generic_params[1])
+
+    assert t0 is t0_again
+    assert t0 is not t1
+    assert t0.name == "T"
+    assert t1.name == "U"
+
+
+def test_typ_param_typ_distinct_across_owners(tmp_path):
+    mod = parse_mod(
+        tmp_path,
+        """
+        fn f[T](x: T) {}
+        fn g[T](x: T) {}
+        """,
+    )
+    f_defn, g_defn = mod.defns
+    assert isinstance(f_defn, ast.FnDefn)
+    assert isinstance(g_defn, ast.FnDefn)
+
+    t_f = TypParamTyp.get_or_create(f_defn, 0, f_defn.generic_params[0])
+    t_g = TypParamTyp.get_or_create(g_defn, 0, g_defn.generic_params[0])
+    assert t_f is not t_g
+    assert t_f.name == t_g.name == "T"
+
+
+def test_substitute_typ_params_replaces_mapped_typ_param(tmp_path):
+    mod = parse_mod(tmp_path, "fn f[T](x: T) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+
+    assert t.substitute_typ_params({t: I32}) is I32
+
+
+def test_substitute_typ_params_leaves_unmapped_typ_param_unchanged(tmp_path):
+    mod = parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    u = TypParamTyp.get_or_create(fn, 1, fn.generic_params[1])
+
+    assert t.substitute_typ_params({u: I32}) is t
+
+
+def test_substitute_typ_params_leaves_concrete_typ_unchanged():
+    assert I32.substitute_typ_params({}) is I32
+    assert BOOL.substitute_typ_params({}) is BOOL
+
+
+def test_substitute_typ_params_recurses_through_composite_typs(tmp_path):
+    mod = parse_mod(tmp_path, "fn f[T](x: T) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    mapping = {t: I32}
+
+    assert PtrTyp.get_or_create(t, MUT).substitute_typ_params(mapping) is PtrTyp.get_or_create(
+        I32, MUT
+    )
+    assert ArrayTyp.get_or_create(t, 3).substitute_typ_params(mapping) is ArrayTyp.get_or_create(
+        I32, 3
+    )
+
+    fn_typ = FnTyp.get_or_create(t, (t, BOOL))
+    assert fn_typ.substitute_typ_params(mapping) is FnTyp.get_or_create(I32, (I32, BOOL))
