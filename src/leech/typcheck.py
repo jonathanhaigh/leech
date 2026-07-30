@@ -23,12 +23,14 @@ handling throughout the ``check_*`` methods below.
 """
 
 from dataclasses import dataclass
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from leech import ast
+from leech.asserts import checked_cast
 from leech.errors import (
     AssignToConstError,
     BreakNotInLoopError,
+    CannotInferTypArgError,
     ContinueNotInLoopError,
     DerefInvalidTypError,
     DuplicateFieldInStructExprError,
@@ -62,11 +64,13 @@ from leech.errors import (
     PrivateStructFieldAccessError,
     RetNotInFnError,
     TooManyArgsError,
+    TypArgsOnNonGenericItemError,
     TypeOfStructExprNotStructError,
     VoidArrayElementError,
     VoidVarInitializerError,
     WhileCondNotBoolError,
     WhileTypNotVoidError,
+    WrongNumberOfTypArgsError,
 )
 from leech.ir_env import Env
 from leech.ir_values import Param, Value
@@ -90,7 +94,15 @@ from leech.typs import (
     PtrTyp,
     StructTyp,
     Typ,
+    TypParamTyp,
 )
+
+if TYPE_CHECKING:
+    # Annotation-only: `ir_module` imports this module at runtime, so an
+    # unconditional import here would be circular. Everywhere this module
+    # needs the actual class objects (for `isinstance`), it imports
+    # `ir_module` locally instead - see e.g. `check_var_expr`.
+    from leech import ir_module
 
 
 def is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
@@ -478,7 +490,7 @@ class TypCheck:
         return VOID
 
     def check_call_expr(self, call_ast: ast.CallExpr, e: Env) -> Typ:
-        fn_typ, recv_ast, recv_typ = self._resolve_callee(call_ast.callee, e)
+        fn_typ, recv_ast, recv_typ = self._resolve_callee(call_ast, e)
         callee_diag_str = call_ast.callee.diag_str()
         param_typs = fn_typ.param_typs
 
@@ -524,32 +536,50 @@ class TypCheck:
         return fn_typ.ret_typ
 
     def _resolve_callee(
-        self, callee_ast: ast.Expr, e: Env
+        self, call_ast: ast.CallExpr, e: Env
     ) -> tuple[CallableTyp, ast.Expr | None, Typ | None]:
         """The callee's type, and its receiver's expression and type, if any.
 
-        If ``callee_ast`` is written as ``x.name``, ``name`` is looked up
-        as a method of ``x``'s struct type first; otherwise (and if
-        that lookup fails) it falls back to ordinary field access, exactly
-        as :meth:`~leech.ir_builder.CfgBuilder.build_call_expr` does.
+        If the callee is written as ``x.name``, ``name`` is looked up as a
+        method of ``x``'s struct type first; otherwise (and if that
+        lookup fails) it falls back to ordinary field access, exactly as
+        :meth:`~leech.ir_builder.CfgBuilder.build_call_expr` does. A bare
+        reference to a generic function is resolved through
+        :meth:`_resolve_generic_call` instead, since it isn't itself a
+        value with one fixed type the way every other callee is (see
+        :class:`~leech.ir_module.GenericFn`).
 
-        :param callee_ast: The parsed callee expression.
+        :param call_ast: The parsed call expression.
         :param e: The scope to resolve names in.
         :return: ``(fn_typ, recv_ast, recv_typ)``. ``recv_ast`` and
-            ``recv_typ`` are ``None`` unless ``callee_ast`` names a
-            method, in which case they're the receiver expression and its
-            *place* type (a pointer, with the receiver's own mutability -
-            see :meth:`check_place`, since a method receiver is always
-            passed by pointer).
-        :raises NotAMethodError: If ``callee_ast`` is ``x.name`` and
-            ``name`` names a real associated function of ``x``'s struct
-            type that has no ``self`` receiver.
-        :raises PrivateItemAccessError: If ``callee_ast`` is ``x.name``
-            and ``name`` names a private method, called from outside the
+            ``recv_typ`` are ``None`` unless the callee names a method, in
+            which case they're the receiver expression and its *place*
+            type (a pointer, with the receiver's own mutability - see
+            :meth:`check_place`, since a method receiver is always passed
+            by pointer).
+        :raises NotAMethodError: If the callee is ``x.name`` and ``name``
+            names a real associated function of ``x``'s struct type that
+            has no ``self`` receiver.
+        :raises PrivateItemAccessError: If the callee is ``x.name`` and
+            ``name`` names a private method, called from outside the
             module its struct is defined in.
         :raises NotCallableError: If the callee doesn't resolve to a
             callable type.
+        :raises WrongNumberOfTypArgsError: If the callee is a generic
+            function given the wrong number of explicit type arguments.
+        :raises CannotInferTypArgError: If the callee is a generic
+            function whose type arguments aren't all given explicitly or
+            determined by the call's arguments' types.
         """
+        callee_ast = call_ast.callee
+        if isinstance(callee_ast, ast.VarExpr):
+            # Real circular import; see check_var_expr.
+            from leech import ir_module  # noqa: PLC0415
+
+            var = e.resolve_path(Env.Namespace.VARS, callee_ast.path)
+            if isinstance(var, ir_module.GenericFn):
+                return self._resolve_generic_call(var.fn, call_ast, e), None, None
+
         if not isinstance(callee_ast, ast.StructAccessExpr):
             callee_typ = self.check_expr(callee_ast, e, None)
             fn_typ = _callable_typ(callee_typ)
@@ -588,6 +618,89 @@ class TypCheck:
         if fn_typ is None:
             raise NotCallableError(callee_ast.diag_str(), callee_typ.name, callee_ast.span)
         return fn_typ, None, None
+
+    def _resolve_generic_call(self, fn: ir_module.Fn, call_ast: ast.CallExpr, e: Env) -> FnTyp:
+        """Resolve a call to a generic function to its concrete instantiated type.
+
+        Explicit type arguments (``f[i32](x)``) are resolved positionally
+        against ``fn``'s own type parameters; without any, each type
+        parameter is instead inferred from the call's arguments (see
+        :meth:`_infer_typ_args`). The two aren't mixed - a call gives type
+        arguments entirely explicitly or leaves them entirely inferred.
+
+        :param fn: The generic function being called.
+        :param call_ast: The parsed call expression, whose callee names
+            ``fn``.
+        :param e: The scope to resolve names in.
+        :return: ``fn``'s signature with every type parameter replaced by
+            its resolved type argument.
+        :raises WrongNumberOfTypArgsError: If explicit type arguments are
+            given and their count doesn't match ``fn``'s declared type
+            parameters.
+        :raises CannotInferTypArgError: If a type parameter is bound by
+            neither an explicit type argument nor any call argument's type.
+        """
+        callee_ast = call_ast.callee
+        assert isinstance(callee_ast, ast.VarExpr)
+        fn_ast = opt_unwrap(fn.ast)
+        typ_params = [
+            TypParamTyp.get_or_create(fn_ast, i, p) for i, p in enumerate(fn_ast.generic_params)
+        ]
+
+        if callee_ast.generic_args:
+            if len(callee_ast.generic_args) != len(typ_params):
+                raise WrongNumberOfTypArgsError(
+                    fn.name,
+                    len(callee_ast.generic_args),
+                    len(typ_params),
+                    callee_ast.span,
+                )
+            mapping = {
+                typ_param: Typ.from_ast(arg_ast, e)
+                for typ_param, arg_ast in zip(typ_params, callee_ast.generic_args, strict=True)
+            }
+        else:
+            mapping = self._infer_typ_args(fn, call_ast, e, typ_params)
+
+        return checked_cast(fn.fn_typ.substitute_typ_params(mapping), FnTyp)
+
+    def _infer_typ_args(
+        self,
+        fn: ir_module.Fn,
+        call_ast: ast.CallExpr,
+        e: Env,
+        typ_params: list[TypParamTyp],
+    ) -> dict[TypParamTyp, Typ]:
+        """Infer a generic call's type arguments from its arguments' types.
+
+        Structural, left to right, with no unification: each non-literal
+        argument is checked (with no expected type, since none is known
+        yet) and matched against its parameter's declared type (see
+        :meth:`~leech.typs.Typ.infer_typ_args`). A bare integer literal is
+        skipped - it has no type of its own to offer until it has a
+        target, so it can't drive inference.
+
+        :param fn: The generic function being called.
+        :param call_ast: The parsed call expression.
+        :param e: The scope to resolve names in.
+        :param typ_params: ``fn``'s own type parameters, in declaration
+            order.
+        :return: The inferred type-parameter-to-concrete-type map.
+        :raises CannotInferTypArgError: If a type parameter is left
+            unbound by every argument.
+        """
+        bindings: dict[TypParamTyp, Typ] = {}
+        for declared_typ, arg_ast in zip(fn.fn_typ.param_typs, call_ast.args, strict=False):
+            if is_flexible_int_lit(arg_ast):
+                continue
+            arg_typ = self.check_expr(arg_ast, e, None)
+            declared_typ.infer_typ_args(arg_typ, bindings)
+
+        for typ_param in typ_params:
+            if typ_param not in bindings:
+                raise CannotInferTypArgError(fn.name, typ_param.name, call_ast.span)
+
+        return bindings
 
     def check_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Typ | None) -> Typ:
         if op_ast.op.name in ("and", "or"):
@@ -732,6 +845,8 @@ class TypCheck:
         var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
         if isinstance(var, ir_module.GenericFn):
             raise MissingTypArgsError(var.name, var_ast.span)
+        if var_ast.generic_args:
+            raise TypArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
         if isinstance(var, ir_module.FnSpec):
             return var.typ
         return var.typ.pointee_typ

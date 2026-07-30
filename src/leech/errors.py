@@ -112,15 +112,59 @@ class MissingTypArgsError(UserError):
 
     A generic function isn't a value until applied to concrete type
     arguments - naming it bare, the way an ordinary value is named, has
-    nothing to give it a type. Calling a generic function without
-    explicit type arguments raises this too, until call-site inference is
-    implemented.
+    nothing to give it a type. A call is exempt: its type arguments can
+    come from its own arguments' types instead (or be given explicitly),
+    so it's checked separately - see
+    :class:`CannotInferTypArgError`.
     """
 
     def __init__(self, item_name: str, span: SrcSpan | None) -> None:
         super().__init__(
             ERROR,
             f'Generic item "{item_name}" used without required type arguments',
+            span,
+        )
+
+
+class CannotInferTypArgError(UserError):
+    """Raised when a generic function call can't determine one of its
+    type parameters from its arguments' types, and no explicit type
+    argument was given for it either."""
+
+    def __init__(self, fn_name: str, typ_param_name: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Cannot infer type argument for parameter "{typ_param_name}"'
+                f' of generic function "{fn_name}"'
+            ),
+            span,
+        )
+        self.add_extra(NOTE, f'Give it explicitly, e.g. "{fn_name}[...]"', None)
+
+
+class WrongNumberOfTypArgsError(UserError):
+    """Raised when a generic item is given the wrong number of explicit
+    type arguments."""
+
+    def __init__(self, item_name: str, given: int, expected: int, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Wrong number of type arguments for generic item "{item_name}":'
+                f" got {given}, expected {expected}"
+            ),
+            span,
+        )
+
+
+class TypArgsOnNonGenericItemError(UserError):
+    """Raised when type arguments are given for an item that isn't generic."""
+
+    def __init__(self, item_name: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            f'"{item_name}" is not generic and cannot take type arguments',
             span,
         )
 

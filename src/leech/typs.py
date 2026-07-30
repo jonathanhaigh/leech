@@ -155,6 +155,36 @@ class Typ(ABC):
         """
         return self
 
+    def infer_typ_args(  # noqa: B027 - intentionally empty default, not abstract
+        self, actual: Typ, bindings: dict[TypParamTyp, Typ]
+    ) -> None:
+        """Bind each type parameter within this type from its counterpart in ``actual``.
+
+        The structural counterpart of :meth:`substitute_typ_params`: walks
+        this (declared) type and ``actual`` (an argument's already-checked
+        type) in parallel, recording the concrete type standing opposite
+        each type parameter found. Purely structural, with no unification
+        - a shape mismatch (``actual`` isn't the matching composite shape)
+        is silently skipped rather than raising, and the first binding for
+        a given type parameter wins over a later, conflicting one. Neither
+        omission is a problem: ordinary argument type-checking, against
+        the signature these bindings are used to substitute, is what
+        actually has to accept or reject the call - this only has to
+        gather enough bindings to build that signature in the first
+        place.
+
+        This base implementation has no type parameter and nothing to
+        recurse into, so it's a no-op - the right answer for every type
+        that can't be built from one. :class:`TypParamTyp` itself, and the
+        types that wrap another type (:class:`PtrTyp`, :class:`ArrayTyp`,
+        :class:`FnTyp`), override it.
+
+        :param actual: The already-checked type occupying this type's
+            position.
+        :param bindings: The accumulated type-parameter-to-concrete-type
+            map to add to.
+        """
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -283,6 +313,14 @@ class FnTyp(CallableTyp):
             tuple(param_typ.substitute_typ_params(mapping) for param_typ in self.param_typs),
         )
 
+    @override
+    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+        if not isinstance(actual, FnTyp):
+            return
+        self.ret_typ.infer_typ_args(actual.ret_typ, bindings)
+        for declared_param, actual_param in zip(self.param_typs, actual.param_typs, strict=False):
+            declared_param.infer_typ_args(actual_param, bindings)
+
 
 class PtrTyp(Typ):
     """A pointer type, e.g. ``*i32`` or ``*mut i32``.
@@ -321,6 +359,11 @@ class PtrTyp(Typ):
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
         return PtrTyp.get_or_create(self.pointee_typ.substitute_typ_params(mapping), self.mut)
 
+    @override
+    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+        if isinstance(actual, PtrTyp):
+            self.pointee_typ.infer_typ_args(actual.pointee_typ, bindings)
+
     def new_with_mut(self, mut: Mutability) -> PtrTyp:
         """Return the pointer type with the same pointee but different mutability.
 
@@ -353,6 +396,11 @@ class ArrayTyp(Typ):
     @override
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
         return ArrayTyp.get_or_create(self.element_typ.substitute_typ_params(mapping), self.length)
+
+    @override
+    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+        if isinstance(actual, ArrayTyp):
+            self.element_typ.infer_typ_args(actual.element_typ, bindings)
 
 
 class TypParamTyp(Typ):
@@ -410,6 +458,10 @@ class TypParamTyp(Typ):
     @override
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
         return mapping.get(self, self)
+
+    @override
+    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+        bindings.setdefault(self, actual)
 
 
 class StructField:

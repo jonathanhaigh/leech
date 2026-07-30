@@ -1,7 +1,10 @@
 import pytest
-from util import check_prog_output, compile_str, find_pos
+from util import build_ir_mod, check_prog_output, compile_str, find_pos
 
+from leech import ir_module
+from leech.asserts import checked_cast
 from leech.errors import (
+    CannotInferTypArgError,
     DerefInvalidTypError,
     FieldAccessIntoInvalidTypError,
     IncompatibleLetTypError,
@@ -9,13 +12,31 @@ from leech.errors import (
     InvalidBinOpArgTypError,
     MissingTypArgsError,
     NotCallableError,
+    TypArgsOnNonGenericItemError,
+    WrongNumberOfTypArgsError,
 )
+from leech.ir_env import Env
+
+
+def _typecheck_main(tmp_path, src) -> None:
+    """Type-check ``main``'s body, without lowering or compiling it.
+
+    Calling a generic function can't be lowered yet (that needs
+    monomorphization), so this is how a test confirms a call
+    type-checks - including that its type arguments resolve correctly -
+    short of actually running it.
+    """
+    mod = build_ir_mod(tmp_path, src)
+    main_item = mod.get_item(Env.Namespace.VARS, "main")
+    assert main_item is not None
+    main_fn = checked_cast(main_item.value, ir_module.Fn)
+    _ = main_fn.typ_check_results
 
 
 def test_generic_fn_body_typechecks_with_identity_only_ops(tmp_path):
     # A generic function's body is checked eagerly, whether or not it's
-    # ever called (calling one isn't supported until type-arg inference
-    # lands) - so this only has to compile and run, never invoking `id`.
+    # ever called - so this only has to compile and run, never invoking
+    # `id` (calling a generic function can't be lowered yet).
     src = """
     fn id[T](x: T) T {
         let y = x;
@@ -153,9 +174,47 @@ def test_address_of_generic_fn_requires_typ_args(tmp_path):
     assert '"id"' in str(exc_info.value)
 
 
-def test_calling_generic_fn_requires_typ_args_until_inference_lands(tmp_path):
-    # Call-site type-arg inference isn't implemented yet, so a call is
-    # rejected the same as any other bare reference to a generic function.
+def test_calling_generic_fn_infers_typ_args_from_argument(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        let n: i32 = 5;
+        return id(n) - 5;
+    }
+    """
+    _typecheck_main(tmp_path, src)
+
+
+def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        return id[i32](5) - 5;
+    }
+    """
+    _typecheck_main(tmp_path, src)
+
+
+def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
+    src = """
+    fn pair_first[T, U](x: T, y: U) T {
+        return x;
+    }
+
+    pub fn main() i32 {
+        let a: i32 = 3;
+        let b: bool = true;
+        return pair_first(a, b) - 3;
+    }
+    """
+    _typecheck_main(tmp_path, src)
+
+
+def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(tmp_path):
+    # A bare integer literal has no type of its own until it has a
+    # target, so it can't drive inference on its own.
     src = """
     fn id[T](x: T) T { return x; }
     pub fn main() i32 {
@@ -163,9 +222,37 @@ def test_calling_generic_fn_requires_typ_args_until_inference_lands(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(MissingTypArgsError) as exc_info:
+    with pytest.raises(CannotInferTypArgError) as exc_info:
+        compile_str(tmp_path, src)
+    msg = str(exc_info.value)
+    assert '"T"' in msg
+    assert '"id"' in msg
+
+
+def test_calling_generic_fn_with_wrong_number_of_explicit_typ_args(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+    pub fn main() i32 {
+        id[i32, bool](5);
+        return 0;
+    }
+    """
+    with pytest.raises(WrongNumberOfTypArgsError) as exc_info:
         compile_str(tmp_path, src)
     assert '"id"' in str(exc_info.value)
+
+
+def test_explicit_typ_args_on_non_generic_fn(tmp_path):
+    src = """
+    fn f(x: i32) i32 { return x; }
+    pub fn main() i32 {
+        f[i32](5);
+        return 0;
+    }
+    """
+    with pytest.raises(TypArgsOnNonGenericItemError) as exc_info:
+        compile_str(tmp_path, src)
+    assert '"f"' in str(exc_info.value)
 
 
 def test_generic_assoc_fn_not_yet_supported(tmp_path):

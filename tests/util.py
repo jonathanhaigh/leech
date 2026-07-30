@@ -1,8 +1,8 @@
 import subprocess
 from pathlib import Path
 
-from leech import ast
-from leech.main import compile_to_llvm_ir
+from leech import ast, ir_module
+from leech.main import compile_to_ir, compile_to_llvm_ir
 from leech.parse import build_parser
 from leech.src import SrcFile
 
@@ -43,6 +43,18 @@ def parse_mod(tmp_path: Path, src: str) -> ast.Mod:
     file = SrcFile(path)
     tree = build_parser("mod").parse(file.src)
     return ast.Mod(file, tree)
+
+
+def build_ir_mod(tmp_path: Path, src: str) -> ir_module.Mod:
+    """Parse and build ``src`` into IR, without lowering or compiling it.
+
+    For exercising type-checking (or anything else that only needs a
+    built :class:`~leech.ir_module.Mod`) on code that can't yet be
+    lowered all the way to a runnable program.
+    """
+    path = tmp_path / "main.leech"
+    write_whole_file(path, src)
+    return compile_to_ir(SrcFile(path))
 
 
 def compile_modules(tmp_path: Path, **modules: str) -> list[Path]:
