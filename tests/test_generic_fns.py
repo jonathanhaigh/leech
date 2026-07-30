@@ -16,27 +16,42 @@ from leech.errors import (
     WrongNumberOfTypArgsError,
 )
 from leech.ir_env import Env
+from leech.ir_values import CallInstr
+from leech.typs import BOOL, I32
 
 
-def _typecheck_main(tmp_path, src) -> None:
-    """Type-check ``main``'s body, without lowering or compiling it.
+def _get_fn(mod, name: str) -> ir_module.Fn:
+    """Get the plain (non-generic) function ``name`` declares in ``mod``."""
+    item = mod.get_item(Env.Namespace.VARS, name)
+    assert item is not None
+    return checked_cast(item.value, ir_module.Fn)
 
-    Calling a generic function can't be lowered yet (that needs
-    monomorphization), so this is how a test confirms a call
-    type-checks - including that its type arguments resolve correctly -
-    short of actually running it.
+
+def _get_generic_fn(mod, name: str) -> ir_module.Fn:
+    """Get the generic function ``name`` declares in ``mod``."""
+    item = mod.get_item(Env.Namespace.VARS, name)
+    assert item is not None
+    return checked_cast(item.value, ir_module.GenericFn).fn
+
+
+def _lower_main(tmp_path, src):
+    """Build and lower ``main``'s body, without compiling it to LLVM IR.
+
+    Codegen doesn't emit generic function instances yet, so this is how
+    a test confirms a call to one type-checks and lowers correctly -
+    including that its type arguments resolve, and that the call's
+    callee is the right instance - short of actually running it.
+
+    :return: ``main``'s lowered control-flow graph.
     """
     mod = build_ir_mod(tmp_path, src)
-    main_item = mod.get_item(Env.Namespace.VARS, "main")
-    assert main_item is not None
-    main_fn = checked_cast(main_item.value, ir_module.Fn)
-    _ = main_fn.typ_check_results
+    return _get_fn(mod, "main").cfg
 
 
 def test_generic_fn_body_typechecks_with_identity_only_ops(tmp_path):
     # A generic function's body is checked eagerly, whether or not it's
     # ever called - so this only has to compile and run, never invoking
-    # `id` (calling a generic function can't be lowered yet).
+    # `id`.
     src = """
     fn id[T](x: T) T {
         let y = x;
@@ -183,7 +198,7 @@ def test_calling_generic_fn_infers_typ_args_from_argument(tmp_path):
         return id(n) - 5;
     }
     """
-    _typecheck_main(tmp_path, src)
+    _lower_main(tmp_path, src)
 
 
 def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
@@ -194,7 +209,7 @@ def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
         return id[i32](5) - 5;
     }
     """
-    _typecheck_main(tmp_path, src)
+    _lower_main(tmp_path, src)
 
 
 def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
@@ -209,7 +224,7 @@ def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
         return pair_first(a, b) - 3;
     }
     """
-    _typecheck_main(tmp_path, src)
+    _lower_main(tmp_path, src)
 
 
 def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(tmp_path):
@@ -268,3 +283,95 @@ def test_generic_assoc_fn_not_yet_supported(tmp_path):
     """
     with pytest.raises(AssertionError):
         compile_str(tmp_path, src)
+
+
+def test_fn_instance_caches_by_typ_args(tmp_path):
+    mod = build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    fn = _get_generic_fn(mod, "id")
+
+    assert fn.instance((I32,)) is fn.instance((I32,))
+    assert fn.instance((I32,)) is not fn.instance((BOOL,))
+
+
+def test_fn_instance_signature_is_substituted(tmp_path):
+    mod = build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    fn = _get_generic_fn(mod, "id")
+
+    inst = fn.instance((I32,))
+    assert inst.fn_typ.param_typs == (I32,)
+    assert inst.fn_typ.ret_typ is I32
+
+
+def test_fn_instance_mangled_name(tmp_path):
+    mod = build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    fn = _get_generic_fn(mod, "id")
+
+    inst = fn.instance((I32,))
+    assert inst.name == "id[i32]"
+    assert inst.qualified_name == "main.id[i32]"
+
+
+def test_fn_instance_mangled_name_with_multiple_typ_args(tmp_path):
+    mod = build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
+    fn = _get_generic_fn(mod, "pair_first")
+
+    inst = fn.instance((I32, BOOL))
+    assert inst.name == "pair_first[i32, bool]"
+
+
+def test_fn_instance_body_lowers(tmp_path):
+    # The body's sole statement is a bare `return x;`, with no tail
+    # expression - so the block's own type is `never`, coerced to the
+    # declared return type T. Lowering that coercion has to substitute
+    # the instance's concrete type argument for T rather than leaving a
+    # raw type parameter behind for codegen to choke on.
+    mod = build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    fn = _get_generic_fn(mod, "id")
+
+    _ = fn.instance((I32,)).cfg
+
+
+def test_fn_instance_body_lowers_for_multiple_typ_args(tmp_path):
+    mod = build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
+    fn = _get_generic_fn(mod, "pair_first")
+
+    _ = fn.instance((I32, BOOL)).cfg
+
+
+def test_fn_instance_recursive_call_lowers(tmp_path):
+    # depth's own recursive call binds its type parameter to itself (the
+    # argument x has type T, depth's own type parameter), so the type
+    # argument TypCheck records for that call site is itself a type
+    # parameter, not a concrete type - lowering has to resolve that
+    # against the instance actually being built before asking for it.
+    mod = build_ir_mod(
+        tmp_path,
+        """
+        fn depth[T](x: T, n: i32) T {
+            if (n <= 0) {
+                return x;
+            };
+            return depth(x, n - 1);
+        }
+        """,
+    )
+    fn = _get_generic_fn(mod, "depth")
+
+    _ = fn.instance((I32,)).cfg
+
+
+def test_calling_generic_fn_lowers_to_an_instance_call(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        let n: i32 = 5;
+        return id(n) - 5;
+    }
+    """
+    cfg = _lower_main(tmp_path, src)
+
+    call_instrs = [instr for bb in cfg.nodes for instr in bb.instrs if isinstance(instr, CallInstr)]
+    (call,) = call_instrs
+    callee = checked_cast(call.callee, ir_module.FnInstance)
+    assert callee.name == "id[i32]"

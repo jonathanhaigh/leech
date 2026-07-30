@@ -13,6 +13,7 @@ than re-deriving them.
 """
 
 import enum
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -58,6 +59,7 @@ from leech.typs import (
     PtrTyp,
     StructTyp,
     Typ,
+    TypParamTyp,
 )
 
 
@@ -85,10 +87,25 @@ class CfgBuilder:
     rather than re-deriving it.
 
     :param typ_check_results: The already-computed type-checking facts for
-        the body being lowered (see :mod:`~leech.typcheck`).
+        the body being lowered (see :mod:`~leech.typcheck`). For a
+        generic function instance, these are its generic declaration's
+        own results, unsubstituted - see ``typ_arg_mapping``.
     :param fn: The function whose body is being lowered, or ``None`` when
         lowering a module-variable initializer (which isn't part of any
         function).
+    :param typ_arg_mapping: The concrete type to substitute for each of
+        the lowered function's own type parameters, if it's one instance
+        of a generic function - empty otherwise. Almost everything typed
+        during lowering already resolves concretely on its own (params
+        and locals ultimately trace back to :attr:`fn`'s own already-
+        substituted signature, or to a type resolved fresh from source
+        against an environment where each type parameter is already
+        shadowed by its concrete argument - see
+        :attr:`~leech.ir_module.FnInstance.env`); the one fact
+        :attr:`typ_check_results` can hand back containing a raw type
+        parameter is a :class:`~leech.typcheck.NeverDiverge` coercion's
+        target, which is why this is consulted in exactly one place,
+        :meth:`_coerce`.
     """
 
     @dataclass
@@ -101,6 +118,7 @@ class CfgBuilder:
 
     fn: ir_module.FnSpec | None
     typ_check_results: Final[TypCheckResults]
+    typ_arg_mapping: Final[Mapping[TypParamTyp, Typ]]
     cfg: Final[Cfg]
     curr_bb: BasicBlock
     _generate_bb_name: Final[VarNamer]
@@ -112,9 +130,11 @@ class CfgBuilder:
         self,
         typ_check_results: TypCheckResults,
         fn: ir_module.FnSpec | None = None,
+        typ_arg_mapping: Mapping[TypParamTyp, Typ] | None = None,
     ) -> None:
         self.fn = fn
         self.typ_check_results = typ_check_results
+        self.typ_arg_mapping = typ_arg_mapping if typ_arg_mapping is not None else {}
         self.cfg = Cfg()
         self._generate_bb_name = VarNamer()
         self.cfg._entry = self.add_bb("entry")
@@ -424,7 +444,12 @@ class CfgBuilder:
     def build_call_expr(self, call_ast: ast.CallExpr, e: Env, ctx: ExprContext) -> Value:
         """Lower a function call expression.
 
-        If the callee is written as ``x.name``, ``name`` is looked up as a
+        If the callee names a generic function, the call is against one
+        instance of it (see :meth:`~leech.ir_module.Fn.instance`) -
+        TypCheck already resolved which one, so this only has to fetch
+        (and, on the first call site to need it, build) it.
+
+        Otherwise, if the callee is written as ``x.name``, ``name`` is looked up as a
         method (an associated function with a ``self`` receiver) of
         ``x``'s struct type first; if found, ``x`` (its place - a method
         receiver is always by-pointer) becomes an implicit leading
@@ -452,7 +477,23 @@ class CfgBuilder:
         recv_ast: ast.Expr | None = None
         recv_arg: Value | None = None
 
-        if isinstance(callee_ast, ast.StructAccessExpr):
+        generic_call = self.typ_check_results.generic_call(call_ast)
+        if generic_call is not None:
+            # TypCheck already resolved which generic function this calls
+            # and its type arguments (inferred or explicit) - but against
+            # the callED generic declaration's own signature, so a type
+            # argument can itself be a type parameter (e.g. a generic
+            # function recursing on its own type parameter). Substituting
+            # for this lowering's own type arguments (a no-op outside a
+            # generic instance) resolves that down to this instantiation's
+            # concrete types before asking for the instance itself -
+            # building it, if this is the first call site to need it.
+            fn, typ_args = generic_call
+            concrete_typ_args = tuple(
+                typ_arg.substitute_typ_params(self.typ_arg_mapping) for typ_arg in typ_args
+            )
+            callee: Value = fn.instance(concrete_typ_args)
+        elif isinstance(callee_ast, ast.StructAccessExpr):
             recv_place = self.build_expr(callee_ast.struct, e, ExprContext.PLACE)
             method: ir_module.Fn | None = None
             if isinstance(recv_place.typ, PtrTyp) and isinstance(
@@ -464,7 +505,7 @@ class CfgBuilder:
             if method is not None:
                 recv_arg = recv_place
                 recv_ast = callee_ast.struct
-                callee: Value = method
+                callee = method
             else:
                 callee = self._build_struct_field_access(recv_place, callee_ast, ExprContext.VALUE)
         else:
@@ -1083,10 +1124,14 @@ class CfgBuilder:
                 # A diverging expression never actually produces a value,
                 # so it coerces to any type - by the time a real value
                 # would be read here, control can't have reached this
-                # point.
+                # point. target was recorded against the generic
+                # declaration's own (possibly type-parameter-typed)
+                # signature, so it needs substituting for this lowering's
+                # concrete type arguments - a no-op outside a generic
+                # instance, where typ_arg_mapping is empty.
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(node)
-                return UndefValue(target, node)
+                return UndefValue(target.substitute_typ_params(self.typ_arg_mapping), node)
             case IntExt(target=target):
                 return self.curr_bb.int_ext(value, target, node)
             case PtrMutRelax():

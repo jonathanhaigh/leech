@@ -2,7 +2,7 @@
 
 import enum
 from abc import abstractmethod
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from typing import ClassVar, Final, override
@@ -153,6 +153,11 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
     :param ast: The parsed function declaration or definition.
     :param e: The enclosing scope, used to resolve parameter and return
         types.
+    :param mod_name: The name of the module this function is declared in,
+        used to qualify a generic instantiation's mangled symbol name
+        (see :attr:`FnInstance.qualified_name`) - an ordinary
+        (non-generic) function is qualified by its own :class:`ModItem`
+        instead, same as any other module item.
     :param recv_struct_typ: The struct this function is an associated
         function of, if any - only consulted when ``ast.receiver`` is
         present, to synthesize the receiver's pointer-to-struct type
@@ -160,6 +165,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
     """
 
     env: Final[ir_env.Env]
+    mod_name: Final[str]
     recv_struct_typ: Final[StructTyp | None]
 
     @override
@@ -167,10 +173,12 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         self,
         ast: FnAstT_co,
         e: ir_env.Env,
+        mod_name: str,
         recv_struct_typ: StructTyp | None = None,
     ) -> None:
         super().__init__(ast)
         self.env = e.new_child()
+        self.mod_name = mod_name
         self.recv_struct_typ = recv_struct_typ
         # Bound here rather than looked up on demand, so a type parameter
         # resolves like any other named type wherever the body names it -
@@ -274,6 +282,121 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         assert self.ast is not None
         return Access.from_ast(self.ast.access) == PUBLIC or self.ast.span.file.path == file.path
 
+    @cached_property
+    def _instances(self) -> dict[tuple[Typ, ...], FnInstance]:
+        return {}
+
+    def instance(self, typ_args: tuple[Typ, ...]) -> FnInstance:
+        """Get this function's instantiation for ``typ_args``, building it if needed.
+
+        Cached, so requesting the same ``typ_args`` twice - from two
+        different call sites, or the same one lowered more than once -
+        returns the same :class:`FnInstance`, and its body is only ever
+        lowered once.
+
+        :param typ_args: The concrete type to substitute for each of this
+            function's own type parameters, in declaration order - empty
+            for a non-generic function.
+        :return: The (possibly newly-built, possibly cached) instantiation.
+        """
+        inst = self._instances.get(typ_args)
+        if inst is None:
+            inst = FnInstance(self, typ_args)
+            self._instances[typ_args] = inst
+        return inst
+
+
+class FnInstance(FnSpec[ast.FnDefn]):
+    """One concrete instantiation of a generic function's body, for one
+    fixed sequence of type arguments.
+
+    Built (and cached) by :meth:`Fn.instance`. A generic ``Fn``'s own
+    :attr:`~leech.ir_values.Value.typ` and :attr:`FnSpec.params` are only
+    ever used to type-check its body against its own type parameters,
+    treated opaquely (see :meth:`NonBuiltinFnSpec.__init__`); they aren't
+    real types anything should be lowered or called against. This is:
+    its :attr:`~leech.ir_values.Value.typ` and :attr:`FnSpec.params` are
+    ``fn``'s own, with every type parameter replaced by its entry in
+    ``typ_args``, and it has its own :attr:`cfg`, lowered once per
+    distinct instantiation rather than once for the generic declaration.
+
+    :param fn: The generic function this is an instantiation of.
+    :param typ_args: The concrete type to substitute for each of ``fn``'s
+        own type parameters, in declaration order.
+    """
+
+    fn: Final[Fn]
+    typ_args: Final[tuple[Typ, ...]]
+    _mapping: Final[Mapping[TypParamTyp, Typ]]
+
+    def __init__(self, fn: Fn, typ_args: tuple[Typ, ...]) -> None:
+        super().__init__(fn.ast)
+        self.fn = fn
+        self.typ_args = typ_args
+        fn_ast = opt_unwrap(fn.ast)
+        self._mapping = {
+            TypParamTyp.get_or_create(fn_ast, i, param_ast): typ_arg
+            for i, (param_ast, typ_arg) in enumerate(
+                zip(fn_ast.generic_params, typ_args, strict=True)
+            )
+        }
+
+    @override
+    def calculate_typ(self) -> PtrTyp:
+        substituted = checked_cast(self.fn.fn_typ.substitute_typ_params(self._mapping), FnTyp)
+        return PtrTyp.get_or_create(substituted, CONST)
+
+    @override
+    def calculate_params(self) -> tuple[Param, ...]:
+        return tuple(Param(self, param.pos, param.ast) for param in self.fn.params)
+
+    @property
+    @override
+    def name(self) -> str:
+        arg_names = ", ".join(typ_arg.name for typ_arg in self.typ_args)
+        return f"{self.fn.name}[{arg_names}]"
+
+    @property
+    def qualified_name(self) -> str:
+        """This instance's mangled symbol name, e.g. ``mod.id[i32]``.
+
+        Extends :attr:`ModItem.qualified_name`'s module-prefixed scheme -
+        an instance is never itself a :class:`ModItem` (nothing declares
+        one directly; it's built on demand by :meth:`Fn.instance`), so it
+        computes the same form independently, from :attr:`fn`'s own
+        module.
+        """
+        return f"{self.fn.mod_name}.{self.name}"
+
+    @cached_property
+    def env(self) -> ir_env.Env:
+        """The scope to lower this instance's body in.
+
+        :attr:`fn`'s own scope, with each type parameter shadowed here by
+        its concrete type argument - so anything resolved fresh from
+        source while lowering (a ``let``'s declared type, a struct
+        literal's, ...) picks up the concrete type automatically, without
+        the lowering code needing to know it's inside an instantiation.
+        """
+        e = self.fn.env.new_child()
+        fn_ast = opt_unwrap(self.fn.ast)
+        for param_ast, typ_arg in zip(fn_ast.generic_params, self.typ_args, strict=True):
+            e.add_container(param_ast.ident.name, typ_arg)
+        return e
+
+    @cached_property
+    def cfg(self) -> Cfg:
+        """This instance's body, lowered to a control-flow graph.
+
+        Built lazily, on first access, from :attr:`fn`'s own
+        (unsubstituted) type-check results - a generic body is checked
+        once, not once per instantiation (see :meth:`Mod.build`) - read
+        back here against this instance's concrete type arguments.
+        """
+        builder = ir_builder.CfgBuilder(self.fn.typ_check_results, self, self._mapping)
+        builder.build_fn(opt_unwrap(self.fn.ast), self.env)
+        return builder.cfg
+
 
 class GenericFn:
     """A free function with type parameters, not yet applied to any.
@@ -281,7 +404,7 @@ class GenericFn:
     Bound into :attr:`~leech.ir_env.Env.Namespace.VARS` in place of
     :attr:`fn` itself, under its name. A generic function's type isn't
     well-defined until it's applied to concrete type arguments (see
-    :meth:`Fn.instance`, not yet implemented) - :attr:`fn`'s own
+    :meth:`Fn.instance`) - :attr:`fn`'s own
     :attr:`~leech.ir_values.Value.typ` is one arbitrary, meaningless
     ``FnTyp`` built from its type parameters taken literally (needed only
     to type-check :attr:`fn`'s body against itself, with each parameter
@@ -466,8 +589,8 @@ class Mod:
         :meth:`~leech.ir_module.Fn.cfg`). A generic body is checked once,
         against its type parameters, independently of whether or how it's
         ever applied (that happens later, per call site - see
-        :meth:`Fn.instance`, not yet implemented), so nothing else is
-        guaranteed to ever force it.
+        :meth:`Fn.instance`), so nothing else is guaranteed to ever force
+        it.
 
         :raises ModDoesNotExistError: If an ``import`` names a module file
             that doesn't exist.
@@ -528,14 +651,14 @@ class Mod:
                 self._add_item(
                     defn_ast.name.name,
                     Access.PUBLIC,
-                    FnDecl(defn_ast, self.env),
+                    FnDecl(defn_ast, self.env, self.name),
                     False,
                 )
             case ast.FnDefn():
                 if defn_ast.receiver is not None:
                     raise SelfParamOutsideImplError(defn_ast.receiver.span)
                 qualify_name = self.name != "main" or defn_ast.name.name != "main"
-                fn = Fn(defn_ast, self.env)
+                fn = Fn(defn_ast, self.env, self.name)
                 value: Fn | GenericFn = fn
                 if defn_ast.generic_params:
                     value = GenericFn(fn)
@@ -578,7 +701,7 @@ class Mod:
             # upstream rejects the syntax, so fail loudly here rather than
             # silently mistreat the method's one literal FnTyp as real.
             assert not fn_ast.generic_params, "generic associated functions aren't supported yet"
-            fn = Fn(fn_ast, typ.env, recv_struct_typ=typ)
+            fn = Fn(fn_ast, typ.env, self.name, recv_struct_typ=typ)
             typ.add_assoc_fn(fn)
             self._add_item(f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn)
 

@@ -248,10 +248,12 @@ class TypCheckResults:
 
     _int_lit_typs: Final[dict[ast.IntLit, IntTyp]]
     _coercions: Final[dict[ast.Ast, Coercion | None]]
+    _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.Fn, tuple[Typ, ...]]]]
 
     def __init__(self) -> None:
         self._int_lit_typs = {}
         self._coercions = {}
+        self._generic_calls = {}
 
     def int_lit_typ(self, node: ast.IntLit) -> IntTyp:
         """The type chosen (and overflow-checked) for an integer literal.
@@ -276,6 +278,22 @@ class TypCheckResults:
 
     def _set_coercion(self, node: ast.Ast, coercion: Coercion | None) -> None:
         self._coercions[node] = coercion
+
+    def generic_call(self, node: ast.CallExpr) -> tuple[ir_module.Fn, tuple[Typ, ...]] | None:
+        """The resolved callee and type arguments for a call to a generic function.
+
+        :param node: The call's AST node, as checked by
+            :meth:`TypCheck._resolve_generic_call`.
+        :return: The generic function being called and its resolved type
+            arguments (in declaration order), or ``None`` if ``node``
+            doesn't call a generic function.
+        """
+        return self._generic_calls.get(node)
+
+    def _set_generic_call(
+        self, node: ast.CallExpr, fn: ir_module.Fn, typ_args: tuple[Typ, ...]
+    ) -> None:
+        self._generic_calls[node] = (fn, typ_args)
 
 
 class TypCheck:
@@ -662,6 +680,8 @@ class TypCheck:
         else:
             mapping = self._infer_typ_args(fn, call_ast, e, typ_params)
 
+        typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
+        self.results._set_generic_call(call_ast, fn, typ_args)
         return checked_cast(fn.fn_typ.substitute_typ_params(mapping), FnTyp)
 
     def _infer_typ_args(
