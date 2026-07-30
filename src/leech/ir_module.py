@@ -31,6 +31,7 @@ from leech.typs import (
     PtrTyp,
     StructTyp,
     Typ,
+    TypParamTyp,
 )
 
 
@@ -74,7 +75,7 @@ class ModItem:
     mod: Final[Mod]
     name: Final[str]
     access: Final[Access]
-    value: Final[Value[PtrTyp] | ir_env.Container]
+    value: Final[Value[PtrTyp] | ir_env.Container | GenericFn]
     qualify_name: Final[bool] = True
 
     @property
@@ -82,7 +83,9 @@ class ModItem:
         """Which namespace this item's name is bound in.
 
         Functions and variables are values, so they live in
-        :attr:`~leech.ir_env.Env.Namespace.VARS`; structs live in
+        :attr:`~leech.ir_env.Env.Namespace.VARS` - a :class:`GenericFn` too,
+        even though it isn't itself a :class:`~leech.ir_values.Value` (see
+        its docstring), since it stands in for one; structs live in
         :attr:`~leech.ir_env.Env.Namespace.CONTAINERS`, and so do imported
         modules - a module isn't a type, but it deliberately shares that
         namespace with types, so a module and a type can't share a name.
@@ -90,7 +93,7 @@ class ModItem:
         which is why its items are keyed on namespace as well as name
         (see :meth:`Mod.get_item`).
         """
-        if isinstance(self.value, Value):
+        if isinstance(self.value, (Value, GenericFn)):
             return ir_env.Env.Namespace.VARS
         return ir_env.Env.Namespace.CONTAINERS
 
@@ -169,6 +172,15 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         super().__init__(ast)
         self.env = e.new_child()
         self.recv_struct_typ = recv_struct_typ
+        # Bound here rather than looked up on demand, so a type parameter
+        # resolves like any other named type wherever the body names it -
+        # in a param or return type (below), or in an expression. A
+        # no-op loop for a non-generic function or an extern declaration,
+        # neither of which can have any.
+        for index, param_ast in enumerate(ast.generic_params):
+            self.env.add_container(
+                param_ast.ident.name, TypParamTyp.get_or_create(ast, index, param_ast)
+            )
 
     @override
     def calculate_typ(self) -> PtrTyp:
@@ -261,6 +273,42 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         """
         assert self.ast is not None
         return Access.from_ast(self.ast.access) == PUBLIC or self.ast.span.file.path == file.path
+
+
+class GenericFn:
+    """A free function with type parameters, not yet applied to any.
+
+    Bound into :attr:`~leech.ir_env.Env.Namespace.VARS` in place of
+    :attr:`fn` itself, under its name. A generic function's type isn't
+    well-defined until it's applied to concrete type arguments (see
+    :meth:`Fn.instance`, not yet implemented) - :attr:`fn`'s own
+    :attr:`~leech.ir_values.Value.typ` is one arbitrary, meaningless
+    ``FnTyp`` built from its type parameters taken literally (needed only
+    to type-check :attr:`fn`'s body against itself, with each parameter
+    opaque - see :meth:`~leech.ir_module.NonBuiltinFnSpec.__init__`), not
+    a type any caller should see. Binding :attr:`fn` directly would let
+    it be resolved and called as though that were a real type; naming a
+    ``GenericFn`` the way an ordinary value is named is instead a
+    :class:`~leech.errors.MissingTypArgsError` (see
+    :meth:`leech.typcheck.TypCheck.check_var_expr`).
+
+    :param fn: The wrapped generic function.
+    """
+
+    fn: Final[Fn]
+
+    def __init__(self, fn: Fn) -> None:
+        self.fn = fn
+
+    @property
+    def name(self) -> str:
+        """This function's name."""
+        return self.fn.name
+
+    @property
+    def span(self) -> SrcSpan | None:
+        """The source location of this function's declaration."""
+        return self.fn.span
 
 
 class ModVar(ComptimePtr[ast.VarDefn]):
@@ -412,6 +460,15 @@ class Mod:
         associated function always the newcomer in a name clash with a
         field (see :meth:`~leech.typs.StructTyp.add_assoc_fn`).
 
+        A generic function's body is type-checked here too, eagerly and
+        unconditionally - unlike an ordinary function, whose body is only
+        checked lazily, on first use of :attr:`Fn.typ_check_results` (see
+        :meth:`~leech.ir_module.Fn.cfg`). A generic body is checked once,
+        against its type parameters, independently of whether or how it's
+        ever applied (that happens later, per call site - see
+        :meth:`Fn.instance`, not yet implemented), so nothing else is
+        guaranteed to ever force it.
+
         :raises ModDoesNotExistError: If an ``import`` names a module file
             that doesn't exist.
         :raises DuplicateItemDefnError: If two definitions in this module
@@ -422,14 +479,18 @@ class Mod:
             module declares two fields with the same name.
         """
         impl_defns = []
+        generic_fns: list[Fn] = []
         for defn_ast in self.ast.defns:
             if isinstance(defn_ast, ast.ImplDefn):
                 impl_defns.append(defn_ast)
             else:
-                self._build_defn(defn_ast)
+                self._build_defn(defn_ast, generic_fns)
 
         for impl_ast in impl_defns:
             self._build_impl_defn(impl_ast)
+
+        for fn in generic_fns:
+            _ = fn.typ_check_results
 
     @property
     def name(self) -> str:
@@ -453,7 +514,7 @@ class Mod:
         """
         return self._items.get((ns, name))
 
-    def _build_defn(self, defn_ast: ast.Defn) -> None:
+    def _build_defn(self, defn_ast: ast.Defn, generic_fns: list[Fn]) -> None:
         match defn_ast:
             case ast.VarDefn():
                 self._add_item(
@@ -474,11 +535,13 @@ class Mod:
                 if defn_ast.receiver is not None:
                     raise SelfParamOutsideImplError(defn_ast.receiver.span)
                 qualify_name = self.name != "main" or defn_ast.name.name != "main"
+                fn = Fn(defn_ast, self.env)
+                value: Fn | GenericFn = fn
+                if defn_ast.generic_params:
+                    value = GenericFn(fn)
+                    generic_fns.append(fn)
                 self._add_item(
-                    defn_ast.name.name,
-                    Access.from_ast(defn_ast.access),
-                    Fn(defn_ast, self.env),
-                    qualify_name,
+                    defn_ast.name.name, Access.from_ast(defn_ast.access), value, qualify_name
                 )
             case ast.StructDefn():
                 self._add_item(
@@ -511,6 +574,10 @@ class Mod:
             raise ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         for fn_ast in impl_ast.fns:
+            # Generic associated functions aren't supported yet - nothing
+            # upstream rejects the syntax, so fail loudly here rather than
+            # silently mistreat the method's one literal FnTyp as real.
+            assert not fn_ast.generic_params, "generic associated functions aren't supported yet"
             fn = Fn(fn_ast, typ.env, recv_struct_typ=typ)
             typ.add_assoc_fn(fn)
             self._add_item(f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn)
@@ -519,7 +586,7 @@ class Mod:
         self,
         name: str,
         access: Access,
-        value: Value[PtrTyp] | ir_env.Container,
+        value: Value[PtrTyp] | ir_env.Container | GenericFn,
         qualify_name: bool = True,
         span: SrcSpan | None = None,
     ) -> None:

@@ -158,6 +158,8 @@ class Compiler:
                 self._compile_mod_struct(item, item.value)
 
         for item in self.mod.items:
+            if isinstance(item.value, ir_module.GenericFn):
+                continue
             self._compile_mod_item(item)
 
     def _program_items(self) -> Iterator[ir_module.ModItem]:
@@ -166,13 +168,16 @@ class Compiler:
         Imported modules contribute only their public items, since
         nothing outside them can refer to the rest. Items that are
         themselves imported modules are skipped: this walk already covers
-        every module, so recursing into them would be redundant.
+        every module, so recursing into them would be redundant. A
+        generic function is skipped too - it has no LLVM symbol of its
+        own, only its instances do (see
+        :class:`~leech.ir_module.GenericFn`), and nothing emits those yet.
 
         :return: The items, grouped by module in load order.
         """
         for mod in self.mod.loader.mods:
             for item in mod.items:
-                if isinstance(item.value, ir_module.Mod):
+                if isinstance(item.value, (ir_module.Mod, ir_module.GenericFn)):
                     continue
                 if mod is self.mod or item.access == ir_module.PUBLIC:
                     yield item

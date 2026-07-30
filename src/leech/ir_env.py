@@ -24,6 +24,13 @@ the same name. Both can hold associated items, which is what the
 namespace's name refers to.
 """
 
+type Var = ir_values.Value[typs.PtrTyp] | ir_module.GenericFn
+"""Anything bindable in the :attr:`Env.Namespace.VARS` namespace.
+
+A value, or a :class:`~leech.ir_module.GenericFn` standing in for one
+until it's applied to type arguments (see that class's docstring).
+"""
+
 
 class Env:
     """A lexical scope mapping names to variables, types and modules.
@@ -53,7 +60,7 @@ class Env:
                 case Env.Namespace.CONTAINERS:
                     return "type or module"
 
-    items: ChainMap[tuple[Env.Namespace, str], Container | ir_values.Value[typs.PtrTyp]]
+    items: ChainMap[tuple[Env.Namespace, str], Container | Var]
     #: Where a name was bound, for bindings whose item can't point at its
     #: own definition site (see :meth:`add`'s ``span`` parameter). Scoped
     #: to this Env alone, mirroring ``items.maps[0]``.
@@ -133,7 +140,7 @@ class Env:
     def add_var(
         self,
         name: str,
-        var: ir_values.Value[typs.PtrTyp],
+        var: Var,
         span: SrcSpan | None = None,
     ) -> None:
         """Bind a variable name in this scope.
@@ -159,7 +166,7 @@ class Env:
 
     @staticmethod
     def _private_item_diag_info(
-        value: ir_values.Value[typs.PtrTyp] | Container,
+        value: Container | Var,
     ) -> tuple[str, SrcSpan | None] | None:
         """A human-readable kind and definition span for a private-item
         diagnostic, if one applies.
@@ -172,6 +179,8 @@ class Env:
             that case callers should fall back to treating it as not found.
         """
         if isinstance(value, ir_module.FnSpec):
+            return "function", value.span
+        if isinstance(value, ir_module.GenericFn):
             return "function", value.span
         if isinstance(value, ir_module.ModVar):
             return "variable", value.span

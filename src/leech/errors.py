@@ -106,6 +106,25 @@ class ItemNotFoundError(UserError):
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
 
 
+class MissingTypArgsError(UserError):
+    """Raised when a generic item is named without the type arguments
+    needed to use it as a value.
+
+    A generic function isn't a value until applied to concrete type
+    arguments - naming it bare, the way an ordinary value is named, has
+    nothing to give it a type. Calling a generic function without
+    explicit type arguments raises this too, until call-site inference is
+    implemented.
+    """
+
+    def __init__(self, item_name: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            f'Generic item "{item_name}" used without required type arguments',
+            span,
+        )
+
+
 class PrivateItemAccessError(UserError):
     """Raised when accessing a private module-level item (function,
     variable, or type) from outside the module it's defined in (or, for an

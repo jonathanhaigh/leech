@@ -54,6 +54,7 @@ from leech.errors import (
     LoopLabelNotFoundError,
     MissingFieldInStructExprError,
     MissingRetError,
+    MissingTypArgsError,
     NotAMethodError,
     NotCallableError,
     NotEnoughArgsError,
@@ -723,12 +724,14 @@ class TypCheck:
 
     def check_var_expr(self, var_ast: ast.VarExpr, e: Env) -> Typ:
         # Real circular import: `ir_module` imports `typcheck` at module
-        # level, and the `isinstance` check below needs the actual class
-        # object at runtime, so this can't be deferred to a TYPE_CHECKING
+        # level, and the `isinstance` checks below need the actual class
+        # objects at runtime, so this can't be deferred to a TYPE_CHECKING
         # guard the way an annotation-only reference could be.
         from leech import ir_module  # noqa: PLC0415
 
         var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
+        if isinstance(var, ir_module.GenericFn):
+            raise MissingTypArgsError(var.name, var_ast.span)
         if isinstance(var, ir_module.FnSpec):
             return var.typ
         return var.typ.pointee_typ
@@ -873,13 +876,20 @@ class TypCheck:
         :param expr_ast: The parsed operand of ``&``.
         :param e: The scope to resolve names in.
         :return: The pointer type ``&expr_ast`` produces.
+        :raises MissingTypArgsError: If ``expr_ast`` bare-names a generic
+            function.
         """
         if isinstance(expr_ast, ast.VarExpr):
+            # Real circular import; see check_var_expr.
+            from leech import ir_module  # noqa: PLC0415
+
             # A variable's own type already *is* its place's pointer type
             # (see check_var_expr) - a function reference doubly so, since
             # taking its address is a no-op rather than an extra
             # indirection (see CfgBuilder.build_var_expr's PLACE case).
             var = e.resolve_path(Env.Namespace.VARS, expr_ast.path)
+            if isinstance(var, ir_module.GenericFn):
+                raise MissingTypArgsError(var.name, expr_ast.span)
             return var.typ
 
         value_typ = self.check_expr(expr_ast, e, None)
