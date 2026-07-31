@@ -153,11 +153,18 @@ class Compiler:
         below, purely to find them) and declared, alongside everything
         else, before any body - an ordinary function's or an instance's
         own - is compiled into LLVM IR and might need to call it.
+
+        A generic struct's own declaration - a ``StructTyp`` with type
+        parameters instead of real field types - is never declared or
+        compiled at all; only its instantiations are (see
+        :meth:`_discover_struct_instances`), found and lowered the same
+        on-demand way as a generic function instance, and for the same
+        reason: nothing else names them until something asks for one.
         """
         self.ll_mod.triple = "x86_64-linux-gnu"
 
         for item in self._program_items():
-            if isinstance(item.value, StructTyp):
+            if isinstance(item.value, StructTyp) and not item.value.ast.generic_params:
                 self._declare_mod_item(item)
 
         for item in self._program_items():
@@ -165,10 +172,26 @@ class Compiler:
                 self._declare_mod_item(item)
 
         for item in self._program_items():
-            if isinstance(item.value, StructTyp):
+            if isinstance(item.value, StructTyp) and not item.value.ast.generic_params:
                 self._compile_mod_struct(item, item.value)
 
+        # A generic struct's own fields are never lowered - only an
+        # instantiation's are, below - but they're still validated here,
+        # against the struct's own (opaque) type parameters, the same as
+        # every other declared struct's: an infinite-size or
+        # runaway-instantiation-depth struct is rejected whether or not
+        # anything in the program ever instantiates it.
+        for item in self._program_items():
+            if isinstance(item.value, StructTyp) and item.value.ast.generic_params:
+                _ = item.value.fields
+
         instances = self._discover_fn_instances()
+        struct_instances = self._discover_struct_instances()
+        for struct_inst in struct_instances:
+            self._declare_struct_instance(struct_inst)
+        for struct_inst in struct_instances:
+            self._compile_struct_instance(struct_inst)
+
         for inst in instances:
             self._declare_fn_instance(inst)
 
@@ -246,6 +269,63 @@ class Compiler:
             pending = newly_requested()
 
         return instances
+
+    def _discover_struct_instances(self) -> list[StructTyp]:
+        """Find every generic struct instantiation reachable from the program.
+
+        Mirrors :meth:`_discover_fn_instances`: an instantiation is
+        created on demand wherever its type is named - a struct literal,
+        a ``let``'s declared type, a function signature, another struct's
+        own field, ... - and one instantiation's own fields can themselves
+        name further instantiations, of the same or another generic
+        struct, so this iterates to a fixpoint the same way.
+
+        Run *after* :meth:`_discover_fn_instances`, which has already
+        forced every reachable function body to lower - and so already
+        requested (see :meth:`~leech.typs.StructTyp.instance`) every
+        instantiation any of them directly names. This only has to chase
+        the ones reachable purely through struct fields from there, which
+        involves no lowering, just resolving :attr:`~leech.typs.StructTyp.fields`.
+
+        Filters to :meth:`~leech.typs.StructTyp.is_concrete` instantiations:
+        type-checking a generic function or ``impl`` block resolves its own
+        type parameters opaquely, which also produces an entry in
+        :attr:`~leech.typs.StructTyp.instances` - one that names no real,
+        lowerable type, and is never reachable through anything that
+        actually gets lowered.
+
+        :return: Every instantiation discovered, in discovery order.
+        """
+        instances: list[StructTyp] = []
+        seen: set[StructTyp] = set()
+
+        def newly_requested() -> list[StructTyp]:
+            new = []
+            for mod in self.mod.loader.mods:
+                for item in mod.items:
+                    if isinstance(item.value, StructTyp) and item.value.ast.generic_params:
+                        for inst in item.value.instances:
+                            if inst.is_concrete() and inst not in seen:
+                                seen.add(inst)
+                                new.append(inst)
+            return new
+
+        pending = newly_requested()
+        while pending:
+            instances.extend(pending)
+            for inst in pending:
+                _ = inst.fields
+            pending = newly_requested()
+
+        return instances
+
+    def _declare_struct_instance(self, inst: StructTyp) -> None:
+        ll_typ = self.ll_mod.context.get_identified_type(inst.qualified_name)
+        self._ll_mod_items.set(inst, ll_typ)
+
+    def _compile_struct_instance(self, inst: StructTyp) -> None:
+        ll_typ = self.ll_mod.context.get_identified_type(inst.qualified_name)
+        ll_typ.set_body(*(self._ll_mod_items.get(field.typ) for field in inst.fields.values()))
 
     def _ll_typ(self, typ: Typ) -> ll.Type:
         match typ:

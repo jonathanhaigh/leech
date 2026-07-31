@@ -599,7 +599,8 @@ class Mod:
         against its type parameters, independently of whether or how it's
         ever applied (that happens later, per call site - see
         :meth:`Fn.instance`), so nothing else is guaranteed to ever force
-        it.
+        it. A generic ``impl`` block's associated functions are checked
+        the same eager way - see :meth:`_build_impl_defn`.
 
         :raises ModDoesNotExistError: If an ``import`` names a module file
             that doesn't exist.
@@ -619,7 +620,7 @@ class Mod:
                 self._build_defn(defn_ast, generic_fns)
 
         for impl_ast in impl_defns:
-            self._build_impl_defn(impl_ast)
+            self._build_impl_defn(impl_ast, generic_fns)
 
         for fn in generic_fns:
             _ = fn.typ_check_results
@@ -679,7 +680,7 @@ class Mod:
                 self._add_item(
                     defn_ast.ident.name,
                     Access.from_ast(defn_ast.access),
-                    StructTyp.create(defn_ast, self.env),
+                    StructTyp.create(defn_ast, self.env, (), self.name),
                 )
             case ast.Import():
                 mod_name = defn_ast.ident.name
@@ -693,26 +694,72 @@ class Mod:
                 # (Mod.build) filters those out before calling here.
                 raise AssertionError(f"unhandled definition {defn_ast}")
 
-    def _build_impl_defn(self, impl_ast: ast.ImplDefn) -> None:
+    def _build_impl_defn(self, impl_ast: ast.ImplDefn, generic_fns: list[Fn]) -> None:
+        """Build one ``impl`` block's associated functions.
+
+        :param impl_ast: The parsed ``impl`` block.
+        :param generic_fns: Accumulates every associated function defined
+            in a *generic* ``impl`` block (``impl_ast.generic_params``
+            non-empty), so :meth:`build` can force it to type-check
+            eagerly, the same as a free generic function - see its
+            docstring. Such a function is otherwise unreachable: it's
+            registered as one of its (generic) receiver type's members,
+            never as a :class:`ModItem`, since :attr:`typ`'s receiver -
+            built from the impl's own, still-opaque type parameters -
+            names no real, lowerable type for codegen to make sense of
+            (see :meth:`~leech.typs.StructTyp.is_concrete`). Calling such
+            a method isn't supported yet: that needs the general member
+            lookup and receiver substitution traits will add.
+        :raises ImplForNonStructTypError: If ``impl_ast.typ`` doesn't name
+            a struct type.
+        :raises ImplForNonLocalStructTypError: If ``impl_ast.typ`` names a
+            struct defined outside this module.
+        """
+        # Trait impls (`impl Trait for T { ... }`) parse but aren't
+        # supported yet.
+        assert impl_ast.for_typ is None, "trait impls aren't supported yet"
+
         impl_typ_ast = impl_ast.typ
         if not isinstance(impl_typ_ast, ast.BasicTyp):
             raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
-        typ = Typ.from_ast(impl_typ_ast, self.env)
+        # The impl's own type parameters, if any, are bound here - before
+        # impl_typ_ast is resolved - so a generic impl's target type
+        # (e.g. `Pair[T, T]`) can name them, and again below, alongside
+        # each associated function's receiver scope, so a method's own
+        # signature and body can too.
+        impl_env = self.env.new_child()
+        for index, param_ast in enumerate(impl_ast.generic_params):
+            impl_env.add_container(
+                param_ast.ident.name, TypParamTyp.get_or_create(impl_ast, index, param_ast)
+            )
+
+        typ = Typ.from_ast(impl_typ_ast, impl_env)
         if not isinstance(typ, StructTyp):
             raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         if len(impl_typ_ast.path.idents) > 1:
             raise ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
+        fn_env = typ.env.new_child()
+        for index, param_ast in enumerate(impl_ast.generic_params):
+            fn_env.add_container(
+                param_ast.ident.name, TypParamTyp.get_or_create(impl_ast, index, param_ast)
+            )
+
         for fn_ast in impl_ast.fns:
             # Generic associated functions aren't supported yet - nothing
             # upstream rejects the syntax, so fail loudly here rather than
             # silently mistreat the method's one literal FnTyp as real.
             assert not fn_ast.generic_params, "generic associated functions aren't supported yet"
-            fn = Fn(fn_ast, typ.env, self.name, recv_struct_typ=typ)
+            fn = Fn(fn_ast, fn_env, self.name, recv_struct_typ=typ)
             typ.add_assoc_fn(fn)
-            self._add_item(f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn)
+            if impl_ast.generic_params:
+                generic_fns.append(fn)
+            else:
+                self._add_item(
+                    f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn
+                )
 
     def _add_item(
         self,

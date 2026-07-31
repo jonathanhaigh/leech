@@ -1003,15 +1003,24 @@ class StructDefn(Defn):
 
     access: Access | None
     ident: Ident
+    #: Empty for a non-generic struct.
+    generic_params: list[GenericParam]
     fields: list[StructFieldDefn]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "struct_defn")
         super().__init__(SrcSpan(file, tree.meta))
-        access, ident, field_defn_list = map(as_tree, tree.children)
-        self.access = Access.from_tree(file, access)
-        self.ident = Ident(file, ident)
+        access, ident, generic_params, field_defn_list = tree.children
+        self.access = Access.from_tree(file, as_tree(access))
+        self.ident = Ident(file, as_tree(ident))
+        if generic_params is not None:
+            self.generic_params = [
+                GenericParam(file, as_tree(c)) for c in as_tree(generic_params).children
+            ]
+        else:
+            self.generic_params = []
 
+        field_defn_list = as_tree(field_defn_list)
         assert_eq(field_defn_list.data, "struct_field_defn_list")
         self.fields = [StructFieldDefn(file, as_tree(child)) for child in field_defn_list.children]
 
@@ -1043,17 +1052,33 @@ class StructFieldDefn(Ast):
 
 
 class ImplDefn(Defn):
-    """An ``impl SomeStruct { ... }`` block of associated functions."""
+    """An ``impl SomeStruct { ... }`` block of associated functions, or -
+    once ``for_typ`` is supported - a trait implementation.
 
+    :param for_typ: The parsed ``for`` clause's type, if present. Parses
+        now but isn't supported yet: every :class:`ImplDefn` is currently
+        rejected unless this is ``None``.
+    """
+
+    #: Empty for a non-generic impl block.
+    generic_params: list[GenericParam]
     typ: Typ
+    for_typ: Typ | None
     fns: list[FnDefn]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "impl_defn")
         super().__init__(SrcSpan(file, tree.meta))
-        typ, *fn_trees = list(map(as_tree, tree.children))
-        self.typ = Typ.from_tree(file, typ)
-        self.fns = [FnDefn(file, fn_tree) for fn_tree in fn_trees]
+        generic_params, typ, for_typ, *fn_trees = tree.children
+        if generic_params is not None:
+            self.generic_params = [
+                GenericParam(file, as_tree(c)) for c in as_tree(generic_params).children
+            ]
+        else:
+            self.generic_params = []
+        self.typ = Typ.from_tree(file, as_tree(typ))
+        self.for_typ = opt_map(for_typ, lambda t: Typ.from_tree(file, as_tree(t)))
+        self.fns = [FnDefn(file, as_tree(fn_tree)) for fn_tree in fn_trees]
 
     @override
     def diag_str(self) -> str:

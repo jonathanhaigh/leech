@@ -20,12 +20,12 @@ fn_decl: "extern" _fn_prototype ";"
 
 var_defn: access let_stmt
 
-struct_defn: access "struct" ident "{" struct_field_defn_list "}"
+struct_defn: access "struct" ident [generic_params] "{" struct_field_defn_list "}"
 struct_field_defn_list: _struct_field_defn_list?
 _struct_field_defn_list: struct_field_defn ("," struct_field_defn)* ","?
 struct_field_defn: access mut ident ":" typ
 
-impl_defn: "impl" typ "{" fn_defn* "}"
+impl_defn: "impl" [generic_params] typ ["for" typ] "{" fn_defn* "}"
 
 import: "import" ident ";"
 

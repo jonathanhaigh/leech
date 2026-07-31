@@ -870,6 +870,7 @@ COMMENTED_INTS = [
             T("defn", "struct_defn").cs(
                 T("access", Tok(None)),
                 T("ident", Tok("AStruct")),
+                None,
                 T("struct_field_defn_list").cs(
                     T("struct_field_defn").cs(
                         T("access", Tok(None)),
@@ -901,33 +902,90 @@ COMMENTED_INTS = [
             T("defn", "struct_defn").cs(
                 T("access", Tok("pub")),
                 T("ident", Tok("EmptyStruct")),
+                None,
                 T("struct_field_defn_list"),
+            ),
+        ),
+        (
+            "defn",
+            "struct Pair[A, B] { first: A, second: B }",
+            T("defn", "struct_defn").cs(
+                T("access", Tok(None)),
+                T("ident", Tok("Pair")),
+                T("generic_params").cs(
+                    T("generic_param", "ident", Tok("A")),
+                    T("generic_param", "ident", Tok("B")),
+                ),
+                T("struct_field_defn_list").cs(
+                    T("struct_field_defn").cs(
+                        T("access", Tok(None)),
+                        T("mut", Tok(None)),
+                        T("ident", Tok("first")),
+                        T("basic_typ").cs(T("path", "ident", Tok("A")), None),
+                    ),
+                    T("struct_field_defn").cs(
+                        T("access", Tok(None)),
+                        T("mut", Tok(None)),
+                        T("ident", Tok("second")),
+                        T("basic_typ").cs(T("path", "ident", Tok("B")), None),
+                    ),
+                ),
             ),
         ),
         (
             "defn",
             "impl Foo {}",
             T("defn", "impl_defn").cs(
+                None,
                 T("basic_typ").cs(T("path", "ident", Tok("Foo")), None),
+                None,
+            ),
+        ),
+        (
+            "defn",
+            "impl[T] Pair[T, T] {}",
+            T("defn", "impl_defn").cs(
+                T("generic_params", "generic_param", "ident", Tok("T")),
+                T("basic_typ").cs(
+                    T("path", "ident", Tok("Pair")),
+                    T("generic_args").cs(
+                        T("basic_typ").cs(T("path", "ident", Tok("T")), None),
+                        T("basic_typ").cs(T("path", "ident", Tok("T")), None),
+                    ),
+                ),
+                None,
+            ),
+        ),
+        (
+            "defn",
+            "impl Show for i32 {}",
+            T("defn", "impl_defn").cs(
+                None,
+                T("basic_typ").cs(T("path", "ident", Tok("Show")), None),
+                T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
             ),
         ),
         (
             "defn",
             "impl *Foo {}",
             T("defn", "impl_defn").cs(
+                None,
                 T("ptr_typ").cs(
                     T("mut", Tok(None)), T("basic_typ").cs(T("path", "ident", Tok("Foo")), None)
                 ),
+                None,
             ),
         ),
         (
             "defn",
             "impl [Foo; 3] {}",
             T("defn", "impl_defn").cs(
+                None,
                 T("array_typ").cs(
                     T("basic_typ").cs(T("path", "ident", Tok("Foo")), None),
                     T("array_length", Tok("3")),
                 ),
+                None,
             ),
         ),
         (
@@ -1006,7 +1064,9 @@ COMMENTED_INTS = [
             "defn",
             "impl Foo { fn f() i32 { 1 } }",
             T("defn", "impl_defn").cs(
+                None,
                 T("basic_typ").cs(T("path", "ident", Tok("Foo")), None),
+                None,
                 T("fn_defn").cs(
                     T("access", Tok(None)),
                     T("ident", Tok("f")),
@@ -1021,7 +1081,9 @@ COMMENTED_INTS = [
             "defn",
             "impl Foo { pub fn new() Foo { 1 } fn helper() i32 { 2 } }",
             T("defn", "impl_defn").cs(
+                None,
                 T("basic_typ").cs(T("path", "ident", Tok("Foo")), None),
+                None,
                 T("fn_defn").cs(
                     T("access", Tok("pub")),
                     T("ident", Tok("new")),
@@ -1085,10 +1147,13 @@ COMMENTED_INTS = [
                 T("defn", "struct_defn").cs(
                     T("access", Tok(None)),
                     T("ident", Tok("Foo")),
+                    None,
                     T("struct_field_defn_list"),
                 ),
                 T("defn", "impl_defn").cs(
+                    None,
                     T("basic_typ").cs(T("path", "ident", Tok("Foo")), None),
+                    None,
                     T("fn_defn").cs(
                         T("access", Tok("pub")),
                         T("ident", Tok("new")),
@@ -1156,6 +1221,8 @@ def test_parse(rule, src, expected):
         ("generic_params", "[]"),
         ("generic_params", "[T"),
         ("expr", "f[](x)"),
+        ("struct_defn", "struct Foo[] {}"),
+        ("impl_defn", "impl[] Foo {}"),
         ("typ", "[x: -10]"),
         ("typ", "[x: N]"),
         ("param", ""),

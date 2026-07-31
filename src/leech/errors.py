@@ -786,6 +786,24 @@ class InfiniteSizeStructError(UserError):
             )
 
 
+class TypInstantiationDepthExceededError(UserError):
+    """Raised when resolving a generic struct's fields would require
+    instantiating it, or another generic struct reached from it, to an
+    unbounded nesting depth - e.g. ``struct L[T] { x: L[[T; 1]] }``, where
+    each field access wraps another array layer around ``T``. Unlike
+    :class:`InfiniteSizeStructError`, no single struct type repeats here:
+    each nesting level is a genuinely distinct instantiation, so the only
+    way to catch the runaway recursion is a depth cap.
+    """
+
+    def __init__(self, struct_name: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            f'Instantiating struct "{struct_name}" nests generic arguments too deeply',
+            span,
+        )
+
+
 class FieldAccessIntoInvalidTypError(UserError):
     """Raised when using ``.`` field access on a non-struct type."""
 
