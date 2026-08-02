@@ -3,6 +3,7 @@
 from collections import ChainMap
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Optional
 
 from llvmlite import ir as ll
 from networkx import dfs_postorder_nodes
@@ -71,7 +72,7 @@ class Compiler:
         def __init__(
             self,
             compiler: Compiler,
-            values: ChainMap[ir_values.Value | Typ, ll.Value | ll.Type] | None = None,
+            values: Optional[ChainMap[ir_values.Value | Typ, ll.Value | ll.Type]] = None,
         ) -> None:
             super().__init__()
             self.compiler = compiler

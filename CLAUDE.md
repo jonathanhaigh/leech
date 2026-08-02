@@ -148,3 +148,7 @@ Cross-cutting pieces:
 - `Typ` and `ast.Typ` are different things: `ast.Typ` is a parsed type
   *expression*; `typs.Typ` is the resolved, interned type it's turned into via
   `typs.Typ.from_ast`.
+- Nullable Python type annotations use `Optional[X]`, not `X | None` — ruff's
+  `UP045` (which would rewrite `Optional[X]` to `X | None`) is disabled in
+  `[tool.ruff.lint]` for this reason. Plain (non-nullable) unions still use
+  `X | Y` PEP 604 syntax as normal.

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from difflib import ndiff
+from typing import Optional
 
 import pytest
 from lark import Tree, UnexpectedCharacters, UnexpectedToken
@@ -9,7 +10,7 @@ from leech.parse import build_parser
 
 @dataclass
 class Tok:
-    value: str | None
+    value: Optional[str]
 
 
 class T(Tree):

@@ -4,7 +4,7 @@ import ast as python_ast
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, override
+from typing import Any, Optional, override
 
 from lark import Token
 from lark.tree import Branch, ParseTree, Tree
@@ -203,7 +203,7 @@ class BlockExpr(Expr):
     """A ``{ stmt; ...; tail_expr }`` block expression."""
 
     stmts: list[Stmt]
-    expr: Expr | None
+    expr: Optional[Expr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "block_expr")
@@ -235,7 +235,7 @@ class IfExpr(Expr):
 
     condition: Expr
     then: BlockExpr
-    els: BlockExpr | None
+    els: Optional[BlockExpr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "if_expr")
@@ -259,7 +259,7 @@ class IfExpr(Expr):
 class WhileExpr(Expr):
     """A ``[label:] while (condition) { ... }`` loop expression."""
 
-    label: Ident | None
+    label: Optional[Ident]
     condition: Expr
     block: BlockExpr
 
@@ -305,8 +305,8 @@ class IntLit(Expr):
 
     token: Token
     value: int
-    explicit_width: int | None
-    explicit_signage: Signage | None
+    explicit_width: Optional[int]
+    explicit_signage: Optional[Signage]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "int_lit")
@@ -616,7 +616,7 @@ class ExprStmt(Stmt):
 class RetStmt(Stmt):
     """A ``return`` statement, with or without a value."""
 
-    expr: Expr | None
+    expr: Optional[Expr]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "ret_stmt")
@@ -632,7 +632,7 @@ class RetStmt(Stmt):
 class BreakStmt(Stmt):
     """A ``break`` statement, with or without a target loop label."""
 
-    label: Ident | None
+    label: Optional[Ident]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "break_stmt")
@@ -648,7 +648,7 @@ class BreakStmt(Stmt):
 class ContinueStmt(Stmt):
     """A ``continue`` statement, with or without a target loop label."""
 
-    label: Ident | None
+    label: Optional[Ident]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "continue_stmt")
@@ -664,9 +664,9 @@ class ContinueStmt(Stmt):
 class LetStmt(Stmt):
     """A local ``let`` binding statement, with an optional declared type."""
 
-    mut: Mutability | None
+    mut: Optional[Mutability]
     ident: Ident
-    typ: Typ | None
+    typ: Optional[Typ]
     expr: Expr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -759,7 +759,7 @@ class BasicTyp(Typ):
 class PtrTyp(Typ):
     """A pointer type expression, e.g. ``*i32`` or ``*mut i32``."""
 
-    mut: Mutability | None
+    mut: Optional[Mutability]
     pointee_typ: Typ
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -820,7 +820,7 @@ class Receiver(Ast):
     """
 
     name: Ident
-    mut: Mutability | None
+    mut: Optional[Mutability]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
         assert_eq(tree.data, "receiver")
@@ -907,18 +907,18 @@ class FnSpec(Defn):
     name: Ident
     #: Empty for a non-generic function.
     generic_params: list[GenericParam]
-    receiver: Receiver | None
+    receiver: Optional[Receiver]
     params: list[Param]
-    ret_typ: Typ | None
+    ret_typ: Optional[Typ]
 
     def __init__(
         self,
         file,
         tree: ParseTree,
         ident: ParseTree,
-        generic_params: ParseTree | None,
+        generic_params: Optional[ParseTree],
         param_list: ParseTree,
-        ret_typ: ParseTree | None,
+        ret_typ: Optional[ParseTree],
     ) -> None:
         super().__init__(SrcSpan(file, tree.meta))
         self.name = Ident(file, ident)
@@ -982,7 +982,7 @@ class TraitFn(FnSpec):
 class FnDefn(FnSpec):
     """A function defined with a body."""
 
-    access: Access | None
+    access: Optional[Access]
     block: BlockExpr
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -1007,7 +1007,7 @@ class FnDefn(FnSpec):
 class VarDefn(Defn):
     """A module-level ``let`` variable definition."""
 
-    access: Access | None
+    access: Optional[Access]
     let_stmt: LetStmt
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -1025,7 +1025,7 @@ class VarDefn(Defn):
 class StructDefn(Defn):
     """A struct type definition."""
 
-    access: Access | None
+    access: Optional[Access]
     ident: Ident
     #: Empty for a non-generic struct.
     generic_params: list[GenericParam]
@@ -1056,8 +1056,8 @@ class StructDefn(Defn):
 class StructFieldDefn(Ast):
     """A single field declaration within a :class:`StructDefn`."""
 
-    access: Access | None
-    mut: Mutability | None
+    access: Optional[Access]
+    mut: Optional[Mutability]
     ident: Ident
     typ: Typ
 
@@ -1079,7 +1079,7 @@ class TraitDefn(Defn):
     """A trait definition: a named set of method prototypes an ``impl ...
     for ...`` block promises to provide."""
 
-    access: Access | None
+    access: Optional[Access]
     ident: Ident
     #: Empty for a non-generic trait.
     generic_params: list[GenericParam]
@@ -1118,7 +1118,7 @@ class ImplDefn(Defn):
     #: Empty for a non-generic impl block.
     generic_params: list[GenericParam]
     typ: Typ
-    for_typ: Typ | None
+    for_typ: Optional[Typ]
     fns: list[FnDefn]
 
     def __init__(self, file: SrcFile, tree: ParseTree) -> None:
@@ -1169,7 +1169,7 @@ class Access(Ast):
         self.value = as_token(child)
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Access | None:
+    def from_tree(file: SrcFile, tree: ParseTree) -> Optional[Access]:
         """Build an :class:`Access` from a parse tree, if it has one present.
 
         :param file: The source file ``tree`` was parsed from.
@@ -1200,7 +1200,7 @@ class Mutability(Ast):
         self.value = as_token(child)
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Mutability | None:
+    def from_tree(file: SrcFile, tree: ParseTree) -> Optional[Mutability]:
         """Build a :class:`Mutability` from a parse tree, if it has one present.
 
         :param file: The source file ``tree`` was parsed from.
@@ -1234,7 +1234,7 @@ class Mod(Ast):
         return "module"
 
 
-def opt_ast(obj: Any) -> Ast | None:
+def opt_ast(obj: Any) -> Optional[Ast]:
     """Get ``obj``'s ``ast`` attribute, if it has one and it's an :class:`Ast`.
 
     :param obj: The object to inspect (typically an
@@ -1247,7 +1247,7 @@ def opt_ast(obj: Any) -> Ast | None:
     return None
 
 
-def opt_span(obj: Any) -> SrcSpan | None:
+def opt_span(obj: Any) -> Optional[SrcSpan]:
     """Get the source span of ``obj``'s ``ast`` attribute, if it has one.
 
     :param obj: The object to inspect (typically an

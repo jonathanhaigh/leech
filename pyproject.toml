@@ -38,6 +38,9 @@ target-version = "py314"
 line-length = 100
 
 [tool.ruff.lint]
+# UP045 (Optional[X] -> X | None) is disabled: this codebase prefers
+# `Optional[X]` over PEP 604 syntax for nullable types.
+ignore = ["UP045"]
 select = [
     "E", "F", "W",   # pycodestyle / pyflakes (default set, kept explicit)
     "A",             # flake8-builtins: don't shadow builtins

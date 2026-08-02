@@ -3,7 +3,7 @@
 import enum
 import re
 from collections import ChainMap
-from typing import Any
+from typing import Any, Optional
 
 from leech import ast, ir_module, ir_traits, ir_values, typs
 from leech.asserts import assert_ge, checked_cast
@@ -85,8 +85,8 @@ class Env:
 
     def __init__(
         self,
-        parent: Env | None = None,
-        impl_registry: ir_traits.ImplRegistry | None = None,
+        parent: Optional[Env] = None,
+        impl_registry: Optional[ir_traits.ImplRegistry] = None,
     ) -> None:
         if parent is None:
             self.items = ChainMap()
@@ -133,7 +133,7 @@ class Env:
         ns: Env.Namespace,
         name: str,
         item: Any,
-        span: SrcSpan | None = None,
+        span: Optional[SrcSpan] = None,
     ) -> None:
         """Bind ``name`` to ``item`` in ``ns``, in this scope only.
 
@@ -164,7 +164,7 @@ class Env:
         self,
         name: str,
         var: Var,
-        span: SrcSpan | None = None,
+        span: Optional[SrcSpan] = None,
     ) -> None:
         """Bind a variable name in this scope.
 
@@ -176,7 +176,7 @@ class Env:
         """
         return self.add(Env.Namespace.VARS, name, var, span)
 
-    def add_container(self, name: str, item: Container, span: SrcSpan | None = None) -> None:
+    def add_container(self, name: str, item: Container, span: Optional[SrcSpan] = None) -> None:
         """Bind a type or module name in this scope.
 
         :param name: The name to bind.
@@ -190,7 +190,7 @@ class Env:
     @staticmethod
     def _private_item_diag_info(
         value: Container | Var,
-    ) -> tuple[str, SrcSpan | None] | None:
+    ) -> Optional[tuple[str, Optional[SrcSpan]]]:
         """A human-readable kind and definition span for a private-item
         diagnostic, if one applies.
 

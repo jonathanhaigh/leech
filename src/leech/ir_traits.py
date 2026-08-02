@@ -1,7 +1,7 @@
 """Trait declarations and their implementations."""
 
 from collections.abc import Collection, Hashable
-from typing import Final
+from typing import Final, Optional
 
 from leech import ast, ir_env, ir_module, typs
 from leech.errors import (
@@ -133,7 +133,7 @@ class Trait:
         """The source location of this trait's declaration."""
         return self.ast.span
 
-    def get_method(self, name: str) -> TraitMethod | None:
+    def get_method(self, name: str) -> Optional[TraitMethod]:
         """Find this trait's method prototype called ``name``.
 
         :param name: The name to look up.
@@ -262,7 +262,7 @@ class Impl:
             )
         self._methods[fn.name] = fn
 
-    def get_method(self, name: str) -> ir_module.Fn | None:
+    def get_method(self, name: str) -> Optional[ir_module.Fn]:
         """Find this impl's method called ``name``.
 
         :param name: The name to look up.
@@ -372,7 +372,7 @@ class ImplRegistry:
                 )
         impls.append(impl)
 
-    def find_impl(self, trait: Trait, typ: typs.Typ) -> Impl | None:
+    def find_impl(self, trait: Trait, typ: typs.Typ) -> Optional[Impl]:
         """Find the impl of ``trait`` that applies to ``typ``, if any.
 
         :param trait: The trait to find an implementation of.
@@ -404,7 +404,9 @@ class ImplRegistry:
         return result
 
 
-def disambiguate[T](matches: list[T], name: str, typ_name: str, span: SrcSpan | None) -> T | None:
+def disambiguate[T](
+    matches: list[T], name: str, typ_name: str, span: Optional[SrcSpan]
+) -> Optional[T]:
     """Resolve a list of same-named candidate methods to the one to use.
 
     Shared by every method-lookup site with more than one place a name
@@ -432,8 +434,8 @@ def lookup_member(
     typ: typs.Typ,
     name: str,
     registry: ImplRegistry,
-    span: SrcSpan | None,
-) -> ir_module.Fn | None:
+    span: Optional[SrcSpan],
+) -> Optional[ir_module.Fn]:
     """Find ``typ``'s member (inherent or via a trait impl) called ``name``.
 
     The generalisation :attr:`~leech.typs.StructTyp.get_assoc_fn` used to be

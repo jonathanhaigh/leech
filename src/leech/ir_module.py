@@ -5,7 +5,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from functools import cached_property
-from typing import ClassVar, Final, override
+from typing import ClassVar, Final, Optional, override
 
 from leech import ast, comptime, ir_builder, ir_env, ir_loader, ir_traits, typcheck
 from leech.asserts import assert_eq, checked_cast
@@ -43,7 +43,7 @@ class Access(enum.Enum):
     PUBLIC = 1
 
     @staticmethod
-    def from_ast(ast: ast.Access | None) -> Access:
+    def from_ast(ast: Optional[ast.Access]) -> Access:
         """Determine access from an optional ``pub`` keyword in the AST.
 
         :param ast: The parsed ``pub`` keyword node, or ``None`` if
@@ -169,7 +169,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
 
     env: Final[ir_env.Env]
     mod_name: Final[str]
-    recv_typ: Final[Typ | None]
+    recv_typ: Final[Optional[Typ]]
 
     @override
     def __init__(
@@ -177,7 +177,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         ast: FnAstT_co,
         e: ir_env.Env,
         mod_name: str,
-        recv_typ: Typ | None = None,
+        recv_typ: Optional[Typ] = None,
     ) -> None:
         super().__init__(ast)
         self.env = e.new_child()
@@ -441,7 +441,7 @@ class GenericFn:
         return self.fn.name
 
     @property
-    def span(self) -> SrcSpan | None:
+    def span(self) -> Optional[SrcSpan]:
         """The source location of this function's declaration."""
         return self.fn.span
 
@@ -638,7 +638,7 @@ class Mod:
         """Every item this module declares, in declaration order."""
         return self._items.values()
 
-    def get_item(self, ns: ir_env.Env.Namespace, name: str) -> ModItem | None:
+    def get_item(self, ns: ir_env.Env.Namespace, name: str) -> Optional[ModItem]:
         """Find the item this module declares as ``name`` in ``ns``.
 
         :param ns: The namespace to look in. A value and a type of the
@@ -873,7 +873,7 @@ class Mod:
         access: Access,
         value: Value[PtrTyp] | ir_env.Container | GenericFn,
         qualify_name: bool = True,
-        span: SrcSpan | None = None,
+        span: Optional[SrcSpan] = None,
     ) -> None:
         item = ModItem(self, name, access, value, qualify_name)
         # Bind in env before recording the item: Env.add is what rejects a

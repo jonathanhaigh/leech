@@ -5,7 +5,7 @@ Used to evaluate module-level ``let`` initializers (see
 generated code.
 """
 
-from typing import Final
+from typing import Final, Optional
 
 from leech import ir_module, ir_values
 from leech.asserts import assert_eq, assert_lt, checked_cast
@@ -34,9 +34,9 @@ class Interpreter:
     registers: Final[dict[ir_values.Value, ir_values.ComptimeValue]]
     cfg: Final[ir_values.Cfg]
     curr_bb: ir_values.BasicBlock
-    prev_bb: ir_values.BasicBlock | None
+    prev_bb: Optional[ir_values.BasicBlock]
     curr_instr_index: int
-    ret_value: ir_values.ComptimeValue | None
+    ret_value: Optional[ir_values.ComptimeValue]
 
     def __init__(
         self,

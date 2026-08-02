@@ -23,7 +23,7 @@ handling throughout the ``check_*`` methods below.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Optional
 
 from leech import ast
 from leech.asserts import checked_cast
@@ -149,7 +149,7 @@ def resolve_peer_typ(fixed_typs: list[Typ]) -> Typ:
     return I32
 
 
-def _callable_typ(typ: Typ) -> CallableTyp | None:
+def _callable_typ(typ: Typ) -> Optional[CallableTyp]:
     """``typ``, unwrapped to the type it's callable as, if it's one.
 
     :param typ: The type to check.
@@ -161,7 +161,7 @@ def _callable_typ(typ: Typ) -> CallableTyp | None:
     return None
 
 
-def _struct_field_typ(typ: Typ, name: str) -> Typ | None:
+def _struct_field_typ(typ: Typ, name: str) -> Optional[Typ]:
     """The type of ``typ``'s field called ``name``, if it has one.
 
     :param typ: The type to look ``name`` up on.
@@ -250,7 +250,7 @@ class TypCheckResults:
     """
 
     _int_lit_typs: Final[dict[ast.IntLit, IntTyp]]
-    _coercions: Final[dict[ast.Ast, Coercion | None]]
+    _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
     _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.Fn, tuple[Typ, ...]]]]
     _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.Fn, tuple[Typ, ...]]]]
 
@@ -271,7 +271,7 @@ class TypCheckResults:
     def _set_int_lit_typ(self, node: ast.IntLit, typ: IntTyp) -> None:
         self._int_lit_typs[node] = typ
 
-    def coercion(self, node: ast.Ast) -> Coercion | None:
+    def coercion(self, node: ast.Ast) -> Optional[Coercion]:
         """The coercion decision recorded for ``node``.
 
         :param node: The AST node the coerced expression was checked
@@ -281,10 +281,10 @@ class TypCheckResults:
         """
         return self._coercions[node]
 
-    def _set_coercion(self, node: ast.Ast, coercion: Coercion | None) -> None:
+    def _set_coercion(self, node: ast.Ast, coercion: Optional[Coercion]) -> None:
         self._coercions[node] = coercion
 
-    def generic_call(self, node: ast.CallExpr) -> tuple[ir_module.Fn, tuple[Typ, ...]] | None:
+    def generic_call(self, node: ast.CallExpr) -> Optional[tuple[ir_module.Fn, tuple[Typ, ...]]]:
         """The resolved callee and type arguments for a call to a generic function.
 
         :param node: The call's AST node, as checked by
@@ -300,7 +300,7 @@ class TypCheckResults:
     ) -> None:
         self._generic_calls[node] = (fn, typ_args)
 
-    def generic_var_ref(self, node: ast.VarExpr) -> tuple[ir_module.Fn, tuple[Typ, ...]] | None:
+    def generic_var_ref(self, node: ast.VarExpr) -> Optional[tuple[ir_module.Fn, tuple[Typ, ...]]]:
         """The resolved function and type arguments for an explicitly
         applied generic function named as a value, e.g. the ``id[i32]``
         in ``let f = id[i32];`` - not called, just referenced.
@@ -328,13 +328,13 @@ class TypCheck:
     """
 
     results: Final[TypCheckResults]
-    _ret_typ: Typ | None
-    _ret_typ_span: SrcSpan | None
-    _fn_name: str | None
+    _ret_typ: Optional[Typ]
+    _ret_typ_span: Optional[SrcSpan]
+    _fn_name: Optional[str]
     #: The enclosing ``while`` loops' labels, innermost last - mirrors
     #: :attr:`~leech.ir_builder.CfgBuilder._loop_stack`, minus the basic
     #: blocks (a lowering-only concern).
-    _loop_labels: list[str | None]
+    _loop_labels: list[Optional[str]]
 
     def __init__(self) -> None:
         self.results = TypCheckResults()
@@ -409,7 +409,7 @@ class TypCheck:
         self._check_let_initializer(defn_ast.let_stmt, e)
         return self.results
 
-    def check_expr(self, expr_ast: ast.Expr, e: Env, expected_typ: Typ | None) -> Typ:
+    def check_expr(self, expr_ast: ast.Expr, e: Env, expected_typ: Optional[Typ]) -> Typ:
         """Check any expression, dispatching to the ``check_*_expr`` method
         matching its AST node kind.
 
@@ -457,7 +457,9 @@ class TypCheck:
             case _:
                 raise AssertionError(f"unhandled expression kind {expr_ast}")
 
-    def check_block_expr(self, block_ast: ast.BlockExpr, e: Env, expected_typ: Typ | None) -> Typ:
+    def check_block_expr(
+        self, block_ast: ast.BlockExpr, e: Env, expected_typ: Optional[Typ]
+    ) -> Typ:
         e = e.new_child()
         diverged = False
         for stmt_ast in block_ast.stmts:
@@ -467,7 +469,7 @@ class TypCheck:
             return NEVER if diverged else VOID
         return self.check_expr(block_ast.expr, e, expected_typ)
 
-    def check_if_expr(self, if_ast: ast.IfExpr, e: Env, expected_typ: Typ | None) -> Typ:
+    def check_if_expr(self, if_ast: ast.IfExpr, e: Env, expected_typ: Optional[Typ]) -> Typ:
         cond_typ = self.check_expr(if_ast.condition, e, None)
         cond_coercion = self._record_coercion(if_ast.condition, cond_typ, BOOL)
         if isinstance(cond_coercion, Invalid):
@@ -578,7 +580,7 @@ class TypCheck:
 
     def _resolve_callee(
         self, call_ast: ast.CallExpr, e: Env
-    ) -> tuple[CallableTyp, ast.Expr | None, Typ | None]:
+    ) -> tuple[CallableTyp, Optional[ast.Expr], Optional[Typ]]:
         """The callee's type, and its receiver's expression and type, if any.
 
         If the callee is written as ``x.name``, ``name`` is looked up as a
@@ -678,8 +680,8 @@ class TypCheck:
         return fn_typ, None, None
 
     def _resolve_bound_method(
-        self, typ_param: TypParamTyp, name: str, span: SrcSpan | None, e: Env
-    ) -> FnTyp | None:
+        self, typ_param: TypParamTyp, name: str, span: Optional[SrcSpan], e: Env
+    ) -> Optional[FnTyp]:
         """Resolve a method call on an unsubstituted type parameter, against its declared bounds.
 
         This is what makes calling a method inside a generic body sound
@@ -768,7 +770,7 @@ class TypCheck:
         fn: ir_module.Fn,
         typ_params: list[TypParamTyp],
         generic_args: list[ast.Typ],
-        span: SrcSpan | None,
+        span: Optional[SrcSpan],
         e: Env,
     ) -> dict[TypParamTyp, Typ]:
         """Resolve a generic item's explicit type arguments against its
@@ -830,7 +832,7 @@ class TypCheck:
 
         return bindings
 
-    def check_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Typ | None) -> Typ:
+    def check_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env, expected_typ: Optional[Typ]) -> Typ:
         if op_ast.op.name in ("and", "or"):
             return self.check_logic_bin_op_expr(op_ast, e)
 
@@ -905,7 +907,9 @@ class TypCheck:
             )
         return BOOL
 
-    def check_unary_op_expr(self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Typ | None) -> Typ:
+    def check_unary_op_expr(
+        self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Optional[Typ]
+    ) -> Typ:
         match op_ast.op.name:
             case "&":
                 return self._check_addr_of_expr(op_ast, e)
@@ -932,7 +936,7 @@ class TypCheck:
             )
         return BOOL
 
-    def _check_neg_expr(self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Typ | None) -> Typ:
+    def _check_neg_expr(self, op_ast: ast.UnaryOpExpr, e: Env, expected_typ: Optional[Typ]) -> Typ:
         if isinstance(op_ast.operand, ast.IntLit):
             typ = self._infer_int_lit_typ(op_ast.operand, expected_typ)
             if typ.signage != SIGNED:
@@ -1014,12 +1018,12 @@ class TypCheck:
         substituted = checked_cast(var.fn.fn_typ.substitute_typ_params(mapping), FnTyp)
         return PtrTyp.get_or_create(substituted, CONST)
 
-    def check_array_expr(self, arr_expr: ast.ArrayExpr, e: Env, expected_typ: Typ | None) -> Typ:
+    def check_array_expr(self, arr_expr: ast.ArrayExpr, e: Env, expected_typ: Optional[Typ]) -> Typ:
         expected_elt_typ = expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
         if not arr_expr.elements and expected_elt_typ is None:
             raise EmptyArrayTypUnknownError(arr_expr.span)
 
-        built: list[Typ | None] = [None] * len(arr_expr.elements)
+        built: list[Optional[Typ]] = [None] * len(arr_expr.elements)
         for i, elt_ast in enumerate(arr_expr.elements):
             if not is_flexible_int_lit(elt_ast):
                 built[i] = self.check_expr(elt_ast, e, expected_elt_typ)
@@ -1276,7 +1280,7 @@ class TypCheck:
             raise ContinueNotInLoopError(continue_ast.span)
         self._resolve_loop_label(continue_ast.label)
 
-    def _resolve_loop_label(self, label: ast.Ident | None) -> None:
+    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> None:
         """Confirm a ``break``/``continue`` label names an enclosing loop.
 
         Mirrors :meth:`~leech.ir_builder.CfgBuilder._resolve_loop_label`,
@@ -1304,7 +1308,7 @@ class TypCheck:
         e.add_var(let_ast.ident.name, _TypedPlace(place_typ))
         return expr_typ == NEVER
 
-    def _check_let_initializer(self, let_ast: ast.LetStmt, e: Env) -> tuple[Typ, Typ | None]:
+    def _check_let_initializer(self, let_ast: ast.LetStmt, e: Env) -> tuple[Typ, Optional[Typ]]:
         """Check a ``let`` initializer, shared by :meth:`check_let_stmt`
         and :meth:`check_var_initializer` - mirrors
         :meth:`~leech.ir_builder.CfgBuilder._build_let_initializer`.
@@ -1353,7 +1357,7 @@ class TypCheck:
             )
         return place_typ == NEVER or expr_typ == NEVER
 
-    def _infer_int_lit_typ(self, lit_ast: ast.IntLit, expected_typ: Typ | None) -> IntTyp:
+    def _infer_int_lit_typ(self, lit_ast: ast.IntLit, expected_typ: Optional[Typ]) -> IntTyp:
         """Choose an integer literal's type.
 
         A literal written with a type suffix always has that type. One
@@ -1371,7 +1375,7 @@ class TypCheck:
             return expected_typ
         return I32
 
-    def _record_coercion(self, node: ast.Ast, value_typ: Typ, target: Typ) -> Coercion | None:
+    def _record_coercion(self, node: ast.Ast, value_typ: Typ, target: Typ) -> Optional[Coercion]:
         """Decide, and record, how a checked expression coerces to a target type.
 
         Mirrors the decision :meth:`~leech.ir_builder.CfgBuilder._coerce`
