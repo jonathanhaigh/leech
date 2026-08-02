@@ -168,7 +168,7 @@ def test_dot_call_on_receiverless_assoc_fn_rejected(tmp_path):
 
 def test_field_access_of_non_method_name_still_works(tmp_path):
     # Non-call field access (no trailing `(...)`) is untouched by method
-    # resolution - it never goes through build_call_expr at all.
+    # resolution - it never goes through _build_call_expr at all.
     src = """
     struct Counter { n: i32 }
     impl Counter {

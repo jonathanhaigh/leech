@@ -44,11 +44,9 @@ def check_typ_arg_bounds(
 ) -> None:
     """Raise if any of ``typ_args`` doesn't implement a bound its parameter declares.
 
-    Shared by every generic instantiation site - a struct's (see
-    :meth:`Typ._basic_typ_from_ast`) and a generic function call's (see
-    :meth:`~leech.typcheck.TypCheck._resolve_generic_call`) - so a bound
-    means the same thing, and is enforced the same way, everywhere one can
-    be declared.
+    Shared by every generic instantiation site - a struct's and a generic
+    function call's - so a bound means the same thing, and is enforced
+    the same way, everywhere one can be declared.
 
     :param generic_params: The generic item's own declared type
         parameters, in declaration order.
@@ -157,8 +155,7 @@ class Typ(abc.ABC):
         Coercion is only ever applied where the target type is
         unambiguous - a call argument, an assignment, a ``return``, a
         struct literal field - never to unify the operands of an
-        operator. See :meth:`~leech.ir_builder.CfgBuilder._coerce`, the sole
-        caller.
+        operator.
 
         This base implementation allows only the identity coercion;
         subclasses widen it.
@@ -228,8 +225,8 @@ class Typ(abc.ABC):
         opaque - so a type built while checking either of those can still
         contain a :class:`TypParamTyp`, and isn't a real, lowerable type
         until :meth:`substitute_typ_params` replaces every one. This is
-        how codegen tells such a type apart from one that already has been
-        (see :meth:`~leech.codegen.Compiler._discover_struct_instances`).
+        how codegen tells such a type apart from one that already has
+        been.
 
         This base implementation has no type parameter to contain, so it's
         unconditionally ``True`` - the right answer for every type that
@@ -300,7 +297,7 @@ class Typ(abc.ABC):
         :return: The resolved type.
         """
         item = e.resolve_typ(typ_ast.path)
-        if not isinstance(item, StructTyp) or not item.ast.generic_params or item.typ_args:
+        if not isinstance(item, StructTyp) or not item.ast.generic_params or item._typ_args:
             if typ_ast.generic_args:
                 raise errors.TypArgsOnNonGenericItemError(typ_ast.path.str(), typ_ast.span)
             return item
@@ -458,7 +455,7 @@ class PtrTyp(Typ):
         this coercion - the two have the same representation.
         """
         return super().coerces_to(target) or (
-            self.mut == MUT and self.new_with_mut(CONST) == target
+            self.mut == MUT and self._new_with_mut(CONST) == target
         )
 
     @override
@@ -474,7 +471,7 @@ class PtrTyp(Typ):
     def is_concrete(self) -> bool:
         return self.pointee_typ.is_concrete()
 
-    def new_with_mut(self, mut: Mutability) -> PtrTyp:
+    def _new_with_mut(self, mut: Mutability) -> PtrTyp:
         """Return the pointer type with the same pointee but different mutability.
 
         :param mut: The mutability of the returned pointer type.
@@ -529,8 +526,7 @@ class TypParamTyp(Typ):
     Stands for an as-yet-unknown type: it has no LLVM representation of
     its own, since a generic body is never lowered directly (see
     :meth:`substitute_typ_params` and :meth:`~leech.ir_module.Fn.instance`)
-    - :meth:`~leech.codegen.Compiler._ll_typ` asserts it never has to
-    translate one.
+    - codegen asserts it never has to translate one.
 
     :param owner_ast: The AST node of the generic item that declares this
         parameter.
@@ -542,13 +538,13 @@ class TypParamTyp(Typ):
         the type (see :meth:`cache_key`).
     """
 
-    owner_ast: Final[ast.Ast]
-    index: Final[int]
+    _owner_ast: Final[ast.Ast]
+    _index: Final[int]
     ast: Final[ast.GenericParam]
 
     def __init__(self, owner_ast: ast.Ast, index: int, param_ast: ast.GenericParam) -> None:
-        self.owner_ast = owner_ast
-        self.index = index
+        self._owner_ast = owner_ast
+        self._index = index
         self.ast = param_ast
 
     @override
@@ -650,13 +646,13 @@ class StructTyp(Typ):
     Unlike other :class:`Typ` subclasses, two ``StructTyp`` instances are
     never equal even if structurally identical: each ``struct`` definition
     in the source introduces its own distinct type, or - for a generic
-    struct - family of types, one per distinct :attr:`typ_args` (see
-    :meth:`cache_key`). A non-generic struct's declaration has exactly one
-    ``StructTyp``, with :attr:`typ_args` always empty; a generic struct's
+    struct - family of types, one per distinct sequence of type arguments
+    (see :meth:`cache_key`). A non-generic struct's declaration has
+    exactly one ``StructTyp``, with no type arguments; a generic struct's
     declaration is itself represented by the "template" ``StructTyp``
-    that :attr:`typ_args` is empty for too - it's what a bare use of the
-    struct's name resolves to (see :meth:`~Typ._basic_typ_from_ast`)
-    before type arguments are applied, and its fields, resolved through
+    that has no type arguments either - it's what a bare use of the
+    struct's name resolves to before type arguments are applied, and its
+    fields, resolved through
     :attr:`env`, name each of its own type parameters opaquely, the same
     way a generic function's own :attr:`~leech.ir_values.Value.typ` does
     (see :class:`~leech.ir_module.GenericFn`) - it's never itself a usable
@@ -684,7 +680,7 @@ class StructTyp(Typ):
 
     :param ast: The parsed struct declaration.
     :param e: The enclosing scope, used to resolve field types and (for a
-        generic struct) type parameters. Recorded as :attr:`decl_env`, so
+        generic struct) type parameters. Recorded for later reuse, so
         a later instantiation can be built against the same scope without
         needing a use site's own (irrelevant) scope.
     :param typ_args: The concrete type to substitute for each of this
@@ -700,8 +696,8 @@ class StructTyp(Typ):
     """
 
     ast: Final[ast.StructDefn]
-    decl_env: Final[ir_env.Env]
-    typ_args: Final[tuple[Typ, ...]]
+    _decl_env: Final[ir_env.Env]
+    _typ_args: Final[tuple[Typ, ...]]
     mod_name: Final[str]
     env: Final[ir_env.Env]
     #: This struct's members - its fields and its associated functions -
@@ -719,8 +715,8 @@ class StructTyp(Typ):
         mod_name: str = "",
     ) -> None:
         self.ast = ast
-        self.decl_env = e
-        self.typ_args = typ_args
+        self._decl_env = e
+        self._typ_args = typ_args
         self.mod_name = mod_name
         self.env = e.new_child()
         # Bound here rather than looked up on demand, so a type parameter
@@ -757,9 +753,8 @@ class StructTyp(Typ):
         Only meaningful on the template (see the class docstring) - an
         instantiation's own cache is simply never added to, since nothing
         ever calls :meth:`instance` on one. Used by codegen to discover
-        instantiations to declare and compile - see
-        :meth:`~leech.codegen.Compiler._discover_struct_instances`, which
-        further filters to :meth:`is_concrete` ones: this struct's own
+        instantiations to declare and compile; codegen filters those down
+        to the :meth:`is_concrete` ones, because this struct's own
         (im)mediate typechecking can request an instantiation that still
         names one of *its own* type parameters (e.g. resolving a generic
         function body's use of ``Box[T]``), and those aren't real,
@@ -782,7 +777,7 @@ class StructTyp(Typ):
         """
         inst = self._instance_cache.get(typ_args)
         if inst is None:
-            inst = StructTyp.get_or_create(self.ast, self.decl_env, typ_args, self.mod_name)
+            inst = StructTyp.get_or_create(self.ast, self._decl_env, typ_args, self.mod_name)
             self._instance_cache[typ_args] = inst
         return inst
 
@@ -799,22 +794,22 @@ class StructTyp(Typ):
 
     @override
     def is_concrete(self) -> bool:
-        return all(typ_arg.is_concrete() for typ_arg in self.typ_args)
+        return all(typ_arg.is_concrete() for typ_arg in self._typ_args)
 
     @override
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
-        if not self.typ_args:
+        if not self._typ_args:
             return self
-        substituted = tuple(typ_arg.substitute_typ_params(mapping) for typ_arg in self.typ_args)
-        if substituted == self.typ_args:
+        substituted = tuple(typ_arg.substitute_typ_params(mapping) for typ_arg in self._typ_args)
+        if substituted == self._typ_args:
             return self
-        template = StructTyp.get(self.ast, self.decl_env)
+        template = StructTyp.get(self.ast, self._decl_env)
         return template.instance(substituted)
 
     @override
     def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
         if isinstance(actual, StructTyp) and actual.ast is self.ast:
-            for declared_arg, actual_arg in zip(self.typ_args, actual.typ_args, strict=True):
+            for declared_arg, actual_arg in zip(self._typ_args, actual._typ_args, strict=True):
                 declared_arg.infer_typ_args(actual_arg, bindings)
 
     @override
@@ -836,9 +831,9 @@ class StructTyp(Typ):
     @property
     @override
     def name(self) -> str:
-        if not self.typ_args:
+        if not self._typ_args:
             return self.ast.ident.name
-        arg_names = ", ".join(typ_arg.name for typ_arg in self.typ_args)
+        arg_names = ", ".join(typ_arg.name for typ_arg in self._typ_args)
         return f"{self.ast.ident.name}[{arg_names}]"
 
     @staticmethod
@@ -895,8 +890,8 @@ class StructTyp(Typ):
         by bare, unqualified name.
 
         Registered among the members first, so a rejected function is
-        never left bound in :attr:`env`. This is the mirror image of
-        :meth:`~leech.ir_module.Mod._add_item`, where the ``Env`` is the
+        never left bound in :attr:`env`. This is the mirror image of how
+        a module registers its own items, where the ``Env`` is the
         duplicate-definition authority; here the member table is, since
         fields never enter :attr:`env`.
 
@@ -934,7 +929,7 @@ class StructTyp(Typ):
             value, directly or through other structs.
         :raises TypInstantiationDepthExceededError: If resolving this
             struct's fields requires instantiating a generic struct
-            nested beyond :data:`_MAX_STRUCT_INSTANTIATION_DEPTH`.
+            nested beyond a fixed depth limit.
         """
         self._check_finite_size([], [])
 

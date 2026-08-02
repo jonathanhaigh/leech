@@ -193,7 +193,7 @@ def test_and_lhs_diverges(tmp_path):
 
 
 # --- An initializer with no declared type never calls _coerce at all,
-# so it takes a different path through build_let_stmt ---
+# so it takes a different path through _build_let_stmt ---
 
 
 def test_unannotated_let_diverges_still_works(tmp_path):

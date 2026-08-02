@@ -34,7 +34,7 @@ def compile_to_llvm_ir(file: src.SrcFile) -> str:
     return str(compiler.ll_mod) + "\n"
 
 
-def parse_args() -> argparse.Namespace:
+def _parse_args() -> argparse.Namespace:
     """Parse the ``leechc`` command-line arguments.
 
     Defaults the output path (``-o``) to the input filename with its
@@ -68,7 +68,7 @@ def run() -> None:
     resulting error level (see :mod:`leech.errors`), writing the compiled
     output to the ``-o`` path only if no error occurred.
     """
-    args = parse_args()
+    args = _parse_args()
     file = src.SrcFile(args.filename)
 
     output = ""

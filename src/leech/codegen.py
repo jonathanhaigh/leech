@@ -11,7 +11,7 @@ from llvmlite import ir as ll
 from leech import asserts, ir_module, ir_traits, ir_values, naming, signage, typs
 
 
-def set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access) -> None:
+def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access) -> None:
     """Set an LLVM global's linkage to match a Leech item's access.
 
     :param ll_global: The LLVM global variable or function to set linkage
@@ -30,12 +30,12 @@ class Compiler:
     :param mod: The IR module to compile.
     """
 
-    mod: Final[ir_module.Mod]
+    _mod: Final[ir_module.Mod]
     ll_mod: Final[ll.Module]
-    _ll_mod_items: Final[Compiler.LLItems]
+    _ll_mod_items: Final[Compiler._LLItems]
     _tmp_name: Final[naming.VarNamer]
 
-    class LLItems:
+    class _LLItems:
         """A cache mapping Leech IR values and types to their LLVM counterparts.
 
         Looking up an item that hasn't been compiled yet compiles and
@@ -50,8 +50,8 @@ class Compiler:
             empty.
         """
 
-        compiler: Final[Compiler]
-        items: Final[collections.ChainMap[ir_values.Value | typs.Typ, ll.Value | ll.Type]]
+        _compiler: Final[Compiler]
+        _items: Final[collections.ChainMap[ir_values.Value | typs.Typ, ll.Value | ll.Type]]
 
         def __init__(
             self,
@@ -61,18 +61,18 @@ class Compiler:
             ] = None,
         ) -> None:
             super().__init__()
-            self.compiler = compiler
+            self._compiler = compiler
             if values is not None:
-                self.items = values
+                self._items = values
             else:
-                self.items = collections.ChainMap()
+                self._items = collections.ChainMap()
 
-        def new_child(self) -> Compiler.LLItems:
+        def new_child(self) -> Compiler._LLItems:
             """Create a new cache nested inside this one.
 
             :return: A fresh cache that inherits this cache's entries.
             """
-            return Compiler.LLItems(self.compiler, self.items.new_child())
+            return Compiler._LLItems(self._compiler, self._items.new_child())
 
         def get(self, item: ir_values.Value | typs.Typ) -> ll.Value | ll.Type:
             """Get the LLVM value or type for ``item``, compiling it if needed.
@@ -80,12 +80,12 @@ class Compiler:
             :param item: The Leech IR value or type to look up.
             :return: The corresponding LLVM value or type.
             """
-            if item not in self.items:
+            if item not in self._items:
                 if isinstance(item, ir_values.ComptimeValue):
-                    self.items[item] = self.compiler._compile_comptime_value(item)
+                    self._items[item] = self._compiler._compile_comptime_value(item)
                 elif isinstance(item, typs.Typ):
-                    self.items[item] = self.compiler._ll_typ(item)
-            return self.items[item]
+                    self._items[item] = self._compiler._ll_typ(item)
+            return self._items[item]
 
         def set(self, item: ir_values.Value | typs.Typ, ll_item: ll.Value | ll.Type) -> None:
             """Record the LLVM value or type to use for ``item``.
@@ -94,25 +94,25 @@ class Compiler:
             :param ll_item: The LLVM value or type to associate with
                 ``item``.
             """
-            self.items[item] = ll_item
+            self._items[item] = ll_item
 
     @dataclasses.dataclass(frozen=True)
     class _FnBuilderContext:
         ll_builder: ll.IRBuilder
-        ll_values: Compiler.LLItems
+        ll_values: Compiler._LLItems
         ll_bbs: collections.ChainMap[ir_values.BasicBlock, ll.Block]
 
     def __init__(self, mod: ir_module.Mod) -> None:
-        self.mod = mod
+        self._mod = mod
         self.ll_mod = ll.Module(context=ll.Context())
-        self._ll_mod_items = Compiler.LLItems(self)
+        self._ll_mod_items = Compiler._LLItems(self)
         self._tmp_name = naming.VarNamer()
 
     def compile(self) -> None:
-        """Compile :attr:`mod` into :attr:`ll_mod`.
+        """Compile the module passed to the constructor into :attr:`ll_mod`.
 
-        Runs in phases over every module in the program - not just
-        :attr:`mod` - taken from the loader, which has already
+        Runs in phases over every module in the program - not just the
+        one being compiled - taken from the loader, which has already
         deduplicated modules reached by more than one import path.
         Declaring everything up front means forward references between
         items resolve regardless of declaration order, and driving the
@@ -123,30 +123,30 @@ class Compiler:
         signature can name a struct from a module loaded later than the
         one declaring the signature.
 
-        Only :attr:`mod`'s own function bodies and variable initializers
-        are compiled; items belonging to imported modules are left as
-        declarations, to be resolved against those modules' own
-        separately-compiled output at link time. Struct *bodies* are the
-        exception - :attr:`mod` needs imported structs' layouts to index
-        into them.
+        Only the compiled module's own function bodies and variable
+        initializers are compiled; items belonging to imported modules
+        are left as declarations, to be resolved against those modules'
+        own separately-compiled output at link time. Struct *bodies* are
+        the exception - the compiled module needs imported structs'
+        layouts to index into them.
 
         A generic function instance is different again: it has no
         ``ModItem`` of its own anywhere (see
         :class:`~leech.ir_module.GenericFn`) - a call to one only creates
-        it, on demand, while :attr:`mod`'s own bodies are being lowered.
-        So every instance any of those calls could possibly request is
-        discovered first (see :meth:`_discover_fn_instances`, which lowers
-        those bodies itself, ahead of the compiled-into-LLVM-IR pass
-        below, purely to find them) and declared, alongside everything
-        else, before any body - an ordinary function's or an instance's
-        own - is compiled into LLVM IR and might need to call it.
+        it, on demand, while the compiled module's own bodies are being
+        lowered. So every instance any of those calls could possibly
+        request is discovered first, by lowering those bodies ahead of
+        the compiled-into-LLVM-IR pass below, purely to find them, and
+        declared, alongside everything else, before any body - an
+        ordinary function's or an instance's own - is compiled into
+        LLVM IR and might need to call it.
 
         A generic struct's own declaration - a ``StructTyp`` with type
         parameters instead of real field types - is never declared or
-        compiled at all; only its instantiations are (see
-        :meth:`_discover_struct_instances`), found and lowered the same
-        on-demand way as a generic function instance, and for the same
-        reason: nothing else names them until something asks for one.
+        compiled at all; only its instantiations are, found and lowered
+        the same on-demand way as a generic function instance, and for
+        the same reason: nothing else names them until something asks
+        for one.
         """
         self.ll_mod.triple = "x86_64-linux-gnu"
 
@@ -182,7 +182,7 @@ class Compiler:
         for inst in instances:
             self._declare_fn_instance(inst)
 
-        for item in self.mod.items:
+        for item in self._mod.items:
             self._compile_mod_item(item)
 
         for inst in instances:
@@ -204,11 +204,11 @@ class Compiler:
 
         :return: The items, grouped by module in load order.
         """
-        for mod in self.mod.loader.mods:
+        for mod in self._mod.loader.mods:
             for item in mod.items:
                 if isinstance(item.value, ir_module.Mod):
                     continue
-                if mod is self.mod or item.access == ir_module.PUBLIC:
+                if mod is self._mod or item.access == ir_module.PUBLIC:
                     yield item
 
     def _discover_fn_instances(self) -> list[ir_module.FnInstance]:
@@ -219,7 +219,7 @@ class Compiler:
         :attr:`~leech.ir_module.Fn.cfg`) a body that calls one - and
         lowering one instance's own body can request further instances of
         the same or another generic function (a nested or recursive
-        generic call). So this forces every one of :attr:`mod`'s own
+        generic call). So this forces every one of :attr:`_mod`'s own
         functions to be lowered first, seeding the search, then keeps
         lowering whatever instances that turns up - regardless of which
         module's generic function they instantiate - until a full sweep
@@ -237,7 +237,7 @@ class Compiler:
 
         def newly_requested() -> list[ir_module.FnInstance]:
             new = []
-            for mod in self.mod.loader.mods:
+            for mod in self._mod.loader.mods:
                 for item in mod.items:
                     if isinstance(item.value, ir_module.GenericFn):
                         for inst in item.value.fn.instances:
@@ -246,7 +246,7 @@ class Compiler:
                                 new.append(inst)
             return new
 
-        for item in self.mod.items:
+        for item in self._mod.items:
             if isinstance(item.value, (ir_module.Fn, ir_module.ModVar)):
                 _ = item.value.cfg
 
@@ -290,7 +290,7 @@ class Compiler:
 
         def newly_requested() -> list[typs.StructTyp]:
             new = []
-            for mod in self.mod.loader.mods:
+            for mod in self._mod.loader.mods:
                 for item in mod.items:
                     if isinstance(item.value, typs.StructTyp) and item.value.ast.generic_params:
                         for inst in item.value.instances:
@@ -351,10 +351,10 @@ class Compiler:
             case typs.StructTyp():
                 # Every StructTyp reachable during codegen is declared
                 # (and cached here) by the earlier declare-types phase,
-                # so LLItems.get() should never fall through to this
+                # so _LLItems.get() should never fall through to this
                 # method for one - if it does, that phase missed it.
-                assert typ in self._ll_mod_items.items, f'struct "{typ.name}" was never declared'
-                return asserts.checked_cast(self._ll_mod_items.items[typ], ll.Type)
+                assert typ in self._ll_mod_items._items, f'struct "{typ.name}" was never declared'
+                return asserts.checked_cast(self._ll_mod_items._items[typ], ll.Type)
             case typs.NeverTyp():
                 raise AssertionError("a never-typed value shouldn't need an LLVM type")
             case _:
@@ -418,7 +418,7 @@ class Compiler:
             item.qualified_name,
         )
         self._ll_mod_items.set(var, ll_val)
-        set_linkage(ll_val, item.access)
+        _set_linkage(ll_val, item.access)
         return ll_val
 
     def _compile_mod_var(self, _item: ir_module.ModItem, var: ir_module.ModVar) -> None:
@@ -429,7 +429,7 @@ class Compiler:
         ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(fn.fn_typ), item.qualified_name)
         self._ll_mod_items.set(fn, ll_fn)
         # TODO: linkage for FnDecls?
-        set_linkage(ll_fn, item.access)
+        _set_linkage(ll_fn, item.access)
         return ll_fn
 
     def _compile_mod_fn(self, _item: ir_module.ModItem, fn: ir_module.Fn) -> None:

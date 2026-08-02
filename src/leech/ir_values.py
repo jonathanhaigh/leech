@@ -2,7 +2,7 @@
 
 import abc
 import functools
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Final, Optional, Self, override
 
 import more_itertools
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from leech import ir_module
 
 
-def gep_typ(base_typ: typs.PtrTyp, index: Value) -> typs.PtrTyp:
+def _gep_typ(base_typ: typs.PtrTyp, index: Value) -> typs.PtrTyp:
     """Compute the pointer type produced by indexing into ``base_typ``.
 
     :param base_typ: The pointer type being indexed into (pointing to an
@@ -196,7 +196,7 @@ class ComptimeAggregate[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast
         """All of this aggregate's elements, in index order."""
         return [self.get_element(i) for i in range(len(self))]
 
-    def check_index(self, index: int) -> None:
+    def _check_index(self, index: int) -> None:
         """Assert that ``index`` is in bounds for this aggregate.
 
         :param index: The zero-based element index to check.
@@ -238,12 +238,12 @@ class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
 
     @override
     def get_element(self, index: int) -> ComptimeValue:
-        self.check_index(index)
+        self._check_index(index)
         return self.elements[index]
 
     @override
     def set_element(self, value: ComptimeValue, index: int) -> None:
-        self.check_index(index)
+        self._check_index(index)
         self.elements[index] = value
 
     @override
@@ -285,14 +285,14 @@ class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
 
     @override
     def get_element(self, index: int) -> ComptimeValue:
-        self.check_index(index)
+        self._check_index(index)
         field_spec = more_itertools.nth(self._typ.fields.values(), index)
         assert field_spec is not None
         return self.fields[field_spec.name]
 
     @override
     def set_element(self, value: ComptimeValue, index: int) -> None:
-        self.check_index(index)
+        self._check_index(index)
         field_spec = more_itertools.nth(self._typ.fields.values(), index)
         assert field_spec is not None
         self.fields[field_spec.name] = value
@@ -386,7 +386,7 @@ class ComptimeGep(ComptimePtr):
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
-        return gep_typ(self.base.typ, self.index)
+        return _gep_typ(self.base.typ, self.index)
 
     @override
     def load(self) -> ComptimeValue:
@@ -753,7 +753,7 @@ class GepInstr(Instr[typs.PtrTyp]):
 
     :param bb: The basic block this instruction belongs to.
     :param base: The pointer to the array or struct being indexed into.
-    :param index: The array or struct field index; see :func:`gep_typ`.
+    :param index: The array or struct field index into ``base``'s pointee type.
     :param ast: The AST node this instruction was built from, if any.
     """
 
@@ -775,7 +775,7 @@ class GepInstr(Instr[typs.PtrTyp]):
     @override
     def calculate_typ(self) -> typs.PtrTyp:
         base_typ = asserts.checked_cast(self.base.typ, typs.PtrTyp)
-        return gep_typ(base_typ, self.index)
+        return _gep_typ(base_typ, self.index)
 
 
 class InsertValueInstr(Instr):
@@ -979,13 +979,13 @@ class BasicBlock:
     name: Final[str]
     instrs: Final[list[Instr]]
     terminated: bool
-    warned_unreachable: bool
+    _warned_unreachable: bool
 
     def __init__(self, name: str) -> None:
         self.name = name
         self.instrs = []
         self.terminated = False
-        self.warned_unreachable = False
+        self._warned_unreachable = False
 
     def __str__(self) -> str:
         """A textual dump of this block's label and instructions, one per line."""
@@ -994,12 +994,12 @@ class BasicBlock:
 
     def _add_instr[T: Instr](self, instr: T, terminate: bool = False) -> T:
         if self.terminated:
-            if not self.warned_unreachable:
+            if not self._warned_unreachable:
                 assert instr.ast is not None, "Shouldn't get unreachable code in builtins"
                 errors.register_error(
                     errors.UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.span)
                 )
-                self.warned_unreachable = True
+                self._warned_unreachable = True
 
             return instr
         self.instrs.append(instr)
@@ -1132,6 +1132,26 @@ class Cfg(nx.DiGraph):
         self._exit = BasicBlock("exit")
         self.add_node(self._entry)
         self.add_node(self._exit)
+
+    @override
+    def copy(self, as_view: bool = False) -> Cfg:
+        # NetworkX's default Graph.copy() builds the result via
+        # `self.__class__()`, which - since Cfg.__init__ always creates
+        # fresh entry/exit blocks - would silently produce a copy whose
+        # .entry/.exit aren't the copied nodes at all. Same hazard for
+        # subgraph() and reverse() below (both also construct a new
+        # instance via `self.__class__()`, directly or through a
+        # NetworkX view). Nothing needs to copy/view a Cfg today; fail
+        # loudly instead of building a graph with a dangling entry/exit.
+        raise NotImplementedError("Cfg does not support copy()")
+
+    @override
+    def subgraph(self, nodes: Optional[Iterable[BasicBlock]]) -> Cfg:
+        raise NotImplementedError("Cfg does not support subgraph()")
+
+    @override
+    def reverse(self, copy: bool = True) -> Cfg:
+        raise NotImplementedError("Cfg does not support reverse()")
 
     @property
     def entry(self) -> BasicBlock:

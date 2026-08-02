@@ -52,7 +52,7 @@ class UserError(Exception):
         self.message = Message(level, message, span)
         self.extra = []
 
-    def add_extra(self, level: Level, message: str, span: Optional[src.SrcSpan]) -> None:
+    def _add_extra(self, level: Level, message: str, span: Optional[src.SrcSpan]) -> None:
         """Attach an extra message to be rendered alongside the primary one.
 
         :param level: The severity of the extra message.
@@ -96,7 +96,7 @@ class UnexpectedTokenError(UserError):
     def __init__(self, found: str, span: src.SrcSpan, expected: Collection[str]) -> None:
         super().__init__(ERROR, f"Unexpected {found}", span)
         if expected:
-            self.add_extra(NOTE, f"Expected one of: {', '.join(expected)}", None)
+            self._add_extra(NOTE, f"Expected one of: {', '.join(expected)}", None)
 
 
 class ItemNotFoundError(UserError):
@@ -140,7 +140,7 @@ class CannotInferTypArgError(UserError):
             ),
             span,
         )
-        self.add_extra(NOTE, f'Give it explicitly, e.g. "{fn_name}[...]"', None)
+        self._add_extra(NOTE, f'Give it explicitly, e.g. "{fn_name}[...]"', None)
 
 
 class WrongNumberOfTypArgsError(UserError):
@@ -186,7 +186,7 @@ class PrivateItemAccessError(UserError):
     ) -> None:
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" is private', access_span)
         if defn_span is not None:
-            self.add_extra(NOTE, f'{item_kind.capitalize()} "{name}" defined here', defn_span)
+            self._add_extra(NOTE, f'{item_kind.capitalize()} "{name}" defined here', defn_span)
 
 
 class AssignToConstError(UserError):
@@ -212,7 +212,7 @@ class IncompatibleAssignmentTypError(UserError):
             span,
         )
         if place_span is not None:
-            self.add_extra(NOTE, f'Place has type "{place_typ}"', place_span)
+            self._add_extra(NOTE, f'Place has type "{place_typ}"', place_span)
 
 
 class IncompatibleLetTypError(UserError):
@@ -236,7 +236,7 @@ class IncompatibleLetTypError(UserError):
             given_span,
         )
         if declared_span is not None:
-            self.add_extra(NOTE, f'Declared with type "{declared_typ}" here', declared_span)
+            self._add_extra(NOTE, f'Declared with type "{declared_typ}" here', declared_span)
 
 
 class DuplicateItemDefnError(UserError):
@@ -251,7 +251,7 @@ class DuplicateItemDefnError(UserError):
     ) -> None:
         super().__init__(ERROR, f'Duplicate definition of {item_kind} "{name}"', span)
         if existing_span is not None:
-            self.add_extra(NOTE, "Previous definition here", existing_span)
+            self._add_extra(NOTE, "Previous definition here", existing_span)
 
 
 class NotCallableError(UserError):
@@ -306,7 +306,7 @@ class InvalidBinOpArgTypError(UserError):
             arg_span,
         )
         if op_span is not None:
-            self.add_extra(NOTE, f'For "{op}" operation here', op_span)
+            self._add_extra(NOTE, f'For "{op}" operation here', op_span)
 
 
 class InvalidUnaryOpArgTypError(UserError):
@@ -330,7 +330,7 @@ class InvalidUnaryOpArgTypError(UserError):
             arg_span,
         )
         if op_span is not None:
-            self.add_extra(NOTE, f'For "{op}" operation here', op_span)
+            self._add_extra(NOTE, f'For "{op}" operation here', op_span)
 
 
 class IncompatibleBinOpArgTypsError(UserError):
@@ -350,8 +350,8 @@ class IncompatibleBinOpArgTypsError(UserError):
             f'Left and right operands to binary operation "{op}" have incompatible types',
             op_span,
         )
-        self.add_extra(NOTE, f'Left operand type is "{lhs_typ}"', lhs_span)
-        self.add_extra(NOTE, f'Right operand type is "{rhs_typ}"', rhs_span)
+        self._add_extra(NOTE, f'Left operand type is "{lhs_typ}"', lhs_span)
+        self._add_extra(NOTE, f'Right operand type is "{rhs_typ}"', rhs_span)
 
 
 class TooManyArgsError(UserError):
@@ -413,7 +413,7 @@ class InvalidRetTypError(UserError):
             ret_expr_span,
         )
         if ret_typ_span is not None:
-            self.add_extra(
+            self._add_extra(
                 NOTE,
                 "Return type specified here",
                 ret_typ_span,
@@ -436,7 +436,7 @@ class InvalidVoidRetError(UserError):
             ret_stmt_span,
         )
         if ret_typ_span is not None:
-            self.add_extra(
+            self._add_extra(
                 NOTE,
                 "Return type specified here",
                 ret_typ_span,
@@ -498,7 +498,7 @@ class MissingRetError(UserError):
             fn_span,
         )
         if ret_typ_span is not None:
-            self.add_extra(NOTE, "return type specified here", ret_typ_span)
+            self._add_extra(NOTE, "return type specified here", ret_typ_span)
 
 
 class IncompatibleTypInArrayExprError(UserError):
@@ -550,7 +550,7 @@ class ModUsedAsTypError(UserError):
 
     def __init__(self, mod_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Module "{mod_name}" cannot be used as a type', span)
-        self.add_extra(
+        self._add_extra(
             NOTE,
             f'A module name can only qualify a path, e.g. "{mod_name}::SomeTyp"',
             None,
@@ -616,7 +616,7 @@ class ConflictingImplsError(UserError):
             span,
         )
         if existing_span is not None:
-            self.add_extra(NOTE, "Previous implementation here", existing_span)
+            self._add_extra(NOTE, "Previous implementation here", existing_span)
 
 
 class TraitMethodNotImplementedError(UserError):
@@ -795,7 +795,7 @@ class NotAMethodError(UserError):
             span,
         )
         if fn_span is not None:
-            self.add_extra(NOTE, f'Function "{fn_name}" defined here', fn_span)
+            self._add_extra(NOTE, f'Function "{fn_name}" defined here', fn_span)
 
 
 class InvalidStructFieldError(UserError):
@@ -814,7 +814,7 @@ class InvalidStructFieldError(UserError):
             field_span,
         )
         if struct_span is not None:
-            self.add_extra(NOTE, f'Struct "{struct_typ}" defined here', struct_span)
+            self._add_extra(NOTE, f'Struct "{struct_typ}" defined here', struct_span)
 
 
 class PrivateStructFieldAccessError(UserError):
@@ -834,7 +834,7 @@ class PrivateStructFieldAccessError(UserError):
             access_span,
         )
         if field_defn_span is not None:
-            self.add_extra(NOTE, f'Field "{field_name}" defined here', field_defn_span)
+            self._add_extra(NOTE, f'Field "{field_name}" defined here', field_defn_span)
 
 
 class IncompatibleStructFieldTypError(UserError):
@@ -858,7 +858,7 @@ class IncompatibleStructFieldTypError(UserError):
             given_span,
         )
         if field_span is not None:
-            self.add_extra(NOTE, f'Field "{field_name}" defined here', field_span)
+            self._add_extra(NOTE, f'Field "{field_name}" defined here', field_span)
 
 
 class MissingFieldInStructExprError(UserError):
@@ -877,7 +877,7 @@ class MissingFieldInStructExprError(UserError):
             struct_expr_span,
         )
         if field_span is not None:
-            self.add_extra(NOTE, f'Field "{field_name}" defined here', field_span)
+            self._add_extra(NOTE, f'Field "{field_name}" defined here', field_span)
 
 
 class DuplicateFieldInStructExprError(UserError):
@@ -895,7 +895,7 @@ class DuplicateFieldInStructExprError(UserError):
             duplicate_span,
         )
         if previous_span is not None:
-            self.add_extra(
+            self._add_extra(
                 NOTE,
                 f'Value for field "{field_name}" previously given here',
                 previous_span,
@@ -917,7 +917,7 @@ class DuplicateFieldInStructDefnError(UserError):
             duplicate_span,
         )
         if previous_span is not None:
-            self.add_extra(
+            self._add_extra(
                 NOTE,
                 f'Definition of field "{field_name}" previously given here',
                 previous_span,
@@ -949,7 +949,7 @@ class InfiniteSizeStructError(UserError):
         """
         super().__init__(ERROR, f'Struct "{struct_name}" has infinite size', struct_span)
         for containing, field_name, field_span, contained in cycle:
-            self.add_extra(
+            self._add_extra(
                 NOTE,
                 f'Field "{field_name}" of struct "{containing}" contains "{contained}" by value',
                 field_span,
@@ -992,8 +992,8 @@ class IfElsTypMismatchError(UserError):
         els_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(ERROR, '"if" and "else" have mismatching types', None)
-        self.add_extra(NOTE, f'"if" type is "{then_typ}"', then_span)
-        self.add_extra(NOTE, f'"else" type is "{els_typ}"', els_span)
+        self._add_extra(NOTE, f'"if" type is "{then_typ}"', then_span)
+        self._add_extra(NOTE, f'"else" type is "{els_typ}"', els_span)
 
 
 class IfTypNotVoidError(UserError):
@@ -1062,17 +1062,6 @@ class InvalidIndexTypError(UserError):
         super().__init__(ERROR, f'Invalid index typ "{typ}"', span)
 
 
-class ArrayIndexOutOfBoundsError(UserError):
-    """Raised when a compile-time-known array index is out of bounds."""
-
-    def __init__(self, index: int, index_span: src.SrcSpan, array_typ: str) -> None:
-        super().__init__(
-            ERROR,
-            f'Index {index} out of bounds for array of type "{array_typ}"',
-            index_span,
-        )
-
-
 class IntLitOverflowError(UserError):
     """Raised when an integer literal doesn't fit in its type's width."""
 
@@ -1132,7 +1121,7 @@ class CircularVarInitializerError(UserError):
         """
         super().__init__(ERROR, f'Initializer of variable "{var_name}" depends on itself', var_span)
         for name, span in cycle:
-            self.add_extra(NOTE, f'Variable "{name}" defined here', span)
+            self._add_extra(NOTE, f'Variable "{name}" defined here', span)
 
 
 class CannotTakeAddressOfComptimeValueError(UserError):
@@ -1181,19 +1170,19 @@ class TextErrorRenderer:
         :param errs: The errors to render.
         """
         for err in errs:
-            self.display_error(err)
+            self._display_error(err)
 
-    def display_error(self, err: UserError) -> None:
+    def _display_error(self, err: UserError) -> None:
         """Render an error's primary message followed by its extra messages.
 
         :param err: The error to render.
         """
 
-        self.display_message(err.message)
+        self._display_message(err.message)
         for message in err.extra:
-            self.display_message(message)
+            self._display_message(message)
 
-    def display_message(self, message: Message) -> None:
+    def _display_message(self, message: Message) -> None:
         """Render a single message, with a source excerpt if it has a span.
 
         :param message: The message to render.
@@ -1228,16 +1217,6 @@ def register_error(err: UserError) -> None:
     if err.level > _error_level:
         _error_level = err.level
     _errors.append(err)
-
-
-def raise_error(err: UserError) -> None:
-    """Record a diagnostic (see :func:`register_error`) and then raise it.
-
-    :param err: The diagnostic to record and raise.
-    :raises UserError: Always; raises ``err`` itself.
-    """
-    register_error(err)
-    raise err
 
 
 def all_errors() -> list[UserError]:

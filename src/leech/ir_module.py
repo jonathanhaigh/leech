@@ -68,7 +68,7 @@ class ModItem:
     qualify_name: Final[bool] = True
 
     @property
-    def ns(self) -> ir_env.Env.Namespace:
+    def _ns(self) -> ir_env.Env.Namespace:
         """Which namespace this item's name is bound in.
 
         Functions and variables are values, so they live in
@@ -156,7 +156,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
     """
 
     env: Final[ir_env.Env]
-    mod_name: Final[str]
+    _mod_name: Final[str]
     recv_typ: Final[Optional[typs.Typ]]
 
     @override
@@ -169,7 +169,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
     ) -> None:
         super().__init__(ast)
         self.env = e.new_child()
-        self.mod_name = mod_name
+        self._mod_name = mod_name
         self.recv_typ = recv_typ
         # Bound here rather than looked up on demand, so a type parameter
         # resolves like any other named type wherever the body names it -
@@ -263,12 +263,10 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         block): a private one can only be called from the module its
         struct is defined in, mirroring
         :meth:`~leech.typs.StructField.is_accessible_from`. Free module-level
-        functions are filtered by access before reaching this point (see
-        :meth:`~leech.ir_env.Env._resolve_path_segment`), so this is only
-        consulted for the two ways of reaching an associated function: the
-        ``Struct::method()`` path form, and the ``value.method()``
-        dot-call form (see
-        :meth:`~leech.ir_builder.CfgBuilder.build_call_expr`).
+        functions are filtered by access before reaching this point, during
+        name resolution, so this is only consulted for the two ways of
+        reaching an associated function: the ``Struct::method()`` path
+        form, and the ``value.method()`` dot-call form, during lowering.
 
         :param file: The source file to check accessibility from.
         :return: Whether this function is accessible from ``file``.
@@ -328,14 +326,14 @@ class FnInstance(FnSpec[ast.FnDefn]):
         own type parameters, in declaration order.
     """
 
-    fn: Final[Fn]
-    typ_args: Final[tuple[typs.Typ, ...]]
+    _fn: Final[Fn]
+    _typ_args: Final[tuple[typs.Typ, ...]]
     _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
 
     def __init__(self, fn: Fn, typ_args: tuple[typs.Typ, ...]) -> None:
         super().__init__(fn.ast)
-        self.fn = fn
-        self.typ_args = typ_args
+        self._fn = fn
+        self._typ_args = typ_args
         fn_ast = opt_util.opt_unwrap(fn.ast)
         self._mapping = {
             typs.TypParamTyp.get_or_create(fn_ast, i, param_ast): typ_arg
@@ -347,19 +345,19 @@ class FnInstance(FnSpec[ast.FnDefn]):
     @override
     def calculate_typ(self) -> typs.PtrTyp:
         substituted = asserts.checked_cast(
-            self.fn.fn_typ.substitute_typ_params(self._mapping), typs.FnTyp
+            self._fn.fn_typ.substitute_typ_params(self._mapping), typs.FnTyp
         )
         return typs.PtrTyp.get_or_create(substituted, typs.CONST)
 
     @override
     def calculate_params(self) -> tuple[ir_values.Param, ...]:
-        return tuple(ir_values.Param(self, param.pos, param.ast) for param in self.fn.params)
+        return tuple(ir_values.Param(self, param.pos, param.ast) for param in self._fn.params)
 
     @property
     @override
     def name(self) -> str:
-        arg_names = ", ".join(typ_arg.name for typ_arg in self.typ_args)
-        return f"{self.fn.name}[{arg_names}]"
+        arg_names = ", ".join(typ_arg.name for typ_arg in self._typ_args)
+        return f"{self._fn.name}[{arg_names}]"
 
     @property
     def qualified_name(self) -> str:
@@ -368,24 +366,25 @@ class FnInstance(FnSpec[ast.FnDefn]):
         Extends :attr:`ModItem.qualified_name`'s module-prefixed scheme -
         an instance is never itself a :class:`ModItem` (nothing declares
         one directly; it's built on demand by :meth:`Fn.instance`), so it
-        computes the same form independently, from :attr:`fn`'s own
-        module.
+        computes the same form independently, from the module of the
+        generic function this instantiates.
         """
-        return f"{self.fn.mod_name}.{self.name}"
+        return f"{self._fn._mod_name}.{self.name}"
 
     @functools.cached_property
     def env(self) -> ir_env.Env:
         """The scope to lower this instance's body in.
 
-        :attr:`fn`'s own scope, with each type parameter shadowed here by
-        its concrete type argument - so anything resolved fresh from
-        source while lowering (a ``let``'s declared type, a struct
-        literal's, ...) picks up the concrete type automatically, without
-        the lowering code needing to know it's inside an instantiation.
+        The own scope of the generic function this instantiates, with
+        each type parameter shadowed here by its concrete type argument -
+        so anything resolved fresh from source while lowering (a
+        ``let``'s declared type, a struct literal's, ...) picks up the
+        concrete type automatically, without the lowering code needing to
+        know it's inside an instantiation.
         """
-        e = self.fn.env.new_child()
-        fn_ast = opt_util.opt_unwrap(self.fn.ast)
-        for param_ast, typ_arg in zip(fn_ast.generic_params, self.typ_args, strict=True):
+        e = self._fn.env.new_child()
+        fn_ast = opt_util.opt_unwrap(self._fn.ast)
+        for param_ast, typ_arg in zip(fn_ast.generic_params, self._typ_args, strict=True):
             e.add_container(param_ast.ident.name, typ_arg)
         return e
 
@@ -393,13 +392,14 @@ class FnInstance(FnSpec[ast.FnDefn]):
     def cfg(self) -> ir_values.Cfg:
         """This instance's body, lowered to a control-flow graph.
 
-        Built lazily, on first access, from :attr:`fn`'s own
-        (unsubstituted) type-check results - a generic body is checked
-        once, not once per instantiation (see :meth:`Mod.build`) - read
-        back here against this instance's concrete type arguments.
+        Built lazily, on first access, from the unsubstituted type-check
+        results of the generic function this instantiates - a generic
+        body is checked once, not once per instantiation (see
+        :meth:`Mod.build`) - read back here against this instance's
+        concrete type arguments.
         """
-        builder = ir_builder.CfgBuilder(self.fn.typ_check_results, self, self._mapping)
-        builder.build_fn(opt_util.opt_unwrap(self.fn.ast), self.env)
+        builder = ir_builder.CfgBuilder(self._fn.typ_check_results, self, self._mapping)
+        builder.build_fn(opt_util.opt_unwrap(self._fn.ast), self.env)
         return builder.cfg
 
 
@@ -417,8 +417,7 @@ class GenericFn:
     a type any caller should see. Binding :attr:`fn` directly would let
     it be resolved and called as though that were a real type; naming a
     ``GenericFn`` the way an ordinary value is named is instead a
-    :class:`~leech.errors.MissingTypArgsError` (see
-    :meth:`leech.typcheck.TypCheck.check_var_expr`).
+    :class:`~leech.errors.MissingTypArgsError`.
 
     :param fn: The wrapped generic function.
     """
@@ -452,7 +451,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     """
 
     env: Final[ir_env.Env]
-    mut: Final[typs.Mutability]
+    _mut: Final[typs.Mutability]
 
     #: Module variables whose initializer is currently being evaluated,
     #: innermost last. Shared across every ``ModVar`` (and, since imports
@@ -465,7 +464,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     def __init__(self, ast: ast.VarDefn, e: ir_env.Env) -> None:
         super().__init__(ast)
         self.env = e.new_child()
-        self.mut = typs.Mutability.from_ast(ast.let_stmt.mut)
+        self._mut = typs.Mutability.from_ast(ast.let_stmt.mut)
 
     @property
     def name(self) -> str:
@@ -530,7 +529,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
-        return typs.PtrTyp.get_or_create(self.initializer.typ, self.mut)
+        return typs.PtrTyp.get_or_create(self.initializer.typ, self._mut)
 
 
 class Mod:
@@ -538,12 +537,10 @@ class Mod:
     declares.
 
     A module is *not* a type, and can't be used as one. It can head a
-    qualified path (``some_mod::foo``) because
-    :meth:`~leech.ir_env.Env._resolve_path_segment` accepts a module as a
-    scope to look a name up in, and it shares the
+    qualified path (``some_mod::foo``) because path resolution accepts a
+    module as a scope to look a name up in, and it shares the
     :attr:`~leech.ir_env.Env.Namespace.CONTAINERS` namespace with types so
-    that a module and a type can't have the same name (see
-    :attr:`ModItem.ns`).
+    that a module and a type can't have the same name.
 
     Construction is two-phase: ``__init__`` only sets up empty state, and
     :meth:`build` populates :attr:`items`. This lets
@@ -596,7 +593,7 @@ class Mod:
         ever applied (that happens later, per call site - see
         :meth:`Fn.instance`), so nothing else is guaranteed to ever force
         it. A generic ``impl`` block's associated functions are checked
-        the same eager way - see :meth:`_build_impl_defn`.
+        the same eager way.
 
         :raises ModDoesNotExistError: If an ``import`` names a module file
             that doesn't exist.
@@ -635,8 +632,8 @@ class Mod:
         """Find the item this module declares as ``name`` in ``ns``.
 
         :param ns: The namespace to look in. A value and a type of the
-            same name are different items (see :attr:`ModItem.ns`), so the
-            namespace is part of the lookup.
+            same name are different items, so the namespace is part of
+            the lookup.
         :param name: The item's unqualified name.
         :return: The item, or ``None`` if this module declares nothing of
             that name in ``ns``.
@@ -873,5 +870,5 @@ class Mod:
         # duplicate definition, and it has to raise before _items is
         # written to, so that a name can never be silently rebound to a
         # different item.
-        self.env.add(item.ns, name, value, span)
-        self._items[(item.ns, name)] = item
+        self.env.add(item._ns, name, value, span)
+        self._items[(item._ns, name)] = item

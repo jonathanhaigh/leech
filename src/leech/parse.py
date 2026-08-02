@@ -7,7 +7,7 @@ import lark
 
 from leech import ast, errors, src
 
-GRAMMAR_PATH = pathlib.Path(__file__).parent / "leech.lark"
+_GRAMMAR_PATH = pathlib.Path(__file__).parent / "leech.lark"
 
 
 def build_parser(start_rule: str) -> lark.Lark:
@@ -17,7 +17,7 @@ def build_parser(start_rule: str) -> lark.Lark:
     :return: A configured, ready-to-use parser.
     """
     return lark.Lark.open(
-        str(GRAMMAR_PATH),
+        str(_GRAMMAR_PATH),
         start=start_rule,
         strict=True,
         propagate_positions=True,
