@@ -72,7 +72,7 @@ assignment_stmt: place "=" expr ";"
 
 ?place: var_expr
   | array_access_expr
-  | struct_access_expr
+  | field_access_expr
   | deref_expr
 
 ?expr: block_expr
@@ -125,7 +125,7 @@ while_expr: [ident ":"] "while" "(" expr ")" block_expr
 ?atom_expr: call_expr
   | array_access_expr
   | struct_expr
-  | struct_access_expr
+  | field_access_expr
   | deref_expr
   | atom
 
@@ -140,7 +140,7 @@ struct_field_expr_list: _struct_field_expr_list?
 _struct_field_expr_list: struct_field_expr ("," struct_field_expr)* ","?
 struct_field_expr: ident ":" expr
 
-struct_access_expr: atom_expr "." ident
+field_access_expr: atom_expr "." ident
 
 deref_expr: atom_expr ".*"
 

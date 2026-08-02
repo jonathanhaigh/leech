@@ -158,7 +158,7 @@ class Expr(Ast):
             "array_access_expr": ArrayAccessExpr,
             "array_expr": ArrayExpr,
             "struct_expr": StructExpr,
-            "struct_access_expr": StructAccessExpr,
+            "field_access_expr": FieldAccessExpr,
             "deref_expr": DerefExpr,
             "or_expr": BinOpExpr,
             "and_expr": BinOpExpr,
@@ -474,22 +474,28 @@ class StructFieldExpr(Expr):
         return f'struct field "{self.ident.name}" expression'
 
 
-class StructAccessExpr(PlaceExpr):
-    """A struct field access expression, ``struct.field``."""
+class FieldAccessExpr(PlaceExpr):
+    """A field access expression, ``value.field``.
 
-    struct: Final[Expr]
+    Despite the name, ``value`` isn't necessarily a struct: this node is
+    also used for method-call syntax (``value.method(...)``), and a
+    method can be defined on any type via an ``impl`` block, not just a
+    struct.
+    """
+
+    value: Final[Expr]
     field: Final[Ident]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "struct_access_expr")
+        asserts.assert_eq(tree.data, "field_access_expr")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        struct, field = map(_as_tree, tree.children)
-        self.struct = Expr.from_tree(file, struct)
+        value, field = map(_as_tree, tree.children)
+        self.value = Expr.from_tree(file, value)
         self.field = Ident.from_tree(file, field)
 
     @override
     def diag_str(self) -> str:
-        return "struct access expression"
+        return "field access expression"
 
 
 class DerefExpr(PlaceExpr):

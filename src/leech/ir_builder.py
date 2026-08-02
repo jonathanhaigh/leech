@@ -240,8 +240,8 @@ class CfgBuilder:
                 return self._build_array_access_expr(expr_ast, e, ctx)
             case ast.StructExpr():
                 return self._build_struct_expr(expr_ast, e, ctx)
-            case ast.StructAccessExpr():
-                return self._build_struct_access_expr(expr_ast, e, ctx)
+            case ast.FieldAccessExpr():
+                return self._build_field_access_expr(expr_ast, e, ctx)
             case ast.DerefExpr():
                 return self._build_deref_expr(expr_ast, e, ctx)
             case _:
@@ -481,8 +481,8 @@ class CfgBuilder:
             # has to get (building, if this is the first call site to
             # need it) the one instance that pairs them.
             callee: ir_values.Value = self._resolve_fn_instance(*generic_call)
-        elif isinstance(callee_ast, ast.StructAccessExpr):
-            recv_place = self._build_expr(callee_ast.struct, e, _ExprContext.PLACE)
+        elif isinstance(callee_ast, ast.FieldAccessExpr):
+            recv_place = self._build_expr(callee_ast.value, e, _ExprContext.PLACE)
             recv_ptr_typ = asserts.checked_cast(recv_place.typ, typs.PtrTyp)
             method = ir_traits.lookup_member(
                 recv_ptr_typ.pointee_typ,
@@ -493,7 +493,7 @@ class CfgBuilder:
 
             if method is not None:
                 recv_arg = recv_place
-                recv_ast = callee_ast.struct
+                recv_ast = callee_ast.value
                 callee = method
             else:
                 callee = self._build_struct_field_access(recv_place, callee_ast, _ExprContext.VALUE)
@@ -919,36 +919,36 @@ class CfgBuilder:
 
         return self._in_context(struct, ctx)
 
-    def _build_struct_access_expr(
-        self, sa_expr: ast.StructAccessExpr, e: ir_env.Env, ctx: _ExprContext
+    def _build_field_access_expr(
+        self, fa_expr: ast.FieldAccessExpr, e: ir_env.Env, ctx: _ExprContext
     ) -> ir_values.Value:
-        """Lower a struct field access expression (``s.field``).
+        """Lower a field access expression (``s.field``).
 
-        :param sa_expr: The parsed struct access expression.
+        :param fa_expr: The parsed field access expression.
         :param e: The scope to resolve names in.
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The field's value, or a pointer to it if ``ctx`` is
             :attr:`~_ExprContext.PLACE`.
         """
-        struct_ptr = self._build_expr(sa_expr.struct, e, _ExprContext.PLACE)
-        return self._build_struct_field_access(struct_ptr, sa_expr, ctx)
+        struct_ptr = self._build_expr(fa_expr.value, e, _ExprContext.PLACE)
+        return self._build_struct_field_access(struct_ptr, fa_expr, ctx)
 
     def _build_struct_field_access(
-        self, struct_ptr: ir_values.Value, sa_expr: ast.StructAccessExpr, ctx: _ExprContext
+        self, struct_ptr: ir_values.Value, fa_expr: ast.FieldAccessExpr, ctx: _ExprContext
     ) -> ir_values.Value:
         """Lower ``s.field`` given ``s``'s already-lowered place pointer.
 
-        Split out of :meth:`_build_struct_access_expr` so
+        Split out of :meth:`_build_field_access_expr` so
         :meth:`_build_call_expr` can fall back to plain field access
         (e.g. a struct field that happens to hold a callable value)
-        without re-lowering ``sa_expr.struct`` a second time. TypCheck
+        without re-lowering ``fa_expr.value`` a second time. TypCheck
         already confirmed ``struct_ptr``'s pointee is a struct type with
-        an accessible field named ``sa_expr.field``.
+        an accessible field named ``fa_expr.field``.
 
-        :param struct_ptr: ``sa_expr.struct`` already lowered in
+        :param struct_ptr: ``fa_expr.value`` already lowered in
             :attr:`~_ExprContext.PLACE` context.
-        :param sa_expr: The parsed struct access expression.
+        :param fa_expr: The parsed field access expression.
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The field's value, or a pointer to it if ``ctx`` is
@@ -956,11 +956,11 @@ class CfgBuilder:
         """
         struct_ptr_typ = asserts.checked_cast(struct_ptr.typ, typs.PtrTyp)
         struct_typ = asserts.checked_cast(struct_ptr_typ.pointee_typ, typs.StructTyp)
-        field = struct_typ.fields[sa_expr.field.name]
+        field = struct_typ.fields[fa_expr.field.name]
 
-        index = ir_values.ComptimeInt(typs.I32, field.index, sa_expr)
-        field_ptr = self._curr_bb.gep(struct_ptr, index, sa_expr)
-        return self._deref_in_context(field_ptr, ctx, sa_expr)
+        index = ir_values.ComptimeInt(typs.I32, field.index, fa_expr)
+        field_ptr = self._curr_bb.gep(struct_ptr, index, fa_expr)
+        return self._deref_in_context(field_ptr, ctx, fa_expr)
 
     def _build_deref_expr(
         self, d_expr: ast.DerefExpr, e: ir_env.Env, ctx: _ExprContext

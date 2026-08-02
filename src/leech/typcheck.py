@@ -389,8 +389,8 @@ class TypCheck:
                 return self._check_array_access_expr(expr_ast, e)
             case ast.StructExpr():
                 return self._check_struct_expr(expr_ast, e)
-            case ast.StructAccessExpr():
-                return self._check_struct_access_expr(expr_ast, e)
+            case ast.FieldAccessExpr():
+                return self._check_field_access_expr(expr_ast, e)
             case ast.DerefExpr():
                 return self._check_deref_expr(expr_ast, e)
             case _:
@@ -524,7 +524,7 @@ class TypCheck:
         """The callee's type, and its receiver's expression and type, if any.
 
         If the callee is written as ``x.name``, ``name`` is looked up as a
-        method of ``x``'s struct type first; otherwise (and if that
+        method of ``x``'s type first; otherwise (and if that
         lookup fails) it falls back to ordinary field access, exactly as
         :meth:`~leech.ir_builder.CfgBuilder._build_call_expr` does. A bare
         reference to a generic function is resolved through
@@ -563,7 +563,7 @@ class TypCheck:
             if isinstance(var, ir_module.GenericFn):
                 return self._resolve_generic_call(var.fn, call_ast, e), None, None
 
-        if not isinstance(callee_ast, ast.StructAccessExpr):
+        if not isinstance(callee_ast, ast.FieldAccessExpr):
             callee_typ = self._check_expr(callee_ast, e, None)
             fn_typ = _callable_typ(callee_typ)
             if fn_typ is None:
@@ -572,7 +572,7 @@ class TypCheck:
                 )
             return fn_typ, None, None
 
-        recv_typ = self._check_place(callee_ast.struct, e)
+        recv_typ = self._check_place(callee_ast.value, e)
         pointee_typ = recv_typ.pointee_typ
 
         if isinstance(pointee_typ, typs.TypParamTyp):
@@ -588,7 +588,7 @@ class TypCheck:
                 pointee_typ, callee_ast.field.name, callee_ast.field.span, e
             )
             if method_fn_typ is not None:
-                return method_fn_typ, callee_ast.struct, recv_typ
+                return method_fn_typ, callee_ast.value, recv_typ
         else:
             # Real circular import; see _check_var_expr.
             from leech import ir_traits  # noqa: PLC0415
@@ -612,7 +612,7 @@ class TypCheck:
                         callee_ast.field.span,
                         method.span,
                     )
-                return method.fn_typ, callee_ast.struct, recv_typ
+                return method.fn_typ, callee_ast.value, recv_typ
 
         field_typ = _struct_field_typ(pointee_typ, callee_ast.field.name)
         callee_typ = opt_util.opt_or_default(field_typ, typs.VOID)
@@ -1077,20 +1077,20 @@ class TypCheck:
 
         return struct_typ
 
-    def _check_struct_access_expr(self, sa_expr: ast.StructAccessExpr, e: ir_env.Env) -> typs.Typ:
-        struct_typ = self._check_expr(sa_expr.struct, e, None)
+    def _check_field_access_expr(self, fa_expr: ast.FieldAccessExpr, e: ir_env.Env) -> typs.Typ:
+        struct_typ = self._check_expr(fa_expr.value, e, None)
         if not isinstance(struct_typ, typs.StructTyp):
-            raise errors.FieldAccessIntoInvalidTypError(struct_typ.name, sa_expr.struct.span)
+            raise errors.FieldAccessIntoInvalidTypError(struct_typ.name, fa_expr.value.span)
 
-        field_name = sa_expr.field.name
+        field_name = fa_expr.field.name
         field = struct_typ.fields.get(field_name)
         if field is None:
             raise errors.InvalidStructFieldError(
-                field_name, sa_expr.field.span, struct_typ.name, struct_typ.span
+                field_name, fa_expr.field.span, struct_typ.name, struct_typ.span
             )
-        if not field.is_accessible_from(sa_expr.span.file):
+        if not field.is_accessible_from(fa_expr.span.file):
             raise errors.PrivateStructFieldAccessError(
-                field_name, sa_expr.field.span, struct_typ.name, field.ast.span
+                field_name, fa_expr.field.span, struct_typ.name, field.ast.span
             )
         return field.typ
 
@@ -1107,7 +1107,7 @@ class TypCheck:
         an expression's *value* type, which :meth:`_check_expr` already
         gives (place vs. value is otherwise a lowering-only concern - see
         :attr:`~leech.ir_builder._ExprContext.PLACE`). For a real place
-        expression (a variable, array access, struct access, or deref)
+        expression (a variable, array access, field access, or deref)
         the result's mutability follows the place; for anything else,
         address-of lowers by copying the value into a fresh ``const``
         temporary and taking its address (see
@@ -1158,15 +1158,15 @@ class TypCheck:
                 return asserts.checked_cast(var.typ, typs.PtrTyp).mut
             case ast.ArrayAccessExpr():
                 return self._place_mut(expr_ast.array, e)
-            case ast.StructAccessExpr():
-                struct_typ = self._check_expr(expr_ast.struct, e, None)
+            case ast.FieldAccessExpr():
+                value_typ = self._check_expr(expr_ast.value, e, None)
                 field = (
-                    struct_typ.fields.get(expr_ast.field.name)
-                    if isinstance(struct_typ, typs.StructTyp)
+                    value_typ.fields.get(expr_ast.field.name)
+                    if isinstance(value_typ, typs.StructTyp)
                     else None
                 )
                 if field is not None and field.mut == typs.MUT:
-                    return self._place_mut(expr_ast.struct, e)
+                    return self._place_mut(expr_ast.value, e)
                 return typs.CONST
             case ast.DerefExpr():
                 # _check_place already ran _check_expr on this same DerefExpr

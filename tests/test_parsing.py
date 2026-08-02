@@ -238,7 +238,7 @@ COMMENTED_INTS = [
         (
             "expr",
             "a.b",
-            T("struct_access_expr").cs(
+            T("field_access_expr").cs(
                 T("var_expr").cs(T("path", "ident", Tok("a")), None),
                 T("ident", Tok("b")),
             ),
@@ -246,8 +246,8 @@ COMMENTED_INTS = [
         (
             "expr",
             "a.b.c",
-            T("struct_access_expr").cs(
-                T("struct_access_expr").cs(
+            T("field_access_expr").cs(
+                T("field_access_expr").cs(
                     T("var_expr").cs(T("path", "ident", Tok("a")), None),
                     T("ident", Tok("b")),
                 ),
@@ -257,7 +257,7 @@ COMMENTED_INTS = [
         (
             "expr",
             "arr.[10].xyz",
-            T("struct_access_expr").cs(
+            T("field_access_expr").cs(
                 T("array_access_expr").cs(
                     T("var_expr").cs(T("path", "ident", Tok("arr")), None),
                     T("int_lit", Tok("10")),
@@ -427,7 +427,7 @@ COMMENTED_INTS = [
             "&a.b",
             T("factor").cs(
                 T("unary_op", Tok("&")),
-                T("struct_access_expr").cs(
+                T("field_access_expr").cs(
                     T("var_expr").cs(T("path", "ident", Tok("a")), None),
                     T("ident", Tok("b")),
                 ),
@@ -444,7 +444,7 @@ COMMENTED_INTS = [
         (
             "expr",
             "a.*.b",
-            T("struct_access_expr").cs(
+            T("field_access_expr").cs(
                 T("deref_expr").cs(T("var_expr").cs(T("path", "ident", Tok("a")), None)),
                 T("ident", Tok("b")),
             ),
@@ -497,7 +497,7 @@ COMMENTED_INTS = [
             "-a.b",
             T("factor").cs(
                 T("unary_op", Tok("-")),
-                T("struct_access_expr").cs(
+                T("field_access_expr").cs(
                     T("var_expr").cs(T("path", "ident", Tok("a")), None),
                     T("ident", Tok("b")),
                 ),
@@ -667,7 +667,7 @@ COMMENTED_INTS = [
             "stmt",
             "x.y = z;",
             T("stmt", "assignment_stmt").cs(
-                T("struct_access_expr").cs(
+                T("field_access_expr").cs(
                     T("var_expr").cs(T("path", "ident", Tok("x")), None),
                     T("ident", Tok("y")),
                 ),
