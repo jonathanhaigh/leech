@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """A tree-walking interpreter for evaluating IR at compile time.
 
 Used to evaluate module-level ``let`` initializers (see

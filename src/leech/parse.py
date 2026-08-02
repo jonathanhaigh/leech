@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Turning source text into an AST: grammar loading and parse-error reporting."""
 
 import pathlib

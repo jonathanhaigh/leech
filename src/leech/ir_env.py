@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Scope and name resolution for variables, types and modules."""
 
 import collections

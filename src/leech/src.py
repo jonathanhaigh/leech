@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Source file and source-span types used for diagnostics."""
 
 import functools

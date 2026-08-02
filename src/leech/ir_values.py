@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The IR data model: values, instructions, basic blocks, and control-flow graphs."""
 
 import abc

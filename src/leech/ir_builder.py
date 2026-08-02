@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """AST-to-IR lowering, assuming an already type-checked program.
 
 Type checking happens beforehand, as its own pass (see

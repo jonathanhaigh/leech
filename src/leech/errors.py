@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """User-facing diagnostics: error/warning types, and their rendering."""
 
 import dataclasses

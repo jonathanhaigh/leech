@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """The parsed AST: one node class per grammar rule, built from Lark parse trees."""
 
 import abc

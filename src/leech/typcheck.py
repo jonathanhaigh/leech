@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Type checking of Leech code, kept separate from lowering to LLVM IR.
 
 :class:`TypCheck` mirrors :class:`~leech.ir_builder.CfgBuilder`'s former

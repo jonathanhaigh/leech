@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Lowering of Leech IR to LLVM IR, via llvmlite."""
 
 import collections

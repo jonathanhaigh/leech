@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Assertion helpers that render both operands on failure.
 
 Each function below raises :class:`AssertionError` with a message that

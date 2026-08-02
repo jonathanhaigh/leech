@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 """Integer signedness.
 
 Pulled out of :mod:`leech.typs` because :mod:`leech.ast` needs it too (to

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jonathan Haigh
+#
+# SPDX-License-Identifier: MPL-2.0
+
 import util
 
 from leech import asserts, ir_env, ir_loader, ir_module, typs
