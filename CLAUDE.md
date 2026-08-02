@@ -45,10 +45,9 @@ uv run ruff check .
 uv run ruff format .
 ```
 
-Type-check (basedpyright is configured via `[tool.basedpyright]` but is not a
-project dependency; run it via `uvx`):
+Type-check (configured via `[tool.basedpyright]` in `pyproject.toml`):
 ```
-uvx basedpyright
+uv run basedpyright
 ```
 
 Compile a `.leech` file by hand (useful for manually inspecting generated IR):
