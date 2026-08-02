@@ -1,5 +1,7 @@
 """Generation of unique, human-readable names."""
 
+from typing import Final
+
 
 class VarNamer:
     """Generates unique names by disambiguating repeated basenames.
@@ -8,7 +10,7 @@ class VarNamer:
     fresh, uniquely-suffixed name every time it is reused.
     """
 
-    _counters: dict[str, int]
+    _counters: Final[dict[str, int]]
 
     def __init__(self) -> None:
         self._counters = {}

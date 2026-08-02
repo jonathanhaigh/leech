@@ -2,6 +2,7 @@
 
 import functools
 import pathlib
+from typing import Final
 
 import lark.tree
 
@@ -12,7 +13,7 @@ class SrcFile:
     :param path: The path to the source file.
     """
 
-    path: pathlib.Path
+    path: Final[pathlib.Path]
 
     def __init__(self, path: pathlib.Path) -> None:
         self.path = path
@@ -24,9 +25,9 @@ class SrcFile:
             return f.read()
 
     @functools.cached_property
-    def lines(self) -> list[str]:
+    def lines(self) -> tuple[str, ...]:
         """The contents of the file split into individual lines."""
-        return self.src.splitlines()
+        return tuple(self.src.splitlines())
 
 
 class SrcSpan:
@@ -35,26 +36,58 @@ class SrcSpan:
     Used to attach source locations to diagnostics.
 
     :param file: The source file the span is located in.
-    :param lark_meta: The Lark parse-tree metadata to derive the span's
-        position from.
+    :param start: The span's start position as a character offset.
+    :param end: The span's end position as a character offset.
+    :param start_line: The span's 1-based start line number.
+    :param end_line: The span's 1-based end line number.
+    :param start_col: The span's 1-based start column number.
+    :param end_col: The span's 1-based end column number.
     """
 
-    file: SrcFile
-    start: int
-    end: int
-    start_line: int
-    end_line: int
-    start_col: int
-    end_col: int
+    file: Final[SrcFile]
+    start: Final[int]
+    end: Final[int]
+    start_line: Final[int]
+    end_line: Final[int]
+    start_col: Final[int]
+    end_col: Final[int]
 
-    def __init__(self, file: SrcFile, lark_meta: lark.tree.Meta) -> None:
+    def __init__(
+        self,
+        file: SrcFile,
+        start: int,
+        end: int,
+        start_line: int,
+        end_line: int,
+        start_col: int,
+        end_col: int,
+    ) -> None:
         self.file = file
-        self.start = lark_meta.start_pos
-        self.end = lark_meta.end_pos
-        self.start_line = lark_meta.line
-        self.end_line = lark_meta.end_line
-        self.start_col = lark_meta.column
-        self.end_col = lark_meta.end_column
+        self.start = start
+        self.end = end
+        self.start_line = start_line
+        self.end_line = end_line
+        self.start_col = start_col
+        self.end_col = end_col
+
+    @classmethod
+    def from_lark_meta(cls, file: SrcFile, lark_meta: lark.tree.Meta) -> SrcSpan:
+        """Construct a span from a Lark ``Meta``/``Token``'s position fields.
+
+        :param file: The source file the span is located in.
+        :param lark_meta: The Lark parse-tree metadata to derive the span's
+            position from.
+        :return: The equivalent span.
+        """
+        return cls(
+            file,
+            lark_meta.start_pos,
+            lark_meta.end_pos,
+            lark_meta.line,
+            lark_meta.end_line,
+            lark_meta.column,
+            lark_meta.end_column,
+        )
 
     @classmethod
     def single_char(cls, file: SrcFile, pos: int, line: int, col: int) -> SrcSpan:
@@ -70,12 +103,4 @@ class SrcSpan:
         :param col: The character's 1-based column number.
         :return: A one-character-wide span starting at ``pos``.
         """
-        span = cls.__new__(cls)
-        span.file = file
-        span.start = pos
-        span.end = pos + 1
-        span.start_line = line
-        span.end_line = line
-        span.start_col = col
-        span.end_col = col + 1
-        return span
+        return cls(file, pos, pos + 1, line, line, col, col + 1)

@@ -3,7 +3,7 @@
 import collections
 import enum
 import re
-from typing import Any, Optional
+from typing import Any, Final, Optional
 
 from leech import (
     asserts,
@@ -73,16 +73,16 @@ class Env:
                 case Env.Namespace.CONTAINERS:
                     return "type or module"
 
-    items: collections.ChainMap[tuple[Env.Namespace, str], Container | Var]
+    items: Final[collections.ChainMap[tuple[Env.Namespace, str], Container | Var]]
     #: Where a name was bound, for bindings whose item can't point at its
     #: own definition site (see :meth:`add`'s ``span`` parameter). Scoped
     #: to this Env alone, mirroring ``items.maps[0]``.
-    _spans: dict[tuple[Env.Namespace, str], src.SrcSpan]
+    _spans: Final[dict[tuple[Env.Namespace, str], src.SrcSpan]]
     #: The program-wide trait impl registry - reachable from any scope, so
     #: that type and method resolution (which thread an ``Env`` through
     #: pervasively already) don't need it passed as a second, parallel
     #: parameter everywhere. See :class:`~leech.ir_traits.ImplRegistry`.
-    impl_registry: ir_traits.ImplRegistry
+    impl_registry: Final[ir_traits.ImplRegistry]
 
     def __init__(
         self,

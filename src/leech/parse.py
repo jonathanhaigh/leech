@@ -69,7 +69,7 @@ def parse_mod_ast(file: src.SrcFile) -> ast.Mod:
         span = src.SrcSpan.single_char(file, err.pos_in_stream, err.line, err.column)
         raise errors.UnexpectedCharacterError(err.char, span) from err
     except lark.UnexpectedToken as err:
-        span = src.SrcSpan(file, err.token)
+        span = src.SrcSpan.from_lark_meta(file, err.token)
         found = "end of input" if err.token.type == "$END" else f'token "{err.token}"'
         expected = _describe_expected_tokens(parser, err.accepts or err.expected)
         raise errors.UnexpectedTokenError(found, span, expected) from err

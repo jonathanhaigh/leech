@@ -77,7 +77,7 @@ class CfgBuilder:
         :meth:`_coerce`.
     """
 
-    @dataclasses.dataclass
+    @dataclasses.dataclass(frozen=True)
     class _LoopCtx:
         """The ``break``/``continue`` targets for one enclosing ``while`` loop."""
 
@@ -85,7 +85,7 @@ class CfgBuilder:
         cond_bb: ir_values.BasicBlock
         end_bb: ir_values.BasicBlock
 
-    fn: Optional[ir_module.FnSpec]
+    fn: Final[Optional[ir_module.FnSpec]]
     typ_check_results: Final[typcheck.TypCheckResults]
     typ_arg_mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
     cfg: Final[ir_values.Cfg]
@@ -106,8 +106,10 @@ class CfgBuilder:
         self.typ_arg_mapping = opt_util.opt_or_default(typ_arg_mapping, {})
         self.cfg = ir_values.Cfg()
         self._generate_bb_name = naming.VarNamer()
-        self.cfg._entry = self.add_bb("entry")
-        self.cfg._exit = self.add_bb("exit")
+        # Reserve the "entry"/"exit" basenames so a later `add_bb` call
+        # never collides with the blocks `Cfg.__init__` already created.
+        self._generate_bb_name("entry")
+        self._generate_bb_name("exit")
         self.curr_bb = self.cfg.entry
         self._loop_stack = []
 

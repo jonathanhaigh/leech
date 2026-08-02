@@ -68,7 +68,7 @@ def test_impl_defn_empty(tmp_path):
     mod = util.parse_mod(tmp_path, src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
-    assert impl.fns == []
+    assert impl.fns == ()
 
 
 def test_fn_defn_generic_params(tmp_path):
@@ -91,7 +91,7 @@ def test_fn_defn_no_generic_params(tmp_path):
     mod = util.parse_mod(tmp_path, src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
-    assert fn.generic_params == []
+    assert fn.generic_params == ()
 
 
 def test_basic_typ_generic_args(tmp_path):

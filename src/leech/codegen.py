@@ -3,7 +3,7 @@
 import collections
 import dataclasses
 from collections.abc import Iterator
-from typing import Optional
+from typing import Final, Optional
 
 import networkx as nx
 from llvmlite import ir as ll
@@ -30,10 +30,10 @@ class Compiler:
     :param mod: The IR module to compile.
     """
 
-    mod: ir_module.Mod
-    ll_mod: ll.Module
-    _ll_mod_items: Compiler.LLItems
-    _tmp_name: naming.VarNamer
+    mod: Final[ir_module.Mod]
+    ll_mod: Final[ll.Module]
+    _ll_mod_items: Final[Compiler.LLItems]
+    _tmp_name: Final[naming.VarNamer]
 
     class LLItems:
         """A cache mapping Leech IR values and types to their LLVM counterparts.
@@ -50,8 +50,8 @@ class Compiler:
             empty.
         """
 
-        compiler: Compiler
-        items: collections.ChainMap[ir_values.Value | typs.Typ, ll.Value | ll.Type]
+        compiler: Final[Compiler]
+        items: Final[collections.ChainMap[ir_values.Value | typs.Typ, ll.Value | ll.Type]]
 
         def __init__(
             self,
@@ -96,7 +96,7 @@ class Compiler:
             """
             self.items[item] = ll_item
 
-    @dataclasses.dataclass
+    @dataclasses.dataclass(frozen=True)
     class _FnBuilderContext:
         ll_builder: ll.IRBuilder
         ll_values: Compiler.LLItems

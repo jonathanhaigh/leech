@@ -23,6 +23,7 @@ handling throughout the ``check_*`` methods below.
 """
 
 import dataclasses
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Final, Optional
 
 from leech import asserts, ast, errors, ir_env, ir_values, opt_util, signage, src, typs
@@ -266,7 +267,7 @@ class TypCheck:
     #: The enclosing ``while`` loops' labels, innermost last - mirrors
     #: :attr:`~leech.ir_builder.CfgBuilder._loop_stack`, minus the basic
     #: blocks (a lowering-only concern).
-    _loop_labels: list[Optional[str]]
+    _loop_labels: Final[list[Optional[str]]]
 
     def __init__(self) -> None:
         self.results = TypCheckResults()
@@ -717,7 +718,7 @@ class TypCheck:
         self,
         fn: ir_module.Fn,
         typ_params: list[typs.TypParamTyp],
-        generic_args: list[ast.Typ],
+        generic_args: Sequence[ast.Typ],
         span: Optional[src.SrcSpan],
         e: ir_env.Env,
     ) -> dict[typs.TypParamTyp, typs.Typ]:

@@ -215,7 +215,7 @@ class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
     :param ast: The AST node this value was built from, if any.
     """
 
-    elements: list[ComptimeValue]
+    elements: Final[list[ComptimeValue]]
     _typ: Final[typs.ArrayTyp]
 
     @override
@@ -260,7 +260,7 @@ class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
     :param ast: The AST node this value was built from, if any.
     """
 
-    fields: dict[str, ComptimeValue]
+    fields: Final[dict[str, ComptimeValue]]
     _typ: Final[typs.StructTyp]
 
     @override
@@ -758,7 +758,7 @@ class GepInstr(Instr[typs.PtrTyp]):
     """
 
     base: Final[Value]
-    index: Value
+    index: Final[Value]
 
     @override
     def __init__(
@@ -791,7 +791,7 @@ class InsertValueInstr(Instr):
 
     aggregate: Final[Value]
     value: Final[Value]
-    indeces: tuple[ComptimeInt, ...]
+    indeces: Final[tuple[ComptimeInt, ...]]
 
     @override
     def __init__(
@@ -822,7 +822,7 @@ class CallInstr(Instr[typs.Typ, ast.CallExpr]):
     """
 
     callee: Final[Value]
-    args: tuple[Value, ...]
+    args: Final[tuple[Value, ...]]
 
     @override
     def __init__(
@@ -1122,15 +1122,23 @@ class Cfg(nx.DiGraph):
     entry and exit block.
     """
 
-    _entry: Optional[BasicBlock]
-    _exit: Optional[BasicBlock]
+    _entry: Final[BasicBlock]
+    _exit: Final[BasicBlock]
+
+    @override
+    def __init__(self) -> None:
+        super().__init__()
+        self._entry = BasicBlock("entry")
+        self._exit = BasicBlock("exit")
+        self.add_node(self._entry)
+        self.add_node(self._exit)
 
     @property
     def entry(self) -> BasicBlock:
         """The block execution starts at."""
-        return opt_util.opt_unwrap(self._entry)
+        return self._entry
 
     @property
     def exit(self) -> BasicBlock:
         """The block all returns are wired to, for reachability analysis."""
-        return opt_util.opt_unwrap(self._exit)
+        return self._exit

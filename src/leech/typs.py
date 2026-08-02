@@ -5,7 +5,7 @@ import enum
 import functools
 import types
 import weakref
-from collections.abc import Collection, Hashable, Mapping
+from collections.abc import Collection, Hashable, Mapping, Sequence
 from typing import ClassVar, Final, Optional, Self, override
 
 from leech import asserts, ast, errors, ir_env, ir_module, signage, src, target
@@ -37,7 +37,7 @@ MUT = Mutability.MUT
 
 
 def check_typ_arg_bounds(
-    generic_params: list[ast.GenericParam],
+    generic_params: Sequence[ast.GenericParam],
     typ_args: tuple[Typ, ...],
     e: ir_env.Env,
     span: Optional[src.SrcSpan],

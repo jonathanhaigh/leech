@@ -4,7 +4,7 @@ import dataclasses
 import enum
 import sys
 from collections.abc import Collection, Sequence
-from typing import Optional
+from typing import Final, Optional
 
 from leech import asserts, src
 
@@ -22,7 +22,7 @@ WARNING = Level.WARNING
 ERROR = Level.ERROR
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class Message:
     """A single diagnostic message, optionally located in source."""
 
@@ -44,8 +44,8 @@ class UserError(Exception):
         any.
     """
 
-    message: Message
-    extra: list[Message]
+    message: Final[Message]
+    extra: Final[list[Message]]
 
     def __init__(self, level: Level, message: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(message)
@@ -1215,7 +1215,7 @@ class TextErrorRenderer:
         print(f"{prefix}^", file=sys.stderr)
 
 
-_errors: list[UserError] = []
+_errors: Final[list[UserError]] = []
 _error_level: Level = NOTE
 
 
