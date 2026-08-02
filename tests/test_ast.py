@@ -1,4 +1,4 @@
-from util import parse_mod
+import util
 
 from leech import ast
 
@@ -10,7 +10,7 @@ def test_impl_defn_basic_typ(tmp_path):
         pub fn new() Foo { Foo {} }
     }
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
@@ -31,7 +31,7 @@ def test_impl_defn_ptr_typ(tmp_path):
         fn helper() i32 { 1 }
     }
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
@@ -50,7 +50,7 @@ def test_impl_defn_array_typ(tmp_path):
         fn helper() i32 { 1 }
     }
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
@@ -65,7 +65,7 @@ def test_impl_defn_empty(tmp_path):
     struct Foo {}
     impl Foo {}
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
     assert impl.fns == []
@@ -75,7 +75,7 @@ def test_fn_defn_generic_params(tmp_path):
     src = """
     fn id[T: Show](x: T) T { return x; }
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -88,7 +88,7 @@ def test_fn_defn_no_generic_params(tmp_path):
     src = """
     fn f() {}
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     assert fn.generic_params == []
@@ -98,7 +98,7 @@ def test_basic_typ_generic_args(tmp_path):
     src = """
     fn f(x: Pair[i32, bool]) {}
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -112,7 +112,7 @@ def test_var_expr_generic_args(tmp_path):
     src = """
     fn f() { g[i32](); }
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -134,7 +134,7 @@ def test_impl_defn_multiple_fns(tmp_path):
         fn helper() i32 { 1 }
     }
     """
-    mod = parse_mod(tmp_path, src)
+    mod = util.parse_mod(tmp_path, src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 

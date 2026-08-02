@@ -1,43 +1,14 @@
 """The IR data model: values, instructions, basic blocks, and control-flow graphs."""
 
-from abc import ABC, abstractmethod
+import abc
+import functools
 from collections.abc import Sequence
-from functools import cached_property
 from typing import TYPE_CHECKING, Final, Optional, Self, override
 
+import more_itertools
 import networkx as nx
-from more_itertools import nth
 
-from leech import ast
-from leech.asserts import (
-    assert_all_eq,
-    assert_eq,
-    assert_ge,
-    assert_gt,
-    assert_lt,
-    checked_cast,
-)
-from leech.errors import UnreachableCodeWarning, register_error
-from leech.opt_util import opt_map, opt_unwrap
-from leech.src import SrcSpan
-from leech.typs import (
-    BOOL,
-    CONST,
-    CSTR,
-    NEVER,
-    U8,
-    VOID,
-    ArrayTyp,
-    BoolTyp,
-    FnTyp,
-    IntTyp,
-    Mutability,
-    NeverTyp,
-    PtrTyp,
-    StructTyp,
-    Typ,
-    VoidTyp,
-)
+from leech import asserts, ast, errors, opt_util, src, typs
 
 if TYPE_CHECKING:
     # `ir_module.FnSpec` (used only in a type annotation below, in `Param`) would
@@ -50,7 +21,7 @@ if TYPE_CHECKING:
     from leech import ir_module
 
 
-def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
+def gep_typ(base_typ: typs.PtrTyp, index: Value) -> typs.PtrTyp:
     """Compute the pointer type produced by indexing into ``base_typ``.
 
     :param base_typ: The pointer type being indexed into (pointing to an
@@ -64,23 +35,25 @@ def gep_typ(base_typ: PtrTyp, index: Value) -> PtrTyp:
     mut = base_typ.mut
     typ = base_typ.pointee_typ
     match typ:
-        case ArrayTyp():
+        case typs.ArrayTyp():
             typ = typ.element_typ
-        case StructTyp():
-            index = checked_cast(index, ComptimeInt, "struct indeces must be comptime known")
+        case typs.StructTyp():
+            index = asserts.checked_cast(
+                index, ComptimeInt, "struct indeces must be comptime known"
+            )
 
-            field = nth(typ.fields.values(), index.value)
+            field = more_itertools.nth(typ.fields.values(), index.value)
             assert field is not None, f"invalid field index {index.value} into {typ.name}"
-            if field.mut == CONST:
-                mut = CONST
+            if field.mut == typs.CONST:
+                mut = typs.CONST
             typ = field.typ
         case _:
             raise AssertionError(f"can't index into pointee type {typ}")
 
-    return PtrTyp.get_or_create(typ, mut)
+    return typs.PtrTyp.get_or_create(typ, mut)
 
 
-class Value[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](ABC):
+class Value[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](abc.ABC):
     """Base class for anything that has a type and a source location: IR
     values, instructions, and function parameters.
 
@@ -93,22 +66,24 @@ class Value[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](ABC):
     def __init__(self, ast: Optional[AstT_co]) -> None:
         self.ast = ast
 
-    @cached_property
+    @functools.cached_property
     def typ(self) -> TypT_co:
         """This value's type, computed once (via :meth:`calculate_typ`) and cached."""
         return self.calculate_typ()
 
     @property
-    def span(self) -> Optional[SrcSpan]:
+    def span(self) -> Optional[src.SrcSpan]:
         """The source location of :attr:`ast`, if it has one."""
-        return opt_map(self.ast, lambda x: x.span)
+        return opt_util.opt_map(self.ast, lambda x: x.span)
 
-    @abstractmethod
+    @abc.abstractmethod
     def calculate_typ(self) -> TypT_co:
         """Compute this value's type; backs the cached :attr:`typ` property."""
 
 
-class ComptimeValue[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT_co, AstT_co]):
+class ComptimeValue[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](
+    Value[TypT_co, AstT_co]
+):
     """Base class for values whose contents are known at compile time."""
 
     def copy(self) -> Self:
@@ -122,7 +97,7 @@ class ComptimeValue[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT_c
         return self
 
 
-class ComptimeInt(ComptimeValue[IntTyp]):
+class ComptimeInt(ComptimeValue[typs.IntTyp]):
     """A compile-time-known integer value.
 
     Callers that construct a ``ComptimeInt`` from a value that isn't
@@ -139,22 +114,22 @@ class ComptimeInt(ComptimeValue[IntTyp]):
     :param ast: The AST node this value was built from, if any.
     """
 
-    _typ: Final[IntTyp]
+    _typ: Final[typs.IntTyp]
     value: Final[int]
 
     @override
-    def __init__(self, typ: IntTyp, value: int, ast: Optional[ast.Ast]) -> None:
+    def __init__(self, typ: typs.IntTyp, value: int, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
         self._typ = typ
         assert typ.fits(value), f"{value} does not fit in type {typ.name}"
         self.value = value
 
     @override
-    def calculate_typ(self) -> IntTyp:
+    def calculate_typ(self) -> typs.IntTyp:
         return self._typ
 
 
-class ComptimeBool(ComptimeValue[BoolTyp]):
+class ComptimeBool(ComptimeValue[typs.BoolTyp]):
     """A compile-time-known boolean value.
 
     :param value: The boolean value.
@@ -168,11 +143,11 @@ class ComptimeBool(ComptimeValue[BoolTyp]):
         self.value = value
 
     @override
-    def calculate_typ(self) -> BoolTyp:
-        return BOOL
+    def calculate_typ(self) -> typs.BoolTyp:
+        return typs.BOOL
 
 
-class ComptimeCStr(ComptimeValue[PtrTyp]):
+class ComptimeCStr(ComptimeValue[typs.PtrTyp]):
     """A compile-time-known, nul-terminated C string constant.
 
     :param value: The string's contents (excluding the nul terminator).
@@ -180,28 +155,28 @@ class ComptimeCStr(ComptimeValue[PtrTyp]):
     """
 
     value: Final[bytearray]
-    initializer_typ: Final[ArrayTyp]
+    initializer_typ: Final[typs.ArrayTyp]
 
     def __init__(self, value: str, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
         self.value = bytearray(value.encode() + b"\0")
-        self.initializer_typ = ArrayTyp.get_or_create(U8, len(self.value))
+        self.initializer_typ = typs.ArrayTyp.get_or_create(typs.U8, len(self.value))
 
     @override
-    def calculate_typ(self) -> PtrTyp:
-        return CSTR
+    def calculate_typ(self) -> typs.PtrTyp:
+        return typs.CSTR
 
 
-class ComptimeAggregate[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](
+class ComptimeAggregate[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](
     ComptimeValue[TypT_co, AstT_co]
 ):
     """Base class for compile-time-known array and struct values."""
 
-    @abstractmethod
+    @abc.abstractmethod
     def __len__(self) -> int:
         pass
 
-    @abstractmethod
+    @abc.abstractmethod
     def get_element(self, index: int) -> ComptimeValue:
         """Get the element at ``index`` (an array index or struct field index).
 
@@ -209,7 +184,7 @@ class ComptimeAggregate[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](
         :return: The element's value.
         """
 
-    @abstractmethod
+    @abc.abstractmethod
     def set_element(self, value: ComptimeValue, index: int) -> None:
         """Set the element at ``index`` (an array index or struct field index).
 
@@ -227,11 +202,11 @@ class ComptimeAggregate[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](
         :param index: The zero-based element index to check.
         :raises AssertionError: If ``index`` is out of bounds.
         """
-        assert_ge(index, 0)
-        assert_lt(index, len(self))
+        asserts.assert_ge(index, 0)
+        asserts.assert_lt(index, len(self))
 
 
-class ComptimeArray(ComptimeAggregate[ArrayTyp]):
+class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
     """A compile-time-known array value.
 
     :param typ: The array type.
@@ -241,14 +216,14 @@ class ComptimeArray(ComptimeAggregate[ArrayTyp]):
     """
 
     elements: list[ComptimeValue]
-    _typ: Final[ArrayTyp]
+    _typ: Final[typs.ArrayTyp]
 
     @override
     def __init__(
-        self, typ: ArrayTyp, elements: list[ComptimeValue], ast: Optional[ast.Ast]
+        self, typ: typs.ArrayTyp, elements: list[ComptimeValue], ast: Optional[ast.Ast]
     ) -> None:
-        assert_eq(typ.length, len(elements))
-        assert_all_eq([elt.typ for elt in elements], typ.element_typ)
+        asserts.assert_eq(typ.length, len(elements))
+        asserts.assert_all_eq([elt.typ for elt in elements], typ.element_typ)
         super().__init__(ast)
         self._typ = typ
         self.elements = elements
@@ -258,7 +233,7 @@ class ComptimeArray(ComptimeAggregate[ArrayTyp]):
         return len(self.elements)
 
     @override
-    def calculate_typ(self) -> ArrayTyp:
+    def calculate_typ(self) -> typs.ArrayTyp:
         return self._typ
 
     @override
@@ -276,7 +251,7 @@ class ComptimeArray(ComptimeAggregate[ArrayTyp]):
         return ComptimeArray(self._typ, [elt.copy() for elt in self.elements], self.ast)
 
 
-class ComptimeStruct(ComptimeAggregate[StructTyp]):
+class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
     """A compile-time-known struct value.
 
     :param typ: The struct type.
@@ -286,13 +261,13 @@ class ComptimeStruct(ComptimeAggregate[StructTyp]):
     """
 
     fields: dict[str, ComptimeValue]
-    _typ: Final[StructTyp]
+    _typ: Final[typs.StructTyp]
 
     @override
     def __init__(
-        self, typ: StructTyp, fields: dict[str, ComptimeValue], ast: Optional[ast.Ast]
+        self, typ: typs.StructTyp, fields: dict[str, ComptimeValue], ast: Optional[ast.Ast]
     ) -> None:
-        assert_eq(
+        asserts.assert_eq(
             {k: v.typ for k, v in typ.fields.items()},
             {k: v.typ for k, v in fields.items()},
         )
@@ -305,20 +280,20 @@ class ComptimeStruct(ComptimeAggregate[StructTyp]):
         return len(self.fields)
 
     @override
-    def calculate_typ(self) -> StructTyp:
+    def calculate_typ(self) -> typs.StructTyp:
         return self._typ
 
     @override
     def get_element(self, index: int) -> ComptimeValue:
         self.check_index(index)
-        field_spec = nth(self._typ.fields.values(), index)
+        field_spec = more_itertools.nth(self._typ.fields.values(), index)
         assert field_spec is not None
         return self.fields[field_spec.name]
 
     @override
     def set_element(self, value: ComptimeValue, index: int) -> None:
         self.check_index(index)
-        field_spec = nth(self._typ.fields.values(), index)
+        field_spec = more_itertools.nth(self._typ.fields.values(), index)
         assert field_spec is not None
         self.fields[field_spec.name] = value
 
@@ -327,7 +302,7 @@ class ComptimeStruct(ComptimeAggregate[StructTyp]):
         return ComptimeStruct(self._typ, {k: v.copy() for k, v in self.fields.items()}, self.ast)
 
 
-class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[PtrTyp, AstT_co]):
+class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[typs.PtrTyp, AstT_co]):
     """Base class for compile-time-known pointer values.
 
     Unlike a runtime pointer (see :class:`AllocaInstr`), a compile-time
@@ -336,18 +311,18 @@ class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[PtrTyp, AstT_co]):
     in memory.
     """
 
-    @abstractmethod
+    @abc.abstractmethod
     def load(self) -> ComptimeValue:
         """Read the value currently pointed to."""
 
-    @abstractmethod
+    @abc.abstractmethod
     def store(self, value: ComptimeValue) -> None:
         """Overwrite the value pointed to.
 
         :param value: The value to store.
         """
 
-    @abstractmethod
+    @abc.abstractmethod
     def is_temporary(self) -> bool:
         """Whether this pointer refers to a value with no address at runtime.
 
@@ -366,17 +341,17 @@ class ComptimeAlloc(ComptimePtr):
     """
 
     value: ComptimeValue
-    mut: Final[Mutability]
+    mut: Final[typs.Mutability]
 
     @override
-    def __init__(self, typ: Typ, mut: Mutability, ast: Optional[ast.Ast]) -> None:
+    def __init__(self, typ: typs.Typ, mut: typs.Mutability, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
         self.mut = mut
         self.value = UndefValue(typ, ast)
 
     @override
-    def calculate_typ(self) -> PtrTyp:
-        return PtrTyp.get_or_create(self.value.typ, self.mut)
+    def calculate_typ(self) -> typs.PtrTyp:
+        return typs.PtrTyp.get_or_create(self.value.typ, self.mut)
 
     @override
     def load(self) -> ComptimeValue:
@@ -410,17 +385,17 @@ class ComptimeGep(ComptimePtr):
         self.index = index
 
     @override
-    def calculate_typ(self) -> PtrTyp:
+    def calculate_typ(self) -> typs.PtrTyp:
         return gep_typ(self.base.typ, self.index)
 
     @override
     def load(self) -> ComptimeValue:
-        agg = checked_cast(self.base.load(), ComptimeAggregate)
+        agg = asserts.checked_cast(self.base.load(), ComptimeAggregate)
         return agg.get_element(self.index.value)
 
     @override
     def store(self, value: ComptimeValue) -> None:
-        agg = checked_cast(self.base.load(), ComptimeAggregate)
+        agg = asserts.checked_cast(self.base.load(), ComptimeAggregate)
         agg.set_element(value, self.index.value)
 
     @override
@@ -428,7 +403,7 @@ class ComptimeGep(ComptimePtr):
         return self.base.is_temporary()
 
 
-class VoidValue(ComptimeValue[VoidTyp]):
+class VoidValue(ComptimeValue[typs.VoidTyp]):
     """The single, valueless result of a void-typed expression.
 
     :param ast: The AST node this value was built from, if any.
@@ -439,11 +414,11 @@ class VoidValue(ComptimeValue[VoidTyp]):
         super().__init__(ast)
 
     @override
-    def calculate_typ(self) -> VoidTyp:
-        return VOID
+    def calculate_typ(self) -> typs.VoidTyp:
+        return typs.VOID
 
 
-class NeverValue(ComptimeValue[NeverTyp]):
+class NeverValue(ComptimeValue[typs.NeverTyp]):
     """The valueless result of a block that ends already terminated.
 
     Used for a block with no tail expression whose statements already
@@ -461,8 +436,8 @@ class NeverValue(ComptimeValue[NeverTyp]):
         super().__init__(ast)
 
     @override
-    def calculate_typ(self) -> NeverTyp:
-        return NEVER
+    def calculate_typ(self) -> typs.NeverTyp:
+        return typs.NEVER
 
 
 class UndefValue(ComptimeValue):
@@ -472,19 +447,19 @@ class UndefValue(ComptimeValue):
     :param ast: The AST node this value was built from, if any.
     """
 
-    _typ: Final[Typ]
+    _typ: Final[typs.Typ]
 
     @override
-    def __init__(self, typ: Typ, ast: Optional[ast.Ast]) -> None:
+    def __init__(self, typ: typs.Typ, ast: Optional[ast.Ast]) -> None:
         super().__init__(ast)
         self._typ = typ
 
     @override
-    def calculate_typ(self) -> Typ:
+    def calculate_typ(self) -> typs.Typ:
         return self._typ
 
 
-class Param(Value[Typ, ast.Param | ast.Receiver]):
+class Param(Value[typs.Typ, ast.Param | ast.Receiver]):
     """A formal parameter of a function, including a method's receiver.
 
     :param fn: The function this is a parameter of.
@@ -507,12 +482,12 @@ class Param(Value[Typ, ast.Param | ast.Receiver]):
         self.pos = pos
 
     @override
-    def calculate_typ(self) -> Typ:
-        assert_gt(len(self.fn.fn_typ.param_typs), self.pos)
+    def calculate_typ(self) -> typs.Typ:
+        asserts.assert_gt(len(self.fn.fn_typ.param_typs), self.pos)
         return self.fn.fn_typ.param_typs[self.pos]
 
 
-class Instr[TypT_co: Typ = Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT_co, AstT_co]):
+class Instr[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT_co, AstT_co]):
     """Base class for a single instruction within a :class:`BasicBlock`.
 
     :param bb: The basic block this instruction belongs to.
@@ -554,8 +529,8 @@ class BinOpInstr(Instr):
         self.rhs = rhs
 
     @override
-    def calculate_typ(self) -> Typ:
-        assert_eq(self.lhs.typ, self.rhs.typ)
+    def calculate_typ(self) -> typs.Typ:
+        asserts.assert_eq(self.lhs.typ, self.rhs.typ)
         return self.lhs.typ
 
 
@@ -595,7 +570,7 @@ class NegInstr(Instr):
         self.operand = operand
 
     @override
-    def calculate_typ(self) -> Typ:
+    def calculate_typ(self) -> typs.Typ:
         return self.operand.typ
 
 
@@ -615,8 +590,8 @@ class NotInstr(Instr):
         self.operand = operand
 
     @override
-    def calculate_typ(self) -> Typ:
-        return BOOL
+    def calculate_typ(self) -> typs.Typ:
+        return typs.BOOL
 
 
 class IcmpInstr(Instr):
@@ -643,8 +618,8 @@ class IcmpInstr(Instr):
         self.rhs = rhs
 
     @override
-    def calculate_typ(self) -> Typ:
-        return BOOL
+    def calculate_typ(self) -> typs.Typ:
+        return typs.BOOL
 
 
 class IcmpSignedInstr(IcmpInstr):
@@ -668,16 +643,16 @@ class LoadInstr(Instr):
     @override
     def __init__(self, bb: BasicBlock, src: Value, ast: Optional[ast.Ast]) -> None:
         super().__init__(bb, ast)
-        checked_cast(src.typ, PtrTyp)
+        asserts.checked_cast(src.typ, typs.PtrTyp)
         self.src = src
 
     @override
-    def calculate_typ(self) -> Typ:
-        src_typ = checked_cast(self.src.typ, PtrTyp)
+    def calculate_typ(self) -> typs.Typ:
+        src_typ = asserts.checked_cast(self.src.typ, typs.PtrTyp)
         return src_typ.pointee_typ
 
 
-class IntExtInstr(Instr[IntTyp]):
+class IntExtInstr(Instr[typs.IntTyp]):
     """Widens an integer to a type that can represent all of its values.
 
     Only ever built for a legal widening coercion (see
@@ -692,22 +667,24 @@ class IntExtInstr(Instr[IntTyp]):
     """
 
     value: Final[Value]
-    _typ: Final[IntTyp]
+    _typ: Final[typs.IntTyp]
 
     @override
-    def __init__(self, bb: BasicBlock, value: Value, typ: IntTyp, ast: Optional[ast.Ast]) -> None:
+    def __init__(
+        self, bb: BasicBlock, value: Value, typ: typs.IntTyp, ast: Optional[ast.Ast]
+    ) -> None:
         super().__init__(bb, ast)
-        src_typ = checked_cast(value.typ, IntTyp)
+        src_typ = asserts.checked_cast(value.typ, typs.IntTyp)
         assert src_typ.coerces_to(typ), f'"{src_typ.name}" does not widen to "{typ.name}"'
         self.value = value
         self._typ = typ
 
     @override
-    def calculate_typ(self) -> IntTyp:
+    def calculate_typ(self) -> typs.IntTyp:
         return self._typ
 
 
-class AllocaInstr(Instr[PtrTyp]):
+class AllocaInstr(Instr[typs.PtrTyp]):
     """Allocates space for a value on the stack and returns a pointer to it.
 
     :param bb: The basic block this instruction belongs to.
@@ -717,16 +694,16 @@ class AllocaInstr(Instr[PtrTyp]):
     :param ast: The AST node this instruction was built from, if any.
     """
 
-    allocated_typ: Final[Typ]
-    mut: Final[Mutability]
+    allocated_typ: Final[typs.Typ]
+    mut: Final[typs.Mutability]
     count: Final[int]
 
     @override
     def __init__(
         self,
         bb: BasicBlock,
-        typ: Typ,
-        mut: Mutability,
+        typ: typs.Typ,
+        mut: typs.Mutability,
         count: int,
         ast: Optional[ast.Ast],
     ) -> None:
@@ -736,11 +713,11 @@ class AllocaInstr(Instr[PtrTyp]):
         self.count = count
 
     @override
-    def calculate_typ(self) -> PtrTyp:
-        return PtrTyp.get_or_create(self.allocated_typ, self.mut)
+    def calculate_typ(self) -> typs.PtrTyp:
+        return typs.PtrTyp.get_or_create(self.allocated_typ, self.mut)
 
 
-class StoreInstr(Instr[VoidTyp]):
+class StoreInstr(Instr[typs.VoidTyp]):
     """Writes a value through a pointer.
 
     :param bb: The basic block this instruction belongs to.
@@ -755,17 +732,17 @@ class StoreInstr(Instr[VoidTyp]):
     @override
     def __init__(self, bb: BasicBlock, value: Value, dest: Value, ast: Optional[ast.Ast]) -> None:
         super().__init__(bb, ast)
-        dest_typ = checked_cast(dest.typ, PtrTyp)
-        assert_eq(value.typ, dest_typ.pointee_typ)
+        dest_typ = asserts.checked_cast(dest.typ, typs.PtrTyp)
+        asserts.assert_eq(value.typ, dest_typ.pointee_typ)
         self.value = value
         self.dest = dest
 
     @override
-    def calculate_typ(self) -> VoidTyp:
-        return VOID
+    def calculate_typ(self) -> typs.VoidTyp:
+        return typs.VOID
 
 
-class GepInstr(Instr[PtrTyp]):
+class GepInstr(Instr[typs.PtrTyp]):
     """Computes a pointer to an element of an array or struct, without reading it.
 
     Corresponds to LLVM's ``getelementptr`` instruction, but simplified to
@@ -796,8 +773,8 @@ class GepInstr(Instr[PtrTyp]):
         self.index = index
 
     @override
-    def calculate_typ(self) -> PtrTyp:
-        base_typ = checked_cast(self.base.typ, PtrTyp)
+    def calculate_typ(self) -> typs.PtrTyp:
+        base_typ = asserts.checked_cast(self.base.typ, typs.PtrTyp)
         return gep_typ(base_typ, self.index)
 
 
@@ -831,11 +808,11 @@ class InsertValueInstr(Instr):
         self.indeces = indeces
 
     @override
-    def calculate_typ(self) -> Typ:
+    def calculate_typ(self) -> typs.Typ:
         return self.aggregate.typ
 
 
-class CallInstr(Instr[Typ, ast.CallExpr]):
+class CallInstr(Instr[typs.Typ, ast.CallExpr]):
     """Calls a function.
 
     :param bb: The basic block this instruction belongs to.
@@ -860,9 +837,9 @@ class CallInstr(Instr[Typ, ast.CallExpr]):
         self.args = args
 
     @override
-    def calculate_typ(self) -> Typ:
-        callee_typ = checked_cast(self.callee.typ, PtrTyp)
-        fn_typ = checked_cast(callee_typ.pointee_typ, FnTyp)
+    def calculate_typ(self) -> typs.Typ:
+        callee_typ = asserts.checked_cast(self.callee.typ, typs.PtrTyp)
+        fn_typ = asserts.checked_cast(callee_typ.pointee_typ, typs.FnTyp)
         return fn_typ.ret_typ
 
 
@@ -885,16 +862,16 @@ class PhiInstr(Instr):
         self.incoming = incoming
 
     @override
-    def calculate_typ(self) -> Typ:
+    def calculate_typ(self) -> typs.Typ:
         values = list(self.incoming.values())
-        assert_gt(len(values), 0)
+        asserts.assert_gt(len(values), 0)
         first_typ = values[0].typ
         for value in values:
-            assert_eq(value.typ, first_typ)
+            asserts.assert_eq(value.typ, first_typ)
         return first_typ
 
 
-class BranchInstr(Instr[NeverTyp]):
+class BranchInstr(Instr[typs.NeverTyp]):
     """An unconditional branch to another basic block; terminates its block.
 
     :param bb: The basic block this instruction belongs to.
@@ -910,11 +887,11 @@ class BranchInstr(Instr[NeverTyp]):
         self.target = target
 
     @override
-    def calculate_typ(self) -> NeverTyp:
-        return NEVER
+    def calculate_typ(self) -> typs.NeverTyp:
+        return typs.NEVER
 
 
-class CbranchInstr(Instr[NeverTyp]):
+class CbranchInstr(Instr[typs.NeverTyp]):
     """A conditional branch to one of two basic blocks; terminates its block.
 
     :param bb: The basic block this instruction belongs to.
@@ -944,11 +921,11 @@ class CbranchInstr(Instr[NeverTyp]):
         self.false_target = false_target
 
     @override
-    def calculate_typ(self) -> NeverTyp:
-        return NEVER
+    def calculate_typ(self) -> typs.NeverTyp:
+        return typs.NEVER
 
 
-class RetInstr(Instr[NeverTyp]):
+class RetInstr(Instr[typs.NeverTyp]):
     """Returns a value from the current function; terminates its block.
 
     :param bb: The basic block this instruction belongs to.
@@ -964,11 +941,11 @@ class RetInstr(Instr[NeverTyp]):
         self.value = value
 
     @override
-    def calculate_typ(self) -> NeverTyp:
-        return NEVER
+    def calculate_typ(self) -> typs.NeverTyp:
+        return typs.NEVER
 
 
-class UnreachableInstr(Instr[NeverTyp]):
+class UnreachableInstr(Instr[typs.NeverTyp]):
     """Marks a point control flow can never reach; terminates its block.
 
     :param bb: The basic block this instruction belongs to.
@@ -980,8 +957,8 @@ class UnreachableInstr(Instr[NeverTyp]):
         super().__init__(bb, ast)
 
     @override
-    def calculate_typ(self) -> NeverTyp:
-        return NEVER
+    def calculate_typ(self) -> typs.NeverTyp:
+        return typs.NEVER
 
 
 class BasicBlock:
@@ -1019,7 +996,9 @@ class BasicBlock:
         if self.terminated:
             if not self.warned_unreachable:
                 assert instr.ast is not None, "Shouldn't get unreachable code in builtins"
-                register_error(UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.span))
+                errors.register_error(
+                    errors.UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.span)
+                )
                 self.warned_unreachable = True
 
             return instr
@@ -1076,11 +1055,13 @@ class BasicBlock:
         """Append a :class:`LoadInstr` to this block."""
         return self._add_instr(LoadInstr(self, src, ast))
 
-    def int_ext(self, value: Value, typ: IntTyp, ast: Optional[ast.Ast]) -> IntExtInstr:
+    def int_ext(self, value: Value, typ: typs.IntTyp, ast: Optional[ast.Ast]) -> IntExtInstr:
         """Append an :class:`IntExtInstr` to this block."""
         return self._add_instr(IntExtInstr(self, value, typ, ast))
 
-    def alloca(self, typ: Typ, mut: Mutability, count: int, ast: Optional[ast.Ast]) -> AllocaInstr:
+    def alloca(
+        self, typ: typs.Typ, mut: typs.Mutability, count: int, ast: Optional[ast.Ast]
+    ) -> AllocaInstr:
         """Append an :class:`AllocaInstr` to this block."""
         return self._add_instr(AllocaInstr(self, typ, mut, count, ast))
 
@@ -1147,9 +1128,9 @@ class Cfg(nx.DiGraph):
     @property
     def entry(self) -> BasicBlock:
         """The block execution starts at."""
-        return opt_unwrap(self._entry)
+        return opt_util.opt_unwrap(self._entry)
 
     @property
     def exit(self) -> BasicBlock:
         """The block all returns are wired to, for reachability analysis."""
-        return opt_unwrap(self._exit)
+        return opt_util.opt_unwrap(self._exit)

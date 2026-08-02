@@ -1,21 +1,15 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import (
-    IncompatibleLetTypError,
-    InvalidRetTypError,
-    ItemNotFoundError,
-    MissingRetError,
-)
-from leech.typs import BOOL, I32, NEVER
+from leech import errors, typs
 
 
 def test_never_coerces_to_any_type():
     # A direct check of the type-lattice rule, independent of any
     # particular call site.
-    assert NEVER.coerces_to(I32)
-    assert NEVER.coerces_to(BOOL)
-    assert NEVER.coerces_to(NEVER)
+    assert typs.NEVER.coerces_to(typs.I32)
+    assert typs.NEVER.coerces_to(typs.BOOL)
+    assert typs.NEVER.coerces_to(typs.NEVER)
 
 
 # --- Coercion sites (call args, assignment, let, struct/array literals,
@@ -29,7 +23,7 @@ def test_annotated_let_initializer_diverges(tmp_path):
         return x + 100;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_comptime_annotated_let_initializer_diverges(tmp_path):
@@ -46,7 +40,7 @@ def test_comptime_annotated_let_initializer_diverges(tmp_path):
         return y;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_assignment_rhs_diverges(tmp_path):
@@ -57,7 +51,7 @@ def test_assignment_rhs_diverges(tmp_path):
         return x + 100;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_call_arg_diverges(tmp_path):
@@ -69,7 +63,7 @@ def test_call_arg_diverges(tmp_path):
         return f({ return 5; });
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_struct_field_diverges(tmp_path):
@@ -80,7 +74,7 @@ def test_struct_field_diverges(tmp_path):
         return t.a + 100;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_array_element_diverges(tmp_path):
@@ -91,7 +85,7 @@ def test_array_element_diverges(tmp_path):
         return a.[0usize] + 100;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_array_index_diverges(tmp_path):
@@ -101,7 +95,7 @@ def test_array_index_diverges(tmp_path):
         return a.[{ return 5; }] + 100;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 # --- Operators - deliberately a different mechanism from _coerce, since
@@ -114,7 +108,7 @@ def test_arithmetic_lhs_diverges(tmp_path):
         return ({ return 5; }) + 1;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_arithmetic_rhs_diverges(tmp_path):
@@ -123,7 +117,7 @@ def test_arithmetic_rhs_diverges(tmp_path):
         return 1 + ({ return 5; });
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_comparison_operand_diverges(tmp_path):
@@ -132,7 +126,7 @@ def test_comparison_operand_diverges(tmp_path):
         return if (1 == ({ return 5; })) { 0 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_unary_neg_operand_diverges(tmp_path):
@@ -141,7 +135,7 @@ def test_unary_neg_operand_diverges(tmp_path):
         return -({ return 5; });
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_unary_not_operand_diverges(tmp_path):
@@ -150,7 +144,7 @@ def test_unary_not_operand_diverges(tmp_path):
         return if (not ({ return 5; })) { 0 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 # --- if/while conditions: the same class of check as operator operands
@@ -163,7 +157,7 @@ def test_if_condition_diverges(tmp_path):
         return if ({ return 5; }) { 0 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_while_condition_diverges(tmp_path):
@@ -177,7 +171,7 @@ def test_while_condition_diverges(tmp_path):
         return f();
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 # --- and/or's left-operand asymmetry (see tests/test_bool_ops.py for the
@@ -195,7 +189,7 @@ def test_and_lhs_diverges(tmp_path):
         return f();
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 # --- An initializer with no declared type never calls _coerce at all,
@@ -211,7 +205,7 @@ def test_unannotated_let_diverges_still_works(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_array_first_element_diverges(tmp_path):
@@ -225,7 +219,7 @@ def test_array_first_element_diverges(tmp_path):
         return a.[0usize] + 100;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_not_diverges_does_not_propagate_past_bool(tmp_path):
@@ -242,8 +236,8 @@ def test_not_diverges_does_not_propagate_past_bool(tmp_path):
         return x;
     }
     """
-    with pytest.raises(IncompatibleLetTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleLetTypError):
+        util.compile_str(tmp_path, src)
 
 
 # --- `never` as a written return-type annotation - the source-level
@@ -265,7 +259,7 @@ def test_extern_fn_returning_never(tmp_path):
         return f(5) + f(-1);
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_never_as_bare_statement_terminates_block(tmp_path):
@@ -280,7 +274,7 @@ def test_never_as_bare_statement_terminates_block(tmp_path):
         exit(9);
     }
     """
-    check_prog_output(tmp_path, src, "", 9)
+    util.check_prog_output(tmp_path, src, "", 9)
 
 
 def test_fn_defn_returning_never_via_self_call(tmp_path):
@@ -292,7 +286,7 @@ def test_fn_defn_returning_never_via_self_call(tmp_path):
         return 0;
     }
     """
-    compile_str(tmp_path, src)
+    util.compile_str(tmp_path, src)
 
 
 def test_never_fn_falling_off_end_is_missing_ret(tmp_path):
@@ -303,8 +297,8 @@ def test_never_fn_falling_off_end_is_missing_ret(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(MissingRetError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.MissingRetError):
+        util.compile_str(tmp_path, src)
 
 
 def test_never_fn_returning_a_value_is_invalid_ret_typ(tmp_path):
@@ -316,8 +310,8 @@ def test_never_fn_returning_a_value_is_invalid_ret_typ(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidRetTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidRetTypError):
+        util.compile_str(tmp_path, src)
 
 
 @pytest.mark.parametrize(
@@ -331,5 +325,5 @@ def test_never_fn_returning_a_value_is_invalid_ret_typ(tmp_path):
     ],
 )
 def test_never_not_nameable_outside_ret_typ(tmp_path, src):
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)

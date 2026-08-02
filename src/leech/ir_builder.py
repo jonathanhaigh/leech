@@ -12,54 +12,23 @@ which of two call/field-access candidates applies, and so on) rather
 than re-deriving them.
 """
 
+import dataclasses
 import enum
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Final, Optional
 
-from leech import ast, ir_module, ir_traits
-from leech.asserts import assert_eq, assert_in, checked_cast
-from leech.ir_env import Env
-from leech.ir_values import (
-    BasicBlock,
-    Cfg,
-    ComptimeArray,
-    ComptimeBool,
-    ComptimeCStr,
-    ComptimeInt,
-    ComptimeStruct,
-    NeverValue,
-    UndefValue,
-    Value,
-    VoidValue,
-)
-from leech.naming import VarNamer
-from leech.opt_util import opt_map, opt_or_default, opt_unwrap
-from leech.typcheck import (
-    IntExt,
-    Invalid,
-    NeverDiverge,
-    PtrMutRelax,
-    TypCheckResults,
-    is_flexible_int_lit,
-    resolve_peer_typ,
-)
-from leech.typs import (
-    CONST,
-    I32,
-    MUT,
-    NEVER,
-    SIGNED,
-    USIZE,
-    VOID,
-    ArrayTyp,
-    CallableTyp,
-    IntTyp,
-    Mutability,
-    PtrTyp,
-    StructTyp,
-    Typ,
-    TypParamTyp,
+from leech import (
+    asserts,
+    ast,
+    ir_env,
+    ir_module,
+    ir_traits,
+    ir_values,
+    naming,
+    opt_util,
+    signage,
+    typcheck,
+    typs,
 )
 
 
@@ -108,41 +77,41 @@ class CfgBuilder:
         :meth:`_coerce`.
     """
 
-    @dataclass
+    @dataclasses.dataclass
     class _LoopCtx:
         """The ``break``/``continue`` targets for one enclosing ``while`` loop."""
 
         label: Optional[str]
-        cond_bb: BasicBlock
-        end_bb: BasicBlock
+        cond_bb: ir_values.BasicBlock
+        end_bb: ir_values.BasicBlock
 
     fn: Optional[ir_module.FnSpec]
-    typ_check_results: Final[TypCheckResults]
-    typ_arg_mapping: Final[Mapping[TypParamTyp, Typ]]
-    cfg: Final[Cfg]
-    curr_bb: BasicBlock
-    _generate_bb_name: Final[VarNamer]
+    typ_check_results: Final[typcheck.TypCheckResults]
+    typ_arg_mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
+    cfg: Final[ir_values.Cfg]
+    curr_bb: ir_values.BasicBlock
+    _generate_bb_name: Final[naming.VarNamer]
     #: The ``while`` loops currently being lowered, innermost last - used
     #: to resolve unlabeled and labeled ``break``/``continue`` targets.
     _loop_stack: Final[list[CfgBuilder._LoopCtx]]
 
     def __init__(
         self,
-        typ_check_results: TypCheckResults,
+        typ_check_results: typcheck.TypCheckResults,
         fn: Optional[ir_module.FnSpec] = None,
-        typ_arg_mapping: Optional[Mapping[TypParamTyp, Typ]] = None,
+        typ_arg_mapping: Optional[Mapping[typs.TypParamTyp, typs.Typ]] = None,
     ) -> None:
         self.fn = fn
         self.typ_check_results = typ_check_results
-        self.typ_arg_mapping = opt_or_default(typ_arg_mapping, {})
-        self.cfg = Cfg()
-        self._generate_bb_name = VarNamer()
+        self.typ_arg_mapping = opt_util.opt_or_default(typ_arg_mapping, {})
+        self.cfg = ir_values.Cfg()
+        self._generate_bb_name = naming.VarNamer()
         self.cfg._entry = self.add_bb("entry")
         self.cfg._exit = self.add_bb("exit")
         self.curr_bb = self.cfg.entry
         self._loop_stack = []
 
-    def build_var_initializer(self, defn_ast: ast.VarDefn, e: Env) -> None:
+    def build_var_initializer(self, defn_ast: ast.VarDefn, e: ir_env.Env) -> None:
         """Lower a module-level ``let`` initializer expression into :attr:`cfg`.
 
         :param defn_ast: The parsed variable declaration.
@@ -154,7 +123,7 @@ class CfgBuilder:
         initializer = self._build_let_initializer(let_ast, e, ExprContext.VALUE)
         self.ret(initializer, let_ast.expr)
 
-    def build_fn(self, fn_ast: ast.FnDefn, e: Env) -> None:
+    def build_fn(self, fn_ast: ast.FnDefn, e: ir_env.Env) -> None:
         """Lower a function body into :attr:`cfg`.
 
         :param fn_ast: The parsed function definition.
@@ -165,21 +134,21 @@ class CfgBuilder:
 
         for param in self.fn.params:
             assert param.ast is not None
-            alloca = self.curr_bb.alloca(param.typ, CONST, 1, param.ast)
+            alloca = self.curr_bb.alloca(param.typ, typs.CONST, 1, param.ast)
             self.curr_bb.store(param, alloca, param.ast)
             e.add_var(param.ast.name.name, alloca)
 
         ret_typ = self.fn.fn_typ.ret_typ
         block = self.build_expr(fn_ast.block, e, ExprContext.VALUE, ret_typ)
-        ret_ast = opt_or_default(fn_ast.block.expr, fn_ast.block)
+        ret_ast = opt_util.opt_or_default(fn_ast.block.expr, fn_ast.block)
 
-        if block.typ != VOID:
-            if block.typ == NEVER:
+        if block.typ != typs.VOID:
+            if block.typ == typs.NEVER:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
                 return
             # TypCheck already confirmed block coerces to ret_typ.
-            coerced = opt_unwrap(self._coerce(block, ret_ast))
+            coerced = opt_util.opt_unwrap(self._coerce(block, ret_ast))
             self.ret(coerced, ret_ast)
             return
 
@@ -188,16 +157,16 @@ class CfgBuilder:
 
         # TypCheck already confirmed a void body only reaches here when
         # ret_typ is void too (else it would have raised MissingRetError).
-        assert_eq(ret_typ, VOID)
-        self.ret(VoidValue(ret_ast), ret_ast)
+        asserts.assert_eq(ret_typ, typs.VOID)
+        self.ret(ir_values.VoidValue(ret_ast), ret_ast)
 
     def build_expr(
         self,
         expr_ast: ast.Expr,
-        e: Env,
+        e: ir_env.Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
-    ) -> Value:
+        expected_typ: Optional[typs.Typ] = None,
+    ) -> ir_values.Value:
         """Lower any expression, dispatching to the ``build_*_expr`` method
         matching its AST node kind.
 
@@ -231,14 +200,14 @@ class CfgBuilder:
             case ast.UnaryOpExpr():
                 return self.build_unary_op_expr(expr_ast, e, ctx, expected_typ)
             case ast.StrLit():
-                return self._in_context(ComptimeCStr(expr_ast.value, expr_ast), ctx)
+                return self._in_context(ir_values.ComptimeCStr(expr_ast.value, expr_ast), ctx)
             case ast.IntLit():
                 return self._in_context(
                     self._build_int_lit(expr_ast, False),
                     ctx,
                 )
             case ast.BoolLit():
-                return self._in_context(ComptimeBool(expr_ast.value, expr_ast), ctx)
+                return self._in_context(ir_values.ComptimeBool(expr_ast.value, expr_ast), ctx)
             case ast.VarExpr():
                 return self.build_var_expr(expr_ast, e, ctx)
             case ast.ArrayExpr():
@@ -257,10 +226,10 @@ class CfgBuilder:
     def build_block_expr(
         self,
         block_ast: ast.BlockExpr,
-        e: Env,
+        e: ir_env.Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
-    ) -> Value:
+        expected_typ: Optional[typs.Typ] = None,
+    ) -> ir_values.Value:
         """Lower a ``{ ... }`` block expression.
 
         :param block_ast: The parsed block expression.
@@ -280,17 +249,17 @@ class CfgBuilder:
 
         if block_ast.expr is None:
             if self.curr_bb.terminated:
-                return NeverValue(block_ast)
-            return VoidValue(block_ast)
+                return ir_values.NeverValue(block_ast)
+            return ir_values.VoidValue(block_ast)
         return self.build_expr(block_ast.expr, e, ctx, expected_typ)
 
     def build_if_expr(
         self,
         if_ast: ast.IfExpr,
-        e: Env,
+        e: ir_env.Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
-    ) -> Value:
+        expected_typ: Optional[typs.Typ] = None,
+    ) -> ir_values.Value:
         """Lower an ``if``/``else`` expression.
 
         :param if_ast: The parsed ``if`` expression.
@@ -306,7 +275,7 @@ class CfgBuilder:
         """
         cond = self.build_expr(if_ast.condition, e, ExprContext.VALUE)
         # TypCheck already confirmed cond coerces to bool.
-        cond = opt_unwrap(self._coerce(cond, if_ast.condition))
+        cond = opt_util.opt_unwrap(self._coerce(cond, if_ast.condition))
         then_bb = self.add_bb("if")
         end_bb = self.add_bb("endif")
         els_bb = None
@@ -319,7 +288,7 @@ class CfgBuilder:
         if els_bb is None:
             self._build_if_arm(if_ast.then, then_bb, end_bb, e, ctx, expected_typ)
             self.set_position(end_bb)
-            return VoidValue(if_ast)
+            return ir_values.VoidValue(if_ast)
 
         els_ast = if_ast.els
         assert els_ast is not None
@@ -330,8 +299,8 @@ class CfgBuilder:
         # lowered first doesn't change what the program does.
         if (
             expected_typ is None
-            and is_flexible_int_lit(if_ast.then)
-            and not is_flexible_int_lit(els_ast)
+            and typcheck.is_flexible_int_lit(if_ast.then)
+            and not typcheck.is_flexible_int_lit(els_ast)
         ):
             els, els_last_bb, have_els_value = self._build_if_arm(
                 els_ast, els_bb, end_bb, e, ctx, expected_typ
@@ -342,15 +311,15 @@ class CfgBuilder:
                 end_bb,
                 e,
                 ctx,
-                resolve_peer_typ([els.typ]) if have_els_value else expected_typ,
+                typcheck.resolve_peer_typ([els.typ]) if have_els_value else expected_typ,
             )
         else:
             then, then_last_bb, have_then_value = self._build_if_arm(
                 if_ast.then, then_bb, end_bb, e, ctx, expected_typ
             )
             els_hint = expected_typ
-            if expected_typ is None and have_then_value and is_flexible_int_lit(els_ast):
-                els_hint = resolve_peer_typ([then.typ])
+            if expected_typ is None and have_then_value and typcheck.is_flexible_int_lit(els_ast):
+                els_hint = typcheck.resolve_peer_typ([then.typ])
             els, els_last_bb, have_els_value = self._build_if_arm(
                 els_ast, els_bb, end_bb, e, ctx, els_hint
             )
@@ -358,7 +327,7 @@ class CfgBuilder:
         if have_then_value and have_els_value:
             # TypCheck already confirmed then and els have the same
             # type - the phi below requires it.
-            assert_eq(then.typ, els.typ)
+            asserts.assert_eq(then.typ, els.typ)
             self.set_position(end_bb)
             return self.curr_bb.phi({els_last_bb: els, then_last_bb: then}, if_ast)
 
@@ -375,12 +344,12 @@ class CfgBuilder:
     def _build_if_arm(
         self,
         arm_ast: ast.Expr,
-        arm_bb: BasicBlock,
-        end_bb: BasicBlock,
-        e: Env,
+        arm_bb: ir_values.BasicBlock,
+        end_bb: ir_values.BasicBlock,
+        e: ir_env.Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ],
-    ) -> tuple[Value, BasicBlock, bool]:
+        expected_typ: Optional[typs.Typ],
+    ) -> tuple[ir_values.Value, ir_values.BasicBlock, bool]:
         """Lower one arm of an ``if``/``else`` into its own basic block.
 
         :param arm_ast: The parsed arm.
@@ -397,14 +366,16 @@ class CfgBuilder:
         self.set_position(arm_bb)
         value = self.build_expr(arm_ast, e, ctx, expected_typ)
         last_bb = self.curr_bb
-        if value.typ == NEVER and not last_bb.terminated:
+        if value.typ == typs.NEVER and not last_bb.terminated:
             last_bb.unreachable(arm_ast)
         have_value = not last_bb.terminated
         if have_value:
             self.branch(end_bb, arm_ast)
         return value, last_bb, have_value
 
-    def build_while_expr(self, while_ast: ast.WhileExpr, e: Env, _ctx: ExprContext) -> Value:
+    def build_while_expr(
+        self, while_ast: ast.WhileExpr, e: ir_env.Env, _ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower a ``while`` loop expression.
 
         :param while_ast: The parsed ``while`` expression.
@@ -419,13 +390,13 @@ class CfgBuilder:
         self.set_position(cond_bb)
         cond = self.build_expr(while_ast.condition, e, ExprContext.VALUE)
         # TypCheck already confirmed cond coerces to bool.
-        cond = opt_unwrap(self._coerce(cond, while_ast.condition))
+        cond = opt_util.opt_unwrap(self._coerce(cond, while_ast.condition))
 
         self.cbranch(cond, loop_bb, end_bb, while_ast)
         self.set_position(loop_bb)
         self._loop_stack.append(
             CfgBuilder._LoopCtx(
-                label=opt_map(while_ast.label, lambda x: x.name),
+                label=opt_util.opt_map(while_ast.label, lambda x: x.name),
                 cond_bb=cond_bb,
                 end_bb=end_bb,
             )
@@ -439,9 +410,11 @@ class CfgBuilder:
             self.branch(cond_bb, while_ast.block)
 
         self.set_position(end_bb)
-        return VoidValue(while_ast)
+        return ir_values.VoidValue(while_ast)
 
-    def build_call_expr(self, call_ast: ast.CallExpr, e: Env, ctx: ExprContext) -> Value:
+    def build_call_expr(
+        self, call_ast: ast.CallExpr, e: ir_env.Env, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower a function call expression.
 
         If the callee names a generic function, the call is against one
@@ -475,7 +448,7 @@ class CfgBuilder:
         """
         callee_ast = call_ast.callee
         recv_ast: Optional[ast.Expr] = None
-        recv_arg: Optional[Value] = None
+        recv_arg: Optional[ir_values.Value] = None
 
         generic_call = self.typ_check_results.generic_call(call_ast)
         if generic_call is not None:
@@ -483,10 +456,10 @@ class CfgBuilder:
             # and its type arguments (inferred or explicit); this just
             # has to get (building, if this is the first call site to
             # need it) the one instance that pairs them.
-            callee: Value = self._resolve_fn_instance(*generic_call)
+            callee: ir_values.Value = self._resolve_fn_instance(*generic_call)
         elif isinstance(callee_ast, ast.StructAccessExpr):
             recv_place = self.build_expr(callee_ast.struct, e, ExprContext.PLACE)
-            recv_ptr_typ = checked_cast(recv_place.typ, PtrTyp)
+            recv_ptr_typ = asserts.checked_cast(recv_place.typ, typs.PtrTyp)
             method = ir_traits.lookup_member(
                 recv_ptr_typ.pointee_typ,
                 callee_ast.field.name,
@@ -503,8 +476,8 @@ class CfgBuilder:
         else:
             callee = self.build_expr(callee_ast, e, ExprContext.VALUE)
 
-        callee_ptr_typ = checked_cast(callee.typ, PtrTyp)
-        fn_typ = checked_cast(callee_ptr_typ.pointee_typ, CallableTyp)
+        callee_ptr_typ = asserts.checked_cast(callee.typ, typs.PtrTyp)
+        fn_typ = asserts.checked_cast(callee_ptr_typ.pointee_typ, typs.CallableTyp)
         param_typs = fn_typ.param_typs
         offset = 1 if recv_ast is not None else 0
         arg_asts: list[ast.Expr] = ([recv_ast] if recv_ast is not None else []) + list(
@@ -519,7 +492,7 @@ class CfgBuilder:
         # TypCheck already confirmed each argument (including the
         # receiver, if any) coerces to its parameter's type.
         coerced_args = tuple(
-            opt_unwrap(self._coerce(arg, arg_asts[i])) for i, arg in enumerate(args)
+            opt_util.opt_unwrap(self._coerce(arg, arg_asts[i])) for i, arg in enumerate(args)
         )
 
         return self._in_context(self.curr_bb.call(callee, coerced_args, call_ast), ctx)
@@ -527,10 +500,10 @@ class CfgBuilder:
     def build_bin_op_expr(
         self,
         op_ast: ast.BinOpExpr,
-        e: Env,
+        e: ir_env.Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
-    ) -> Value:
+        expected_typ: Optional[typs.Typ] = None,
+    ) -> ir_values.Value:
         """Lower a binary operator expression (arithmetic or comparison).
 
         :param op_ast: The parsed binary operation.
@@ -552,20 +525,24 @@ class CfgBuilder:
         # a bare integer literal on either side take its type from it.
         # The deferred operand is always such a literal, which emits no
         # instructions, so left-to-right evaluation is unaffected.
-        if is_flexible_int_lit(op_ast.lhs) and not is_flexible_int_lit(op_ast.rhs):
+        if typcheck.is_flexible_int_lit(op_ast.lhs) and not typcheck.is_flexible_int_lit(
+            op_ast.rhs
+        ):
             rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
             propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
             if propagated is not None:
                 return propagated
             # A bare integer literal always ends up with an integer type,
             # so the left operand needs no separate check here.
-            lhs = self.build_expr(op_ast.lhs, e, ExprContext.VALUE, resolve_peer_typ([rhs.typ]))
+            lhs = self.build_expr(
+                op_ast.lhs, e, ExprContext.VALUE, typcheck.resolve_peer_typ([rhs.typ])
+            )
         else:
             lhs = self.build_expr(
                 op_ast.lhs,
                 e,
                 ExprContext.VALUE,
-                expected_typ if is_flexible_int_lit(op_ast.lhs) else None,
+                expected_typ if typcheck.is_flexible_int_lit(op_ast.lhs) else None,
             )
             propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
             if propagated is not None:
@@ -575,7 +552,9 @@ class CfgBuilder:
                 op_ast.rhs,
                 e,
                 ExprContext.VALUE,
-                resolve_peer_typ([lhs.typ]) if is_flexible_int_lit(op_ast.rhs) else None,
+                typcheck.resolve_peer_typ([lhs.typ])
+                if typcheck.is_flexible_int_lit(op_ast.rhs)
+                else None,
             )
             propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
             if propagated is not None:
@@ -583,11 +562,11 @@ class CfgBuilder:
 
         # lhs and rhs are already known (by TypCheck) to be equal integer
         # types by this point.
-        lhs_typ = checked_cast(lhs.typ, IntTyp)
+        lhs_typ = asserts.checked_cast(lhs.typ, typs.IntTyp)
         op = op_ast.op.name
         match op:
             case "<" | "<=" | "==" | "!=" | ">=" | ">":
-                if lhs_typ.signage == SIGNED:
+                if lhs_typ.signage == signage.SIGNED:
                     res = self.curr_bb.icmp_signed(op, lhs, rhs, op_ast)
                 else:
                     res = self.curr_bb.icmp_unsigned(op, lhs, rhs, op_ast)
@@ -598,7 +577,7 @@ class CfgBuilder:
             case "*":
                 res = self.curr_bb.mul(lhs, rhs, op_ast)
             case "/":
-                if lhs_typ.signage == SIGNED:
+                if lhs_typ.signage == signage.SIGNED:
                     res = self.curr_bb.sdiv(lhs, rhs, op_ast)
                 else:
                     res = self.curr_bb.udiv(lhs, rhs, op_ast)
@@ -607,7 +586,9 @@ class CfgBuilder:
 
         return self._in_context(res, ctx)
 
-    def build_logic_bin_op_expr(self, op_ast: ast.BinOpExpr, e: Env, ctx: ExprContext) -> Value:
+    def build_logic_bin_op_expr(
+        self, op_ast: ast.BinOpExpr, e: ir_env.Env, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower a short-circuiting ``and``/``or`` expression.
 
         Modelled on :meth:`build_if_expr`: the right operand is only
@@ -635,14 +616,14 @@ class CfgBuilder:
         if propagated is not None:
             return propagated
         # TypCheck already confirmed lhs coerces to bool.
-        lhs = opt_unwrap(self._coerce(lhs, op_ast.lhs))
+        lhs = opt_util.opt_unwrap(self._coerce(lhs, op_ast.lhs))
 
         rhs_bb = self.add_bb("and_rhs" if is_and else "or_rhs")
         end_bb = self.add_bb("and_end" if is_and else "or_end")
         # `and` evaluates the rhs when the lhs is true; `or`, when it's
         # false. The value reaching end_bb directly is then the lhs's own
         # outcome: false for `and`, true for `or`.
-        short_circuit = ComptimeBool(not is_and, op_ast)
+        short_circuit = ir_values.ComptimeBool(not is_and, op_ast)
         if is_and:
             self.cbranch(lhs, rhs_bb, end_bb, op_ast)
         else:
@@ -653,7 +634,7 @@ class CfgBuilder:
         rhs = self.build_expr(op_ast.rhs, e, ExprContext.VALUE)
         rhs_last_bb = self.curr_bb  # building the rhs may have moved it
         # TypCheck already confirmed rhs coerces to bool.
-        coerced_rhs = opt_unwrap(self._coerce(rhs, op_ast.rhs))
+        coerced_rhs = opt_util.opt_unwrap(self._coerce(rhs, op_ast.rhs))
 
         if rhs_last_bb.terminated:
             # The rhs diverged, so only the short-circuit path reaches
@@ -669,10 +650,10 @@ class CfgBuilder:
     def build_unary_op_expr(
         self,
         op_ast: ast.UnaryOpExpr,
-        e: Env,
+        e: ir_env.Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
-    ) -> Value:
+        expected_typ: Optional[typs.Typ] = None,
+    ) -> ir_values.Value:
         """Lower a unary operator expression (``&``, ``-``, or ``not``).
 
         :param op_ast: The parsed unary operation.
@@ -693,7 +674,7 @@ class CfgBuilder:
             case "not":
                 operand = self.build_expr(op_ast.operand, e, ExprContext.VALUE)
                 # TypCheck already confirmed operand coerces to bool.
-                coerced_operand = opt_unwrap(self._coerce(operand, op_ast.operand))
+                coerced_operand = opt_util.opt_unwrap(self._coerce(operand, op_ast.operand))
                 return self._in_context(self.curr_bb.not_(coerced_operand, op_ast), ctx)
             case "-":
                 # A literal operand is folded into a single negative
@@ -716,7 +697,7 @@ class CfgBuilder:
                 raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
     def _resolve_fn_instance(
-        self, fn: ir_module.Fn, typ_args: tuple[Typ, ...]
+        self, fn: ir_module.Fn, typ_args: tuple[typs.Typ, ...]
     ) -> ir_module.FnInstance:
         """Get the concrete instance a generic call or reference resolves to.
 
@@ -741,7 +722,9 @@ class CfgBuilder:
         )
         return fn.instance(concrete_typ_args)
 
-    def build_var_expr(self, var_ast: ast.VarExpr, e: Env, ctx: ExprContext) -> Value:
+    def build_var_expr(
+        self, var_ast: ast.VarExpr, e: ir_env.Env, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower a (possibly qualified) variable or function reference.
 
         If ``var_ast`` names a generic function applied to explicit type
@@ -767,7 +750,7 @@ class CfgBuilder:
             # (building, if needed) the instance they name.
             return self._resolve_fn_instance(*generic_ref)
 
-        var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
+        var = e.resolve_path(ir_env.Env.Namespace.VARS, var_ast.path)
         if isinstance(var, ir_module.FnSpec):
             return var
         if ctx == ExprContext.PLACE:
@@ -778,10 +761,10 @@ class CfgBuilder:
     def build_array_expr(
         self,
         arr_expr: ast.ArrayExpr,
-        e: Env,
+        e: ir_env.Env,
         ctx: ExprContext,
-        expected_typ: Optional[Typ] = None,
-    ) -> Value:
+        expected_typ: Optional[typs.Typ] = None,
+    ) -> ir_values.Value:
         """Lower an array literal expression.
 
         An empty array literal has no elements to infer an element type
@@ -801,16 +784,18 @@ class CfgBuilder:
             from the surrounding context.
         :return: The constructed array value.
         """
-        expected_elt_typ = expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
+        expected_elt_typ = (
+            expected_typ.element_typ if isinstance(expected_typ, typs.ArrayTyp) else None
+        )
 
         # Two passes, so that a bare integer literal takes its type from
         # its sibling elements wherever it sits, rather than the first
         # element deciding for everyone. The deferred elements are all
         # bare literals, which emit no instructions, so lowering them
         # second can't reorder any of the others' effects.
-        built: list[Optional[Value]] = [None] * len(arr_expr.elements)
+        built: list[Optional[ir_values.Value]] = [None] * len(arr_expr.elements)
         for i, elt_ast in enumerate(arr_expr.elements):
-            if not is_flexible_int_lit(elt_ast):
+            if not typcheck.is_flexible_int_lit(elt_ast):
                 built[i] = self.build_expr(elt_ast, e, ExprContext.VALUE, expected_elt_typ)
 
         # An element type the surrounding context supplied is what the
@@ -819,7 +804,7 @@ class CfgBuilder:
         if expected_elt_typ is not None:
             elt_typ = expected_elt_typ
         else:
-            elt_typ = resolve_peer_typ([v.typ for v in built if v is not None])
+            elt_typ = typcheck.resolve_peer_typ([v.typ for v in built if v is not None])
 
         elts = [
             v
@@ -828,25 +813,25 @@ class CfgBuilder:
             for i, v in enumerate(built)
         ]
 
-        arr_typ = ArrayTyp.get_or_create(elt_typ, len(elts))
-        arr = ComptimeArray(
+        arr_typ = typs.ArrayTyp.get_or_create(elt_typ, len(elts))
+        arr = ir_values.ComptimeArray(
             arr_typ,
-            [UndefValue(arr_typ.element_typ, arr_expr)] * len(elts),
+            [ir_values.UndefValue(arr_typ.element_typ, arr_expr)] * len(elts),
             arr_expr,
         )
 
         # TypCheck already confirmed every element coerces to elt_typ.
         for i, elt in enumerate(elts):
             elt_ast = arr_expr.elements[i]
-            coerced = opt_unwrap(self._coerce(elt, elt_ast))
-            elt_index = ComptimeInt(USIZE, i, elt_ast)
+            coerced = opt_util.opt_unwrap(self._coerce(elt, elt_ast))
+            elt_index = ir_values.ComptimeInt(typs.USIZE, i, elt_ast)
             arr = self.curr_bb.insert_value(arr, coerced, (elt_index,), elt_ast)
 
         return self._in_context(arr, ctx)
 
     def build_array_access_expr(
-        self, aa_expr: ast.ArrayAccessExpr, e: Env, ctx: ExprContext
-    ) -> Value:
+        self, aa_expr: ast.ArrayAccessExpr, e: ir_env.Env, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower an array indexing expression (``arr[index]``).
 
         :param aa_expr: The parsed array access expression.
@@ -861,15 +846,17 @@ class CfgBuilder:
         # An index is a coercion point like any other unambiguous target
         # type: a bare literal infers as usize, and a narrower unsigned
         # value widens to it. TypCheck already confirmed it coerces.
-        index = self.build_expr(aa_expr.index, e, ExprContext.VALUE, USIZE)
-        index = opt_unwrap(self._coerce(index, aa_expr.index))
+        index = self.build_expr(aa_expr.index, e, ExprContext.VALUE, typs.USIZE)
+        index = opt_util.opt_unwrap(self._coerce(index, aa_expr.index))
 
         # TODO: bounds check
 
         elt_ptr = self.curr_bb.gep(arr_ptr, index, aa_expr)
         return self._deref_in_context(elt_ptr, ctx, aa_expr)
 
-    def build_struct_expr(self, struct_expr: ast.StructExpr, e: Env, ctx: ExprContext) -> Value:
+    def build_struct_expr(
+        self, struct_expr: ast.StructExpr, e: ir_env.Env, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower a struct literal expression.
 
         :param struct_expr: The parsed struct expression.
@@ -879,19 +866,19 @@ class CfgBuilder:
         :return: The constructed struct value.
         :raises ItemNotFoundError: If the named type cannot be resolved.
         """
-        resolved_typ = Typ.from_ast(struct_expr.typ, e)
-        struct_typ = checked_cast(resolved_typ, StructTyp)
+        resolved_typ = typs.Typ.from_ast(struct_expr.typ, e)
+        struct_typ = asserts.checked_cast(resolved_typ, typs.StructTyp)
 
-        struct = ComptimeStruct(
+        struct = ir_values.ComptimeStruct(
             struct_typ,
-            {f.name: UndefValue(f.typ, struct_expr) for f in struct_typ.fields.values()},
+            {f.name: ir_values.UndefValue(f.typ, struct_expr) for f in struct_typ.fields.values()},
             struct_expr,
         )
 
         # TypCheck already confirmed every given field name is real,
         # accessible and given only once, and that every field of
         # struct_typ is given a value that coerces to its type.
-        field_values: dict[str, Value] = {}
+        field_values: dict[str, ir_values.Value] = {}
         field_value_asts: dict[str, ast.Expr] = {}
         for field_expr in struct_expr.fields:
             field = struct_typ.fields[field_expr.ident.name]
@@ -902,15 +889,15 @@ class CfgBuilder:
 
         for i, field in enumerate(struct_typ.fields.values()):
             field_value = field_values[field.name]
-            coerced = opt_unwrap(self._coerce(field_value, field_value_asts[field.name]))
-            field_index = ComptimeInt(I32, i, field_value.ast)
+            coerced = opt_util.opt_unwrap(self._coerce(field_value, field_value_asts[field.name]))
+            field_index = ir_values.ComptimeInt(typs.I32, i, field_value.ast)
             struct = self.curr_bb.insert_value(struct, coerced, (field_index,), field_value.ast)
 
         return self._in_context(struct, ctx)
 
     def build_struct_access_expr(
-        self, sa_expr: ast.StructAccessExpr, e: Env, ctx: ExprContext
-    ) -> Value:
+        self, sa_expr: ast.StructAccessExpr, e: ir_env.Env, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower a struct field access expression (``s.field``).
 
         :param sa_expr: The parsed struct access expression.
@@ -924,8 +911,8 @@ class CfgBuilder:
         return self._build_struct_field_access(struct_ptr, sa_expr, ctx)
 
     def _build_struct_field_access(
-        self, struct_ptr: Value, sa_expr: ast.StructAccessExpr, ctx: ExprContext
-    ) -> Value:
+        self, struct_ptr: ir_values.Value, sa_expr: ast.StructAccessExpr, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower ``s.field`` given ``s``'s already-lowered place pointer.
 
         Split out of :meth:`build_struct_access_expr` so
@@ -943,15 +930,17 @@ class CfgBuilder:
         :return: The field's value, or a pointer to it if ``ctx`` is
             :attr:`~ExprContext.PLACE`.
         """
-        struct_ptr_typ = checked_cast(struct_ptr.typ, PtrTyp)
-        struct_typ = checked_cast(struct_ptr_typ.pointee_typ, StructTyp)
+        struct_ptr_typ = asserts.checked_cast(struct_ptr.typ, typs.PtrTyp)
+        struct_typ = asserts.checked_cast(struct_ptr_typ.pointee_typ, typs.StructTyp)
         field = struct_typ.fields[sa_expr.field.name]
 
-        index = ComptimeInt(I32, field.index, sa_expr)
+        index = ir_values.ComptimeInt(typs.I32, field.index, sa_expr)
         field_ptr = self.curr_bb.gep(struct_ptr, index, sa_expr)
         return self._deref_in_context(field_ptr, ctx, sa_expr)
 
-    def build_deref_expr(self, d_expr: ast.DerefExpr, e: Env, ctx: ExprContext) -> Value:
+    def build_deref_expr(
+        self, d_expr: ast.DerefExpr, e: ir_env.Env, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower a pointer dereference expression (``ptr.*``).
 
         :param d_expr: The parsed dereference expression.
@@ -964,7 +953,7 @@ class CfgBuilder:
         ptr = self.build_expr(d_expr.ptr, e, ExprContext.VALUE)
         return self._deref_in_context(ptr, ctx, d_expr)
 
-    def build_stmt(self, stmt_ast: ast.Stmt, e: Env) -> None:
+    def build_stmt(self, stmt_ast: ast.Stmt, e: ir_env.Env) -> None:
         """Lower any statement, dispatching to the ``build_*_stmt`` method
         matching its AST node kind.
 
@@ -974,7 +963,7 @@ class CfgBuilder:
         match stmt_ast:
             case ast.ExprStmt():
                 value = self.build_expr(stmt_ast.expr, e, ExprContext.VALUE)
-                if value.typ == NEVER and not self.curr_bb.terminated:
+                if value.typ == typs.NEVER and not self.curr_bb.terminated:
                     self.curr_bb.unreachable(stmt_ast.expr)
             case ast.RetStmt():
                 self.build_ret_stmt(stmt_ast, e)
@@ -987,7 +976,7 @@ class CfgBuilder:
             case ast.ContinueStmt():
                 self.build_continue_stmt(stmt_ast)
 
-    def build_ret_stmt(self, ret_ast: ast.RetStmt, e: Env) -> None:
+    def build_ret_stmt(self, ret_ast: ast.RetStmt, e: ir_env.Env) -> None:
         """Lower a ``return`` statement.
 
         :param ret_ast: The parsed return statement.
@@ -998,19 +987,19 @@ class CfgBuilder:
 
         if ret_ast.expr is not None:
             expr = self.build_expr(ret_ast.expr, e, ExprContext.VALUE, ret_typ)
-            if expr.typ == NEVER:
+            if expr.typ == typs.NEVER:
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(ret_ast)
                 return
             # TypCheck already confirmed expr coerces to ret_typ.
-            coerced = opt_unwrap(self._coerce(expr, ret_ast.expr))
+            coerced = opt_util.opt_unwrap(self._coerce(expr, ret_ast.expr))
             self.ret(coerced, ret_ast)
             return
 
         # TypCheck already confirmed a bare `return;` only appears where
         # ret_typ is void (else it would have raised InvalidVoidRetError).
-        assert_eq(ret_typ, VOID)
-        self.ret(VoidValue(ret_ast), ret_ast)
+        asserts.assert_eq(ret_typ, typs.VOID)
+        self.ret(ir_values.VoidValue(ret_ast), ret_ast)
 
     def build_break_stmt(self, break_ast: ast.BreakStmt) -> None:
         """Lower a ``break`` statement.
@@ -1046,7 +1035,7 @@ class CfgBuilder:
                 return ctx
         raise AssertionError(f"unresolved loop label {label.name!r}")
 
-    def build_let_stmt(self, let_ast: ast.LetStmt, e: Env) -> None:
+    def build_let_stmt(self, let_ast: ast.LetStmt, e: ir_env.Env) -> None:
         """Lower a local ``let`` statement.
 
         :param let_ast: The parsed ``let`` statement.
@@ -1055,12 +1044,12 @@ class CfgBuilder:
         """
         expr = self._build_let_initializer(let_ast, e, ExprContext.VALUE)
         name = let_ast.ident.name
-        mut = Mutability.from_ast(let_ast.mut)
+        mut = typs.Mutability.from_ast(let_ast.mut)
         alloca = self.curr_bb.alloca(expr.typ, mut, 1, let_ast)
         e.add_var(name, alloca)
         self.curr_bb.store(expr, alloca, let_ast)
 
-    def build_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: Env) -> None:
+    def build_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: ir_env.Env) -> None:
         """Lower an assignment statement (``place = expr``).
 
         Leech deliberately evaluates the place expression before the value
@@ -1078,16 +1067,18 @@ class CfgBuilder:
         :param e: The scope to resolve names in.
         """
         place = self.build_expr(ass_ast.place, e, ExprContext.PLACE)
-        place_typ = checked_cast(place.typ, PtrTyp)
-        assert place_typ.pointee_typ != VOID, "assignment place cannot be void"
+        place_typ = asserts.checked_cast(place.typ, typs.PtrTyp)
+        assert place_typ.pointee_typ != typs.VOID, "assignment place cannot be void"
         expr = self.build_expr(ass_ast.expr, e, ExprContext.VALUE, place_typ.pointee_typ)
 
         # TypCheck already confirmed place isn't const and expr coerces.
-        assert_eq(place_typ.mut, MUT)
-        coerced = opt_unwrap(self._coerce(expr, ass_ast.expr))
+        asserts.assert_eq(place_typ.mut, typs.MUT)
+        coerced = opt_util.opt_unwrap(self._coerce(expr, ass_ast.expr))
         self.curr_bb.store(coerced, place, ass_ast)
 
-    def _build_let_initializer(self, let_ast: ast.LetStmt, e: Env, ctx: ExprContext) -> Value:
+    def _build_let_initializer(
+        self, let_ast: ast.LetStmt, e: ir_env.Env, ctx: ExprContext
+    ) -> ir_values.Value:
         """Lower a ``let`` statement's initializer expression, shared by
         :meth:`build_let_stmt` and :meth:`build_var_initializer`.
 
@@ -1102,14 +1093,14 @@ class CfgBuilder:
         :return: The (possibly coerced) initializer's value.
         """
         declared_typ_ast = let_ast.typ
-        expected_typ = opt_map(declared_typ_ast, lambda t: Typ.from_ast(t, e))
+        expected_typ = opt_util.opt_map(declared_typ_ast, lambda t: typs.Typ.from_ast(t, e))
         expr = self.build_expr(let_ast.expr, e, ctx, expected_typ)
         if declared_typ_ast is None:
             return expr
         # TypCheck already confirmed expr coerces to expected_typ.
-        return opt_unwrap(self._coerce(expr, let_ast.expr))
+        return opt_util.opt_unwrap(self._coerce(expr, let_ast.expr))
 
-    def _build_int_lit(self, lit_ast: ast.IntLit, negated: bool) -> Value:
+    def _build_int_lit(self, lit_ast: ast.IntLit, negated: bool) -> ir_values.Value:
         """Lower an integer literal to a compile-time-known value.
 
         Its type was already chosen and overflow-checked while type
@@ -1123,9 +1114,9 @@ class CfgBuilder:
         """
         typ = self.typ_check_results.int_lit_typ(lit_ast)
         value = -lit_ast.value if negated else lit_ast.value
-        return ComptimeInt(typ, value, lit_ast)
+        return ir_values.ComptimeInt(typ, value, lit_ast)
 
-    def _coerce(self, value: Value, node: ast.Ast) -> Optional[Value]:
+    def _coerce(self, value: ir_values.Value, node: ast.Ast) -> Optional[ir_values.Value]:
         """Convert ``value`` to the type its context expects, if allowed.
 
         The decision - whether a coercion applies, and which kind - was
@@ -1151,9 +1142,9 @@ class CfgBuilder:
         match coercion:
             case None:
                 return value
-            case Invalid():
+            case typcheck.Invalid():
                 return None
-            case NeverDiverge(target=target):
+            case typcheck.NeverDiverge(target=target):
                 # A diverging expression never actually produces a value,
                 # so it coerces to any type - by the time a real value
                 # would be read here, control can't have reached this
@@ -1164,10 +1155,12 @@ class CfgBuilder:
                 # instance, where typ_arg_mapping is empty.
                 if not self.curr_bb.terminated:
                     self.curr_bb.unreachable(node)
-                return UndefValue(target.substitute_typ_params(self.typ_arg_mapping), node)
-            case IntExt(target=target):
+                return ir_values.UndefValue(
+                    target.substitute_typ_params(self.typ_arg_mapping), node
+                )
+            case typcheck.IntExt(target=target):
                 return self.curr_bb.int_ext(value, target, node)
-            case PtrMutRelax():
+            case typcheck.PtrMutRelax():
                 # A *mut T given where a *T is wanted needs nothing
                 # emitted - the two have the same representation.
                 return value
@@ -1175,8 +1168,8 @@ class CfgBuilder:
                 raise AssertionError(f"unhandled coercion {coercion!r}")
 
     def _propagate_never(
-        self, value: Value, ast_node: ast.Ast, ctx: ExprContext
-    ) -> Optional[Value]:
+        self, value: ir_values.Value, ast_node: ast.Ast, ctx: ExprContext
+    ) -> Optional[ir_values.Value]:
         """If ``value`` is ``never``-typed, terminate the current block.
 
         For operators, which don't coerce toward a target type (see
@@ -1192,28 +1185,30 @@ class CfgBuilder:
             ``never``-typed, so the caller should proceed with ``value``
             normally.
         """
-        if value.typ != NEVER:
+        if value.typ != typs.NEVER:
             return None
         if not self.curr_bb.terminated:
             self.curr_bb.unreachable(ast_node)
-        return self._in_context(NeverValue(ast_node), ctx)
+        return self._in_context(ir_values.NeverValue(ast_node), ctx)
 
-    def _value_to_ptr(self, value: Value) -> Value[PtrTyp]:
-        alloca = self.curr_bb.alloca(value.typ, CONST, 1, value.ast)
+    def _value_to_ptr(self, value: ir_values.Value) -> ir_values.Value[typs.PtrTyp]:
+        alloca = self.curr_bb.alloca(value.typ, typs.CONST, 1, value.ast)
         self.curr_bb.store(value, alloca, value.ast)
         return alloca
 
-    def _in_context(self, value: Value, ctx: ExprContext) -> Value:
+    def _in_context(self, value: ir_values.Value, ctx: ExprContext) -> ir_values.Value:
         if ctx == ExprContext.PLACE:
             return self._value_to_ptr(value)
         return value
 
-    def _deref_in_context(self, ptr: Value, ctx: ExprContext, ast: Optional[ast.Ast]) -> Value:
+    def _deref_in_context(
+        self, ptr: ir_values.Value, ctx: ExprContext, ast: Optional[ast.Ast]
+    ) -> ir_values.Value:
         if ctx == ExprContext.PLACE:
             return ptr
         return self.curr_bb.load(ptr, ast)
 
-    def add_bb(self, basename: str) -> BasicBlock:
+    def add_bb(self, basename: str) -> ir_values.BasicBlock:
         """Create a new, empty basic block and add it to :attr:`cfg`.
 
         :param basename: A human-readable name to derive the block's
@@ -1221,20 +1216,20 @@ class CfgBuilder:
         :return: The new basic block. It is not made the current block;
             use :meth:`set_position` for that.
         """
-        bb = BasicBlock(self._generate_bb_name(basename))
+        bb = ir_values.BasicBlock(self._generate_bb_name(basename))
         self.cfg.add_node(bb)
         return bb
 
-    def set_position(self, bb: BasicBlock) -> None:
+    def set_position(self, bb: ir_values.BasicBlock) -> None:
         """Make ``bb`` the block that subsequent instructions are added to.
 
         :param bb: The basic block to switch to; must already be in
             :attr:`cfg`.
         """
-        assert_in(bb, self.cfg)
+        asserts.assert_in(bb, self.cfg)
         self.curr_bb = bb
 
-    def branch(self, target: BasicBlock, ast: ast.Ast) -> None:
+    def branch(self, target: ir_values.BasicBlock, ast: ast.Ast) -> None:
         """Terminate :attr:`curr_bb` with an unconditional branch.
 
         Does not change :attr:`curr_bb`, the same as :meth:`cbranch` and
@@ -1249,15 +1244,15 @@ class CfgBuilder:
             :attr:`cfg`.
         :param ast: The AST node the branch instruction is attributed to.
         """
-        assert_in(target, self.cfg)
+        asserts.assert_in(target, self.cfg)
         self.curr_bb.branch(target, ast)
         self.cfg.add_edge(self.curr_bb, target)
 
     def cbranch(
         self,
-        condition: Value,
-        true_target: BasicBlock,
-        false_target: BasicBlock,
+        condition: ir_values.Value,
+        true_target: ir_values.BasicBlock,
+        false_target: ir_values.BasicBlock,
         ast: ast.Ast,
     ) -> None:
         """Terminate :attr:`curr_bb` with a conditional branch.
@@ -1272,13 +1267,13 @@ class CfgBuilder:
             false; must already be in :attr:`cfg`.
         :param ast: The AST node the branch instruction is attributed to.
         """
-        assert_in(true_target, self.cfg)
-        assert_in(false_target, self.cfg)
+        asserts.assert_in(true_target, self.cfg)
+        asserts.assert_in(false_target, self.cfg)
         self.curr_bb.cbranch(condition, true_target, false_target, ast)
         self.cfg.add_edge(self.curr_bb, true_target)
         self.cfg.add_edge(self.curr_bb, false_target)
 
-    def ret(self, value: Value, ast: Optional[ast.Ast]) -> None:
+    def ret(self, value: ir_values.Value, ast: Optional[ast.Ast]) -> None:
         """Terminate :attr:`curr_bb` with a return of ``value``.
 
         :param value: The value to return.

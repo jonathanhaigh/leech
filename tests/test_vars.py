@@ -1,12 +1,7 @@
 import pytest
-from util import check_prog_output, compile_modules, compile_str
+import util
 
-from leech.errors import (
-    CircularVarInitializerError,
-    DuplicateItemDefnError,
-    ItemNotFoundError,
-    VoidVarInitializerError,
-)
+from leech import errors
 
 
 def test_int_mod_var_ref_in_fn(tmp_path):
@@ -16,7 +11,7 @@ def test_int_mod_var_ref_in_fn(tmp_path):
         return a;
     }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 def test_str_mod_var_ref_in_fn(tmp_path):
@@ -30,7 +25,7 @@ def test_str_mod_var_ref_in_fn(tmp_path):
         return 100;
     }
     """
-    check_prog_output(tmp_path, src, "abcd\n", 100)
+    util.check_prog_output(tmp_path, src, "abcd\n", 100)
 
 
 def test_int_mod_var_ref_in_mod(tmp_path):
@@ -44,7 +39,7 @@ def test_int_mod_var_ref_in_mod(tmp_path):
         return b;
     }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 def test_str_mod_var_ref_in_mod(tmp_path):
@@ -59,7 +54,7 @@ def test_str_mod_var_ref_in_mod(tmp_path):
         return 100;
     }
     """
-    check_prog_output(tmp_path, src, "abcd\n", 100)
+    util.check_prog_output(tmp_path, src, "abcd\n", 100)
 
 
 def test_fn_mod_var(tmp_path):
@@ -74,7 +69,7 @@ def test_fn_mod_var(tmp_path):
         return g();
     }
     """
-    check_prog_output(tmp_path, src, "", 99)
+    util.check_prog_output(tmp_path, src, "", 99)
 
 
 def test_fn_local_var(tmp_path):
@@ -88,7 +83,7 @@ def test_fn_local_var(tmp_path):
         return g();
     }
     """
-    check_prog_output(tmp_path, src, "", 99)
+    util.check_prog_output(tmp_path, src, "", 99)
 
 
 def test_var_not_found_at_mod_scope(tmp_path):
@@ -96,16 +91,16 @@ def test_var_not_found_at_mod_scope(tmp_path):
     let a = x;
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_var_not_found_at_fn_scope(tmp_path):
     src = """
     pub fn main() i32 { x }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_shadowed_mod_var(tmp_path):
@@ -116,7 +111,7 @@ def test_shadowed_mod_var(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 200)
+    util.check_prog_output(tmp_path, src, "", 200)
 
 
 def test_unshadowed_mod_var(tmp_path):
@@ -129,7 +124,7 @@ def test_unshadowed_mod_var(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 def test_shadowed_local_var(tmp_path):
@@ -142,7 +137,7 @@ def test_shadowed_local_var(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 200)
+    util.check_prog_output(tmp_path, src, "", 200)
 
 
 def test_unshadowed_local_var(tmp_path):
@@ -155,7 +150,7 @@ def test_unshadowed_local_var(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 def test_cannot_access_inner_scope(tmp_path):
@@ -167,8 +162,8 @@ def test_cannot_access_inner_scope(tmp_path):
         return x;
     }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_duplicate_mod_var(tmp_path):
@@ -177,8 +172,8 @@ def test_duplicate_mod_var(tmp_path):
     let x = 200;
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_duplicate_local_var(tmp_path):
@@ -189,8 +184,8 @@ def test_duplicate_local_var(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_void_local_var(tmp_path):
@@ -201,8 +196,8 @@ def test_void_local_var(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(VoidVarInitializerError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.VoidVarInitializerError):
+        util.compile_str(tmp_path, src)
 
 
 def test_void_mod_var(tmp_path):
@@ -213,8 +208,8 @@ def test_void_mod_var(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(VoidVarInitializerError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.VoidVarInitializerError):
+        util.compile_str(tmp_path, src)
 
 
 def test_diverging_if_els_local_var_true(tmp_path):
@@ -232,7 +227,7 @@ def test_diverging_if_els_local_var_true(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_diverging_if_els_local_var_false(tmp_path):
@@ -246,7 +241,7 @@ def test_diverging_if_els_local_var_false(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_diverging_bare_block_local_var(tmp_path):
@@ -262,7 +257,7 @@ def test_diverging_bare_block_local_var(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_mod_var_self_cycle(tmp_path):
@@ -272,8 +267,8 @@ def test_mod_var_self_cycle(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CircularVarInitializerError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CircularVarInitializerError):
+        util.compile_str(tmp_path, src)
 
 
 def test_mod_var_cycle(tmp_path):
@@ -284,8 +279,8 @@ def test_mod_var_cycle(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CircularVarInitializerError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CircularVarInitializerError):
+        util.compile_str(tmp_path, src)
 
 
 def test_mod_var_three_way_cycle(tmp_path):
@@ -297,8 +292,8 @@ def test_mod_var_three_way_cycle(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CircularVarInitializerError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CircularVarInitializerError):
+        util.compile_str(tmp_path, src)
 
 
 def test_cross_module_var_cycle(tmp_path):
@@ -316,5 +311,5 @@ def test_cross_module_var_cycle(tmp_path):
     import main;
     pub let y = main::x;
     """
-    with pytest.raises(CircularVarInitializerError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.CircularVarInitializerError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)

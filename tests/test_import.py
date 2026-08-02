@@ -1,14 +1,7 @@
 import pytest
-from util import check_prog_output, compile_modules
+import util
 
-from leech.errors import (
-    DuplicateItemDefnError,
-    ModDoesNotExistError,
-    ModUsedAsTypError,
-    PrivateItemAccessError,
-    PrivateStructFieldAccessError,
-    UnexpectedTokenError,
-)
+from leech import errors
 
 
 def test_import_of_module_with_syntax_error(tmp_path):
@@ -24,8 +17,8 @@ def test_import_of_module_with_syntax_error(tmp_path):
     a_src = """
     pub fn f() i32
     """
-    with pytest.raises(UnexpectedTokenError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.UnexpectedTokenError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_fn(tmp_path):
@@ -43,7 +36,7 @@ def test_import_fn(tmp_path):
         return 101;
     }
     """
-    check_prog_output(tmp_path, main_src, "abc\n", 101, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "abc\n", 101, a=a_src)
 
 
 def test_comptime_import_fn(tmp_path):
@@ -59,7 +52,7 @@ def test_comptime_import_fn(tmp_path):
         return 101;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 101, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 101, a=a_src)
 
 
 def test_import_private_fn(tmp_path):
@@ -77,8 +70,8 @@ def test_import_private_fn(tmp_path):
         return 101;
     }
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_private_fn_use_comptime(tmp_path):
@@ -94,8 +87,8 @@ def test_import_private_fn_use_comptime(tmp_path):
         return 101;
     }
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_var(tmp_path):
@@ -108,7 +101,7 @@ def test_import_var(tmp_path):
     a_src = """
     pub let x = 11;
     """
-    check_prog_output(tmp_path, main_src, "", 11, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 11, a=a_src)
 
 
 def test_import_var_use_comptime(tmp_path):
@@ -122,7 +115,7 @@ def test_import_var_use_comptime(tmp_path):
     a_src = """
     pub let x = 11;
     """
-    check_prog_output(tmp_path, main_src, "", 11, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 11, a=a_src)
 
 
 def test_import_private_var(tmp_path):
@@ -135,8 +128,8 @@ def test_import_private_var(tmp_path):
     a_src = """
     let x = 11;
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_private_var_use_comptime(tmp_path):
@@ -150,8 +143,8 @@ def test_import_private_var_use_comptime(tmp_path):
     a_src = """
     let x = 11;
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_typ(tmp_path):
@@ -167,7 +160,7 @@ def test_import_typ(tmp_path):
         pub int: i32,
     }
     """
-    check_prog_output(tmp_path, main_src, "", 32, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 32, a=a_src)
 
 
 def test_import_typ_use_comptime(tmp_path):
@@ -183,7 +176,7 @@ def test_import_typ_use_comptime(tmp_path):
         pub int: i32,
     }
     """
-    check_prog_output(tmp_path, main_src, "", 32, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 32, a=a_src)
 
 
 def test_import_private_typ(tmp_path):
@@ -199,8 +192,8 @@ def test_import_private_typ(tmp_path):
         int: i32,
     }
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_private_typ_use_comptime(tmp_path):
@@ -216,8 +209,8 @@ def test_import_private_typ_use_comptime(tmp_path):
         int: i32,
     }
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_typ_with_var_of_same_name(tmp_path):
@@ -238,7 +231,7 @@ def test_import_typ_with_var_of_same_name(tmp_path):
         pub v: i32,
     }
     """
-    check_prog_output(tmp_path, main_src, "", 32, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 32, a=a_src)
 
 
 def test_import_var_with_typ_of_same_name(tmp_path):
@@ -257,7 +250,7 @@ def test_import_var_with_typ_of_same_name(tmp_path):
 
     pub let T = 5;
     """
-    check_prog_output(tmp_path, main_src, "", 5, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 5, a=a_src)
 
 
 def test_import_var_with_private_typ_of_same_name(tmp_path):
@@ -277,7 +270,7 @@ def test_import_var_with_private_typ_of_same_name(tmp_path):
 
     pub let T = 5;
     """
-    check_prog_output(tmp_path, main_src, "", 5, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 5, a=a_src)
 
 
 def test_import_private_struct_field_construct(tmp_path):
@@ -296,8 +289,8 @@ def test_import_private_struct_field_construct(tmp_path):
         priv_val: i32,
     }
     """
-    with pytest.raises(PrivateStructFieldAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateStructFieldAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_comptime_import_private_struct_field_construct(tmp_path):
@@ -313,8 +306,8 @@ def test_comptime_import_private_struct_field_construct(tmp_path):
         priv_val: i32,
     }
     """
-    with pytest.raises(PrivateStructFieldAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateStructFieldAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_private_struct_field_read(tmp_path):
@@ -336,8 +329,8 @@ def test_import_private_struct_field_read(tmp_path):
         return T { priv_val: 1 };
     }
     """
-    with pytest.raises(PrivateStructFieldAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateStructFieldAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_private_struct_field_write(tmp_path):
@@ -358,8 +351,8 @@ def test_import_private_struct_field_write(tmp_path):
         return T { priv_val: 1 };
     }
     """
-    with pytest.raises(PrivateStructFieldAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateStructFieldAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(tmp_path):
@@ -387,7 +380,7 @@ def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(tmp_pat
         }
     }
     """
-    check_prog_output(tmp_path, main_src, "", 42, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src)
 
 
 def test_mod_does_not_exist(tmp_path):
@@ -397,8 +390,8 @@ def test_mod_does_not_exist(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(ModDoesNotExistError):
-        compile_modules(tmp_path, main=main_src)
+    with pytest.raises(errors.ModDoesNotExistError):
+        util.compile_modules(tmp_path, main=main_src)
 
 
 def test_duplicate_import(tmp_path):
@@ -416,8 +409,8 @@ def test_duplicate_import(tmp_path):
         return 1;
     }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 @pytest.mark.parametrize(
@@ -448,8 +441,8 @@ def test_mod_used_as_typ(defn, tmp_path):
         return 1;
     }
     """
-    with pytest.raises(ModUsedAsTypError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.ModUsedAsTypError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_and_struct_same_name(tmp_path):
@@ -467,8 +460,8 @@ def test_import_and_struct_same_name(tmp_path):
         return 1;
     }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_import_and_var_same_name(tmp_path):
@@ -487,7 +480,7 @@ def test_import_and_var_same_name(tmp_path):
         return 1;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 12, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 12, a=a_src)
 
 
 def test_import_chain(tmp_path):
@@ -516,7 +509,7 @@ def test_import_chain(tmp_path):
         return 100;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 111, a=a_src, b=b_src, c=c_src)
+    util.check_prog_output(tmp_path, main_src, "", 111, a=a_src, b=b_src, c=c_src)
 
 
 def test_diamond_import(tmp_path):
@@ -547,7 +540,7 @@ def test_diamond_import(tmp_path):
         return Foo { v: n };
     }
     """
-    check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
 
 
 def test_diamond_import_reversed_order(tmp_path):
@@ -578,7 +571,7 @@ def test_diamond_import_reversed_order(tmp_path):
         return Foo { v: n };
     }
     """
-    check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
 
 
 def test_import_of_typ_re_exported_by_imported_mod(tmp_path):
@@ -606,7 +599,7 @@ def test_import_of_typ_re_exported_by_imported_mod(tmp_path):
         return Foo { v: n };
     }
     """
-    check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
 
 
 def test_import_of_var_re_exported_by_imported_mod(tmp_path):
@@ -627,7 +620,7 @@ def test_import_of_var_re_exported_by_imported_mod(tmp_path):
     c_src = """
     pub let cvar = 30;
     """
-    check_prog_output(tmp_path, main_src, "", 30, a=a_src, c=c_src)
+    util.check_prog_output(tmp_path, main_src, "", 30, a=a_src, c=c_src)
 
 
 def test_circular_import(tmp_path):
@@ -656,7 +649,7 @@ def test_circular_import(tmp_path):
         return a::only_from_b() * 2;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 11, a=a_src, b=b_src)
+    util.check_prog_output(tmp_path, main_src, "", 11, a=a_src, b=b_src)
 
 
 def test_circular_import_of_typ(tmp_path):
@@ -684,7 +677,7 @@ def test_circular_import_of_typ(tmp_path):
         return a::Foo { v: 42 };
     }
     """
-    check_prog_output(tmp_path, main_src, "", 42, a=a_src, b=b_src)
+    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src, b=b_src)
 
 
 def test_self_import(tmp_path):
@@ -699,4 +692,4 @@ def test_self_import(tmp_path):
         return 7;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 7)
+    util.check_prog_output(tmp_path, main_src, "", 7)

@@ -7,10 +7,10 @@ module instead avoids a genuine import cycle between them for the sake of
 one enum.
 """
 
-from enum import Enum
+import enum
 
 
-class Signage(Enum):
+class Signage(enum.Enum):
     """Whether an integer type is signed or unsigned."""
 
     SIGNED = 0

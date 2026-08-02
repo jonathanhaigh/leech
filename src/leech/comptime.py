@@ -7,15 +7,7 @@ generated code.
 
 from typing import Final, Optional
 
-from leech import ir_module, ir_values
-from leech.asserts import assert_eq, assert_lt, checked_cast
-from leech.errors import (
-    CallExternFnAtComptimeError,
-    CannotTakeAddressOfComptimeValueError,
-    DivisionByZeroAtComptimeError,
-    IntOverflowAtComptimeError,
-    SetNonLocalVarAtComptimeError,
-)
+from leech import asserts, errors, ir_module, ir_values
 
 
 class Interpreter:
@@ -77,7 +69,7 @@ class Interpreter:
                 self._check_not_temporary(self.ret_value)
                 return self.ret_value
             instr_index = self.curr_instr_index
-            assert_lt(instr_index, len(self.curr_bb.instrs))
+            asserts.assert_lt(instr_index, len(self.curr_bb.instrs))
             self.curr_instr_index += 1
             self._eval_instr(self.curr_bb.instrs[instr_index])
 
@@ -88,7 +80,7 @@ class Interpreter:
 
     def _check_not_temporary(self, value: ir_values.ComptimeValue) -> None:
         if isinstance(value, ir_values.ComptimePtr) and value.is_temporary():
-            raise CannotTakeAddressOfComptimeValueError(value.span)
+            raise errors.CannotTakeAddressOfComptimeValueError(value.span)
         if isinstance(value, ir_values.ComptimeAggregate):
             for elt in value.values():
                 self._check_not_temporary(elt)
@@ -96,9 +88,13 @@ class Interpreter:
     def _eval_instr(self, instr: ir_values.Instr) -> None:
         match instr:
             case ir_values.BinOpInstr():
-                lhs = checked_cast(self._get_comptime_value(instr.lhs), ir_values.ComptimeInt)
-                rhs = checked_cast(self._get_comptime_value(instr.rhs), ir_values.ComptimeInt)
-                assert_eq(lhs.typ, rhs.typ)
+                lhs = asserts.checked_cast(
+                    self._get_comptime_value(instr.lhs), ir_values.ComptimeInt
+                )
+                rhs = asserts.checked_cast(
+                    self._get_comptime_value(instr.rhs), ir_values.ComptimeInt
+                )
+                asserts.assert_eq(lhs.typ, rhs.typ)
                 match instr:
                     case ir_values.AddInstr():
                         ret = lhs.value + rhs.value
@@ -108,34 +104,38 @@ class Interpreter:
                         ret = lhs.value * rhs.value
                     case ir_values.SdivInstr() | ir_values.UdivInstr():
                         if rhs.value == 0:
-                            raise DivisionByZeroAtComptimeError(instr.span)
+                            raise errors.DivisionByZeroAtComptimeError(instr.span)
                         ret = lhs.value // rhs.value
                     case _:
                         raise AssertionError(f"invalid bin op instr {instr}")
                 # TODO: sdiv vs udiv?
                 if not lhs.typ.fits(ret):
-                    raise IntOverflowAtComptimeError(ret, lhs.typ.name, instr.span)
+                    raise errors.IntOverflowAtComptimeError(ret, lhs.typ.name, instr.span)
                 self.registers[instr] = ir_values.ComptimeInt(lhs.typ, ret, instr.ast)
 
             case ir_values.NegInstr():
-                operand = checked_cast(
+                operand = asserts.checked_cast(
                     self._get_comptime_value(instr.operand), ir_values.ComptimeInt
                 )
                 ret = -operand.value
                 if not operand.typ.fits(ret):
-                    raise IntOverflowAtComptimeError(ret, operand.typ.name, instr.span)
+                    raise errors.IntOverflowAtComptimeError(ret, operand.typ.name, instr.span)
                 self.registers[instr] = ir_values.ComptimeInt(operand.typ, ret, instr.ast)
 
             case ir_values.NotInstr():
-                operand = checked_cast(
+                operand = asserts.checked_cast(
                     self._get_comptime_value(instr.operand), ir_values.ComptimeBool
                 )
                 self.registers[instr] = ir_values.ComptimeBool(not operand.value, instr.ast)
 
             case ir_values.IcmpSignedInstr() | ir_values.IcmpUnsignedInstr():
-                lhs = checked_cast(self._get_comptime_value(instr.lhs), ir_values.ComptimeInt)
-                rhs = checked_cast(self._get_comptime_value(instr.rhs), ir_values.ComptimeInt)
-                assert_eq(lhs.typ, rhs.typ)
+                lhs = asserts.checked_cast(
+                    self._get_comptime_value(instr.lhs), ir_values.ComptimeInt
+                )
+                rhs = asserts.checked_cast(
+                    self._get_comptime_value(instr.rhs), ir_values.ComptimeInt
+                )
+                asserts.assert_eq(lhs.typ, rhs.typ)
                 match instr.op:
                     case "<":
                         ret = lhs.value < rhs.value
@@ -155,12 +155,14 @@ class Interpreter:
                 self.registers[instr] = ir_values.ComptimeBool(ret, instr.ast)
 
             case ir_values.LoadInstr():
-                src = checked_cast(self._get_comptime_value(instr.src), ir_values.ComptimePtr)
+                src = asserts.checked_cast(
+                    self._get_comptime_value(instr.src), ir_values.ComptimePtr
+                )
                 self.registers[instr] = src.load()
             case ir_values.IntExtInstr():
                 # Widening never changes the value, only the type it's
                 # held in.
-                int_value = checked_cast(
+                int_value = asserts.checked_cast(
                     self._get_comptime_value(instr.value), ir_values.ComptimeInt
                 )
                 self.registers[instr] = ir_values.ComptimeInt(instr.typ, int_value.value, instr.ast)
@@ -169,31 +171,39 @@ class Interpreter:
                     instr.allocated_typ, instr.mut, instr.ast
                 )
             case ir_values.StoreInstr():
-                dest = checked_cast(self._get_comptime_value(instr.dest), ir_values.ComptimePtr)
+                dest = asserts.checked_cast(
+                    self._get_comptime_value(instr.dest), ir_values.ComptimePtr
+                )
                 if not dest.is_temporary():
-                    raise SetNonLocalVarAtComptimeError(instr.span)
+                    raise errors.SetNonLocalVarAtComptimeError(instr.span)
                 value = self._get_comptime_value(instr.value)
                 dest.store(value)
             case ir_values.GepInstr():
-                base = checked_cast(self._get_comptime_value(instr.base), ir_values.ComptimePtr)
-                index = checked_cast(self._get_comptime_value(instr.index), ir_values.ComptimeInt)
+                base = asserts.checked_cast(
+                    self._get_comptime_value(instr.base), ir_values.ComptimePtr
+                )
+                index = asserts.checked_cast(
+                    self._get_comptime_value(instr.index), ir_values.ComptimeInt
+                )
                 self.registers[instr] = ir_values.ComptimeGep(base, index, instr.ast)
             case ir_values.InsertValueInstr():
                 value = self._get_comptime_value(instr.value)
                 base_agg = self._get_comptime_value(instr.aggregate).copy()
                 agg = base_agg
                 for index in instr.indeces[:-1]:
-                    agg = checked_cast(agg, ir_values.ComptimeAggregate)
+                    agg = asserts.checked_cast(agg, ir_values.ComptimeAggregate)
                     agg = agg.get_element(index.value)
 
-                agg = checked_cast(agg, ir_values.ComptimeAggregate)
+                agg = asserts.checked_cast(agg, ir_values.ComptimeAggregate)
                 agg.set_element(value, instr.indeces[-1].value)
                 self.registers[instr] = base_agg
             case ir_values.CallInstr():
-                callee = checked_cast(self._get_comptime_value(instr.callee), ir_module.FnSpec)
+                callee = asserts.checked_cast(
+                    self._get_comptime_value(instr.callee), ir_module.FnSpec
+                )
                 cfg = getattr(callee, "cfg", None)
                 if cfg is None:
-                    raise CallExternFnAtComptimeError(callee.span)
+                    raise errors.CallExternFnAtComptimeError(callee.span)
                 args = tuple(self._get_comptime_value(arg) for arg in instr.args)
                 self.registers[instr] = Interpreter(cfg, callee.params, args).eval()
             case ir_values.PhiInstr():
@@ -204,7 +214,7 @@ class Interpreter:
                 self.curr_bb = instr.target
                 self.curr_instr_index = 0
             case ir_values.CbranchInstr():
-                cond = checked_cast(
+                cond = asserts.checked_cast(
                     self._get_comptime_value(instr.condition), ir_values.ComptimeBool
                 )
                 self.prev_bb = self.curr_bb

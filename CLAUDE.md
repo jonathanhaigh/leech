@@ -11,8 +11,11 @@ compiler is written in Python (>=3.14, uses modern generic syntax like
 textual LLVM IR via `llvmlite`. It does not itself invoke `llc`/`clang`/`lli` —
 those are external tools tests shell out to.
 
-The CLI entry point is `leech` (see `[project.scripts]` in `pyproject.toml`),
-implemented by `leech.main.run`.
+The CLI entry point is `leech` (see `[project.scripts]` in `pyproject.toml`,
+which points at the `main()` function in `leech/__init__.py`), implemented by
+`leech.driver.run`. The driver module is deliberately named `driver.py`, not
+`main.py`, so it can't collide with the package's own `main()` entry point
+function.
 
 ## Commands
 
@@ -152,3 +155,15 @@ Cross-cutting pieces:
   `UP045` (which would rewrite `Optional[X]` to `X | None`) is disabled in
   `[tool.ruff.lint]` for this reason. Plain (non-nullable) unions still use
   `X | Y` PEP 604 syntax as normal.
+- Imports follow the Google Python style guide: `import x` for packages/
+  modules, `from x import y` only where `y` is itself a module (e.g.
+  `from leech import typs`, `import lark.tree`), never for an individual
+  class/function/constant — those are referenced qualified (`typs.Typ`,
+  `asserts.checked_cast`). Exempted per the guide: `typing`,
+  `collections.abc`, `typing_extensions`. `from leech.src import SrcFile`
+  in `tests/util.py` and `tests/test_typs.py` is aliased to `leech_src`
+  (`from leech import src as leech_src`) since those files use `src` as an
+  ordinary parameter name throughout (a snippet of Leech source).
+- `leech.errors`'s "every diagnostic recorded so far" accessor is named
+  `all_errors()`, not `errors()` — the obvious name would read as
+  `errors.errors()` once imported Google-style, which is confusing.

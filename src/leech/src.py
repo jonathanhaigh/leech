@@ -1,9 +1,9 @@
 """Source file and source-span types used for diagnostics."""
 
-from functools import cached_property
-from pathlib import Path
+import functools
+import pathlib
 
-from lark.tree import Meta
+import lark.tree
 
 
 class SrcFile:
@@ -12,18 +12,18 @@ class SrcFile:
     :param path: The path to the source file.
     """
 
-    path: Path
+    path: pathlib.Path
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: pathlib.Path) -> None:
         self.path = path
 
-    @cached_property
+    @functools.cached_property
     def src(self) -> str:
         """The full contents of the file, read and cached on first access."""
         with self.path.open(encoding="utf-8") as f:
             return f.read()
 
-    @cached_property
+    @functools.cached_property
     def lines(self) -> list[str]:
         """The contents of the file split into individual lines."""
         return self.src.splitlines()
@@ -47,7 +47,7 @@ class SrcSpan:
     start_col: int
     end_col: int
 
-    def __init__(self, file: SrcFile, lark_meta: Meta) -> None:
+    def __init__(self, file: SrcFile, lark_meta: lark.tree.Meta) -> None:
         self.file = file
         self.start = lark_meta.start_pos
         self.end = lark_meta.end_pos

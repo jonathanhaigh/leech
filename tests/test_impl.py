@@ -1,13 +1,7 @@
 import pytest
-from util import check_prog_output, compile_modules, compile_str
+import util
 
-from leech.errors import (
-    DuplicateItemDefnError,
-    ImplForNonLocalStructTypError,
-    ImplForNonStructTypError,
-    ItemNotFoundError,
-    PrivateItemAccessError,
-)
+from leech import errors
 
 
 def test_assoc_fn_call(tmp_path):
@@ -21,7 +15,7 @@ def test_assoc_fn_call(tmp_path):
         return f.a;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_comptime_assoc_fn_call(tmp_path):
@@ -35,7 +29,7 @@ def test_comptime_assoc_fn_call(tmp_path):
         return x.a;
     }
     """
-    check_prog_output(tmp_path, src, "", 99)
+    util.check_prog_output(tmp_path, src, "", 99)
 
 
 def test_multiple_assoc_fns_one_impl_block(tmp_path):
@@ -49,7 +43,7 @@ def test_multiple_assoc_fns_one_impl_block(tmp_path):
         return Foo::new().a + Foo::other();
     }
     """
-    check_prog_output(tmp_path, src, "", 3)
+    util.check_prog_output(tmp_path, src, "", 3)
 
 
 def test_multiple_impl_blocks_same_struct(tmp_path):
@@ -65,7 +59,7 @@ def test_multiple_impl_blocks_same_struct(tmp_path):
         return Foo::new().a + Foo::other();
     }
     """
-    check_prog_output(tmp_path, src, "", 3)
+    util.check_prog_output(tmp_path, src, "", 3)
 
 
 def test_two_structs_with_same_assoc_fn_name(tmp_path):
@@ -82,7 +76,7 @@ def test_two_structs_with_same_assoc_fn_name(tmp_path):
         return Foo::new().a + Bar::new().b;
     }
     """
-    check_prog_output(tmp_path, src, "", 3)
+    util.check_prog_output(tmp_path, src, "", 3)
 
 
 def test_assoc_fn_lookup_does_not_leak_module_scope(tmp_path):
@@ -93,8 +87,8 @@ def test_assoc_fn_lookup_does_not_leak_module_scope(tmp_path):
         return Foo::helper();
     }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assoc_fn_lookup_does_not_leak_builtin_scope(tmp_path):
@@ -107,8 +101,8 @@ def test_assoc_fn_lookup_does_not_leak_builtin_scope(tmp_path):
         return Foo::usize;
     }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_impl_before_struct_defn(tmp_path):
@@ -121,7 +115,7 @@ def test_impl_before_struct_defn(tmp_path):
         return Foo::new().a;
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_duplicate_assoc_fn_name(tmp_path):
@@ -133,8 +127,8 @@ def test_duplicate_assoc_fn_name(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_duplicate_assoc_fn_name_across_impl_blocks(tmp_path):
@@ -148,8 +142,8 @@ def test_duplicate_assoc_fn_name_across_impl_blocks(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_field_and_method_same_name_rejected(tmp_path):
@@ -163,8 +157,8 @@ def test_field_and_method_same_name_rejected(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_field_and_receiverless_assoc_fn_same_name_rejected(tmp_path):
@@ -177,8 +171,8 @@ def test_field_and_receiverless_assoc_fn_same_name_rejected(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_field_and_method_same_name_rejected_in_separate_impl_block(tmp_path):
@@ -192,8 +186,8 @@ def test_field_and_method_same_name_rejected_in_separate_impl_block(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_same_name_field_and_method_in_different_structs(tmp_path):
@@ -211,7 +205,7 @@ def test_same_name_field_and_method_in_different_structs(tmp_path):
         return a.get + b.get();
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_field_not_reachable_by_assoc_fn_path(tmp_path):
@@ -226,8 +220,8 @@ def test_field_not_reachable_by_assoc_fn_path(tmp_path):
         return Foo::a;
     }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assoc_fn_not_usable_as_typ(tmp_path):
@@ -242,8 +236,8 @@ def test_assoc_fn_not_usable_as_typ(tmp_path):
     fn g(p: Foo::f) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
@@ -261,7 +255,7 @@ def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
         return s.get();
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 @pytest.mark.parametrize(
@@ -280,8 +274,8 @@ def test_impl_on_non_struct_typ(impl_typ, tmp_path):
     }}
     pub fn main() i32 {{ return 0; }}
     """
-    with pytest.raises(ImplForNonStructTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ImplForNonStructTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_impl_on_qualified_path_typ(tmp_path):
@@ -295,8 +289,8 @@ def test_impl_on_qualified_path_typ(tmp_path):
     a_src = """
     pub struct Foo {}
     """
-    with pytest.raises(ImplForNonLocalStructTypError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.ImplForNonLocalStructTypError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_cross_module_assoc_fn_call(tmp_path):
@@ -313,7 +307,7 @@ def test_cross_module_assoc_fn_call(tmp_path):
         pub fn new() Foo { Foo { a: 7 } }
     }
     """
-    check_prog_output(tmp_path, main_src, "", 7, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 7, a=a_src)
 
 
 def test_private_assoc_fn_accessible_within_defining_module(tmp_path):
@@ -328,7 +322,7 @@ def test_private_assoc_fn_accessible_within_defining_module(tmp_path):
         return Foo::new().a;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_cross_module_private_assoc_fn_call(tmp_path):
@@ -348,8 +342,8 @@ def test_cross_module_private_assoc_fn_call(tmp_path):
         fn new() Foo { Foo { a: 7 } }
     }
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_comptime_cross_module_private_assoc_fn_call(tmp_path):
@@ -366,5 +360,5 @@ def test_comptime_cross_module_private_assoc_fn_call(tmp_path):
         fn new() Foo { Foo { a: 7 } }
     }
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)

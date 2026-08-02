@@ -1,21 +1,22 @@
 """Scope and name resolution for variables, types and modules."""
 
+import collections
 import enum
 import re
-from collections import ChainMap
 from typing import Any, Optional
 
-from leech import ast, ir_module, ir_traits, ir_values, typs
-from leech.asserts import assert_ge, checked_cast
-from leech.errors import (
-    DuplicateItemDefnError,
-    ItemNotFoundError,
-    ModUsedAsTypError,
-    PrivateItemAccessError,
-    TraitUsedAsTypError,
+from leech import (
+    asserts,
+    ast,
+    errors,
+    ir_module,
+    ir_traits,
+    ir_values,
+    opt_util,
+    signage,
+    src,
+    typs,
 )
-from leech.opt_util import opt_map, opt_or_else
-from leech.src import SrcSpan
 
 type Container = typs.Typ | ir_module.Mod | ir_traits.Trait
 """Anything bindable in the :attr:`Env.Namespace.CONTAINERS` namespace.
@@ -72,11 +73,11 @@ class Env:
                 case Env.Namespace.CONTAINERS:
                     return "type or module"
 
-    items: ChainMap[tuple[Env.Namespace, str], Container | Var]
+    items: collections.ChainMap[tuple[Env.Namespace, str], Container | Var]
     #: Where a name was bound, for bindings whose item can't point at its
     #: own definition site (see :meth:`add`'s ``span`` parameter). Scoped
     #: to this Env alone, mirroring ``items.maps[0]``.
-    _spans: dict[tuple[Env.Namespace, str], SrcSpan]
+    _spans: dict[tuple[Env.Namespace, str], src.SrcSpan]
     #: The program-wide trait impl registry - reachable from any scope, so
     #: that type and method resolution (which thread an ``Env`` through
     #: pervasively already) don't need it passed as a second, parallel
@@ -89,8 +90,8 @@ class Env:
         impl_registry: Optional[ir_traits.ImplRegistry] = None,
     ) -> None:
         if parent is None:
-            self.items = ChainMap()
-            self.impl_registry = opt_or_else(impl_registry, ir_traits.ImplRegistry)
+            self.items = collections.ChainMap()
+            self.impl_registry = opt_util.opt_or_else(impl_registry, ir_traits.ImplRegistry)
         else:
             self.items = parent.items.new_child()
             self.impl_registry = parent.impl_registry
@@ -120,9 +121,9 @@ class Env:
         if ns == Env.Namespace.CONTAINERS:
             m = re.fullmatch("([iu])([1-9][0-9]*)", name)
             if m:
-                signage = typs.SIGNED if m[1] == "i" else typs.UNSIGNED
+                sign = signage.SIGNED if m[1] == "i" else signage.UNSIGNED
                 width = int(m[2])
-                typ = typs.IntTyp.get_or_create(width, signage)
+                typ = typs.IntTyp.get_or_create(width, sign)
                 self.items.maps[-1][key] = typ
                 return typ
 
@@ -133,7 +134,7 @@ class Env:
         ns: Env.Namespace,
         name: str,
         item: Any,
-        span: Optional[SrcSpan] = None,
+        span: Optional[src.SrcSpan] = None,
     ) -> None:
         """Bind ``name`` to ``item`` in ``ns``, in this scope only.
 
@@ -155,7 +156,7 @@ class Env:
             if span is None:
                 span = ast.opt_span(item)
             existing_span = self._spans.get(key) or ast.opt_span(existing)
-            raise DuplicateItemDefnError(ns.item_kind(), name, span, existing_span)
+            raise errors.DuplicateItemDefnError(ns.item_kind(), name, span, existing_span)
         self.items[key] = item
         if span is not None:
             self._spans[key] = span
@@ -164,7 +165,7 @@ class Env:
         self,
         name: str,
         var: Var,
-        span: Optional[SrcSpan] = None,
+        span: Optional[src.SrcSpan] = None,
     ) -> None:
         """Bind a variable name in this scope.
 
@@ -176,7 +177,7 @@ class Env:
         """
         return self.add(Env.Namespace.VARS, name, var, span)
 
-    def add_container(self, name: str, item: Container, span: Optional[SrcSpan] = None) -> None:
+    def add_container(self, name: str, item: Container, span: Optional[src.SrcSpan] = None) -> None:
         """Bind a type or module name in this scope.
 
         :param name: The name to bind.
@@ -190,7 +191,7 @@ class Env:
     @staticmethod
     def _private_item_diag_info(
         value: Container | Var,
-    ) -> Optional[tuple[str, Optional[SrcSpan]]]:
+    ) -> Optional[tuple[str, Optional[src.SrcSpan]]]:
         """A human-readable kind and definition span for a private-item
         diagnostic, if one applies.
 
@@ -225,14 +226,16 @@ class Env:
             case ir_module.Mod():
                 item = scope.get_item(ns, ident.name)
                 if item is None or item.access == ir_module.PUBLIC:
-                    res = opt_map(item, lambda i: i.value)
+                    res = opt_util.opt_map(item, lambda i: i.value)
                 else:
                     diag_info = Env._private_item_diag_info(item.value)
                     if diag_info is None:
                         res = None
                     else:
                         item_kind, defn_span = diag_info
-                        raise PrivateItemAccessError(item_kind, ident.name, ident.span, defn_span)
+                        raise errors.PrivateItemAccessError(
+                            item_kind, ident.name, ident.span, defn_span
+                        )
             case typs.StructTyp():
                 # A struct's members share one namespace and are all values,
                 # never types, so a type lookup can't name one. Of those
@@ -243,10 +246,12 @@ class Env:
                 # Private associated functions are invisible outside the
                 # struct's own module, same as private Mod items above.
                 if res is not None and not res.is_accessible_from(ident.span.file):
-                    raise PrivateItemAccessError("function", ident.name, ident.span, res.span)
+                    raise errors.PrivateItemAccessError(
+                        "function", ident.name, ident.span, res.span
+                    )
 
         if res is None:
-            raise ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
+            raise errors.ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
 
         return res
 
@@ -272,10 +277,10 @@ class Env:
         """
         item = self.resolve_path(Env.Namespace.CONTAINERS, path)
         if isinstance(item, ir_module.Mod):
-            raise ModUsedAsTypError(item.name, path.idents[-1].span)
+            raise errors.ModUsedAsTypError(item.name, path.idents[-1].span)
         if isinstance(item, ir_traits.Trait):
-            raise TraitUsedAsTypError(item.name, path.idents[-1].span)
-        return checked_cast(item, typs.Typ)
+            raise errors.TraitUsedAsTypError(item.name, path.idents[-1].span)
+        return asserts.checked_cast(item, typs.Typ)
 
     def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:
         """Resolve a (possibly qualified) path to an item in ``ns``.
@@ -294,7 +299,7 @@ class Env:
             the module it (or, for an associated function, its struct) is
             defined in.
         """
-        assert_ge(len(path.idents), 1)
+        asserts.assert_ge(len(path.idents), 1)
 
         scope = self
         for ident in path.idents[:-1]:

@@ -3,18 +3,7 @@
 from collections.abc import Collection, Hashable
 from typing import Final, Optional
 
-from leech import ast, ir_env, ir_module, typs
-from leech.errors import (
-    AmbiguousMethodError,
-    ConflictingImplsError,
-    DuplicateItemDefnError,
-    ExtraMethodInImplError,
-    OrphanImplError,
-    TraitMethodMissingReceiverError,
-    TraitMethodNotImplementedError,
-    TraitMethodSignatureMismatchError,
-)
-from leech.src import SrcSpan
+from leech import ast, errors, ir_env, ir_module, src, typs
 
 # `typs` is imported as a module, not `from leech.typs import ...`, even
 # though every other user of these names does the latter: ir_env imports
@@ -40,7 +29,7 @@ class TraitMethod:
 
     def __init__(self, ast: ast.TraitFn, trait: Trait) -> None:
         if ast.receiver is None:
-            raise TraitMethodMissingReceiverError(ast.name.name, ast.span)
+            raise errors.TraitMethodMissingReceiverError(ast.name.name, ast.span)
         self.ast = ast
         self.trait = trait
 
@@ -50,7 +39,7 @@ class TraitMethod:
         return self.ast.name.name
 
     @property
-    def span(self) -> SrcSpan:
+    def span(self) -> src.SrcSpan:
         """The source location of this method's prototype."""
         return self.ast.span
 
@@ -118,7 +107,7 @@ class Trait:
             method = TraitMethod(method_ast, self)
             existing = self._methods.get(method.name)
             if existing is not None:
-                raise DuplicateItemDefnError(
+                raise errors.DuplicateItemDefnError(
                     "trait method", method.name, method.span, existing.span
                 )
             self._methods[method.name] = method
@@ -129,7 +118,7 @@ class Trait:
         return self.ast.ident.name
 
     @property
-    def span(self) -> SrcSpan:
+    def span(self) -> src.SrcSpan:
         """The source location of this trait's declaration."""
         return self.ast.span
 
@@ -220,7 +209,7 @@ class Impl:
         return f"<{self.self_typ.name} as {self.trait.name}>"
 
     @property
-    def span(self) -> SrcSpan:
+    def span(self) -> src.SrcSpan:
         """The source location of this impl block."""
         return self.ast.span
 
@@ -235,7 +224,7 @@ class Impl:
         :raises OrphanImplError: If neither is local.
         """
         if not _is_local(self.trait, self.mod_name) and not _is_local(self.self_typ, self.mod_name):
-            raise OrphanImplError(self.trait.name, self.self_typ.name, self.span)
+            raise errors.OrphanImplError(self.trait.name, self.self_typ.name, self.span)
 
     def add_method(self, fn: ir_module.Fn) -> None:
         """Register ``fn`` as one of this impl's methods.
@@ -251,13 +240,13 @@ class Impl:
         """
         trait_method = self.trait.get_method(fn.name)
         if trait_method is None:
-            raise ExtraMethodInImplError(self.trait.name, fn.name, fn.span)
+            raise errors.ExtraMethodInImplError(self.trait.name, fn.name, fn.span)
         existing = self._methods.get(fn.name)
         if existing is not None:
-            raise DuplicateItemDefnError("method", fn.name, fn.span, existing.span)
+            raise errors.DuplicateItemDefnError("method", fn.name, fn.span, existing.span)
         expected_typ = trait_method.fn_typ_for_self(self.self_typ)
         if fn.fn_typ is not expected_typ:
-            raise TraitMethodSignatureMismatchError(
+            raise errors.TraitMethodSignatureMismatchError(
                 self.trait.name, fn.name, fn.fn_typ.name, expected_typ.name, fn.span
             )
         self._methods[fn.name] = fn
@@ -279,7 +268,7 @@ class Impl:
         """
         for trait_method in self.trait.methods:
             if trait_method.name not in self._methods:
-                raise TraitMethodNotImplementedError(
+                raise errors.TraitMethodNotImplementedError(
                     self.trait.name, trait_method.name, self.self_typ.name, self.span
                 )
 
@@ -367,7 +356,7 @@ class ImplRegistry:
             self._traits_by_shape.setdefault(shape, []).append(impl.trait)
         for existing in impls:
             if _typs_overlap(impl.self_typ, existing.self_typ):
-                raise ConflictingImplsError(
+                raise errors.ConflictingImplsError(
                     impl.trait.name, impl.self_typ.name, impl.span, existing.span
                 )
         impls.append(impl)
@@ -405,7 +394,7 @@ class ImplRegistry:
 
 
 def disambiguate[T](
-    matches: list[T], name: str, typ_name: str, span: Optional[SrcSpan]
+    matches: list[T], name: str, typ_name: str, span: Optional[src.SrcSpan]
 ) -> Optional[T]:
     """Resolve a list of same-named candidate methods to the one to use.
 
@@ -426,7 +415,7 @@ def disambiguate[T](
     :raises AmbiguousMethodError: If ``matches`` has more than one entry.
     """
     if len(matches) > 1:
-        raise AmbiguousMethodError(name, typ_name, span)
+        raise errors.AmbiguousMethodError(name, typ_name, span)
     return matches[0] if matches else None
 
 
@@ -434,7 +423,7 @@ def lookup_member(
     typ: typs.Typ,
     name: str,
     registry: ImplRegistry,
-    span: Optional[SrcSpan],
+    span: Optional[src.SrcSpan],
 ) -> Optional[ir_module.Fn]:
     """Find ``typ``'s member (inherent or via a trait impl) called ``name``.
 

@@ -1,7 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import DuplicateItemDefnError, ItemNotFoundError
+from leech import errors
 
 
 def test_param_typ_not_defined(tmp_path):
@@ -9,8 +9,8 @@ def test_param_typ_not_defined(tmp_path):
     pub fn f(p: not_a_typ) { }
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_param_shadows_mod_var(tmp_path):
@@ -25,7 +25,7 @@ def test_param_shadows_mod_var(tmp_path):
         return f(5);
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_duplicate_param_name(tmp_path):
@@ -37,5 +37,5 @@ def test_duplicate_param_name(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DuplicateItemDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)

@@ -6,8 +6,8 @@ debugging than the bare condition a plain ``assert`` would report.
 """
 
 import operator
+import pprint
 from collections.abc import Callable, Sequence
-from pprint import pformat
 from typing import Any, Optional
 
 
@@ -23,7 +23,8 @@ def _assert_op(
     message: Optional[str] = None,
 ) -> None:
     assert op(lhs, rhs), (
-        f"not(lhs {op_name} rhs)\nlhs={pformat(lhs)}\nrhs={pformat(rhs)}{_message_str(message)}"
+        f"not(lhs {op_name} rhs)\nlhs={pprint.pformat(lhs)}\nrhs={pprint.pformat(rhs)}"
+        f"{_message_str(message)}"
     )
 
 
@@ -97,7 +98,7 @@ def checked_cast[T](obj: Any, typ: type[T], message: Optional[str] = None) -> T:
     """
     assert isinstance(obj, typ), (
         f"not(isinstance(obj, typ))"
-        f"\nobj={pformat(obj)}"
+        f"\nobj={pprint.pformat(obj)}"
         f"\n{type(obj)=}"
         f"\n{typ=}"
         f"{_message_str(message)}"
@@ -117,9 +118,9 @@ def assert_all_eq(seq: Sequence[Any], value: Any, message: Optional[str] = None)
     for i, elt in enumerate(seq):
         assert elt == value, (
             f"seq[{i}] != value"
-            f"\nseq[{i}]={pformat(elt)}"
-            f"\nvalue={pformat(value)}"
-            f"\nseq={pformat(seq)}"
+            f"\nseq[{i}]={pprint.pformat(elt)}"
+            f"\nvalue={pprint.pformat(value)}"
+            f"\nseq={pprint.pformat(seq)}"
             f"{_message_str(message)}"
         )
 
@@ -134,8 +135,8 @@ def assert_in(obj: Any, container: Any, message: Optional[str] = None) -> None:
     """
     assert obj in container, (
         f"not(obj in container)"
-        f"\nobj={pformat(obj)}"
-        f"\ncontainer={pformat(container)}"
+        f"\nobj={pprint.pformat(obj)}"
+        f"\ncontainer={pprint.pformat(container)}"
         f"{_message_str(message)}"
     )
 
@@ -150,7 +151,7 @@ def assert_not_in(obj: Any, container: Any, message: Optional[str] = None) -> No
     """
     assert obj not in container, (
         f"not(obj not in container)"
-        f"\nobj={pformat(obj)}"
-        f"\ncontainer={pformat(container)}"
+        f"\nobj={pprint.pformat(obj)}"
+        f"\ncontainer={pprint.pformat(container)}"
         f"{_message_str(message)}"
     )

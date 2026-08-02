@@ -1,17 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str, write_whole_file
+import util
 
-from leech.errors import (
-    DuplicateFieldInStructDefnError,
-    DuplicateFieldInStructExprError,
-    FieldAccessIntoInvalidTypError,
-    IncompatibleStructFieldTypError,
-    InfiniteSizeStructError,
-    InvalidStructFieldError,
-    ItemNotFoundError,
-    MissingFieldInStructExprError,
-    TypeOfStructExprNotStructError,
-)
+from leech import errors
 
 
 def test_struct_access(tmp_path):
@@ -33,7 +23,7 @@ def test_struct_access(tmp_path):
         return t.a + t.c.[3usize];
     }
     """
-    check_prog_output(tmp_path, src, "abc\n", 13)
+    util.check_prog_output(tmp_path, src, "abc\n", 13)
 
 
 def test_empty_struct(tmp_path):
@@ -44,7 +34,7 @@ def test_empty_struct(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_comptime_empty_struct(tmp_path):
@@ -55,7 +45,7 @@ def test_comptime_empty_struct(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_private_field_accessible_within_defining_module(tmp_path):
@@ -72,7 +62,7 @@ def test_private_field_accessible_within_defining_module(tmp_path):
         return t.val;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_duplicate_field_in_struct_defn(tmp_path):
@@ -86,8 +76,8 @@ def test_duplicate_field_in_struct_defn(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DuplicateFieldInStructDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateFieldInStructDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_unknown_typ_for_struct_field(tmp_path):
@@ -99,8 +89,8 @@ def test_unknown_typ_for_struct_field(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_struct_in_struct(tmp_path):
@@ -116,7 +106,7 @@ def test_struct_in_struct(tmp_path):
         return x.b.a;
     }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 def test_struct_with_ptr_to_same_struct(tmp_path):
@@ -129,7 +119,7 @@ def test_struct_with_ptr_to_same_struct(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
@@ -144,7 +134,7 @@ def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_duplicate_field_in_unused_private_struct_in_imported_module(tmp_path):
@@ -166,9 +156,9 @@ def test_duplicate_field_in_unused_private_struct_in_imported_module(tmp_path):
         return a::g();
     }
     """
-    write_whole_file(tmp_path / "a.leech", a_src)
-    with pytest.raises(DuplicateFieldInStructDefnError):
-        compile_str(tmp_path, main_src)
+    util.write_whole_file(tmp_path / "a.leech", a_src)
+    with pytest.raises(errors.DuplicateFieldInStructDefnError):
+        util.compile_str(tmp_path, main_src)
 
 
 def test_struct_contains_itself_by_value(tmp_path):
@@ -180,8 +170,8 @@ def test_struct_contains_itself_by_value(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InfiniteSizeStructError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InfiniteSizeStructError):
+        util.compile_str(tmp_path, src)
 
 
 def test_duplicate_field_reported_before_infinite_size(tmp_path):
@@ -199,8 +189,8 @@ def test_duplicate_field_reported_before_infinite_size(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DuplicateFieldInStructDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateFieldInStructDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_struct_contains_itself_via_zero_length_array(tmp_path):
@@ -215,8 +205,8 @@ def test_struct_contains_itself_via_zero_length_array(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InfiniteSizeStructError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InfiniteSizeStructError):
+        util.compile_str(tmp_path, src)
 
 
 def test_struct_contains_itself_via_nonempty_array(tmp_path):
@@ -228,8 +218,8 @@ def test_struct_contains_itself_via_nonempty_array(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InfiniteSizeStructError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InfiniteSizeStructError):
+        util.compile_str(tmp_path, src)
 
 
 def test_mutual_struct_recursion_by_value(tmp_path):
@@ -244,8 +234,8 @@ def test_mutual_struct_recursion_by_value(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InfiniteSizeStructError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InfiniteSizeStructError):
+        util.compile_str(tmp_path, src)
 
 
 def test_mutual_struct_recursion_by_ptr(tmp_path):
@@ -263,7 +253,7 @@ def test_mutual_struct_recursion_by_ptr(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_struct_diamond_containment_is_not_a_cycle(tmp_path):
@@ -281,7 +271,7 @@ def test_struct_diamond_containment_is_not_a_cycle(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_typ_of_struct_expr_not_struct(tmp_path):
@@ -291,8 +281,8 @@ def test_typ_of_struct_expr_not_struct(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(TypeOfStructExprNotStructError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TypeOfStructExprNotStructError):
+        util.compile_str(tmp_path, src)
 
 
 def test_missing_field_in_struct_expr(tmp_path):
@@ -306,8 +296,8 @@ def test_missing_field_in_struct_expr(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(MissingFieldInStructExprError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.MissingFieldInStructExprError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_field_in_struct_expr(tmp_path):
@@ -321,8 +311,8 @@ def test_invalid_field_in_struct_expr(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidStructFieldError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidStructFieldError):
+        util.compile_str(tmp_path, src)
 
 
 def test_duplicate_field_in_struct_expr(tmp_path):
@@ -336,8 +326,8 @@ def test_duplicate_field_in_struct_expr(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DuplicateFieldInStructExprError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateFieldInStructExprError):
+        util.compile_str(tmp_path, src)
 
 
 def test_incompatible_struct_field_typ(tmp_path):
@@ -350,8 +340,8 @@ def test_incompatible_struct_field_typ(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleStructFieldTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleStructFieldTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_void_call_as_struct_field_initializer(tmp_path):
@@ -365,8 +355,8 @@ def test_void_call_as_struct_field_initializer(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleStructFieldTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleStructFieldTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_field_access_into_non_struct(tmp_path):
@@ -377,8 +367,8 @@ def test_field_access_into_non_struct(tmp_path):
         return x.a;
     }
     """
-    with pytest.raises(FieldAccessIntoInvalidTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.FieldAccessIntoInvalidTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_struct_access(tmp_path):
@@ -398,7 +388,7 @@ def test_comptime_struct_access(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 10)
+    util.check_prog_output(tmp_path, src, "", 10)
 
 
 def test_typ_of_comptime_struct_expr_not_struct(tmp_path):
@@ -408,8 +398,8 @@ def test_typ_of_comptime_struct_expr_not_struct(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(TypeOfStructExprNotStructError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TypeOfStructExprNotStructError):
+        util.compile_str(tmp_path, src)
 
 
 def test_missing_field_in_comptime_struct_expr(tmp_path):
@@ -423,8 +413,8 @@ def test_missing_field_in_comptime_struct_expr(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(MissingFieldInStructExprError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.MissingFieldInStructExprError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_field_in_comptime_struct_expr(tmp_path):
@@ -438,8 +428,8 @@ def test_invalid_field_in_comptime_struct_expr(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidStructFieldError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidStructFieldError):
+        util.compile_str(tmp_path, src)
 
 
 def test_duplicate_field_in_comptime_struct_expr(tmp_path):
@@ -453,8 +443,8 @@ def test_duplicate_field_in_comptime_struct_expr(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DuplicateFieldInStructExprError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateFieldInStructExprError):
+        util.compile_str(tmp_path, src)
 
 
 def test_incompatible_comptime_struct_field_typ(tmp_path):
@@ -467,8 +457,8 @@ def test_incompatible_comptime_struct_field_typ(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleStructFieldTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleStructFieldTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_field_access_into_non_struct(tmp_path):
@@ -480,5 +470,5 @@ def test_comptime_field_access_into_non_struct(tmp_path):
         return y;
     }
     """
-    with pytest.raises(FieldAccessIntoInvalidTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.FieldAccessIntoInvalidTypError):
+        util.compile_str(tmp_path, src)

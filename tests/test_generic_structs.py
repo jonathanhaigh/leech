@@ -1,26 +1,14 @@
 import pytest
-from util import build_ir_mod, check_prog_output, compile_modules, compile_str, find_pos
+import util
 
-from leech.asserts import checked_cast
-from leech.errors import (
-    DuplicateFieldInStructDefnError,
-    ImplForNonLocalStructTypError,
-    InfiniteSizeStructError,
-    InvalidBinOpArgTypError,
-    MissingTypArgsError,
-    TypArgsOnNonGenericItemError,
-    TypInstantiationDepthExceededError,
-    WrongNumberOfTypArgsError,
-)
-from leech.ir_env import Env
-from leech.typs import BOOL, I32, StructTyp
+from leech import asserts, errors, ir_env, typs
 
 
-def _get_struct_typ(mod, name: str) -> StructTyp:
+def _get_struct_typ(mod, name: str) -> typs.StructTyp:
     """Get the (template) struct type ``name`` declares in ``mod``."""
-    item = mod.get_item(Env.Namespace.CONTAINERS, name)
+    item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, name)
     assert item is not None
-    return checked_cast(item.value, StructTyp)
+    return asserts.checked_cast(item.value, typs.StructTyp)
 
 
 def test_generic_struct_single_typ_param(tmp_path):
@@ -31,7 +19,7 @@ def test_generic_struct_single_typ_param(tmp_path):
         return b.val - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_multiple_typ_params(tmp_path):
@@ -42,7 +30,7 @@ def test_generic_struct_multiple_typ_params(tmp_path):
         return (p.first + p.second) - 7;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_distinct_typ_args_produce_distinct_fields(tmp_path):
@@ -54,7 +42,7 @@ def test_generic_struct_distinct_typ_args_produce_distinct_fields(tmp_path):
         return 99;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_field_write(tmp_path):
@@ -66,7 +54,7 @@ def test_generic_struct_field_write(tmp_path):
         return b.val;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_nested_generic_struct_instantiation(tmp_path):
@@ -77,7 +65,7 @@ def test_nested_generic_struct_instantiation(tmp_path):
         return b.val.val - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_array_element(tmp_path):
@@ -88,7 +76,7 @@ def test_generic_struct_array_element(tmp_path):
         return (a.[0].val + a.[1].val) - 3;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_behind_pointer(tmp_path):
@@ -100,7 +88,7 @@ def test_generic_struct_behind_pointer(tmp_path):
         return p.*.val - 9;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_used_as_generic_fn_typ_arg(tmp_path):
@@ -115,7 +103,7 @@ def test_generic_struct_used_as_generic_fn_typ_arg(tmp_path):
         return b.val - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_fn_returning_generic_struct(tmp_path):
@@ -128,7 +116,7 @@ def test_generic_fn_returning_generic_struct(tmp_path):
         return b.val - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_cross_module(tmp_path):
@@ -142,7 +130,7 @@ def test_generic_struct_cross_module(tmp_path):
         return (p.first + p.second) - 7;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
 def test_generic_struct_instance_merges_across_modules(tmp_path):
@@ -164,7 +152,7 @@ def test_generic_struct_instance_merges_across_modules(tmp_path):
         return (p.first + p.second) + a::make_pair() - 10;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
 def test_bare_reference_to_generic_struct_requires_typ_args(tmp_path):
@@ -175,12 +163,12 @@ def test_bare_reference_to_generic_struct_requires_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(MissingTypArgsError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"Box"' in str(exc_info.value)
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "Box = ")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "Box = ")
 
 
 def test_wrong_number_of_typ_args_on_generic_struct(tmp_path):
@@ -191,8 +179,8 @@ def test_wrong_number_of_typ_args_on_generic_struct(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(WrongNumberOfTypArgsError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"Pair"' in str(exc_info.value)
 
 
@@ -204,8 +192,8 @@ def test_explicit_typ_args_on_non_generic_struct(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(TypArgsOnNonGenericItemError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"Foo"' in str(exc_info.value)
 
 
@@ -217,8 +205,8 @@ def test_generic_struct_duplicate_field(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(DuplicateFieldInStructDefnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateFieldInStructDefnError):
+        util.compile_str(tmp_path, src)
 
 
 def test_generic_struct_infinite_size_via_own_typ_param(tmp_path):
@@ -231,8 +219,8 @@ def test_generic_struct_infinite_size_via_own_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(InfiniteSizeStructError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InfiniteSizeStructError):
+        util.compile_str(tmp_path, src)
 
 
 def test_generic_struct_ptr_to_self_is_finite(tmp_path):
@@ -242,7 +230,7 @@ def test_generic_struct_ptr_to_self_is_finite(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_instantiation_depth_exceeded(tmp_path):
@@ -256,8 +244,8 @@ def test_generic_struct_instantiation_depth_exceeded(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(TypInstantiationDepthExceededError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TypInstantiationDepthExceededError):
+        util.compile_str(tmp_path, src)
 
 
 def test_generic_impl_block_body_typechecks(tmp_path):
@@ -270,7 +258,7 @@ def test_generic_impl_block_body_typechecks(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(tmp_path):
@@ -281,34 +269,34 @@ def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(InvalidBinOpArgTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidBinOpArgTypError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"T"' in str(exc_info.value)
 
 
 def test_generic_struct_instance_caches_by_typ_args(tmp_path):
-    mod = build_ir_mod(tmp_path, "struct Box[T] { val: T }")
+    mod = util.build_ir_mod(tmp_path, "struct Box[T] { val: T }")
     box = _get_struct_typ(mod, "Box")
 
-    assert box.instance((I32,)) is box.instance((I32,))
-    assert box.instance((I32,)) is not box.instance((BOOL,))
+    assert box.instance((typs.I32,)) is box.instance((typs.I32,))
+    assert box.instance((typs.I32,)) is not box.instance((typs.BOOL,))
 
 
 def test_generic_struct_instance_qualified_name(tmp_path):
-    mod = build_ir_mod(tmp_path, "struct Pair[A, B] { first: A, second: B }")
+    mod = util.build_ir_mod(tmp_path, "struct Pair[A, B] { first: A, second: B }")
     pair = _get_struct_typ(mod, "Pair")
 
-    inst = pair.instance((I32, BOOL))
+    inst = pair.instance((typs.I32, typs.BOOL))
     assert inst.name == "Pair[i32, bool]"
     assert inst.qualified_name == "main.Pair[i32, bool]"
 
 
 def test_generic_struct_field_typs_are_substituted(tmp_path):
-    mod = build_ir_mod(tmp_path, "struct Box[T] { val: T }")
+    mod = util.build_ir_mod(tmp_path, "struct Box[T] { val: T }")
     box = _get_struct_typ(mod, "Box")
 
-    inst = box.instance((I32,))
-    assert inst.fields["val"].typ is I32
+    inst = box.instance((typs.I32,))
+    assert inst.fields["val"].typ is typs.I32
 
 
 def test_impl_on_generic_struct_target_qualified_path(tmp_path):
@@ -322,5 +310,5 @@ def test_impl_on_generic_struct_target_qualified_path(tmp_path):
     a_src = """
     pub struct Pair[T] { val: T }
     """
-    with pytest.raises(ImplForNonLocalStructTypError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.ImplForNonLocalStructTypError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)

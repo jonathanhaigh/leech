@@ -60,5 +60,5 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["T20"]
-"src/leech/main.py" = ["T20"]
+"src/leech/driver.py" = ["T20"]
 "src/leech/errors.py" = ["T20"]

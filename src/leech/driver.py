@@ -4,21 +4,10 @@ import argparse
 import pathlib
 import sys
 
-from leech import ir_module
-from leech.codegen import Compiler
-from leech.errors import (
-    ERROR,
-    TextErrorRenderer,
-    UserError,
-    error_level,
-    errors,
-    register_error,
-)
-from leech.ir_loader import ModLoader
-from leech.src import SrcFile
+from leech import codegen, errors, ir_loader, ir_module, src
 
 
-def compile_to_ir(file: SrcFile) -> ir_module.Mod:
+def compile_to_ir(file: src.SrcFile) -> ir_module.Mod:
     """Parse and lower a source file, and everything it imports, into IR.
 
     :param file: The source file to compile.
@@ -30,17 +19,17 @@ def compile_to_ir(file: SrcFile) -> ir_module.Mod:
     :raises UnexpectedTokenError: If a token in ``file`` doesn't fit the
         grammar at that point (including the input ending too soon).
     """
-    return ModLoader().load(file.path)
+    return ir_loader.ModLoader().load(file.path)
 
 
-def compile_to_llvm_ir(file: SrcFile) -> str:
+def compile_to_llvm_ir(file: src.SrcFile) -> str:
     """Compile a source file all the way down to textual LLVM IR.
 
     :param file: The source file to compile.
     :return: The generated LLVM IR, as text.
     """
     mod = compile_to_ir(file)
-    compiler = Compiler(mod)
+    compiler = codegen.Compiler(mod)
     compiler.compile()
     return str(compiler.ll_mod) + "\n"
 
@@ -80,20 +69,20 @@ def run() -> None:
     output to the ``-o`` path only if no error occurred.
     """
     args = parse_args()
-    file = SrcFile(args.filename)
+    file = src.SrcFile(args.filename)
 
     output = ""
     try:
         output = compile_to_llvm_ir(file)
-    except UserError as err:
-        register_error(err)
+    except errors.UserError as err:
+        errors.register_error(err)
 
-    if errors():
-        renderer = TextErrorRenderer()
-        renderer.display_errors(errors())
+    if errors.all_errors():
+        renderer = errors.TextErrorRenderer()
+        renderer.display_errors(errors.all_errors())
 
-    if error_level() < ERROR:
+    if errors.error_level() < errors.ERROR:
         with pathlib.Path(args.o).open("w", encoding="utf-8") as f:
             f.write(output)
 
-    sys.exit(error_level())
+    sys.exit(errors.error_level())

@@ -1,16 +1,15 @@
 """User-facing diagnostics: error/warning types, and their rendering."""
 
+import dataclasses
+import enum
 import sys
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
-from enum import IntEnum
 from typing import Optional
 
-from leech.asserts import assert_gt
-from leech.src import SrcSpan
+from leech import asserts, src
 
 
-class Level(IntEnum):
+class Level(enum.IntEnum):
     """The severity of a diagnostic message."""
 
     NOTE = 0
@@ -23,13 +22,13 @@ WARNING = Level.WARNING
 ERROR = Level.ERROR
 
 
-@dataclass
+@dataclasses.dataclass
 class Message:
     """A single diagnostic message, optionally located in source."""
 
     level: Level
     message: str
-    span: Optional[SrcSpan]
+    span: Optional[src.SrcSpan]
 
 
 class UserError(Exception):
@@ -48,12 +47,12 @@ class UserError(Exception):
     message: Message
     extra: list[Message]
 
-    def __init__(self, level: Level, message: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, level: Level, message: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(message)
         self.message = Message(level, message, span)
         self.extra = []
 
-    def add_extra(self, level: Level, message: str, span: Optional[SrcSpan]) -> None:
+    def add_extra(self, level: Level, message: str, span: Optional[src.SrcSpan]) -> None:
         """Attach an extra message to be rendered alongside the primary one.
 
         :param level: The severity of the extra message.
@@ -73,7 +72,7 @@ class UnexpectedCharacterError(UserError):
     """Raised when the lexer encounters a character that can't start any
     valid token, given where it appears in the source."""
 
-    def __init__(self, char: str, span: SrcSpan) -> None:
+    def __init__(self, char: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Unexpected character "{char}"', span)
 
 
@@ -94,7 +93,7 @@ class UnexpectedTokenError(UserError):
         ``found`` is known.
     """
 
-    def __init__(self, found: str, span: SrcSpan, expected: Collection[str]) -> None:
+    def __init__(self, found: str, span: src.SrcSpan, expected: Collection[str]) -> None:
         super().__init__(ERROR, f"Unexpected {found}", span)
         if expected:
             self.add_extra(NOTE, f"Expected one of: {', '.join(expected)}", None)
@@ -103,7 +102,7 @@ class UnexpectedTokenError(UserError):
 class ItemNotFoundError(UserError):
     """Raised when a name cannot be resolved in scope."""
 
-    def __init__(self, item_kind: str, name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, item_kind: str, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
 
 
@@ -119,7 +118,7 @@ class MissingTypArgsError(UserError):
     :class:`CannotInferTypArgError`.
     """
 
-    def __init__(self, item_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'Generic item "{item_name}" used without required type arguments',
@@ -132,7 +131,7 @@ class CannotInferTypArgError(UserError):
     type parameters from its arguments' types, and no explicit type
     argument was given for it either."""
 
-    def __init__(self, fn_name: str, typ_param_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, fn_name: str, typ_param_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             (
@@ -148,7 +147,9 @@ class WrongNumberOfTypArgsError(UserError):
     """Raised when a generic item is given the wrong number of explicit
     type arguments."""
 
-    def __init__(self, item_name: str, given: int, expected: int, span: Optional[SrcSpan]) -> None:
+    def __init__(
+        self, item_name: str, given: int, expected: int, span: Optional[src.SrcSpan]
+    ) -> None:
         super().__init__(
             ERROR,
             (
@@ -162,7 +163,7 @@ class WrongNumberOfTypArgsError(UserError):
 class TypArgsOnNonGenericItemError(UserError):
     """Raised when type arguments are given for an item that isn't generic."""
 
-    def __init__(self, item_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'"{item_name}" is not generic and cannot take type arguments',
@@ -180,8 +181,8 @@ class PrivateItemAccessError(UserError):
         self,
         item_kind: str,
         name: str,
-        access_span: Optional[SrcSpan],
-        defn_span: Optional[SrcSpan],
+        access_span: Optional[src.SrcSpan],
+        defn_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" is private', access_span)
         if defn_span is not None:
@@ -191,7 +192,7 @@ class PrivateItemAccessError(UserError):
 class AssignToConstError(UserError):
     """Raised when assigning through a const pointer or to a const place."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot assign to const place expression", span)
 
 
@@ -202,8 +203,8 @@ class IncompatibleAssignmentTypError(UserError):
         self,
         given_typ: str,
         place_typ: str,
-        span: Optional[SrcSpan],
-        place_span: Optional[SrcSpan],
+        span: Optional[src.SrcSpan],
+        place_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -223,8 +224,8 @@ class IncompatibleLetTypError(UserError):
         var_name: str,
         declared_typ: str,
         given_typ: str,
-        given_span: Optional[SrcSpan],
-        declared_span: Optional[SrcSpan],
+        given_span: Optional[src.SrcSpan],
+        declared_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -245,8 +246,8 @@ class DuplicateItemDefnError(UserError):
         self,
         item_kind: str,
         name: str,
-        span: Optional[SrcSpan],
-        existing_span: Optional[SrcSpan],
+        span: Optional[src.SrcSpan],
+        existing_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(ERROR, f'Duplicate definition of {item_kind} "{name}"', span)
         if existing_span is not None:
@@ -256,7 +257,7 @@ class DuplicateItemDefnError(UserError):
 class NotCallableError(UserError):
     """Raised when calling a value whose type isn't a function pointer."""
 
-    def __init__(self, callee_diag: str, given_typ: str, span: Optional[SrcSpan]):
+    def __init__(self, callee_diag: str, given_typ: str, span: Optional[src.SrcSpan]):
         super().__init__(ERROR, f'{callee_diag} of type "{given_typ}" is not callable', span)
 
 
@@ -266,11 +267,11 @@ class InvalidArgTypError(UserError):
     def __init__(
         self,
         callee_diag: str,
-        _fn_span: Optional[SrcSpan],
+        _fn_span: Optional[src.SrcSpan],
         arg_num: int,
         given_typ: str,
         expected_typ: str,
-        arg_span: Optional[SrcSpan],
+        arg_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -289,11 +290,11 @@ class InvalidBinOpArgTypError(UserError):
     def __init__(
         self,
         op: str,
-        op_span: Optional[SrcSpan],
+        op_span: Optional[src.SrcSpan],
         arg_name: str,
         given_typ: str,
         expected_typ: str,
-        arg_span: Optional[SrcSpan],
+        arg_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -314,10 +315,10 @@ class InvalidUnaryOpArgTypError(UserError):
     def __init__(
         self,
         op: str,
-        op_span: Optional[SrcSpan],
+        op_span: Optional[src.SrcSpan],
         given_typ: str,
         expected_typ: str,
-        arg_span: Optional[SrcSpan],
+        arg_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -338,11 +339,11 @@ class IncompatibleBinOpArgTypsError(UserError):
     def __init__(
         self,
         op: str,
-        op_span: Optional[SrcSpan],
+        op_span: Optional[src.SrcSpan],
         lhs_typ: str,
-        lhs_span: Optional[SrcSpan],
+        lhs_span: Optional[src.SrcSpan],
         rhs_typ: str,
-        rhs_span: Optional[SrcSpan],
+        rhs_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -359,8 +360,8 @@ class TooManyArgsError(UserError):
     def __init__(
         self,
         callee_diag: str,
-        _fn_span: Optional[SrcSpan],
-        arg_span: Optional[SrcSpan],
+        _fn_span: Optional[src.SrcSpan],
+        arg_span: Optional[src.SrcSpan],
         got: int,
         expected: int,
     ):
@@ -377,7 +378,7 @@ class NotEnoughArgsError(UserError):
     def __init__(
         self,
         callee_diag: str,
-        fn_span: Optional[SrcSpan],
+        fn_span: Optional[src.SrcSpan],
         got: int,
         expected: int,
     ):
@@ -399,9 +400,9 @@ class InvalidRetTypError(UserError):
         self,
         fn_name: str,
         ret_typ: str,
-        ret_typ_span: Optional[SrcSpan],
+        ret_typ_span: Optional[src.SrcSpan],
         ret_expr_typ: str,
-        ret_expr_span: Optional[SrcSpan],
+        ret_expr_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -426,8 +427,8 @@ class InvalidVoidRetError(UserError):
         self,
         fn_name: str,
         ret_typ: str,
-        ret_typ_span: Optional[SrcSpan],
-        ret_stmt_span: Optional[SrcSpan],
+        ret_typ_span: Optional[src.SrcSpan],
+        ret_stmt_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -445,35 +446,35 @@ class InvalidVoidRetError(UserError):
 class RetNotInFnError(UserError):
     """Raised when a ``return`` statement appears outside a function body."""
 
-    def __init__(self, ret_span: Optional[SrcSpan]) -> None:
+    def __init__(self, ret_span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Return statement not in function", ret_span)
 
 
 class BreakNotInLoopError(UserError):
     """Raised when a ``break`` statement appears outside any loop."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Break statement not in a loop", span)
 
 
 class ContinueNotInLoopError(UserError):
     """Raised when a ``continue`` statement appears outside any loop."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Continue statement not in a loop", span)
 
 
 class LoopLabelNotFoundError(UserError):
     """Raised when a ``break``/``continue`` names a label no enclosing loop has."""
 
-    def __init__(self, label_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, label_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Loop label "{label_name}" not found', span)
 
 
 class UnreachableCodeWarning(UserError):  # noqa: N818 - a warning, not an error
     """Warns about code that can never be executed."""
 
-    def __init__(self, code_typ: str, code_span: Optional[SrcSpan]) -> None:
+    def __init__(self, code_typ: str, code_span: Optional[src.SrcSpan]) -> None:
         super().__init__(WARNING, f"{code_typ} is unreachable", code_span)
 
 
@@ -483,9 +484,9 @@ class MissingRetError(UserError):
     def __init__(
         self,
         fn_name: str,
-        fn_span: Optional[SrcSpan],
+        fn_span: Optional[src.SrcSpan],
         ret_typ: str,
-        ret_typ_span: Optional[SrcSpan],
+        ret_typ_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -507,7 +508,7 @@ class IncompatibleTypInArrayExprError(UserError):
         self,
         element_typ: str,
         element_index: int,
-        element_span: SrcSpan,
+        element_span: src.SrcSpan,
         array_typ: str,
     ) -> None:
         super().__init__(
@@ -523,7 +524,7 @@ class IncompatibleTypInArrayExprError(UserError):
 class VoidArrayElementError(UserError):
     """Raised when an array literal's element type is ``void``."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, 'Array element cannot have type "void"', span)
 
 
@@ -536,7 +537,7 @@ class EmptyArrayTypUnknownError(UserError):
     array type.
     """
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot infer element type of empty array expression", span)
 
 
@@ -547,7 +548,7 @@ class ModUsedAsTypError(UserError):
     but a module isn't a type: it can only qualify a path.
     """
 
-    def __init__(self, mod_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, mod_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Module "{mod_name}" cannot be used as a type', span)
         self.add_extra(
             NOTE,
@@ -564,7 +565,7 @@ class TraitUsedAsTypError(UserError):
     only a bound on one, or the target of an ``impl ... for ...`` block.
     """
 
-    def __init__(self, trait_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, trait_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Trait "{trait_name}" cannot be used as a type', span)
 
 
@@ -573,7 +574,7 @@ class TraitMethodMissingReceiverError(UserError):
     receiver. Every trait method dispatches on its receiver's type, so an
     associated-function-style prototype with none isn't supported yet."""
 
-    def __init__(self, method_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, method_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'Trait method "{method_name}" must take a "self" parameter',
@@ -587,7 +588,7 @@ class OrphanImplError(UserError):
     Rust's), which keeps any two modules from being able to write
     conflicting impls of the same trait for the same type."""
 
-    def __init__(self, trait_name: str, typ_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, trait_name: str, typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             (
@@ -606,8 +607,8 @@ class ConflictingImplsError(UserError):
         self,
         trait_name: str,
         typ_name: str,
-        span: Optional[SrcSpan],
-        existing_span: Optional[SrcSpan],
+        span: Optional[src.SrcSpan],
+        existing_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -627,7 +628,7 @@ class TraitMethodNotImplementedError(UserError):
         trait_name: str,
         method_name: str,
         typ_name: str,
-        span: Optional[SrcSpan],
+        span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -643,7 +644,7 @@ class ExtraMethodInImplError(UserError):
     """Raised when an ``impl Trait for ...`` block defines a method the
     trait doesn't declare."""
 
-    def __init__(self, trait_name: str, method_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, trait_name: str, method_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'"{method_name}" is not a method of trait "{trait_name}"',
@@ -661,7 +662,7 @@ class TraitMethodSignatureMismatchError(UserError):
         method_name: str,
         given_typ: str,
         expected_typ: str,
-        span: Optional[SrcSpan],
+        span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -677,7 +678,7 @@ class AmbiguousMethodError(UserError):
     """Raised when a method call could resolve to more than one trait's
     method of the same name for the receiver's type."""
 
-    def __init__(self, method_name: str, typ_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, method_name: str, typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'Call to "{method_name}" on type "{typ_name}" is ambiguous between multiple traits',
@@ -688,7 +689,7 @@ class AmbiguousMethodError(UserError):
 class BoundNotATraitError(UserError):
     """Raised when a generic parameter's declared bound doesn't name a trait."""
 
-    def __init__(self, name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'"{name}" is not a trait, so it cannot be used as a bound', span)
 
 
@@ -701,7 +702,7 @@ class UnsatisfiedBoundError(UserError):
         typ_arg_name: str,
         trait_name: str,
         typ_param_name: str,
-        span: Optional[SrcSpan],
+        span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -716,7 +717,7 @@ class UnsatisfiedBoundError(UserError):
 class TypeOfStructExprNotStructError(UserError):
     """Raised when a struct literal's named type isn't actually a struct type."""
 
-    def __init__(self, typ: str, span: Optional[SrcSpan]):
+    def __init__(self, typ: str, span: Optional[src.SrcSpan]):
         super().__init__(
             ERROR,
             f'Cannot create value of not struct type "{typ}" using struct expression',
@@ -727,7 +728,7 @@ class TypeOfStructExprNotStructError(UserError):
 class ImplForNonStructTypError(UserError):
     """Raised when an ``impl`` block targets a non-struct type."""
 
-    def __init__(self, typ_diag: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, typ_diag: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'"impl" blocks are only supported for struct types, found {typ_diag}',
@@ -738,7 +739,7 @@ class ImplForNonStructTypError(UserError):
 class ImplForNonLocalStructTypError(UserError):
     """Raised when an ``impl`` block targets a struct defined in another module."""
 
-    def __init__(self, typ_diag: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, typ_diag: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             (
@@ -752,7 +753,7 @@ class ImplForNonLocalStructTypError(UserError):
 class ImplForNonTraitError(UserError):
     """Raised when an ``impl ... for ...`` block's head doesn't name a trait."""
 
-    def __init__(self, name_diag: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, name_diag: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'"impl ... for ..." blocks require a trait, found {name_diag}',
@@ -765,7 +766,7 @@ class SelfParamOutsideImplError(UserError):
     ``extern`` declaration, which can never be an associated function -
     declares a ``*self``/``*mut self`` receiver."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             '"self" parameter is only allowed on functions defined inside an "impl" block',
@@ -782,8 +783,8 @@ class NotAMethodError(UserError):
         self,
         fn_name: str,
         struct_typ: str,
-        span: Optional[SrcSpan],
-        fn_span: Optional[SrcSpan],
+        span: Optional[src.SrcSpan],
+        fn_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -803,9 +804,9 @@ class InvalidStructFieldError(UserError):
     def __init__(
         self,
         field_name: str,
-        field_span: Optional[SrcSpan],
+        field_span: Optional[src.SrcSpan],
         struct_typ: str,
-        struct_span: Optional[SrcSpan],
+        struct_span: Optional[src.SrcSpan],
     ):
         super().__init__(
             ERROR,
@@ -823,9 +824,9 @@ class PrivateStructFieldAccessError(UserError):
     def __init__(
         self,
         field_name: str,
-        access_span: Optional[SrcSpan],
+        access_span: Optional[src.SrcSpan],
         struct_typ: str,
-        field_defn_span: Optional[SrcSpan],
+        field_defn_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -844,9 +845,9 @@ class IncompatibleStructFieldTypError(UserError):
         field_name: str,
         struct_typ: str,
         given_typ: str,
-        given_span: Optional[SrcSpan],
+        given_span: Optional[src.SrcSpan],
         field_typ: str,
-        field_span: Optional[SrcSpan],
+        field_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -866,9 +867,9 @@ class MissingFieldInStructExprError(UserError):
     def __init__(
         self,
         field_name: str,
-        field_span: Optional[SrcSpan],
+        field_span: Optional[src.SrcSpan],
         struct_name: str,
-        struct_expr_span: Optional[SrcSpan],
+        struct_expr_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -885,8 +886,8 @@ class DuplicateFieldInStructExprError(UserError):
     def __init__(
         self,
         field_name: str,
-        duplicate_span: Optional[SrcSpan],
-        previous_span: Optional[SrcSpan],
+        duplicate_span: Optional[src.SrcSpan],
+        previous_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -907,8 +908,8 @@ class DuplicateFieldInStructDefnError(UserError):
     def __init__(
         self,
         field_name: str,
-        duplicate_span: Optional[SrcSpan],
-        previous_span: Optional[SrcSpan],
+        duplicate_span: Optional[src.SrcSpan],
+        previous_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -935,8 +936,8 @@ class InfiniteSizeStructError(UserError):
     def __init__(
         self,
         struct_name: str,
-        struct_span: Optional[SrcSpan],
-        cycle: Sequence[tuple[str, str, Optional[SrcSpan], str]],
+        struct_span: Optional[src.SrcSpan],
+        cycle: Sequence[tuple[str, str, Optional[src.SrcSpan], str]],
     ) -> None:
         """
         :param struct_name: The name of the struct whose size is
@@ -965,7 +966,7 @@ class TypInstantiationDepthExceededError(UserError):
     way to catch the runaway recursion is a depth cap.
     """
 
-    def __init__(self, struct_name: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, struct_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'Instantiating struct "{struct_name}" nests generic arguments too deeply',
@@ -976,7 +977,7 @@ class TypInstantiationDepthExceededError(UserError):
 class FieldAccessIntoInvalidTypError(UserError):
     """Raised when using ``.`` field access on a non-struct type."""
 
-    def __init__(self, typ: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Field access into invalid type "{typ}"', span)
 
 
@@ -986,9 +987,9 @@ class IfElsTypMismatchError(UserError):
     def __init__(
         self,
         then_typ: str,
-        then_span: Optional[SrcSpan],
+        then_span: Optional[src.SrcSpan],
         els_typ: str,
-        els_span: Optional[SrcSpan],
+        els_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(ERROR, '"if" and "else" have mismatching types', None)
         self.add_extra(NOTE, f'"if" type is "{then_typ}"', then_span)
@@ -1001,7 +1002,7 @@ class IfTypNotVoidError(UserError):
     def __init__(
         self,
         then_typ: str,
-        then_span: Optional[SrcSpan],
+        then_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -1013,7 +1014,7 @@ class IfTypNotVoidError(UserError):
 class IfCondNotBoolError(UserError):
     """Raised when an ``if`` condition's type isn't ``bool``."""
 
-    def __init__(self, expr_diag: str, expr_typ: str, expr_span: Optional[SrcSpan]) -> None:
+    def __init__(self, expr_diag: str, expr_typ: str, expr_span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'"if" condition must have type "bool", found {expr_diag} of type "{expr_typ}"',
@@ -1027,7 +1028,7 @@ class WhileTypNotVoidError(UserError):
     def __init__(
         self,
         block_typ: str,
-        block_span: Optional[SrcSpan],
+        block_span: Optional[src.SrcSpan],
     ) -> None:
         super().__init__(
             ERROR,
@@ -1039,7 +1040,7 @@ class WhileTypNotVoidError(UserError):
 class WhileCondNotBoolError(UserError):
     """Raised when a ``while`` loop's condition's type isn't ``bool``."""
 
-    def __init__(self, expr_diag: str, expr_typ: str, expr_span: Optional[SrcSpan]) -> None:
+    def __init__(self, expr_diag: str, expr_typ: str, expr_span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'"while" condition must have type "bool", found {expr_diag} of type "{expr_typ}"',
@@ -1050,21 +1051,21 @@ class WhileCondNotBoolError(UserError):
 class IndexIntoInvalidTypError(UserError):
     """Raised when using ``[]`` indexing on a non-array type."""
 
-    def __init__(self, typ: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Index into invalid type "{typ}"', span)
 
 
 class InvalidIndexTypError(UserError):
     """Raised when an array index expression's type isn't ``usize``."""
 
-    def __init__(self, typ: str, span: SrcSpan) -> None:
+    def __init__(self, typ: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Invalid index typ "{typ}"', span)
 
 
 class ArrayIndexOutOfBoundsError(UserError):
     """Raised when a compile-time-known array index is out of bounds."""
 
-    def __init__(self, index: int, index_span: SrcSpan, array_typ: str) -> None:
+    def __init__(self, index: int, index_span: src.SrcSpan, array_typ: str) -> None:
         super().__init__(
             ERROR,
             f'Index {index} out of bounds for array of type "{array_typ}"',
@@ -1075,7 +1076,7 @@ class ArrayIndexOutOfBoundsError(UserError):
 class IntLitOverflowError(UserError):
     """Raised when an integer literal doesn't fit in its type's width."""
 
-    def __init__(self, value: int, typ: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, value: int, typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Integer literal {value} does not fit in type "{typ}"', span)
 
 
@@ -1088,7 +1089,7 @@ class IntOverflowAtComptimeError(UserError):
     compile time, not for an integer literal written in source.
     """
 
-    def __init__(self, value: int, typ: str, span: Optional[SrcSpan]) -> None:
+    def __init__(self, value: int, typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             f'Result of compile-time integer operation ({value}) does not fit in type "{typ}"',
@@ -1099,7 +1100,7 @@ class IntOverflowAtComptimeError(UserError):
 class DerefInvalidTypError(UserError):
     """Raised when dereferencing a value whose type isn't a data pointer."""
 
-    def __init__(self, typ: str, span: SrcSpan) -> None:
+    def __init__(self, typ: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot dereference value of type "{typ}"', span)
 
 
@@ -1107,7 +1108,7 @@ class VoidVarInitializerError(UserError):
     """Raised when a ``let`` initializer (module-level or local) has type
     ``void``."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Variable initializer cannot be void", span)
 
 
@@ -1118,8 +1119,8 @@ class CircularVarInitializerError(UserError):
     def __init__(
         self,
         var_name: str,
-        var_span: Optional[SrcSpan],
-        cycle: Sequence[tuple[str, Optional[SrcSpan]]],
+        var_span: Optional[src.SrcSpan],
+        cycle: Sequence[tuple[str, Optional[src.SrcSpan]]],
     ) -> None:
         """
         :param var_name: The name of the variable whose initializer is
@@ -1138,14 +1139,14 @@ class CannotTakeAddressOfComptimeValueError(UserError):
     """Raised when a compile-time-evaluated expression's result would need
     the address of a temporary that has no address at runtime."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot take address of comptime value", span)
 
 
 class CallExternFnAtComptimeError(UserError):
     """Raised when compile-time evaluation needs to call a function with no body."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot call extern function at comptime", span)
 
 
@@ -1153,21 +1154,21 @@ class SetNonLocalVarAtComptimeError(UserError):
     """Raised when compile-time evaluation needs to write through a pointer
     to a variable outside the expression being evaluated."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot set non-local variable at comptime", span)
 
 
 class DivisionByZeroAtComptimeError(UserError):
     """Raised when compile-time evaluation divides by a value of zero."""
 
-    def __init__(self, span: Optional[SrcSpan]) -> None:
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Division by zero", span)
 
 
 class ModDoesNotExistError(UserError):
     """Raised when an ``import`` names a module file that doesn't exist."""
 
-    def __init__(self, name: str, span: SrcSpan) -> None:
+    def __init__(self, name: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot find module "{name}"', span)
 
 
@@ -1204,12 +1205,12 @@ class TextErrorRenderer:
             self._display_line(message.span, line_num_width)
             self._display_col_pos(message.span, line_num_width)
 
-    def _display_line(self, span: SrcSpan, line_num_width) -> None:
-        assert_gt(span.start_line, 0)
+    def _display_line(self, span: src.SrcSpan, line_num_width) -> None:
+        asserts.assert_gt(span.start_line, 0)
         line = span.file.lines[span.start_line - 1]
         print(f"{span.start_line:{line_num_width}d}| {line}", file=sys.stderr)
 
-    def _display_col_pos(self, span: SrcSpan, line_num_width) -> None:
+    def _display_col_pos(self, span: src.SrcSpan, line_num_width) -> None:
         prefix = "-" * (span.start_col + line_num_width + 1)
         print(f"{prefix}^", file=sys.stderr)
 
@@ -1239,7 +1240,7 @@ def raise_error(err: UserError) -> None:
     raise err
 
 
-def errors() -> list[UserError]:
+def all_errors() -> list[UserError]:
     """Return all diagnostics recorded so far, in registration order."""
     return _errors
 

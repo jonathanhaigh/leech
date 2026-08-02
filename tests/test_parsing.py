@@ -1,19 +1,19 @@
-from dataclasses import dataclass
-from difflib import ndiff
+import dataclasses
+import difflib
 from typing import Optional
 
+import lark
 import pytest
-from lark import Tree, UnexpectedCharacters, UnexpectedToken
 
-from leech.parse import build_parser
+from leech import parse
 
 
-@dataclass
+@dataclasses.dataclass
 class Tok:
     value: Optional[str]
 
 
-class T(Tree):
+class T(lark.Tree):
     def __init__(self, data, *descendants):
         super().__init__(data, [], None)
         self.leaf = self
@@ -35,7 +35,7 @@ class T(Tree):
 
 
 def check_parse(rule, src, expected):
-    p = build_parser(rule)
+    p = parse.build_parser(rule)
     tree = p.parse(src)
 
     if tree != expected:
@@ -49,7 +49,7 @@ def check_parse(rule, src, expected):
         print(expected_str)
 
         print("DIFF:\n")
-        diff = ndiff(
+        diff = difflib.ndiff(
             got_str.splitlines(keepends=True),
             expected_str.splitlines(keepends=True),
         )
@@ -59,8 +59,8 @@ def check_parse(rule, src, expected):
 
 
 def check_parse_fails(rule, src):
-    p = build_parser(rule)
-    with pytest.raises((UnexpectedToken, UnexpectedCharacters)):
+    p = parse.build_parser(rule)
+    with pytest.raises((lark.UnexpectedToken, lark.UnexpectedCharacters)):
         tree = p.parse(src)
         print(tree)
 

@@ -1,7 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import IfCondNotBoolError, IfElsTypMismatchError, IfTypNotVoidError
+from leech import errors
 
 
 def test_if_false_else_expr_val(tmp_path):
@@ -14,7 +14,7 @@ def test_if_false_else_expr_val(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_comptime_if_false_else_expr_val(tmp_path):
@@ -28,7 +28,7 @@ def test_comptime_if_false_else_expr_val(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_if_true_else_expr_val(tmp_path):
@@ -41,7 +41,7 @@ def test_if_true_else_expr_val(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_comptime_if_true_else_expr_val(tmp_path):
@@ -55,7 +55,7 @@ def test_comptime_if_true_else_expr_val(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_if_false_ret_else_expr_val(tmp_path):
@@ -68,7 +68,7 @@ def test_if_false_ret_else_expr_val(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_if_true_ret_else_expr_val(tmp_path):
@@ -81,7 +81,7 @@ def test_if_true_ret_else_expr_val(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_if_false_else_ret_expr_val(tmp_path):
@@ -94,7 +94,7 @@ def test_if_false_else_ret_expr_val(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_if_true_else_ret_expr_val(tmp_path):
@@ -107,7 +107,7 @@ def test_if_true_else_ret_expr_val(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_if_ret_else_ret_expr_val(tmp_path):
@@ -120,7 +120,7 @@ def test_if_ret_else_ret_expr_val(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_if_ret_expr_val(tmp_path):
@@ -132,7 +132,7 @@ def test_if_ret_expr_val(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_if_with_tail_expr(tmp_path):
@@ -144,8 +144,8 @@ def test_if_with_tail_expr(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IfTypNotVoidError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IfTypNotVoidError):
+        util.compile_str(tmp_path, src)
 
 
 def test_if_els_with_mismatching_typs(tmp_path):
@@ -160,8 +160,8 @@ def test_if_els_with_mismatching_typs(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IfElsTypMismatchError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IfElsTypMismatchError):
+        util.compile_str(tmp_path, src)
 
 
 def test_void_call_as_if_cond(tmp_path):
@@ -174,5 +174,5 @@ def test_void_call_as_if_cond(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IfCondNotBoolError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IfCondNotBoolError):
+        util.compile_str(tmp_path, src)

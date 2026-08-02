@@ -1,7 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import IncompatibleBinOpArgTypsError
+from leech import errors
 
 CMP_OPS = ("<", "<=", "==", "!=", ">=", ">")
 
@@ -41,7 +41,7 @@ def test_cmp(op, lhs, rhs, result, tmp_path):
     }}
     """
     expected_status = 100 if result else 200
-    check_prog_output(tmp_path, src, "", expected_status)
+    util.check_prog_output(tmp_path, src, "", expected_status)
 
 
 @pytest.mark.parametrize("op,lhs,rhs,result", CMP_CASES)
@@ -53,7 +53,7 @@ def test_comptime_cmp(op, lhs, rhs, result, tmp_path):
     }}
     """
     expected_status = 100 if result else 200
-    check_prog_output(tmp_path, src, "", expected_status)
+    util.check_prog_output(tmp_path, src, "", expected_status)
 
 
 @pytest.mark.parametrize("op", CMP_OPS)
@@ -65,5 +65,5 @@ def test_incompatible_cmp_args(op, lhs, rhs, tmp_path):
         return 0;
     }}
     """
-    with pytest.raises(IncompatibleBinOpArgTypsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+        util.compile_str(tmp_path, src)

@@ -1,20 +1,14 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import (
-    InvalidRetTypError,
-    InvalidVoidRetError,
-    ItemNotFoundError,
-    MissingRetError,
-    RetNotInFnError,
-)
+from leech import errors
 
 
 def test_tail_expr_return(tmp_path):
     src = """
     pub fn main() i32 { 100 }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 def test_missing_return(tmp_path):
@@ -24,8 +18,8 @@ def test_missing_return(tmp_path):
         puts("abcd");
     }
     """
-    with pytest.raises(MissingRetError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.MissingRetError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_void_return(tmp_path):
@@ -34,8 +28,8 @@ def test_invalid_void_return(tmp_path):
         return;
     }
     """
-    with pytest.raises(InvalidVoidRetError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidVoidRetError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_return_typ(tmp_path):
@@ -44,8 +38,8 @@ def test_invalid_return_typ(tmp_path):
         return "abcd";
     }
     """
-    with pytest.raises(InvalidRetTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidRetTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_return_typ_not_defined(tmp_path):
@@ -53,8 +47,8 @@ def test_return_typ_not_defined(tmp_path):
     pub fn f() not_a_typ { }
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(ItemNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_return(tmp_path):
@@ -64,5 +58,5 @@ def test_comptime_return(tmp_path):
     };
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(RetNotInFnError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.RetNotInFnError):
+        util.compile_str(tmp_path, src)

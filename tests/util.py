@@ -1,10 +1,8 @@
+import pathlib
 import subprocess
-from pathlib import Path
 
-from leech import ast, ir_module
-from leech.main import compile_to_ir, compile_to_llvm_ir
-from leech.parse import build_parser
-from leech.src import SrcFile
+from leech import ast, driver, ir_module, parse
+from leech import src as leech_src
 
 
 def find_pos(src: str, substr: str) -> tuple[int, int]:
@@ -16,7 +14,7 @@ def find_pos(src: str, substr: str) -> tuple[int, int]:
     return line, col
 
 
-def write_whole_file(path: Path, content: str) -> None:
+def write_whole_file(path: pathlib.Path, content: str) -> None:
     with path.open("w", encoding="utf-8") as f:
         f.write(content)
 
@@ -24,28 +22,28 @@ def write_whole_file(path: Path, content: str) -> None:
     print(content)
 
 
-def compile_file(path: Path) -> Path:
-    llir = compile_to_llvm_ir(SrcFile(path))
+def compile_file(path: pathlib.Path) -> pathlib.Path:
+    llir = driver.compile_to_llvm_ir(leech_src.SrcFile(path))
     llir_path = path.with_suffix(".ll")
     write_whole_file(llir_path, llir)
     return llir_path
 
 
-def compile_str(tmp_path: Path, src: str) -> Path:
+def compile_str(tmp_path: pathlib.Path, src: str) -> pathlib.Path:
     path = tmp_path / "main.leech"
     write_whole_file(path, src)
     return compile_file(path)
 
 
-def parse_mod(tmp_path: Path, src: str) -> ast.Mod:
+def parse_mod(tmp_path: pathlib.Path, src: str) -> ast.Mod:
     path = tmp_path / "main.leech"
     write_whole_file(path, src)
-    file = SrcFile(path)
-    tree = build_parser("mod").parse(file.src)
+    file = leech_src.SrcFile(path)
+    tree = parse.build_parser("mod").parse(file.src)
     return ast.Mod(file, tree)
 
 
-def build_ir_mod(tmp_path: Path, src: str) -> ir_module.Mod:
+def build_ir_mod(tmp_path: pathlib.Path, src: str) -> ir_module.Mod:
     """Parse and build ``src`` into IR, without lowering or compiling it.
 
     For exercising type-checking (or anything else that only needs a
@@ -54,10 +52,10 @@ def build_ir_mod(tmp_path: Path, src: str) -> ir_module.Mod:
     """
     path = tmp_path / "main.leech"
     write_whole_file(path, src)
-    return compile_to_ir(SrcFile(path))
+    return driver.compile_to_ir(leech_src.SrcFile(path))
 
 
-def compile_modules(tmp_path: Path, **modules: str) -> list[Path]:
+def compile_modules(tmp_path: pathlib.Path, **modules: str) -> list[pathlib.Path]:
     for mod_name, mod_src in modules.items():
         write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
 
@@ -65,7 +63,7 @@ def compile_modules(tmp_path: Path, **modules: str) -> list[Path]:
 
 
 def check_prog_output(
-    tmp_path: Path, src: str, expected_output, expected_exit_status, **modules: str
+    tmp_path: pathlib.Path, src: str, expected_output, expected_exit_status, **modules: str
 ) -> None:
     modules["main"] = src
     llir_mod_paths = compile_modules(tmp_path, **modules)

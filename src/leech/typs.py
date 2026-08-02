@@ -1,32 +1,17 @@
 """Leech's type system: type representations, caching, and construction from AST."""
 
-from abc import ABC, abstractmethod
+import abc
+import enum
+import functools
+import types
+import weakref
 from collections.abc import Collection, Hashable, Mapping
-from enum import Enum
-from functools import cached_property
-from types import MappingProxyType
 from typing import ClassVar, Final, Optional, Self, override
-from weakref import WeakValueDictionary
 
-from leech import ast, ir_env, ir_module
-from leech.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
-from leech.errors import (
-    BoundNotATraitError,
-    DuplicateFieldInStructDefnError,
-    DuplicateItemDefnError,
-    InfiniteSizeStructError,
-    MissingTypArgsError,
-    TypArgsOnNonGenericItemError,
-    TypInstantiationDepthExceededError,
-    UnsatisfiedBoundError,
-    WrongNumberOfTypArgsError,
-)
-from leech.signage import SIGNED, UNSIGNED, Signage
-from leech.src import SrcFile, SrcSpan
-from leech.target import ADDR_SIZE
+from leech import asserts, ast, errors, ir_env, ir_module, signage, src, target
 
 
-class Mutability(Enum):
+class Mutability(enum.Enum):
     """Whether a pointer or struct field may be written through."""
 
     CONST = 0
@@ -43,7 +28,7 @@ class Mutability(Enum):
         """
         if mut_ast is None:
             return CONST
-        assert_eq(mut_ast.value, "mut")
+        asserts.assert_eq(mut_ast.value, "mut")
         return MUT
 
 
@@ -55,7 +40,7 @@ def check_typ_arg_bounds(
     generic_params: list[ast.GenericParam],
     typ_args: tuple[Typ, ...],
     e: ir_env.Env,
-    span: Optional[SrcSpan],
+    span: Optional[src.SrcSpan],
 ) -> None:
     """Raise if any of ``typ_args`` doesn't implement a bound its parameter declares.
 
@@ -88,12 +73,14 @@ def check_typ_arg_bounds(
         for bound_path in param_ast.bounds:
             trait = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound_path)
             if not isinstance(trait, ir_traits.Trait):
-                raise BoundNotATraitError(bound_path.str(), bound_path.span)
+                raise errors.BoundNotATraitError(bound_path.str(), bound_path.span)
             if e.impl_registry.find_impl(trait, typ_arg) is None:
-                raise UnsatisfiedBoundError(typ_arg.name, trait.name, param_ast.ident.name, span)
+                raise errors.UnsatisfiedBoundError(
+                    typ_arg.name, trait.name, param_ast.ident.name, span
+                )
 
 
-class Typ(ABC):
+class Typ(abc.ABC):
     """Base class for all Leech types.
 
     Structural types (e.g. :class:`PtrTyp`, :class:`ArrayTyp`) are
@@ -103,7 +90,7 @@ class Typ(ABC):
     collected once nothing else references it.
     """
 
-    _cache: ClassVar[WeakValueDictionary[Hashable, Typ]] = WeakValueDictionary()
+    _cache: ClassVar[weakref.WeakValueDictionary[Hashable, Typ]] = weakref.WeakValueDictionary()
 
     @classmethod
     def create(cls, *args: Hashable) -> Self:
@@ -117,7 +104,7 @@ class Typ(ABC):
             exists.
         """
         key = cls.cache_key(*args)
-        assert_not_in(key, Typ._cache)
+        asserts.assert_not_in(key, Typ._cache)
         obj = cls(*args)
         Typ._cache[key] = obj
         return obj
@@ -132,7 +119,7 @@ class Typ(ABC):
         :return: The cached instance.
         :raises KeyError: If no matching instance has been cached.
         """
-        return checked_cast(Typ._cache[cls.cache_key(*args)], cls)
+        return asserts.checked_cast(Typ._cache[cls.cache_key(*args)], cls)
 
     @classmethod
     def get_or_create(cls, *args: Hashable) -> Self:
@@ -148,7 +135,7 @@ class Typ(ABC):
         if obj is None:
             obj = cls(*args)
             Typ._cache[key] = obj
-        return checked_cast(obj, cls)
+        return asserts.checked_cast(obj, cls)
 
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
@@ -255,7 +242,7 @@ class Typ(ABC):
         return True
 
     @property
-    @abstractmethod
+    @abc.abstractmethod
     def name(self) -> str:
         """This type's human-readable name, as used in diagnostics."""
 
@@ -315,13 +302,13 @@ class Typ(ABC):
         item = e.resolve_typ(typ_ast.path)
         if not isinstance(item, StructTyp) or not item.ast.generic_params or item.typ_args:
             if typ_ast.generic_args:
-                raise TypArgsOnNonGenericItemError(typ_ast.path.str(), typ_ast.span)
+                raise errors.TypArgsOnNonGenericItemError(typ_ast.path.str(), typ_ast.span)
             return item
 
         if not typ_ast.generic_args:
-            raise MissingTypArgsError(item.name, typ_ast.span)
+            raise errors.MissingTypArgsError(item.name, typ_ast.span)
         if len(typ_ast.generic_args) != len(item.ast.generic_params):
-            raise WrongNumberOfTypArgsError(
+            raise errors.WrongNumberOfTypArgsError(
                 item.name, len(typ_ast.generic_args), len(item.ast.generic_params), typ_ast.span
             )
         typ_args = tuple(Typ.from_ast(arg, e) for arg in typ_ast.generic_args)
@@ -337,29 +324,29 @@ class IntTyp(Typ):
     """
 
     width: Final[int]
-    signage: Final[Signage]
+    signage: Final[signage.Signage]
 
-    def __init__(self, width: int, signage: Signage) -> None:
+    def __init__(self, width: int, signage: signage.Signage) -> None:
         self.width = width
         self.signage = signage
 
     @property
     @override
     def name(self) -> str:
-        sign_char = "i" if self.signage == SIGNED else "u"
+        sign_char = "i" if self.signage == signage.SIGNED else "u"
         return f"{sign_char}{self.width}"
 
     @property
     def min_value(self) -> int:
         """The smallest value representable by this type."""
-        if self.signage == SIGNED:
+        if self.signage == signage.SIGNED:
             return -(2 ** (self.width - 1))
         return 0
 
     @property
     def max_value(self) -> int:
         """The largest value representable by this type."""
-        if self.signage == SIGNED:
+        if self.signage == signage.SIGNED:
             return 2 ** (self.width - 1) - 1
         return 2**self.width - 1
 
@@ -574,7 +561,7 @@ class TypParamTyp(Typ):
             item's AST node and ``args[1]`` the parameter's index.
         :return: The cache key.
         """
-        assert_gt(len(args), 1)
+        asserts.assert_gt(len(args), 1)
         return (cls, args[0], args[1])
 
     @property
@@ -617,17 +604,17 @@ class StructField:
         """The field's name."""
         return self.ast.ident.name
 
-    @cached_property
+    @functools.cached_property
     def typ(self) -> Typ:
         """The field's type."""
         return Typ.from_ast(self.ast.typ, self.env)
 
-    @cached_property
+    @functools.cached_property
     def access(self) -> ir_module.Access:
         """Whether the field is public or private."""
         return ir_module.Access.from_ast(self.ast.access)
 
-    @cached_property
+    @functools.cached_property
     def mut(self) -> Mutability:
         """Whether the field may be written through a mut pointer to the struct.
 
@@ -636,7 +623,7 @@ class StructField:
         """
         return Mutability.from_ast(self.ast.mut)
 
-    def is_accessible_from(self, file: SrcFile) -> bool:
+    def is_accessible_from(self, file: src.SrcFile) -> bool:
         """Whether this field can be read, written, or initialized from
         code in ``file``.
 
@@ -759,7 +746,7 @@ class StructTyp(Typ):
         for i, field_ast in enumerate(ast.fields):
             self._add_member(StructField(i, field_ast, self.env))
 
-    @cached_property
+    @functools.cached_property
     def _instance_cache(self) -> dict[tuple[Typ, ...], StructTyp]:
         return {}
 
@@ -841,9 +828,9 @@ class StructTyp(Typ):
             arguments (defaulting to ``()``, matching :meth:`__init__`).
         :return: The cache key.
         """
-        assert_gt(len(args), 0)
-        struct_ast = checked_cast(args[0], ast.StructDefn)
-        typ_args = checked_cast(args[2], tuple) if len(args) > 2 else ()
+        asserts.assert_gt(len(args), 0)
+        struct_ast = asserts.checked_cast(args[0], ast.StructDefn)
+        typ_args = asserts.checked_cast(args[2], tuple) if len(args) > 2 else ()
         return (cls, struct_ast, typ_args)
 
     @property
@@ -855,7 +842,7 @@ class StructTyp(Typ):
         return f"{self.ast.ident.name}[{arg_names}]"
 
     @staticmethod
-    def _member_ident_span(member: StructField | ir_module.Fn) -> Optional[SrcSpan]:
+    def _member_ident_span(member: StructField | ir_module.Fn) -> Optional[src.SrcSpan]:
         """The span of ``member``'s name, for duplicate-member diagnostics.
 
         Points at the identifier rather than the whole declaration, since
@@ -893,8 +880,10 @@ class StructTyp(Typ):
                 # the enclosing module builds any impl block, so the only
                 # thing a field can collide with is another field.
                 assert isinstance(existing, StructField)
-                raise DuplicateFieldInStructDefnError(member.name, span, existing_span)
-            raise DuplicateItemDefnError("associated function", member.name, span, existing_span)
+                raise errors.DuplicateFieldInStructDefnError(member.name, span, existing_span)
+            raise errors.DuplicateItemDefnError(
+                "associated function", member.name, span, existing_span
+            )
         self._members[member.name] = member
 
     def add_assoc_fn(self, fn: ir_module.Fn) -> None:
@@ -933,8 +922,8 @@ class StructTyp(Typ):
         member = self._members.get(name)
         return member if isinstance(member, ir_module.Fn) else None
 
-    @cached_property
-    def fields(self) -> MappingProxyType[str, StructField]:
+    @functools.cached_property
+    def fields(self) -> types.MappingProxyType[str, StructField]:
         """This struct's fields, keyed by name, in declaration order.
 
         A view of the field members among this struct's members;
@@ -959,7 +948,7 @@ class StructTyp(Typ):
     def _check_finite_size(
         self,
         visiting: list[StructTyp],
-        hops: list[tuple[str, str, Optional[SrcSpan], str]],
+        hops: list[tuple[str, str, Optional[src.SrcSpan], str]],
     ) -> None:
         """Raise if this struct is reachable from itself by value.
 
@@ -984,10 +973,10 @@ class StructTyp(Typ):
         """
         if self in visiting:
             cycle_start = visiting.index(self)
-            raise InfiniteSizeStructError(self.name, self.span, hops[cycle_start:])
+            raise errors.InfiniteSizeStructError(self.name, self.span, hops[cycle_start:])
         if len(visiting) >= _MAX_STRUCT_INSTANTIATION_DEPTH:
             outermost = visiting[0] if visiting else self
-            raise TypInstantiationDepthExceededError(outermost.name, outermost.span)
+            raise errors.TypInstantiationDepthExceededError(outermost.name, outermost.span)
 
         visiting = [*visiting, self]
         for field_ast in self.ast.fields:
@@ -999,7 +988,7 @@ class StructTyp(Typ):
                 typ._check_finite_size(visiting, [*hops, hop])
 
     @property
-    def span(self) -> SrcSpan:
+    def span(self) -> src.SrcSpan:
         """The source location of this struct's declaration."""
         return self.ast.span
 
@@ -1031,12 +1020,12 @@ class NeverTyp(Typ):
 
 
 #: The built-in numeric, boolean, string, and control-flow type singletons.
-U8 = IntTyp.get_or_create(8, UNSIGNED)
-I8 = IntTyp.get_or_create(8, SIGNED)
-U32 = IntTyp.get_or_create(32, UNSIGNED)
-I32 = IntTyp.get_or_create(32, SIGNED)
-USIZE = IntTyp.get_or_create(ADDR_SIZE, UNSIGNED)
-ISIZE = IntTyp.get_or_create(ADDR_SIZE, SIGNED)
+U8 = IntTyp.get_or_create(8, signage.UNSIGNED)
+I8 = IntTyp.get_or_create(8, signage.SIGNED)
+U32 = IntTyp.get_or_create(32, signage.UNSIGNED)
+I32 = IntTyp.get_or_create(32, signage.SIGNED)
+USIZE = IntTyp.get_or_create(target.ADDR_SIZE, signage.UNSIGNED)
+ISIZE = IntTyp.get_or_create(target.ADDR_SIZE, signage.SIGNED)
 CINT = I32
 BOOL = BoolTyp.get_or_create()
 CSTR = PtrTyp.get_or_create(U8, CONST)

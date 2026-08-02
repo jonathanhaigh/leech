@@ -1,14 +1,10 @@
 import pathlib
 
 import pytest
-from util import check_prog_output, compile_str, find_pos, parse_mod
+import util
 
-from leech import ast
-from leech.errors import IncompatibleLetTypError, IntLitOverflowError
-from leech.ir_env import Env
-from leech.parse import build_parser
-from leech.src import SrcFile
-from leech.typs import BOOL, I32, MUT, ArrayTyp, FnTyp, PtrTyp, Typ, TypParamTyp
+from leech import ast, errors, ir_env, parse, typs
+from leech import src as leech_src
 
 
 @pytest.mark.parametrize(
@@ -31,7 +27,7 @@ def test_builtin_typ_lookup(tmp_path, typ, value):
         return 0;
     }}
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_int_lit_at_typ_width_boundary_is_allowed(tmp_path):
@@ -41,7 +37,7 @@ def test_int_lit_at_typ_width_boundary_is_allowed(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_int_lit_overflow(tmp_path):
@@ -51,8 +47,8 @@ def test_int_lit_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntLitOverflowError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "256" in msg
@@ -60,7 +56,7 @@ def test_int_lit_overflow(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "256u8")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "256u8")
 
 
 def test_comptime_int_lit_overflow(tmp_path):
@@ -70,8 +66,8 @@ def test_comptime_int_lit_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntLitOverflowError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "256" in msg
@@ -79,7 +75,7 @@ def test_comptime_int_lit_overflow(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "256u8")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "256u8")
 
 
 def test_int_lit_at_signed_typ_max_is_allowed(tmp_path):
@@ -89,7 +85,7 @@ def test_int_lit_at_signed_typ_max_is_allowed(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_int_lit_overflow_signed(tmp_path):
@@ -102,8 +98,8 @@ def test_int_lit_overflow_signed(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntLitOverflowError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "128" in msg
@@ -111,7 +107,7 @@ def test_int_lit_overflow_signed(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "128i8")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "128i8")
 
 
 def test_comptime_int_lit_overflow_signed(tmp_path):
@@ -121,8 +117,8 @@ def test_comptime_int_lit_overflow_signed(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntLitOverflowError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "128" in msg
@@ -130,7 +126,7 @@ def test_comptime_int_lit_overflow_signed(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "128i8")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "128i8")
 
 
 def test_int_lit_infers_declared_let_typ(tmp_path):
@@ -143,7 +139,7 @@ def test_int_lit_infers_declared_let_typ(tmp_path):
         return if (y == 210u8) { 7 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 @pytest.mark.parametrize(
@@ -168,7 +164,7 @@ def test_int_lit_infers_at_coercion_points(tmp_path, prelude, expr):
         return if (x == 200u8) {{ 7 }} else {{ 0 }};
     }}
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_int_lit_infers_in_assignment(tmp_path):
@@ -179,7 +175,7 @@ def test_int_lit_infers_in_assignment(tmp_path):
         return if (x == 200u8) { 7 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_comptime_int_lit_infers_declared_typ(tmp_path):
@@ -189,7 +185,7 @@ def test_comptime_int_lit_infers_declared_typ(tmp_path):
         return if (x == 200u8) { 7 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_int_lit_inference_reaches_operands(tmp_path):
@@ -201,7 +197,7 @@ def test_int_lit_inference_reaches_operands(tmp_path):
         return if (x == 255u8) { 7 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_int_lit_inference_does_not_reach_across_a_typed_operand(tmp_path):
@@ -213,8 +209,8 @@ def test_int_lit_inference_does_not_reach_across_a_typed_operand(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleLetTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleLetTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_explicit_int_lit_suffix_beats_inference(tmp_path):
@@ -225,8 +221,8 @@ def test_explicit_int_lit_suffix_beats_inference(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleLetTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleLetTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_int_lit_too_big_for_inferred_typ(tmp_path):
@@ -236,8 +232,8 @@ def test_int_lit_too_big_for_inferred_typ(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntLitOverflowError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "300" in msg
@@ -245,7 +241,7 @@ def test_int_lit_too_big_for_inferred_typ(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "300")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "300")
 
 
 @pytest.mark.parametrize(
@@ -260,20 +256,20 @@ def test_int_lit_too_big_for_inferred_typ(tmp_path):
 def test_ptr_typ_name_matches_source_syntax(src, expected):
     # Type names appear in diagnostics, so they should read the way the
     # type would be written.
-    file = SrcFile(pathlib.Path("test.leech"))
-    tree = build_parser("typ").parse(src)
-    typ = Typ.from_ast(ast.Typ.from_tree(file, tree), Env())
+    file = leech_src.SrcFile(pathlib.Path("test.leech"))
+    tree = parse.build_parser("typ").parse(src)
+    typ = typs.Typ.from_ast(ast.Typ.from_tree(file, tree), ir_env.Env())
     assert typ.name == expected
 
 
 def test_typ_param_typ_interns_by_owner_and_index(tmp_path):
-    mod = parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
+    mod = util.parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
-    t0 = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
-    t0_again = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
-    t1 = TypParamTyp.get_or_create(fn, 1, fn.generic_params[1])
+    t0 = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    t0_again = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    t1 = typs.TypParamTyp.get_or_create(fn, 1, fn.generic_params[1])
 
     assert t0 is t0_again
     assert t0 is not t1
@@ -282,7 +278,7 @@ def test_typ_param_typ_interns_by_owner_and_index(tmp_path):
 
 
 def test_typ_param_typ_distinct_across_owners(tmp_path):
-    mod = parse_mod(
+    mod = util.parse_mod(
         tmp_path,
         """
         fn f[T](x: T) {}
@@ -293,49 +289,51 @@ def test_typ_param_typ_distinct_across_owners(tmp_path):
     assert isinstance(f_defn, ast.FnDefn)
     assert isinstance(g_defn, ast.FnDefn)
 
-    t_f = TypParamTyp.get_or_create(f_defn, 0, f_defn.generic_params[0])
-    t_g = TypParamTyp.get_or_create(g_defn, 0, g_defn.generic_params[0])
+    t_f = typs.TypParamTyp.get_or_create(f_defn, 0, f_defn.generic_params[0])
+    t_g = typs.TypParamTyp.get_or_create(g_defn, 0, g_defn.generic_params[0])
     assert t_f is not t_g
     assert t_f.name == t_g.name == "T"
 
 
 def test_substitute_typ_params_replaces_mapped_typ_param(tmp_path):
-    mod = parse_mod(tmp_path, "fn f[T](x: T) {}")
+    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
-    t = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
 
-    assert t.substitute_typ_params({t: I32}) is I32
+    assert t.substitute_typ_params({t: typs.I32}) is typs.I32
 
 
 def test_substitute_typ_params_leaves_unmapped_typ_param_unchanged(tmp_path):
-    mod = parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
+    mod = util.parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
-    t = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
-    u = TypParamTyp.get_or_create(fn, 1, fn.generic_params[1])
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    u = typs.TypParamTyp.get_or_create(fn, 1, fn.generic_params[1])
 
-    assert t.substitute_typ_params({u: I32}) is t
+    assert t.substitute_typ_params({u: typs.I32}) is t
 
 
 def test_substitute_typ_params_leaves_concrete_typ_unchanged():
-    assert I32.substitute_typ_params({}) is I32
-    assert BOOL.substitute_typ_params({}) is BOOL
+    assert typs.I32.substitute_typ_params({}) is typs.I32
+    assert typs.BOOL.substitute_typ_params({}) is typs.BOOL
 
 
 def test_substitute_typ_params_recurses_through_composite_typs(tmp_path):
-    mod = parse_mod(tmp_path, "fn f[T](x: T) {}")
+    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
-    t = TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
-    mapping = {t: I32}
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    mapping = {t: typs.I32}
 
-    assert PtrTyp.get_or_create(t, MUT).substitute_typ_params(mapping) is PtrTyp.get_or_create(
-        I32, MUT
-    )
-    assert ArrayTyp.get_or_create(t, 3).substitute_typ_params(mapping) is ArrayTyp.get_or_create(
-        I32, 3
-    )
+    assert typs.PtrTyp.get_or_create(t, typs.MUT).substitute_typ_params(
+        mapping
+    ) is typs.PtrTyp.get_or_create(typs.I32, typs.MUT)
+    assert typs.ArrayTyp.get_or_create(t, 3).substitute_typ_params(
+        mapping
+    ) is typs.ArrayTyp.get_or_create(typs.I32, 3)
 
-    fn_typ = FnTyp.get_or_create(t, (t, BOOL))
-    assert fn_typ.substitute_typ_params(mapping) is FnTyp.get_or_create(I32, (I32, BOOL))
+    fn_typ = typs.FnTyp.get_or_create(t, (t, typs.BOOL))
+    assert fn_typ.substitute_typ_params(mapping) is typs.FnTyp.get_or_create(
+        typs.I32, (typs.I32, typs.BOOL)
+    )

@@ -1,28 +1,7 @@
 import pytest
-from util import compile_modules, compile_str, find_pos
+import util
 
-from leech.errors import (
-    CannotInferTypArgError,
-    CircularVarInitializerError,
-    DuplicateItemDefnError,
-    IfCondNotBoolError,
-    IfElsTypMismatchError,
-    InfiniteSizeStructError,
-    InvalidArgTypError,
-    InvalidBinOpArgTypError,
-    LoopLabelNotFoundError,
-    MissingTypArgsError,
-    ModUsedAsTypError,
-    NotCallableError,
-    PrivateItemAccessError,
-    PrivateStructFieldAccessError,
-    TypArgsOnNonGenericItemError,
-    UnexpectedCharacterError,
-    UnexpectedTokenError,
-    VoidVarInitializerError,
-    WhileCondNotBoolError,
-    WrongNumberOfTypArgsError,
-)
+from leech import errors
 
 
 def test_unexpected_character_message(tmp_path):
@@ -30,15 +9,15 @@ def test_unexpected_character_message(tmp_path):
     return 0 @ 1;
 }
 """
-    with pytest.raises(UnexpectedCharacterError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.UnexpectedCharacterError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"@"' in msg
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "@")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "@")
 
     # Unlike UnexpectedTokenError, there's no "expected" note: the lexer
     # couldn't form a token at all, so there's nothing to enumerate.
@@ -50,15 +29,15 @@ def test_unexpected_token_message(tmp_path):
     return 0
 }
 """
-    with pytest.raises(UnexpectedTokenError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.UnexpectedTokenError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"}"' in msg
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "}")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "}")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
@@ -70,8 +49,8 @@ def test_unexpected_end_of_input_message(tmp_path):
     src = """pub fn main() i32 {
     return 0;
 """
-    with pytest.raises(UnexpectedTokenError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.UnexpectedTokenError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "Unexpected end of input" in msg
@@ -110,8 +89,8 @@ def test_private_struct_field_access_message(tmp_path):
         return T { val: 1 };
     }
     """
-    with pytest.raises(PrivateStructFieldAccessError) as exc_info:
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateStructFieldAccessError) as exc_info:
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
     msg = str(exc_info.value)
     assert '"val"' in msg
@@ -120,13 +99,13 @@ def test_private_struct_field_access_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(main_src, "val")
+    assert (span.start_line, span.start_col) == util.find_pos(main_src, "val")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert note.message == 'Field "val" defined here'
     assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "val")
+    assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "val")
 
 
 def test_private_fn_access_message(tmp_path):
@@ -141,8 +120,8 @@ def test_private_fn_access_message(tmp_path):
         return 1;
     }
     """
-    with pytest.raises(PrivateItemAccessError) as exc_info:
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError) as exc_info:
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
     msg = str(exc_info.value)
     assert '"f"' in msg
@@ -150,13 +129,13 @@ def test_private_fn_access_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(main_src, "f()")
+    assert (span.start_line, span.start_col) == util.find_pos(main_src, "f()")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert note.message == 'Function "f" defined here'
     assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "fn f()")
+    assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "fn f()")
 
 
 def test_private_var_access_message(tmp_path):
@@ -169,8 +148,8 @@ def test_private_var_access_message(tmp_path):
     a_src = """
     let x = 11;
     """
-    with pytest.raises(PrivateItemAccessError) as exc_info:
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError) as exc_info:
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
     msg = str(exc_info.value)
     assert '"x"' in msg
@@ -178,13 +157,13 @@ def test_private_var_access_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(main_src, "x")
+    assert (span.start_line, span.start_col) == util.find_pos(main_src, "x")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert note.message == 'Variable "x" defined here'
     assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "let x")
+    assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "let x")
 
 
 def test_private_typ_access_message(tmp_path):
@@ -200,8 +179,8 @@ def test_private_typ_access_message(tmp_path):
         int: i32,
     }
     """
-    with pytest.raises(PrivateItemAccessError) as exc_info:
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError) as exc_info:
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
     msg = str(exc_info.value)
     assert '"T"' in msg
@@ -209,13 +188,13 @@ def test_private_typ_access_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(main_src, "T{")
+    assert (span.start_line, span.start_col) == util.find_pos(main_src, "T{")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert note.message == 'Type "T" defined here'
     assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == find_pos(a_src, "struct T")
+    assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "struct T")
 
 
 def test_void_local_var_initializer_message(tmp_path):
@@ -229,8 +208,8 @@ def test_void_local_var_initializer_message(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(VoidVarInitializerError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.VoidVarInitializerError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "void" in msg
@@ -245,8 +224,8 @@ def test_void_mod_var_initializer_message(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(VoidVarInitializerError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.VoidVarInitializerError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "void" in msg
@@ -267,8 +246,8 @@ def test_mod_used_as_typ_message(tmp_path):
         return 1;
     }
     """
-    with pytest.raises(ModUsedAsTypError) as exc_info:
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.ModUsedAsTypError) as exc_info:
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
     msg = str(exc_info.value)
     assert '"a"' in msg
@@ -278,7 +257,7 @@ def test_mod_used_as_typ_message(tmp_path):
     # import that bound it.
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(main_src, "a) i32")
+    assert (span.start_line, span.start_col) == util.find_pos(main_src, "a) i32")
 
     # The note has no span of its own - a module's AST node covers its
     # whole file, so there's nothing useful to point at.
@@ -302,8 +281,8 @@ def test_mod_and_typ_name_clash_message(tmp_path):
         return 1;
     }
     """
-    with pytest.raises(DuplicateItemDefnError) as exc_info:
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
     assert str(exc_info.value) == 'Duplicate definition of type or module "a"'
 
@@ -323,8 +302,8 @@ def test_field_and_assoc_fn_name_clash_message(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DuplicateItemDefnError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"get"' in msg
@@ -332,12 +311,12 @@ def test_field_and_assoc_fn_name_clash_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "get(*self)")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "get(*self)")
 
     (note,) = exc_info.value.extra
     assert note.message == "Previous definition here"
     assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == find_pos(src, "get: i32")
+    assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "get: i32")
 
 
 def test_infinite_size_struct_message(tmp_path):
@@ -352,8 +331,8 @@ def test_infinite_size_struct_message(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InfiniteSizeStructError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"A"' in msg
@@ -361,16 +340,16 @@ def test_infinite_size_struct_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "struct A")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "struct A")
 
     assert len(exc_info.value.extra) == 2
     first, second = exc_info.value.extra
     assert first.message == 'Field "b" of struct "A" contains "B" by value'
     assert first.span is not None
-    assert (first.span.start_line, first.span.start_col) == find_pos(src, "b: B")
+    assert (first.span.start_line, first.span.start_col) == util.find_pos(src, "b: B")
     assert second.message == 'Field "a" of struct "B" contains "A" by value'
     assert second.span is not None
-    assert (second.span.start_line, second.span.start_col) == find_pos(src, "a: A")
+    assert (second.span.start_line, second.span.start_col) == util.find_pos(src, "a: A")
 
 
 def test_circular_var_initializer_message(tmp_path):
@@ -381,8 +360,8 @@ def test_circular_var_initializer_message(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CircularVarInitializerError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CircularVarInitializerError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"b"' in msg
@@ -390,16 +369,16 @@ def test_circular_var_initializer_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "let b")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "let b")
 
     assert len(exc_info.value.extra) == 2
     first, second = exc_info.value.extra
     assert first.message == 'Variable "b" defined here'
     assert first.span is not None
-    assert (first.span.start_line, first.span.start_col) == find_pos(src, "let b")
+    assert (first.span.start_line, first.span.start_col) == util.find_pos(src, "let b")
     assert second.message == 'Variable "a" defined here'
     assert second.span is not None
-    assert (second.span.start_line, second.span.start_col) == find_pos(src, "let a")
+    assert (second.span.start_line, second.span.start_col) == util.find_pos(src, "let a")
 
 
 def test_if_cond_not_bool_message(tmp_path):
@@ -411,8 +390,8 @@ def test_if_cond_not_bool_message(tmp_path):
     };
 }
 """
-    with pytest.raises(IfCondNotBoolError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IfCondNotBoolError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "bool" in msg
@@ -422,7 +401,7 @@ def test_if_cond_not_bool_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "1 + 2")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "1 + 2")
 
 
 def test_while_cond_not_bool_message(tmp_path):
@@ -433,8 +412,8 @@ def test_while_cond_not_bool_message(tmp_path):
     return 0;
 }
 """
-    with pytest.raises(WhileCondNotBoolError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.WhileCondNotBoolError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "bool" in msg
@@ -443,7 +422,7 @@ def test_while_cond_not_bool_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "&x")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "&x")
 
 
 def test_loop_label_not_found_message(tmp_path):
@@ -454,15 +433,15 @@ def test_loop_label_not_found_message(tmp_path):
     return 0;
 }
 """
-    with pytest.raises(LoopLabelNotFoundError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.LoopLabelNotFoundError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "nope" in msg
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "nope")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "nope")
 
 
 def test_not_callable_message(tmp_path):
@@ -472,8 +451,8 @@ def test_not_callable_message(tmp_path):
     return 0;
 }
 """
-    with pytest.raises(NotCallableError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.NotCallableError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert 'variable "x"' in msg
@@ -482,7 +461,7 @@ def test_not_callable_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "x();")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "x();")
 
 
 def test_invalid_arg_typ_message(tmp_path):
@@ -492,8 +471,8 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(InvalidArgTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "Argument 1" in msg
@@ -503,7 +482,7 @@ pub fn main() i32 {
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, '"abc"')
+    assert (span.start_line, span.start_col) == util.find_pos(src, '"abc"')
 
 
 def test_invalid_bin_op_arg_typ_message(tmp_path):
@@ -512,8 +491,8 @@ def test_invalid_bin_op_arg_typ_message(tmp_path):
     return 0;
 }
 """
-    with pytest.raises(InvalidBinOpArgTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidBinOpArgTypError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "operand" in msg
@@ -523,13 +502,13 @@ def test_invalid_bin_op_arg_typ_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "true + 1")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "true + 1")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert '"+"' in note.message
     assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == find_pos(src, "+ 1")
+    assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "+ 1")
 
 
 def test_if_els_typ_mismatch_message(tmp_path):
@@ -538,8 +517,8 @@ def test_if_els_typ_mismatch_message(tmp_path):
     return 0;
 }
 """
-    with pytest.raises(IfElsTypMismatchError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IfElsTypMismatchError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"if"' in msg
@@ -552,10 +531,10 @@ def test_if_els_typ_mismatch_message(tmp_path):
     then_note, els_note = exc_info.value.extra
     assert '"i32"' in then_note.message
     assert then_note.span is not None
-    assert (then_note.span.start_line, then_note.span.start_col) == find_pos(src, "{ 1 }")
+    assert (then_note.span.start_line, then_note.span.start_col) == util.find_pos(src, "{ 1 }")
     assert '"*u8"' in els_note.message
     assert els_note.span is not None
-    assert (els_note.span.start_line, els_note.span.start_col) == find_pos(src, '{ "abc" }')
+    assert (els_note.span.start_line, els_note.span.start_col) == util.find_pos(src, '{ "abc" }')
 
 
 def test_missing_typ_args_message(tmp_path):
@@ -565,8 +544,8 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(MissingTypArgsError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"id"' in msg
@@ -574,7 +553,7 @@ pub fn main() i32 {
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "id;")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "id;")
 
 
 def test_cannot_infer_typ_arg_message(tmp_path):
@@ -584,8 +563,8 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(CannotInferTypArgError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CannotInferTypArgError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"T"' in msg
@@ -594,7 +573,7 @@ pub fn main() i32 {
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "id(5)")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "id(5)")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
@@ -608,8 +587,8 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(WrongNumberOfTypArgsError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"id"' in msg
@@ -618,7 +597,7 @@ pub fn main() i32 {
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "id[i32, bool](5)")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "id[i32, bool](5)")
 
 
 def test_typ_args_on_non_generic_item_message(tmp_path):
@@ -628,8 +607,8 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(TypArgsOnNonGenericItemError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"f"' in msg
@@ -637,4 +616,4 @@ pub fn main() i32 {
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "f[i32](5)")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "f[i32](5)")

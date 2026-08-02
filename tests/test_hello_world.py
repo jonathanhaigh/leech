@@ -1,4 +1,4 @@
-from util import check_prog_output
+import util
 
 
 def test_hello_world(tmp_path):
@@ -10,7 +10,7 @@ def test_hello_world(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "hello world\n", 0)
+    util.check_prog_output(tmp_path, src, "hello world\n", 0)
 
 
 def test_recursive_factorial_fn(tmp_path):
@@ -25,7 +25,7 @@ def test_recursive_factorial_fn(tmp_path):
         return fact(5);
     }
     """
-    check_prog_output(tmp_path, src, "", 120)
+    util.check_prog_output(tmp_path, src, "", 120)
 
 
 def test_comptime_recursive_factorial_fn(tmp_path):
@@ -41,7 +41,7 @@ def test_comptime_recursive_factorial_fn(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 120)
+    util.check_prog_output(tmp_path, src, "", 120)
 
 
 def test_mutually_recursive_fns(tmp_path):
@@ -70,7 +70,7 @@ def test_mutually_recursive_fns(tmp_path):
         }
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_comptime_mutually_recursive_fns(tmp_path):
@@ -99,4 +99,4 @@ def test_comptime_mutually_recursive_fns(tmp_path):
         }
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)

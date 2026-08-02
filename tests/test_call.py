@@ -1,13 +1,7 @@
 import pytest
-from util import compile_str
+import util
 
-from leech.errors import (
-    CallExternFnAtComptimeError,
-    InvalidArgTypError,
-    NotCallableError,
-    NotEnoughArgsError,
-    TooManyArgsError,
-)
+from leech import errors
 
 
 def test_not_callable(tmp_path):
@@ -18,8 +12,8 @@ def test_not_callable(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(NotCallableError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.NotCallableError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_not_callable(tmp_path):
@@ -30,8 +24,8 @@ def test_comptime_not_callable(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(NotCallableError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.NotCallableError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_arg_typ(tmp_path):
@@ -42,8 +36,8 @@ def test_invalid_arg_typ(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_invalid_arg_typ(tmp_path):
@@ -54,8 +48,8 @@ def test_comptime_invalid_arg_typ(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_void_call_as_arg(tmp_path):
@@ -66,8 +60,8 @@ def test_void_call_as_arg(tmp_path):
         return g(f());
     }
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_too_many_args(tmp_path):
@@ -78,8 +72,8 @@ def test_too_many_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(TooManyArgsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TooManyArgsError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_too_many_args(tmp_path):
@@ -90,8 +84,8 @@ def test_comptime_too_many_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(TooManyArgsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TooManyArgsError):
+        util.compile_str(tmp_path, src)
 
 
 def test_not_enough_args(tmp_path):
@@ -102,8 +96,8 @@ def test_not_enough_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(NotEnoughArgsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.NotEnoughArgsError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_not_enough_args(tmp_path):
@@ -114,8 +108,8 @@ def test_comptime_not_enough_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(NotEnoughArgsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.NotEnoughArgsError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_call_extern(tmp_path):
@@ -126,5 +120,5 @@ def test_comptime_call_extern(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CallExternFnAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CallExternFnAtComptimeError):
+        util.compile_str(tmp_path, src)

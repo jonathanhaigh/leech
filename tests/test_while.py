@@ -1,7 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import WhileCondNotBoolError, WhileTypNotVoidError
+from leech import errors
 
 
 def test_while(tmp_path):
@@ -14,7 +14,7 @@ def test_while(tmp_path):
         return i;
     }
     """
-    check_prog_output(tmp_path, src, "", 10)
+    util.check_prog_output(tmp_path, src, "", 10)
 
 
 def test_comptime_while(tmp_path):
@@ -30,7 +30,7 @@ def test_comptime_while(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 10)
+    util.check_prog_output(tmp_path, src, "", 10)
 
 
 def test_if_in_while(tmp_path):
@@ -46,7 +46,7 @@ def test_if_in_while(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 128)
+    util.check_prog_output(tmp_path, src, "", 128)
 
 
 def test_while_body_not_void(tmp_path):
@@ -58,8 +58,8 @@ def test_while_body_not_void(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(WhileTypNotVoidError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.WhileTypNotVoidError):
+        util.compile_str(tmp_path, src)
 
 
 def test_void_call_as_while_cond(tmp_path):
@@ -71,5 +71,5 @@ def test_void_call_as_while_cond(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(WhileCondNotBoolError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.WhileCondNotBoolError):
+        util.compile_str(tmp_path, src)

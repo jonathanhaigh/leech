@@ -1,30 +1,14 @@
 """Lowering of Leech IR to LLVM IR, via llvmlite."""
 
-from collections import ChainMap
+import collections
+import dataclasses
 from collections.abc import Iterator
-from dataclasses import dataclass
 from typing import Optional
 
+import networkx as nx
 from llvmlite import ir as ll
-from networkx import dfs_postorder_nodes
 
-from leech import ir_module, ir_traits, ir_values
-from leech.asserts import assert_eq, checked_cast
-from leech.naming import VarNamer
-from leech.typs import (
-    SIGNED,
-    USIZE,
-    VOID,
-    ArrayTyp,
-    BoolTyp,
-    FnTyp,
-    IntTyp,
-    NeverTyp,
-    PtrTyp,
-    StructTyp,
-    Typ,
-    VoidTyp,
-)
+from leech import asserts, ir_module, ir_traits, ir_values, naming, signage, typs
 
 
 def set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access) -> None:
@@ -37,7 +21,7 @@ def set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Ac
     if access == ir_module.PRIVATE:
         ll_global.linkage = "private"
     else:
-        assert_eq(access, ir_module.PUBLIC)
+        asserts.assert_eq(access, ir_module.PUBLIC)
 
 
 class Compiler:
@@ -49,7 +33,7 @@ class Compiler:
     mod: ir_module.Mod
     ll_mod: ll.Module
     _ll_mod_items: Compiler.LLItems
-    _tmp_name: VarNamer
+    _tmp_name: naming.VarNamer
 
     class LLItems:
         """A cache mapping Leech IR values and types to their LLVM counterparts.
@@ -67,19 +51,21 @@ class Compiler:
         """
 
         compiler: Compiler
-        items: ChainMap[ir_values.Value | Typ, ll.Value | ll.Type]
+        items: collections.ChainMap[ir_values.Value | typs.Typ, ll.Value | ll.Type]
 
         def __init__(
             self,
             compiler: Compiler,
-            values: Optional[ChainMap[ir_values.Value | Typ, ll.Value | ll.Type]] = None,
+            values: Optional[
+                collections.ChainMap[ir_values.Value | typs.Typ, ll.Value | ll.Type]
+            ] = None,
         ) -> None:
             super().__init__()
             self.compiler = compiler
             if values is not None:
                 self.items = values
             else:
-                self.items = ChainMap()
+                self.items = collections.ChainMap()
 
         def new_child(self) -> Compiler.LLItems:
             """Create a new cache nested inside this one.
@@ -88,7 +74,7 @@ class Compiler:
             """
             return Compiler.LLItems(self.compiler, self.items.new_child())
 
-        def get(self, item: ir_values.Value | Typ) -> ll.Value | ll.Type:
+        def get(self, item: ir_values.Value | typs.Typ) -> ll.Value | ll.Type:
             """Get the LLVM value or type for ``item``, compiling it if needed.
 
             :param item: The Leech IR value or type to look up.
@@ -97,11 +83,11 @@ class Compiler:
             if item not in self.items:
                 if isinstance(item, ir_values.ComptimeValue):
                     self.items[item] = self.compiler._compile_comptime_value(item)
-                elif isinstance(item, Typ):
+                elif isinstance(item, typs.Typ):
                     self.items[item] = self.compiler._ll_typ(item)
             return self.items[item]
 
-        def set(self, item: ir_values.Value | Typ, ll_item: ll.Value | ll.Type) -> None:
+        def set(self, item: ir_values.Value | typs.Typ, ll_item: ll.Value | ll.Type) -> None:
             """Record the LLVM value or type to use for ``item``.
 
             :param item: The Leech IR value or type.
@@ -110,17 +96,17 @@ class Compiler:
             """
             self.items[item] = ll_item
 
-    @dataclass
+    @dataclasses.dataclass
     class _FnBuilderContext:
         ll_builder: ll.IRBuilder
         ll_values: Compiler.LLItems
-        ll_bbs: ChainMap[ir_values.BasicBlock, ll.Block]
+        ll_bbs: collections.ChainMap[ir_values.BasicBlock, ll.Block]
 
     def __init__(self, mod: ir_module.Mod) -> None:
         self.mod = mod
         self.ll_mod = ll.Module(context=ll.Context())
         self._ll_mod_items = Compiler.LLItems(self)
-        self._tmp_name = VarNamer()
+        self._tmp_name = naming.VarNamer()
 
     def compile(self) -> None:
         """Compile :attr:`mod` into :attr:`ll_mod`.
@@ -165,15 +151,15 @@ class Compiler:
         self.ll_mod.triple = "x86_64-linux-gnu"
 
         for item in self._program_items():
-            if isinstance(item.value, StructTyp) and not item.value.ast.generic_params:
+            if isinstance(item.value, typs.StructTyp) and not item.value.ast.generic_params:
                 self._declare_mod_item(item)
 
         for item in self._program_items():
-            if not isinstance(item.value, StructTyp):
+            if not isinstance(item.value, typs.StructTyp):
                 self._declare_mod_item(item)
 
         for item in self._program_items():
-            if isinstance(item.value, StructTyp) and not item.value.ast.generic_params:
+            if isinstance(item.value, typs.StructTyp) and not item.value.ast.generic_params:
                 self._compile_mod_struct(item, item.value)
 
         # A generic struct's own fields are never lowered - only an
@@ -183,7 +169,7 @@ class Compiler:
         # runaway-instantiation-depth struct is rejected whether or not
         # anything in the program ever instantiates it.
         for item in self._program_items():
-            if isinstance(item.value, StructTyp) and item.value.ast.generic_params:
+            if isinstance(item.value, typs.StructTyp) and item.value.ast.generic_params:
                 _ = item.value.fields
 
         instances = self._discover_fn_instances()
@@ -273,7 +259,7 @@ class Compiler:
 
         return instances
 
-    def _discover_struct_instances(self) -> list[StructTyp]:
+    def _discover_struct_instances(self) -> list[typs.StructTyp]:
         """Find every generic struct instantiation reachable from the program.
 
         Mirrors :meth:`_discover_fn_instances`: an instantiation is
@@ -299,14 +285,14 @@ class Compiler:
 
         :return: Every instantiation discovered, in discovery order.
         """
-        instances: list[StructTyp] = []
-        seen: set[StructTyp] = set()
+        instances: list[typs.StructTyp] = []
+        seen: set[typs.StructTyp] = set()
 
-        def newly_requested() -> list[StructTyp]:
+        def newly_requested() -> list[typs.StructTyp]:
             new = []
             for mod in self.mod.loader.mods:
                 for item in mod.items:
-                    if isinstance(item.value, StructTyp) and item.value.ast.generic_params:
+                    if isinstance(item.value, typs.StructTyp) and item.value.ast.generic_params:
                         for inst in item.value.instances:
                             if inst.is_concrete() and inst not in seen:
                                 seen.add(inst)
@@ -322,21 +308,21 @@ class Compiler:
 
         return instances
 
-    def _declare_struct_instance(self, inst: StructTyp) -> None:
+    def _declare_struct_instance(self, inst: typs.StructTyp) -> None:
         ll_typ = self.ll_mod.context.get_identified_type(inst.qualified_name)
         self._ll_mod_items.set(inst, ll_typ)
 
-    def _compile_struct_instance(self, inst: StructTyp) -> None:
+    def _compile_struct_instance(self, inst: typs.StructTyp) -> None:
         ll_typ = self.ll_mod.context.get_identified_type(inst.qualified_name)
         ll_typ.set_body(*(self._ll_mod_items.get(field.typ) for field in inst.fields.values()))
 
-    def _ll_typ(self, typ: Typ) -> ll.Type:
+    def _ll_typ(self, typ: typs.Typ) -> ll.Type:
         match typ:
-            case IntTyp():
+            case typs.IntTyp():
                 return ll.IntType(typ.width)
-            case BoolTyp():
+            case typs.BoolTyp():
                 return ll.IntType(1)
-            case FnTyp():
+            case typs.FnTyp():
                 # A `never` return type has no LLVM representation of its
                 # own (see the NeverTyp case below): a function declared
                 # to return `never` only ever ends its body in
@@ -345,31 +331,31 @@ class Compiler:
                 # it.
                 ll_ret_typ = (
                     ll.VoidType()
-                    if isinstance(typ.ret_typ, NeverTyp)
+                    if isinstance(typ.ret_typ, typs.NeverTyp)
                     else self._ll_mod_items.get(typ.ret_typ)
                 )
                 return ll.FunctionType(
                     ll_ret_typ,
                     (self._ll_mod_items.get(param_typ) for param_typ in typ.param_typs),
                 )
-            case PtrTyp():
+            case typs.PtrTyp():
                 # Typed pointers are deprecated in llvmlite (and LLVM IR) but
                 # llvmlite seems to rely on pointer types in a bunch of places
                 # (call instruction, gep instruction) that's a pain to try to
                 # work around, so just use typed pointers for now.
                 return ll.PointerType(pointee=self._ll_mod_items.get(typ.pointee_typ))
-            case ArrayTyp():
+            case typs.ArrayTyp():
                 return ll.ArrayType(self._ll_mod_items.get(typ.element_typ), typ.length)
-            case VoidTyp():
+            case typs.VoidTyp():
                 return ll.VoidType()
-            case StructTyp():
+            case typs.StructTyp():
                 # Every StructTyp reachable during codegen is declared
                 # (and cached here) by the earlier declare-types phase,
                 # so LLItems.get() should never fall through to this
                 # method for one - if it does, that phase missed it.
                 assert typ in self._ll_mod_items.items, f'struct "{typ.name}" was never declared'
-                return checked_cast(self._ll_mod_items.items[typ], ll.Type)
-            case NeverTyp():
+                return asserts.checked_cast(self._ll_mod_items.items[typ], ll.Type)
+            case typs.NeverTyp():
                 raise AssertionError("a never-typed value shouldn't need an LLVM type")
             case _:
                 raise AssertionError(f"unhandled type {typ}")
@@ -380,7 +366,7 @@ class Compiler:
                 self._declare_mod_var(item, item.value)
             case ir_module.FnSpec():
                 self._declare_mod_fn(item, item.value)
-            case StructTyp():
+            case typs.StructTyp():
                 ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
                 self._ll_mod_items.set(item.value, ll_item)
             case ir_module.GenericFn():
@@ -406,7 +392,7 @@ class Compiler:
                 return self._compile_mod_fn(item, item.value)
             case ir_module.FnDecl():
                 return None
-            case StructTyp():
+            case typs.StructTyp():
                 # Already compiled, along with every other module's, by
                 # the struct-body phase of compile().
                 return None
@@ -482,10 +468,10 @@ class Compiler:
         ctx = Compiler._FnBuilderContext(
             ll_builder=ll.IRBuilder(),
             ll_values=self._ll_mod_items.new_child(),
-            ll_bbs=ChainMap(),
+            ll_bbs=collections.ChainMap(),
         )
 
-        ll_fn = checked_cast(self._ll_mod_items.get(fn_value), ll.Function)
+        ll_fn = asserts.checked_cast(self._ll_mod_items.get(fn_value), ll.Function)
         for param, ll_param in zip(params, ll_fn.args, strict=True):
             ctx.ll_values.set(param, ll_param)
 
@@ -499,7 +485,7 @@ class Compiler:
         # edge that isn't a loop back-edge, and loop back-edges never
         # carry a phi in this compiler (`while` produces no merged
         # value), so this is safe even though `cfg` can have cycles.
-        bb_order = reversed(list(dfs_postorder_nodes(cfg, cfg.entry)))
+        bb_order = reversed(list(nx.dfs_postorder_nodes(cfg, cfg.entry)))
         bb_order = [bb for bb in bb_order if bb.name != "exit"]
         for bb in bb_order:
             ctx.ll_bbs[bb] = ll_fn.append_basic_block(bb.name)
@@ -507,7 +493,7 @@ class Compiler:
         for bb in bb_order:
             self._compile_bb(bb, ctx)
 
-    def _compile_mod_struct(self, item: ir_module.ModItem, typ: StructTyp) -> None:
+    def _compile_mod_struct(self, item: ir_module.ModItem, typ: typs.StructTyp) -> None:
         ll_typ = self.ll_mod.context.get_identified_type(item.qualified_name)
         ll_typ.set_body(*(self._ll_mod_items.get(field.typ) for field in typ.fields.values()))
 
@@ -571,8 +557,12 @@ class Compiler:
                 # Which extension to use follows from the source type: a
                 # signed value's sign bit has to be replicated to keep
                 # its value, an unsigned one's must not be.
-                src_typ = checked_cast(instr.value.typ, IntTyp)
-                extend = ctx.ll_builder.sext if src_typ.signage == SIGNED else ctx.ll_builder.zext
+                src_typ = asserts.checked_cast(instr.value.typ, typs.IntTyp)
+                extend = (
+                    ctx.ll_builder.sext
+                    if src_typ.signage == signage.SIGNED
+                    else ctx.ll_builder.zext
+                )
                 return extend(  # type: ignore
                     ctx.ll_values.get(instr.value),
                     self._ll_mod_items.get(instr.typ),
@@ -585,7 +575,7 @@ class Compiler:
                     ctx.ll_values.get(instr.dest),
                 )
             case ir_values.GepInstr():
-                zero = ll.Constant(self._ll_mod_items.get(USIZE), 0)
+                zero = ll.Constant(self._ll_mod_items.get(typs.USIZE), 0)
                 ll_index = ctx.ll_values.get(instr.index)
                 return ctx.ll_builder.gep(ctx.ll_values.get(instr.base), [zero, ll_index])
             case ir_values.InsertValueInstr():
@@ -611,7 +601,7 @@ class Compiler:
                     ctx.ll_bbs[instr.false_target],
                 )
             case ir_values.RetInstr():
-                if instr.value.typ == VOID:
+                if instr.value.typ == typs.VOID:
                     return ctx.ll_builder.ret_void()
                 return ctx.ll_builder.ret(ctx.ll_values.get(instr.value))
             case ir_values.UnreachableInstr():
@@ -648,7 +638,7 @@ class Compiler:
                 fields = (self._ll_mod_items.get(value.fields[fname]) for fname in value.typ.fields)
                 return ll.Constant(self._ll_mod_items.get(value.typ), fields)
             case ir_values.ComptimeGep():
-                zero = ll.Constant(self._ll_mod_items.get(USIZE), 0)
+                zero = ll.Constant(self._ll_mod_items.get(typs.USIZE), 0)
                 ll_index = self._ll_mod_items.get(value.index)
                 base = self._ll_mod_items.get(value.base)
                 assert isinstance(base, (ll.GlobalValue, ll.Constant))

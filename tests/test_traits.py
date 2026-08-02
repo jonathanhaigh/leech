@@ -1,22 +1,7 @@
 import pytest
-from util import build_ir_mod, check_prog_output, compile_modules, compile_str, find_pos
+import util
 
-from leech.errors import (
-    AmbiguousMethodError,
-    BoundNotATraitError,
-    ConflictingImplsError,
-    ExtraMethodInImplError,
-    ImplForNonTraitError,
-    InvalidBinOpArgTypError,
-    OrphanImplError,
-    TraitMethodMissingReceiverError,
-    TraitMethodNotImplementedError,
-    TraitMethodSignatureMismatchError,
-    TraitUsedAsTypError,
-    UnsatisfiedBoundError,
-)
-from leech.ir_env import Env
-from leech.ir_traits import Trait
+from leech import errors, ir_env, ir_traits
 
 
 def test_trait_impl_for_builtin_typ(tmp_path):
@@ -32,7 +17,7 @@ def test_trait_impl_for_builtin_typ(tmp_path):
         return x.show() - 11;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_trait_impl_for_struct(tmp_path):
@@ -49,7 +34,7 @@ def test_trait_impl_for_struct(tmp_path):
         return f.show() - 22;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_trait_impl_with_mut_receiver(tmp_path):
@@ -67,7 +52,7 @@ def test_trait_impl_with_mut_receiver(tmp_path):
         return c.n;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_inherent_and_trait_methods_coexist(tmp_path):
@@ -89,7 +74,7 @@ def test_inherent_and_trait_methods_coexist(tmp_path):
         return (f.show() - 7) + (x.show() - 101);
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_trait_method_call_on_generic_typ_param(tmp_path):
@@ -108,7 +93,7 @@ def test_trait_method_call_on_generic_typ_param(tmp_path):
         return double_show(n) - 22;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_trait_method_call_on_generic_typ_param_with_struct(tmp_path):
@@ -128,7 +113,7 @@ def test_trait_method_call_on_generic_typ_param_with_struct(tmp_path):
         return double_show(f) - 10;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_impl_body_typechecks(tmp_path):
@@ -143,7 +128,7 @@ def test_generic_impl_body_typechecks(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_impl_body_rejects_invalid_op(tmp_path):
@@ -155,8 +140,8 @@ def test_generic_impl_body_rejects_invalid_op(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(InvalidBinOpArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidBinOpArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_calling_method_through_generic_impl_not_supported_yet(tmp_path):
@@ -177,7 +162,7 @@ def test_calling_method_through_generic_impl_not_supported_yet(tmp_path):
     }
     """
     with pytest.raises(AssertionError):
-        compile_str(tmp_path, src)
+        util.compile_str(tmp_path, src)
 
 
 def test_unsatisfied_bound_on_generic_fn_call(tmp_path):
@@ -191,8 +176,8 @@ def test_unsatisfied_bound_on_generic_fn_call(tmp_path):
         return double_show(n);
     }
     """
-    with pytest.raises(UnsatisfiedBoundError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
     msg = str(exc_info.value)
     assert '"bool"' in msg
     assert '"Show"' in msg
@@ -208,8 +193,8 @@ def test_unsatisfied_bound_on_generic_struct_instantiation(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(UnsatisfiedBoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.UnsatisfiedBoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_bound_satisfied_on_generic_struct_instantiation(tmp_path):
@@ -222,7 +207,7 @@ def test_bound_satisfied_on_generic_struct_instantiation(tmp_path):
         return b.val.show() - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_ambiguous_method_call_between_two_traits(tmp_path):
@@ -236,8 +221,8 @@ def test_ambiguous_method_call_between_two_traits(tmp_path):
         return x.f();
     }
     """
-    with pytest.raises(AmbiguousMethodError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AmbiguousMethodError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"f"' in str(exc_info.value)
 
 
@@ -250,8 +235,8 @@ def test_ambiguous_method_call_on_bound_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(AmbiguousMethodError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AmbiguousMethodError):
+        util.compile_str(tmp_path, src)
 
 
 def test_bound_names_non_trait_via_method_call(tmp_path):
@@ -265,8 +250,8 @@ def test_bound_names_non_trait_via_method_call(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(BoundNotATraitError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.BoundNotATraitError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"NotATrait"' in str(exc_info.value)
 
 
@@ -281,8 +266,8 @@ def test_bound_names_non_trait_on_generic_fn_call(tmp_path):
         return f(1i32);
     }
     """
-    with pytest.raises(BoundNotATraitError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.BoundNotATraitError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"NotATrait"' in str(exc_info.value)
 
 
@@ -295,8 +280,8 @@ def test_bound_names_non_trait_on_generic_struct_instantiation(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(BoundNotATraitError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.BoundNotATraitError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"NotATrait"' in str(exc_info.value)
 
 
@@ -306,8 +291,8 @@ def test_trait_missing_method_not_implemented(tmp_path):
     impl Show for i32 {}
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(TraitMethodNotImplementedError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TraitMethodNotImplementedError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"show"' in str(exc_info.value)
     assert '"Show"' in str(exc_info.value)
 
@@ -321,8 +306,8 @@ def test_trait_impl_extra_method(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(ExtraMethodInImplError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ExtraMethodInImplError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"other"' in str(exc_info.value)
 
 
@@ -334,8 +319,8 @@ def test_trait_impl_method_signature_mismatch(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(TraitMethodSignatureMismatchError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TraitMethodSignatureMismatchError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"show"' in str(exc_info.value)
 
 
@@ -347,8 +332,8 @@ def test_trait_impl_method_wrong_receiver_mutability(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(TraitMethodSignatureMismatchError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TraitMethodSignatureMismatchError):
+        util.compile_str(tmp_path, src)
 
 
 def test_conflicting_impls_of_same_trait_same_typ(tmp_path):
@@ -358,8 +343,8 @@ def test_conflicting_impls_of_same_trait_same_typ(tmp_path):
     impl Show for i32 { fn show(*self) i32 { self.* } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(ConflictingImplsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ConflictingImplsError):
+        util.compile_str(tmp_path, src)
 
 
 def test_impls_of_different_traits_for_same_typ_do_not_conflict(tmp_path):
@@ -373,7 +358,7 @@ def test_impls_of_different_traits_for_same_typ_do_not_conflict(tmp_path):
         return x.a() + x.b() - 3;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_impls_of_same_trait_for_different_int_typs_do_not_conflict(tmp_path):
@@ -387,7 +372,7 @@ def test_impls_of_same_trait_for_different_int_typs_do_not_conflict(tmp_path):
         return x.show() + y.show() - 10;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_orphan_impl_neither_trait_nor_typ_local(tmp_path):
@@ -397,8 +382,8 @@ def test_orphan_impl_neither_trait_nor_typ_local(tmp_path):
     impl a::Show for i32 { fn show(*self) i32 { self.* } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(OrphanImplError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.OrphanImplError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_impl_local_trait_for_foreign_typ_not_orphan(tmp_path):
@@ -412,7 +397,7 @@ def test_impl_local_trait_for_foreign_typ_not_orphan(tmp_path):
         return f.show() - 9;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
 def test_impl_foreign_trait_for_local_typ_not_orphan(tmp_path):
@@ -426,7 +411,7 @@ def test_impl_foreign_trait_for_local_typ_not_orphan(tmp_path):
         return f.show() - 9;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
 def test_impl_for_non_trait(tmp_path):
@@ -435,8 +420,8 @@ def test_impl_for_non_trait(tmp_path):
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(ImplForNonTraitError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ImplForNonTraitError):
+        util.compile_str(tmp_path, src)
 
 
 def test_trait_used_as_typ(tmp_path):
@@ -445,8 +430,8 @@ def test_trait_used_as_typ(tmp_path):
     fn f(x: Show) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(TraitUsedAsTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TraitUsedAsTypError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"Show"' in str(exc_info.value)
 
 
@@ -455,8 +440,8 @@ def test_trait_method_missing_receiver(tmp_path):
     trait Show { fn show() i32; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(TraitMethodMissingReceiverError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TraitMethodMissingReceiverError):
+        util.compile_str(tmp_path, src)
 
 
 def test_trait_method_call_span(tmp_path):
@@ -470,11 +455,11 @@ def test_trait_method_call_span(tmp_path):
         return double_show(n);
     }
     """
-    with pytest.raises(UnsatisfiedBoundError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "double_show(n)")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "double_show(n)")
 
 
 def test_cross_module_trait_and_impl(tmp_path):
@@ -489,13 +474,13 @@ def test_cross_module_trait_and_impl(tmp_path):
         return x.show() - 11;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
 def test_get_trait_item_from_mod(tmp_path):
-    mod = build_ir_mod(tmp_path, "trait Show { fn show(*self) i32; }")
-    item = mod.get_item(Env.Namespace.CONTAINERS, "Show")
+    mod = util.build_ir_mod(tmp_path, "trait Show { fn show(*self) i32; }")
+    item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Show")
     assert item is not None
-    assert isinstance(item.value, Trait)
+    assert isinstance(item.value, ir_traits.Trait)
     assert item.value.name == "Show"
     assert [m.name for m in item.value.methods] == ["show"]

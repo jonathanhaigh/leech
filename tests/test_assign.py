@@ -1,11 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import (
-    AssignToConstError,
-    IncompatibleAssignmentTypError,
-    SetNonLocalVarAtComptimeError,
-)
+from leech import errors
 
 
 def test_assign_to_local_var(tmp_path):
@@ -16,7 +12,7 @@ def test_assign_to_local_var(tmp_path):
         return a;
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_assign_to_mod_var(tmp_path):
@@ -27,7 +23,7 @@ def test_assign_to_mod_var(tmp_path):
         return a;
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_comptime_assign_to_mod_var(tmp_path):
@@ -42,8 +38,8 @@ def test_comptime_assign_to_mod_var(tmp_path):
         return a;
     }
     """
-    with pytest.raises(SetNonLocalVarAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.SetNonLocalVarAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_const_local_var(tmp_path):
@@ -54,8 +50,8 @@ def test_assign_to_const_local_var(tmp_path):
         return a;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_const_mod_var(tmp_path):
@@ -66,8 +62,8 @@ def test_assign_to_const_mod_var(tmp_path):
         return a;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_local_arr_element(tmp_path):
@@ -78,7 +74,7 @@ def test_assign_to_local_arr_element(tmp_path):
         return a.[2usize] + a.[0usize];
     }
     """
-    check_prog_output(tmp_path, src, "", 11)
+    util.check_prog_output(tmp_path, src, "", 11)
 
 
 def test_assign_to_local_nested_arr_element(tmp_path):
@@ -89,7 +85,7 @@ def test_assign_to_local_nested_arr_element(tmp_path):
         return a.[1usize].[0usize];
     }
     """
-    check_prog_output(tmp_path, src, "", 10)
+    util.check_prog_output(tmp_path, src, "", 10)
 
 
 def test_assign_to_const_local_arr_element(tmp_path):
@@ -100,8 +96,8 @@ def test_assign_to_const_local_arr_element(tmp_path):
         return a.[2usize] + a.[0usize];
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_const_local_nested_arr_element(tmp_path):
@@ -112,8 +108,8 @@ def test_assign_to_const_local_nested_arr_element(tmp_path):
         return a.[1usize].[0usize];
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_local_struct_field(tmp_path):
@@ -127,7 +123,7 @@ def test_assign_to_local_struct_field(tmp_path):
         return x.a + x.b;
     }
     """
-    check_prog_output(tmp_path, src, "", 210)
+    util.check_prog_output(tmp_path, src, "", 210)
 
 
 def test_assign_to_local_nested_struct_field(tmp_path):
@@ -142,7 +138,7 @@ def test_assign_to_local_nested_struct_field(tmp_path):
         return x.c.b.a;
     }
     """
-    check_prog_output(tmp_path, src, "", 101)
+    util.check_prog_output(tmp_path, src, "", 101)
 
 
 def test_assign_to_const_local_struct_field(tmp_path):
@@ -155,8 +151,8 @@ def test_assign_to_const_local_struct_field(tmp_path):
         return x.a;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_local_struct_const_field(tmp_path):
@@ -169,8 +165,8 @@ def test_assign_to_local_struct_const_field(tmp_path):
         return x.a;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_const_local_nested_struct_field(tmp_path):
@@ -183,8 +179,8 @@ def test_assign_to_const_local_nested_struct_field(tmp_path):
         return x.b.a;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_local_nested_struct_const_field(tmp_path):
@@ -197,8 +193,8 @@ def test_assign_to_local_nested_struct_const_field(tmp_path):
         return x.b.a;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_through_ptr_deref(tmp_path):
@@ -210,7 +206,7 @@ def test_assign_through_ptr_deref(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_assign_through_const_ptr_deref(tmp_path):
@@ -225,8 +221,8 @@ def test_assign_through_const_ptr_deref(tmp_path):
         return x;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_through_explicit_mut_ptr_param(tmp_path):
@@ -244,7 +240,7 @@ def test_assign_through_explicit_mut_ptr_param(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_assign_wrong_typ_to_local(tmp_path):
@@ -258,8 +254,8 @@ def test_assign_wrong_typ_to_local(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleAssignmentTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleAssignmentTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_wrong_typ_through_ptr_deref(tmp_path):
@@ -271,8 +267,8 @@ def test_assign_wrong_typ_through_ptr_deref(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleAssignmentTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleAssignmentTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_wrong_typ_to_struct_field(tmp_path):
@@ -284,8 +280,8 @@ def test_assign_wrong_typ_to_struct_field(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleAssignmentTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleAssignmentTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_const_reported_before_typ_mismatch(tmp_path):
@@ -298,8 +294,8 @@ def test_assign_to_const_reported_before_typ_mismatch(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_through_explicit_const_ptr_param(tmp_path):
@@ -314,8 +310,8 @@ def test_assign_through_explicit_const_ptr_param(tmp_path):
         return x;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_to_temporary(tmp_path):
@@ -329,8 +325,8 @@ def test_assign_to_temporary(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(AssignToConstError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.AssignToConstError):
+        util.compile_str(tmp_path, src)
 
 
 def test_assign_evaluates_place_before_value(tmp_path):
@@ -360,4 +356,4 @@ def test_assign_evaluates_place_before_value(tmp_path):
         return arr.[0usize];
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)

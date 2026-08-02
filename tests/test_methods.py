@@ -1,13 +1,7 @@
 import pytest
-from util import check_prog_output, compile_modules, compile_str
+import util
 
-from leech.errors import (
-    InvalidArgTypError,
-    NotAMethodError,
-    NotCallableError,
-    PrivateItemAccessError,
-    SelfParamOutsideImplError,
-)
+from leech import errors
 
 
 def test_const_ptr_method_call(tmp_path):
@@ -21,7 +15,7 @@ def test_const_ptr_method_call(tmp_path):
         return c.get();
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_mut_ptr_method_call(tmp_path):
@@ -37,7 +31,7 @@ def test_mut_ptr_method_call(tmp_path):
         return c.n;
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_mut_ptr_method_call_on_const_place_rejected(tmp_path):
@@ -54,8 +48,8 @@ def test_mut_ptr_method_call_on_const_place_rejected(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_const_ptr_method_call_on_mut_place(tmp_path):
@@ -71,7 +65,7 @@ def test_const_ptr_method_call_on_mut_place(tmp_path):
         return c.get();
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_dot_call_and_explicit_path_call_equivalent_const_receiver(tmp_path):
@@ -85,7 +79,7 @@ def test_dot_call_and_explicit_path_call_equivalent_const_receiver(tmp_path):
         return c.get() - Counter::get(&c);
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_dot_call_and_explicit_path_call_equivalent_mut_receiver(tmp_path):
@@ -101,7 +95,7 @@ def test_dot_call_and_explicit_path_call_equivalent_mut_receiver(tmp_path):
         return c.n;
     }
     """
-    check_prog_output(tmp_path, src, "", 2)
+    util.check_prog_output(tmp_path, src, "", 2)
 
 
 def test_dot_call_private_method_accessible_within_defining_module(tmp_path):
@@ -115,7 +109,7 @@ def test_dot_call_private_method_accessible_within_defining_module(tmp_path):
         return c.get();
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_dot_call_private_method_cross_module_rejected(tmp_path):
@@ -133,8 +127,8 @@ def test_dot_call_private_method_cross_module_rejected(tmp_path):
         fn get(*self) i32 { self.*.n }
     }
     """
-    with pytest.raises(PrivateItemAccessError):
-        compile_modules(tmp_path, main=main_src, a=a_src)
+    with pytest.raises(errors.PrivateItemAccessError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 
 def test_self_param_outside_impl_rejected(tmp_path):
@@ -142,8 +136,8 @@ def test_self_param_outside_impl_rejected(tmp_path):
     pub fn f(*self) i32 { 0 }
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(SelfParamOutsideImplError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.SelfParamOutsideImplError):
+        util.compile_str(tmp_path, src)
 
 
 def test_self_param_on_extern_rejected(tmp_path):
@@ -151,8 +145,8 @@ def test_self_param_on_extern_rejected(tmp_path):
     extern fn f(*self) i32;
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(SelfParamOutsideImplError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.SelfParamOutsideImplError):
+        util.compile_str(tmp_path, src)
 
 
 def test_dot_call_on_receiverless_assoc_fn_rejected(tmp_path):
@@ -168,8 +162,8 @@ def test_dot_call_on_receiverless_assoc_fn_rejected(tmp_path):
         return c.new();
     }
     """
-    with pytest.raises(NotAMethodError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.NotAMethodError):
+        util.compile_str(tmp_path, src)
 
 
 def test_field_access_of_non_method_name_still_works(tmp_path):
@@ -185,7 +179,7 @@ def test_field_access_of_non_method_name_still_works(tmp_path):
         return c.n;
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_dot_call_falls_back_to_field_access_when_no_method_matches(tmp_path):
@@ -201,5 +195,5 @@ def test_dot_call_falls_back_to_field_access_when_no_method_matches(tmp_path):
         return h.n();
     }
     """
-    with pytest.raises(NotCallableError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.NotCallableError):
+        util.compile_str(tmp_path, src)

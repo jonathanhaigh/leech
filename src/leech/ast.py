@@ -1,50 +1,46 @@
 """The parsed AST: one node class per grammar rule, built from Lark parse trees."""
 
+import abc
 import ast as python_ast
 import re
-from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, Optional, override
 
-from lark import Token
-from lark.tree import Branch, ParseTree, Tree
+import lark
+import lark.tree
 
-from leech.asserts import assert_eq, assert_in, checked_cast
-from leech.opt_util import opt_map
-from leech.signage import SIGNED, UNSIGNED, Signage
-from leech.src import SrcFile, SrcSpan
-from leech.target import ADDR_SIZE
+from leech import asserts, opt_util, signage, src, target
 
 
-def as_token(branch: Branch[Token]) -> Token:
+def as_token(branch: lark.tree.Branch[lark.Token]) -> lark.Token:
     """Assert that a Lark tree child is a leaf token, and return it as such.
 
     :param branch: The parse-tree child to check.
     :return: ``branch``, statically typed as :class:`~lark.Token`.
     :raises AssertionError: If ``branch`` is not a :class:`~lark.Token`.
     """
-    return checked_cast(branch, Token)
+    return asserts.checked_cast(branch, lark.Token)
 
 
-def as_tree(branch: Branch[Token]) -> Tree[Token]:
+def as_tree(branch: lark.tree.Branch[lark.Token]) -> lark.tree.Tree[lark.Token]:
     """Assert that a Lark tree child is itself a subtree, and return it as such.
 
     :param branch: The parse-tree child to check.
     :return: ``branch``, statically typed as :class:`~lark.Tree`.
     :raises AssertionError: If ``branch`` is not a :class:`~lark.Tree`.
     """
-    return checked_cast(branch, Tree)
+    return asserts.checked_cast(branch, lark.tree.Tree)
 
 
-class Ast(ABC):
+class Ast(abc.ABC):
     """Base class for every AST node.
 
     :param span: The node's source location.
     """
 
-    span: SrcSpan
+    span: src.SrcSpan
 
-    def __init__(self, span: SrcSpan) -> None:
+    def __init__(self, span: src.SrcSpan) -> None:
         self.span = span
 
     @staticmethod
@@ -73,7 +69,7 @@ class Ast(ABC):
         child_strs = "\n".join(Ast._pretty_child(k, v, indent, level + 1) for k, v in child_attrs)
         return f"{cls_name}\n{child_strs}"
 
-    @abstractmethod
+    @abc.abstractmethod
     def diag_str(self) -> str:
         """A short, human-readable description of this node, for use in diagnostics.
 
@@ -86,13 +82,13 @@ class Ident(Ast):
 
     name: str
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "ident")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "ident")
+        super().__init__(src.SrcSpan(file, tree.meta))
         self.name = as_token(tree.children[0])
 
     @staticmethod
-    def synthetic(name: str, span: SrcSpan) -> Ident:
+    def synthetic(name: str, span: src.SrcSpan) -> Ident:
         """Construct an :class:`Ident` not backed by a parse tree.
 
         Used for the implicit ``self`` binding a method's receiver
@@ -119,9 +115,9 @@ class Path(Ast):
     idents: list[Ident]
 
     @override
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "path")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "path")
+        super().__init__(src.SrcSpan(file, tree.meta))
         self.idents = [Ident(file, as_tree(ident)) for ident in tree.children]
 
     @override
@@ -137,7 +133,7 @@ class Expr(Ast):
     """Base class for every expression node."""
 
     @staticmethod
-    def _child_ctors() -> dict[str, Callable[[SrcFile, Tree], Expr]]:
+    def _child_ctors() -> dict[str, Callable[[src.SrcFile, lark.tree.Tree], Expr]]:
         return {
             "block_expr": BlockExpr,
             "if_expr": IfExpr,
@@ -162,7 +158,7 @@ class Expr(Ast):
         }
 
     @staticmethod
-    def is_expr_tree(tree: ParseTree) -> bool:
+    def is_expr_tree(tree: lark.tree.ParseTree) -> bool:
         """Whether ``tree``'s grammar rule is one that produces an :class:`Expr`.
 
         :param tree: The parse tree to check.
@@ -171,7 +167,7 @@ class Expr(Ast):
         return tree.data in Expr._child_ctors()
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Expr:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Expr:
         """Build the appropriate :class:`Expr` subclass instance from a parse tree.
 
         :param file: The source file ``tree`` was parsed from.
@@ -186,7 +182,7 @@ class PlaceExpr(Expr):
     """Base class for expressions that can appear on the left of ``=``."""
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> PlaceExpr:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> PlaceExpr:
         """Build the appropriate :class:`PlaceExpr` subclass instance from a parse tree.
 
         :param file: The source file ``tree`` was parsed from.
@@ -196,7 +192,7 @@ class PlaceExpr(Expr):
         :raises AssertionError: If ``tree``'s grammar rule doesn't produce
             a :class:`PlaceExpr`.
         """
-        return checked_cast(Expr.from_tree(file, tree), PlaceExpr)
+        return asserts.checked_cast(Expr.from_tree(file, tree), PlaceExpr)
 
 
 class BlockExpr(Expr):
@@ -205,9 +201,9 @@ class BlockExpr(Expr):
     stmts: list[Stmt]
     expr: Optional[Expr]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "block_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "block_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
 
         children = list(map(as_tree, tree.children))
 
@@ -237,9 +233,9 @@ class IfExpr(Expr):
     then: BlockExpr
     els: Optional[BlockExpr]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "if_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "if_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
 
         condition, then, *rest = list(map(as_tree, tree.children))
         self.condition = Expr.from_tree(file, condition)
@@ -263,11 +259,11 @@ class WhileExpr(Expr):
     condition: Expr
     block: BlockExpr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "while_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "while_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
         label, condition, block = tree.children
-        self.label = opt_map(label, lambda x: Ident(file, as_tree(x)))
+        self.label = opt_util.opt_map(label, lambda x: Ident(file, as_tree(x)))
         self.condition = Expr.from_tree(file, as_tree(condition))
         self.block = BlockExpr(file, as_tree(block))
 
@@ -281,9 +277,9 @@ class StrLit(Expr):
 
     value: str
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "str_lit")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "str_lit")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (tok,) = tree.children
         self.value = python_ast.literal_eval(as_token(tok))
 
@@ -303,22 +299,22 @@ class IntLit(Expr):
     for where the two are turned into a :class:`~leech.typs.IntTyp`.
     """
 
-    token: Token
+    token: lark.Token
     value: int
     explicit_width: Optional[int]
-    explicit_signage: Optional[Signage]
+    explicit_signage: Optional[signage.Signage]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "int_lit")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "int_lit")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (token,) = tree.children
         self.token = as_token(token)
         m = re.fullmatch("([0-9]+)(?:([iu])((?:[0-9]+)|size))?", self.token)
         assert m is not None
 
         if m[2] is not None:
-            self.explicit_signage = SIGNED if m[2] == "i" else UNSIGNED
-            self.explicit_width = ADDR_SIZE if m[3] == "size" else int(m[3])
+            self.explicit_signage = signage.SIGNED if m[2] == "i" else signage.UNSIGNED
+            self.explicit_width = target.ADDR_SIZE if m[3] == "size" else int(m[3])
         else:
             self.explicit_signage = None
             self.explicit_width = None
@@ -333,12 +329,12 @@ class IntLit(Expr):
 class ArrayLength(Expr):
     """An array type's length, e.g. the ``4`` in ``[i32; 4]``."""
 
-    token: Token
+    token: lark.Token
     value: int
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "array_length")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "array_length")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (token,) = tree.children
         self.token = as_token(token)
         self.value = int(self.token)
@@ -351,15 +347,15 @@ class ArrayLength(Expr):
 class BoolLit(Expr):
     """A boolean literal, ``true`` or ``false``."""
 
-    token: Token
+    token: lark.Token
     value: bool
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "bool_lit")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "bool_lit")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (token,) = tree.children
         self.token = as_token(token)
-        assert_in(token, {"true", "false"})
+        asserts.assert_in(token, {"true", "false"})
         self.value = token == "true"
 
     @override
@@ -378,8 +374,8 @@ class VarExpr(PlaceExpr):
     path: Path
     generic_args: list[Typ]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        super().__init__(src.SrcSpan(file, tree.meta))
         path, generic_args = tree.children
         self.path = Path(file, as_tree(path))
         if generic_args is not None:
@@ -400,9 +396,9 @@ class ArrayAccessExpr(PlaceExpr):
     array: Expr
     index: Expr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "array_access_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "array_access_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
         array, index = map(as_tree, tree.children)
         self.array = Expr.from_tree(file, array)
         self.index = Expr.from_tree(file, index)
@@ -417,11 +413,11 @@ class ArrayExpr(Expr):
 
     elements: list[Expr]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "array_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "array_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (arg_list,) = map(as_tree, tree.children)
-        assert_eq(arg_list.data, "arg_list")
+        asserts.assert_eq(arg_list.data, "arg_list")
         self.elements = [Expr.from_tree(file, as_tree(child)) for child in arg_list.children]
 
     @override
@@ -435,13 +431,13 @@ class StructExpr(Expr):
     typ: BasicTyp
     fields: list[StructFieldExpr]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "struct_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "struct_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
         typ, field_list = map(as_tree, tree.children)
         self.typ = BasicTyp(file, typ)
 
-        assert_eq(field_list.data, "struct_field_expr_list")
+        asserts.assert_eq(field_list.data, "struct_field_expr_list")
         self.fields = [StructFieldExpr(file, as_tree(child)) for child in field_list.children]
 
     @override
@@ -455,9 +451,9 @@ class StructFieldExpr(Expr):
     ident: Ident
     value: Expr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "struct_field_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "struct_field_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
         ident, value = map(as_tree, tree.children)
         self.ident = Ident(file, ident)
         self.value = Expr.from_tree(file, value)
@@ -473,9 +469,9 @@ class StructAccessExpr(PlaceExpr):
     struct: Expr
     field: Ident
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "struct_access_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "struct_access_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
         struct, field = map(as_tree, tree.children)
         self.struct = Expr.from_tree(file, struct)
         self.field = Ident(file, field)
@@ -490,9 +486,9 @@ class DerefExpr(PlaceExpr):
 
     ptr: Expr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "deref_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "deref_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (ptr,) = map(as_tree, tree.children)
         self.ptr = Expr.from_tree(file, ptr)
 
@@ -507,13 +503,13 @@ class CallExpr(Expr):
     callee: Expr
     args: list[Expr]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "call_expr")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "call_expr")
+        super().__init__(src.SrcSpan(file, tree.meta))
         callee, arg_list = map(as_tree, tree.children)
         self.callee = Expr.from_tree(file, callee)
 
-        assert_eq(arg_list.data, "arg_list")
+        asserts.assert_eq(arg_list.data, "arg_list")
         self.args = [Expr.from_tree(file, as_tree(child)) for child in arg_list.children]
 
     @override
@@ -526,9 +522,9 @@ class Op(Ast):
 
     name: str
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        super().__init__(SrcSpan(file, tree.meta))
-        assert_eq(len(tree.children), 1)
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        super().__init__(src.SrcSpan(file, tree.meta))
+        asserts.assert_eq(len(tree.children), 1)
         self.name = as_token(tree.children[0])
 
     @override
@@ -543,8 +539,8 @@ class BinOpExpr(Expr):
     op: Op
     rhs: Expr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        super().__init__(src.SrcSpan(file, tree.meta))
         lhs, op, rhs = map(as_tree, tree.children)
         self.lhs = Expr.from_tree(file, lhs)
         self.op = Op(file, op)
@@ -561,8 +557,8 @@ class UnaryOpExpr(Expr):
     op: Op
     operand: Expr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        super().__init__(src.SrcSpan(file, tree.meta))
         op, operand = map(as_tree, tree.children)
         self.op = Op(file, op)
         self.operand = Expr.from_tree(file, operand)
@@ -576,7 +572,7 @@ class Stmt(Ast):
     """Base class for every statement node."""
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Stmt:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Stmt:
         """Build the appropriate :class:`Stmt` subclass instance from a parse tree.
 
         :param file: The source file ``tree`` was parsed from.
@@ -584,7 +580,7 @@ class Stmt(Ast):
             :class:`Stmt` subclass is constructed.
         :return: The constructed statement node.
         """
-        assert_eq(tree.data, "stmt")
+        asserts.assert_eq(tree.data, "stmt")
         (child,) = map(as_tree, tree.children)
         child_classes = {
             "expr_stmt": ExprStmt,
@@ -602,9 +598,9 @@ class ExprStmt(Stmt):
 
     expr: Expr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "expr_stmt")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "expr_stmt")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (child,) = tree.children
         self.expr = Expr.from_tree(file, as_tree(child))
 
@@ -618,11 +614,11 @@ class RetStmt(Stmt):
 
     expr: Optional[Expr]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "ret_stmt")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "ret_stmt")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (expr,) = tree.children
-        self.expr = opt_map(expr, lambda x: Expr.from_tree(file, as_tree(x)))
+        self.expr = opt_util.opt_map(expr, lambda x: Expr.from_tree(file, as_tree(x)))
 
     @override
     def diag_str(self) -> str:
@@ -634,11 +630,11 @@ class BreakStmt(Stmt):
 
     label: Optional[Ident]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "break_stmt")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "break_stmt")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (label,) = tree.children
-        self.label = opt_map(label, lambda x: Ident(file, as_tree(x)))
+        self.label = opt_util.opt_map(label, lambda x: Ident(file, as_tree(x)))
 
     @override
     def diag_str(self) -> str:
@@ -650,11 +646,11 @@ class ContinueStmt(Stmt):
 
     label: Optional[Ident]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "continue_stmt")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "continue_stmt")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (label,) = tree.children
-        self.label = opt_map(label, lambda x: Ident(file, as_tree(x)))
+        self.label = opt_util.opt_map(label, lambda x: Ident(file, as_tree(x)))
 
     @override
     def diag_str(self) -> str:
@@ -669,13 +665,13 @@ class LetStmt(Stmt):
     typ: Optional[Typ]
     expr: Expr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "let_stmt")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "let_stmt")
+        super().__init__(src.SrcSpan(file, tree.meta))
         mut, ident, typ, expr = tree.children
         self.mut = Mutability.from_tree(file, as_tree(mut))
         self.ident = Ident(file, as_tree(ident))
-        self.typ = opt_map(typ, lambda x: Typ.from_tree(file, as_tree(x)))
+        self.typ = opt_util.opt_map(typ, lambda x: Typ.from_tree(file, as_tree(x)))
         self.expr = Expr.from_tree(file, as_tree(expr))
 
     @override
@@ -689,9 +685,9 @@ class AssignmentStmt(Stmt):
     place: PlaceExpr
     expr: Expr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "assignment_stmt")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "assignment_stmt")
+        super().__init__(src.SrcSpan(file, tree.meta))
         place, expr = map(as_tree, tree.children)
         self.place = PlaceExpr.from_tree(file, place)
         self.expr = Expr.from_tree(file, expr)
@@ -709,12 +705,12 @@ class Typ(Ast):
     :meth:`leech.typs.Typ.from_ast`).
     """
 
-    def __init__(self, span: SrcSpan) -> None:
+    def __init__(self, span: src.SrcSpan) -> None:
         super().__init__(span)
         self._typ = None
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Typ:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Typ:
         """Build the appropriate :class:`Typ` subclass instance from a parse tree.
 
         :param file: The source file ``tree`` was parsed from.
@@ -739,9 +735,9 @@ class BasicTyp(Typ):
     path: Path
     generic_args: list[Typ]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "basic_typ")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "basic_typ")
+        super().__init__(src.SrcSpan(file, tree.meta))
         path, generic_args = tree.children
         self.path = Path(file, as_tree(path))
         if generic_args is not None:
@@ -762,9 +758,9 @@ class PtrTyp(Typ):
     mut: Optional[Mutability]
     pointee_typ: Typ
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "ptr_typ")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "ptr_typ")
+        super().__init__(src.SrcSpan(file, tree.meta))
         mut, typ = tree.children
         self.mut = Mutability.from_tree(file, as_tree(mut))
         self.pointee_typ = Typ.from_tree(file, as_tree(typ))
@@ -780,9 +776,9 @@ class ArrayTyp(Typ):
     element_typ: Typ
     length: ArrayLength
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "array_typ")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "array_typ")
+        super().__init__(src.SrcSpan(file, tree.meta))
         typ, length = tree.children
         self.element_typ = Typ.from_tree(file, as_tree(typ))
         self.length = ArrayLength(file, as_tree(length))
@@ -798,9 +794,9 @@ class Param(Ast):
     name: Ident
     typ: Typ
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "param")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "param")
+        super().__init__(src.SrcSpan(file, tree.meta))
         ident, typ = tree.children
         self.name = Ident(file, as_tree(ident))
         self.typ = Typ.from_tree(file, as_tree(typ))
@@ -822,9 +818,9 @@ class Receiver(Ast):
     name: Ident
     mut: Optional[Mutability]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "receiver")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "receiver")
+        super().__init__(src.SrcSpan(file, tree.meta))
         self.name = Ident.synthetic("self", self.span)
         (mut,) = tree.children
         self.mut = Mutability.from_tree(file, as_tree(mut))
@@ -846,9 +842,9 @@ class GenericParam(Ast):
     ident: Ident
     bounds: list[Path]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "generic_param")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "generic_param")
+        super().__init__(src.SrcSpan(file, tree.meta))
         ident, *rest = list(map(as_tree, tree.children))
         self.ident = Ident(file, ident)
         if rest:
@@ -866,7 +862,7 @@ class Defn(Ast):
     """Base class for every top-level module item definition."""
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Defn:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Defn:
         """Build the appropriate :class:`Defn` subclass instance from a parse tree.
 
         :param file: The source file ``tree`` was parsed from.
@@ -874,7 +870,7 @@ class Defn(Ast):
             :class:`Defn` subclass is constructed.
         :return: The constructed definition node.
         """
-        assert_eq(tree.data, "defn")
+        asserts.assert_eq(tree.data, "defn")
         (child,) = map(as_tree, tree.children)
         child_classes = {
             "fn_defn": FnDefn,
@@ -914,21 +910,21 @@ class FnSpec(Defn):
     def __init__(
         self,
         file,
-        tree: ParseTree,
-        ident: ParseTree,
-        generic_params: Optional[ParseTree],
-        param_list: ParseTree,
-        ret_typ: Optional[ParseTree],
+        tree: lark.tree.ParseTree,
+        ident: lark.tree.ParseTree,
+        generic_params: Optional[lark.tree.ParseTree],
+        param_list: lark.tree.ParseTree,
+        ret_typ: Optional[lark.tree.ParseTree],
     ) -> None:
-        super().__init__(SrcSpan(file, tree.meta))
+        super().__init__(src.SrcSpan(file, tree.meta))
         self.name = Ident(file, ident)
         if generic_params is not None:
             self.generic_params = [GenericParam(file, as_tree(c)) for c in generic_params.children]
         else:
             self.generic_params = []
-        self.ret_typ = opt_map(ret_typ, lambda x: Typ.from_tree(file, x))
+        self.ret_typ = opt_util.opt_map(ret_typ, lambda x: Typ.from_tree(file, x))
 
-        assert_eq(param_list.data, "param_list")
+        asserts.assert_eq(param_list.data, "param_list")
         children = [as_tree(child) for child in param_list.children]
         if children and children[0].data == "receiver":
             self.receiver = Receiver(file, children[0])
@@ -944,11 +940,16 @@ class FnDecl(FnSpec):
     Never generic - an ``extern`` function has no body to monomorphize.
     """
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "fn_decl")
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "fn_decl")
         ident, param_list, ret_typ = tree.children
         super().__init__(
-            file, tree, as_tree(ident), None, as_tree(param_list), opt_map(ret_typ, as_tree)
+            file,
+            tree,
+            as_tree(ident),
+            None,
+            as_tree(param_list),
+            opt_util.opt_map(ret_typ, as_tree),
         )
 
     @override
@@ -967,11 +968,16 @@ class TraitFn(FnSpec):
     are deferred.
     """
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "trait_fn")
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "trait_fn")
         ident, param_list, ret_typ = tree.children
         super().__init__(
-            file, tree, as_tree(ident), None, as_tree(param_list), opt_map(ret_typ, as_tree)
+            file,
+            tree,
+            as_tree(ident),
+            None,
+            as_tree(param_list),
+            opt_util.opt_map(ret_typ, as_tree),
         )
 
     @override
@@ -985,16 +991,16 @@ class FnDefn(FnSpec):
     access: Optional[Access]
     block: BlockExpr
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "fn_defn")
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "fn_defn")
         access, ident, generic_params, param_list, ret_typ, block = tree.children
         super().__init__(
             file,
             tree,
             as_tree(ident),
-            opt_map(generic_params, as_tree),
+            opt_util.opt_map(generic_params, as_tree),
             as_tree(param_list),
-            opt_map(ret_typ, as_tree),
+            opt_util.opt_map(ret_typ, as_tree),
         )
         self.access = Access.from_tree(file, as_tree(access))
         self.block = BlockExpr(file, as_tree(block))
@@ -1010,9 +1016,9 @@ class VarDefn(Defn):
     access: Optional[Access]
     let_stmt: LetStmt
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "var_defn")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "var_defn")
+        super().__init__(src.SrcSpan(file, tree.meta))
         access, let_stmt = tree.children
         self.access = Access.from_tree(file, as_tree(access))
         self.let_stmt = LetStmt(file, as_tree(let_stmt))
@@ -1031,9 +1037,9 @@ class StructDefn(Defn):
     generic_params: list[GenericParam]
     fields: list[StructFieldDefn]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "struct_defn")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "struct_defn")
+        super().__init__(src.SrcSpan(file, tree.meta))
         access, ident, generic_params, field_defn_list = tree.children
         self.access = Access.from_tree(file, as_tree(access))
         self.ident = Ident(file, as_tree(ident))
@@ -1045,7 +1051,7 @@ class StructDefn(Defn):
             self.generic_params = []
 
         field_defn_list = as_tree(field_defn_list)
-        assert_eq(field_defn_list.data, "struct_field_defn_list")
+        asserts.assert_eq(field_defn_list.data, "struct_field_defn_list")
         self.fields = [StructFieldDefn(file, as_tree(child)) for child in field_defn_list.children]
 
     @override
@@ -1061,9 +1067,9 @@ class StructFieldDefn(Ast):
     ident: Ident
     typ: Typ
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "struct_field_defn")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "struct_field_defn")
+        super().__init__(src.SrcSpan(file, tree.meta))
         access, mut, ident, typ = map(as_tree, tree.children)
         self.access = Access.from_tree(file, access)
         self.mut = Mutability.from_tree(file, mut)
@@ -1085,9 +1091,9 @@ class TraitDefn(Defn):
     generic_params: list[GenericParam]
     methods: list[TraitFn]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "trait_defn")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "trait_defn")
+        super().__init__(src.SrcSpan(file, tree.meta))
         access, ident, generic_params, *method_trees = tree.children
         self.access = Access.from_tree(file, as_tree(access))
         self.ident = Ident(file, as_tree(ident))
@@ -1121,9 +1127,9 @@ class ImplDefn(Defn):
     for_typ: Optional[Typ]
     fns: list[FnDefn]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "impl_defn")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "impl_defn")
+        super().__init__(src.SrcSpan(file, tree.meta))
         generic_params, typ, for_typ, *fn_trees = tree.children
         if generic_params is not None:
             self.generic_params = [
@@ -1132,7 +1138,7 @@ class ImplDefn(Defn):
         else:
             self.generic_params = []
         self.typ = Typ.from_tree(file, as_tree(typ))
-        self.for_typ = opt_map(for_typ, lambda t: Typ.from_tree(file, as_tree(t)))
+        self.for_typ = opt_util.opt_map(for_typ, lambda t: Typ.from_tree(file, as_tree(t)))
         self.fns = [FnDefn(file, as_tree(fn_tree)) for fn_tree in fn_trees]
 
     @override
@@ -1145,9 +1151,9 @@ class Import(Defn):
 
     ident: Ident
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "import")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "import")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (ident,) = map(as_tree, tree.children)
         self.ident = Ident(file, ident)
 
@@ -1161,15 +1167,15 @@ class Access(Ast):
 
     value: str
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "access")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "access")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (child,) = tree.children
         assert child is not None
         self.value = as_token(child)
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Optional[Access]:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Optional[Access]:
         """Build an :class:`Access` from a parse tree, if it has one present.
 
         :param file: The source file ``tree`` was parsed from.
@@ -1193,14 +1199,14 @@ class Mutability(Ast):
 
     value: str
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "mut")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "mut")
+        super().__init__(src.SrcSpan(file, tree.meta))
         (child,) = tree.children
         self.value = as_token(child)
 
     @staticmethod
-    def from_tree(file: SrcFile, tree: ParseTree) -> Optional[Mutability]:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Optional[Mutability]:
         """Build a :class:`Mutability` from a parse tree, if it has one present.
 
         :param file: The source file ``tree`` was parsed from.
@@ -1224,9 +1230,9 @@ class Mod(Ast):
 
     defns: list[Defn]
 
-    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
-        assert_eq(tree.data, "mod")
-        super().__init__(SrcSpan(file, tree.meta))
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "mod")
+        super().__init__(src.SrcSpan(file, tree.meta))
         self.defns = [Defn.from_tree(file, as_tree(child)) for child in tree.children]
 
     @override
@@ -1247,11 +1253,11 @@ def opt_ast(obj: Any) -> Optional[Ast]:
     return None
 
 
-def opt_span(obj: Any) -> Optional[SrcSpan]:
+def opt_span(obj: Any) -> Optional[src.SrcSpan]:
     """Get the source span of ``obj``'s ``ast`` attribute, if it has one.
 
     :param obj: The object to inspect (typically an
         :class:`~leech.ir_values.Value`).
     :return: The span of ``obj.ast``, or ``None`` if unavailable.
     """
-    return opt_map(opt_ast(obj), lambda x: x.span)
+    return opt_util.opt_map(opt_ast(obj), lambda x: x.span)

@@ -1,11 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import (
-    BreakNotInLoopError,
-    ContinueNotInLoopError,
-    LoopLabelNotFoundError,
-)
+from leech import errors
 
 
 def test_break(tmp_path):
@@ -19,7 +15,7 @@ def test_break(tmp_path):
         return i;
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_continue(tmp_path):
@@ -36,7 +32,7 @@ def test_continue(tmp_path):
     }
     """
     # 1+2+4+5+6+7+8+9+10, skipping 3
-    check_prog_output(tmp_path, src, "", 52)
+    util.check_prog_output(tmp_path, src, "", 52)
 
 
 def test_labeled_break_outer_from_inner(tmp_path):
@@ -56,7 +52,7 @@ def test_labeled_break_outer_from_inner(tmp_path):
     """
     # If `break outer;` only broke the inner loop, this would loop forever
     # (or count well past 3).
-    check_prog_output(tmp_path, src, "", 3)
+    util.check_prog_output(tmp_path, src, "", 3)
 
 
 def test_labeled_continue_outer_from_inner(tmp_path):
@@ -79,7 +75,7 @@ def test_labeled_continue_outer_from_inner(tmp_path):
     # Each outer iteration's inner loop runs exactly twice (j=1, j=2) before
     # `continue outer;` skips the rest of the inner loop and the rest of
     # the outer body, for 3 outer iterations total.
-    check_prog_output(tmp_path, src, "", 6)
+    util.check_prog_output(tmp_path, src, "", 6)
 
 
 def test_shadowed_label_targets_inner_loop(tmp_path):
@@ -101,7 +97,7 @@ def test_shadowed_label_targets_inner_loop(tmp_path):
     """
     # If `break lbl;` had escaped to the outer loop instead of the inner
     # one shadowing it, outer_iters would be 1, not 3.
-    check_prog_output(tmp_path, src, "", (3 * 100 + 4 * 3) % 256)
+    util.check_prog_output(tmp_path, src, "", (3 * 100 + 4 * 3) % 256)
 
 
 def test_sibling_loops_reuse_label(tmp_path):
@@ -119,7 +115,7 @@ def test_sibling_loops_reuse_label(tmp_path):
         return total;
     }
     """
-    check_prog_output(tmp_path, src, "", 22)
+    util.check_prog_output(tmp_path, src, "", 22)
 
 
 def test_break_terminates_block_as_never(tmp_path):
@@ -136,7 +132,7 @@ def test_break_terminates_block_as_never(tmp_path):
         return i;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_break_in_if_arm_inside_while(tmp_path):
@@ -152,7 +148,7 @@ def test_break_in_if_arm_inside_while(tmp_path):
         return i;
     }
     """
-    check_prog_output(tmp_path, src, "", 128)
+    util.check_prog_output(tmp_path, src, "", 128)
 
 
 def test_comptime_break(tmp_path):
@@ -169,7 +165,7 @@ def test_comptime_break(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_comptime_continue(tmp_path):
@@ -189,7 +185,7 @@ def test_comptime_continue(tmp_path):
     }
     """
     # 1+3+4+5, skipping 2
-    check_prog_output(tmp_path, src, "", 13)
+    util.check_prog_output(tmp_path, src, "", 13)
 
 
 def test_break_outside_loop(tmp_path):
@@ -198,8 +194,8 @@ def test_break_outside_loop(tmp_path):
         break;
     }
     """
-    with pytest.raises(BreakNotInLoopError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.BreakNotInLoopError):
+        util.compile_str(tmp_path, src)
 
 
 def test_continue_outside_loop(tmp_path):
@@ -208,8 +204,8 @@ def test_continue_outside_loop(tmp_path):
         continue;
     }
     """
-    with pytest.raises(ContinueNotInLoopError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.ContinueNotInLoopError):
+        util.compile_str(tmp_path, src)
 
 
 def test_labeled_break_outside_loop(tmp_path):
@@ -220,8 +216,8 @@ def test_labeled_break_outside_loop(tmp_path):
         break nope;
     }
     """
-    with pytest.raises(BreakNotInLoopError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.BreakNotInLoopError):
+        util.compile_str(tmp_path, src)
 
 
 def test_break_unknown_label(tmp_path):
@@ -233,8 +229,8 @@ def test_break_unknown_label(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(LoopLabelNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.LoopLabelNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_continue_unknown_label(tmp_path):
@@ -246,8 +242,8 @@ def test_continue_unknown_label(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(LoopLabelNotFoundError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.LoopLabelNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_break_outside_loop(tmp_path):
@@ -257,5 +253,5 @@ def test_comptime_break_outside_loop(tmp_path):
     };
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(BreakNotInLoopError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.BreakNotInLoopError):
+        util.compile_str(tmp_path, src)

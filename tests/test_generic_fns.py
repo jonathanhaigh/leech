@@ -1,37 +1,21 @@
 import pytest
-from util import build_ir_mod, check_prog_output, compile_str, find_pos
+import util
 
-from leech import ir_module
-from leech.asserts import checked_cast
-from leech.errors import (
-    CannotInferTypArgError,
-    DerefInvalidTypError,
-    FieldAccessIntoInvalidTypError,
-    IncompatibleLetTypError,
-    IndexIntoInvalidTypError,
-    InvalidBinOpArgTypError,
-    MissingTypArgsError,
-    NotCallableError,
-    TypArgsOnNonGenericItemError,
-    WrongNumberOfTypArgsError,
-)
-from leech.ir_env import Env
-from leech.ir_values import CallInstr
-from leech.typs import BOOL, I32
+from leech import asserts, errors, ir_env, ir_module, ir_values, typs
 
 
 def _get_fn(mod, name: str) -> ir_module.Fn:
     """Get the plain (non-generic) function ``name`` declares in ``mod``."""
-    item = mod.get_item(Env.Namespace.VARS, name)
+    item = mod.get_item(ir_env.Env.Namespace.VARS, name)
     assert item is not None
-    return checked_cast(item.value, ir_module.Fn)
+    return asserts.checked_cast(item.value, ir_module.Fn)
 
 
 def _get_generic_fn(mod, name: str) -> ir_module.Fn:
     """Get the generic function ``name`` declares in ``mod``."""
-    item = mod.get_item(Env.Namespace.VARS, name)
+    item = mod.get_item(ir_env.Env.Namespace.VARS, name)
     assert item is not None
-    return checked_cast(item.value, ir_module.GenericFn).fn
+    return asserts.checked_cast(item.value, ir_module.GenericFn).fn
 
 
 def _lower_main(tmp_path, src):
@@ -44,7 +28,7 @@ def _lower_main(tmp_path, src):
 
     :return: ``main``'s lowered control-flow graph.
     """
-    mod = build_ir_mod(tmp_path, src)
+    mod = util.build_ir_mod(tmp_path, src)
     return _get_fn(mod, "main").cfg
 
 
@@ -63,7 +47,7 @@ def test_generic_fn_body_typechecks_with_identity_only_ops(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_fn_with_multiple_typ_params_typechecks(tmp_path):
@@ -78,7 +62,7 @@ def test_generic_fn_with_multiple_typ_params_typechecks(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_fn_body_rejects_arithmetic_on_typ_param(tmp_path):
@@ -88,8 +72,8 @@ def test_generic_fn_body_rejects_arithmetic_on_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(InvalidBinOpArgTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidBinOpArgTypError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"T"' in str(exc_info.value)
 
 
@@ -100,8 +84,8 @@ def test_generic_fn_body_rejects_field_access_on_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(FieldAccessIntoInvalidTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.FieldAccessIntoInvalidTypError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"T"' in str(exc_info.value)
 
 
@@ -112,8 +96,8 @@ def test_generic_fn_body_rejects_indexing_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(IndexIntoInvalidTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IndexIntoInvalidTypError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"T"' in str(exc_info.value)
 
 
@@ -125,8 +109,8 @@ def test_generic_fn_body_rejects_calling_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(NotCallableError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.NotCallableError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"T"' in str(exc_info.value)
 
 
@@ -137,8 +121,8 @@ def test_generic_fn_body_rejects_deref_of_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(DerefInvalidTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DerefInvalidTypError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"T"' in str(exc_info.value)
 
 
@@ -152,8 +136,8 @@ def test_generic_fn_distinct_typ_params_are_incompatible(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(IncompatibleLetTypError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleLetTypError) as exc_info:
+        util.compile_str(tmp_path, src)
     msg = str(exc_info.value)
     assert '"T"' in msg
     assert '"U"' in msg
@@ -167,13 +151,13 @@ def test_bare_reference_to_generic_fn_requires_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(MissingTypArgsError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     assert '"id"' in str(exc_info.value)
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == find_pos(src, "id;")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "id;")
 
 
 def test_address_of_generic_fn_requires_typ_args(tmp_path):
@@ -184,8 +168,8 @@ def test_address_of_generic_fn_requires_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(MissingTypArgsError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"id"' in str(exc_info.value)
 
 
@@ -200,7 +184,7 @@ def test_generic_fn_instance_as_function_pointer(tmp_path):
         return f(5) - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_fn_instance_pointer_called_multiple_times(tmp_path):
@@ -214,7 +198,7 @@ def test_generic_fn_instance_pointer_called_multiple_times(tmp_path):
         return (a + b) - 7;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_address_of_explicit_generic_fn_instance_is_a_noop(tmp_path):
@@ -228,7 +212,7 @@ def test_address_of_explicit_generic_fn_instance_is_a_noop(tmp_path):
         return f(5) - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_wrong_number_of_explicit_typ_args_on_bare_generic_fn_reference(tmp_path):
@@ -239,8 +223,8 @@ def test_wrong_number_of_explicit_typ_args_on_bare_generic_fn_reference(tmp_path
         return 0;
     }
     """
-    with pytest.raises(WrongNumberOfTypArgsError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"id"' in str(exc_info.value)
 
 
@@ -252,8 +236,8 @@ def test_explicit_typ_args_on_non_generic_fn_reference(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(TypArgsOnNonGenericItemError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"f"' in str(exc_info.value)
 
 
@@ -266,7 +250,7 @@ def test_calling_generic_fn_infers_typ_args_from_argument(tmp_path):
         return id(n) - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
@@ -277,7 +261,7 @@ def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
         return id[i32](5) - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
@@ -292,7 +276,7 @@ def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
         return pair_first(a, b) - 3;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_calling_generic_fn_from_another_module(tmp_path):
@@ -305,7 +289,7 @@ def test_calling_generic_fn_from_another_module(tmp_path):
         return a::id(n) - 7;
     }
     """
-    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
 def test_generic_fn_instance_merges_across_modules(tmp_path):
@@ -328,7 +312,7 @@ def test_generic_fn_instance_merges_across_modules(tmp_path):
         return (a::id(n) - 7) + a::use_id_internally();
     }
     """
-    check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
 def test_multiple_typ_args_coexist_for_the_same_generic_fn(tmp_path):
@@ -345,7 +329,7 @@ def test_multiple_typ_args_coexist_for_the_same_generic_fn(tmp_path):
         return 99;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_fn_over_pointer_typ_param(tmp_path):
@@ -357,7 +341,7 @@ def test_generic_fn_over_pointer_typ_param(tmp_path):
         return deref(&n) - 42;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_fn_with_struct_typ_arg(tmp_path):
@@ -373,7 +357,7 @@ def test_generic_fn_with_struct_typ_arg(tmp_path):
         return (p.x + p.y) - 7;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_fn_infers_typ_arg_through_generic_struct_arg(tmp_path):
@@ -390,7 +374,7 @@ def test_generic_fn_infers_typ_arg_through_generic_struct_arg(tmp_path):
         return unwrap(b) - 42;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_fn_recursion_runtime_output(tmp_path):
@@ -407,7 +391,7 @@ def test_generic_fn_recursion_runtime_output(tmp_path):
         return depth(start, 3) - 11;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_mod_var_initializer_calls_generic_fn_with_explicit_typ_args(tmp_path):
@@ -420,7 +404,7 @@ def test_mod_var_initializer_calls_generic_fn_with_explicit_typ_args(tmp_path):
         return x - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_mod_var_initializer_calls_generic_fn_with_inferred_typ_args(tmp_path):
@@ -434,7 +418,7 @@ def test_mod_var_initializer_calls_generic_fn_with_inferred_typ_args(tmp_path):
         return x - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_mod_var_initializer_stores_generic_fn_instance_as_function_pointer(tmp_path):
@@ -447,7 +431,7 @@ def test_mod_var_initializer_stores_generic_fn_instance_as_function_pointer(tmp_
         return f(5) - 5;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_two_mod_var_initializers_use_different_typ_args_of_same_generic_fn(tmp_path):
@@ -462,7 +446,7 @@ def test_two_mod_var_initializers_use_different_typ_args_of_same_generic_fn(tmp_
         return 99;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(tmp_path):
@@ -475,8 +459,8 @@ def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CannotInferTypArgError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CannotInferTypArgError) as exc_info:
+        util.compile_str(tmp_path, src)
     msg = str(exc_info.value)
     assert '"T"' in msg
     assert '"id"' in msg
@@ -490,8 +474,8 @@ def test_calling_generic_fn_with_wrong_number_of_explicit_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(WrongNumberOfTypArgsError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"id"' in str(exc_info.value)
 
 
@@ -503,8 +487,8 @@ def test_explicit_typ_args_on_non_generic_fn(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(TypArgsOnNonGenericItemError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+        util.compile_str(tmp_path, src)
     assert '"f"' in str(exc_info.value)
 
 
@@ -520,40 +504,40 @@ def test_generic_assoc_fn_not_yet_supported(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(AssertionError):
-        compile_str(tmp_path, src)
+        util.compile_str(tmp_path, src)
 
 
 def test_fn_instance_caches_by_typ_args(tmp_path):
-    mod = build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    assert fn.instance((I32,)) is fn.instance((I32,))
-    assert fn.instance((I32,)) is not fn.instance((BOOL,))
+    assert fn.instance((typs.I32,)) is fn.instance((typs.I32,))
+    assert fn.instance((typs.I32,)) is not fn.instance((typs.BOOL,))
 
 
 def test_fn_instance_signature_is_substituted(tmp_path):
-    mod = build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    inst = fn.instance((I32,))
-    assert inst.fn_typ.param_typs == (I32,)
-    assert inst.fn_typ.ret_typ is I32
+    inst = fn.instance((typs.I32,))
+    assert inst.fn_typ.param_typs == (typs.I32,)
+    assert inst.fn_typ.ret_typ is typs.I32
 
 
 def test_fn_instance_mangled_name(tmp_path):
-    mod = build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    inst = fn.instance((I32,))
+    inst = fn.instance((typs.I32,))
     assert inst.name == "id[i32]"
     assert inst.qualified_name == "main.id[i32]"
 
 
 def test_fn_instance_mangled_name_with_multiple_typ_args(tmp_path):
-    mod = build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
+    mod = util.build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
     fn = _get_generic_fn(mod, "pair_first")
 
-    inst = fn.instance((I32, BOOL))
+    inst = fn.instance((typs.I32, typs.BOOL))
     assert inst.name == "pair_first[i32, bool]"
 
 
@@ -563,17 +547,17 @@ def test_fn_instance_body_lowers(tmp_path):
     # declared return type T. Lowering that coercion has to substitute
     # the instance's concrete type argument for T rather than leaving a
     # raw type parameter behind for codegen to choke on.
-    mod = build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    _ = fn.instance((I32,)).cfg
+    _ = fn.instance((typs.I32,)).cfg
 
 
 def test_fn_instance_body_lowers_for_multiple_typ_args(tmp_path):
-    mod = build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
+    mod = util.build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
     fn = _get_generic_fn(mod, "pair_first")
 
-    _ = fn.instance((I32, BOOL)).cfg
+    _ = fn.instance((typs.I32, typs.BOOL)).cfg
 
 
 def test_fn_instance_recursive_call_lowers(tmp_path):
@@ -582,7 +566,7 @@ def test_fn_instance_recursive_call_lowers(tmp_path):
     # argument TypCheck records for that call site is itself a type
     # parameter, not a concrete type - lowering has to resolve that
     # against the instance actually being built before asking for it.
-    mod = build_ir_mod(
+    mod = util.build_ir_mod(
         tmp_path,
         """
         fn depth[T](x: T, n: i32) T {
@@ -595,7 +579,7 @@ def test_fn_instance_recursive_call_lowers(tmp_path):
     )
     fn = _get_generic_fn(mod, "depth")
 
-    _ = fn.instance((I32,)).cfg
+    _ = fn.instance((typs.I32,)).cfg
 
 
 def test_calling_generic_fn_lowers_to_an_instance_call(tmp_path):
@@ -609,7 +593,9 @@ def test_calling_generic_fn_lowers_to_an_instance_call(tmp_path):
     """
     cfg = _lower_main(tmp_path, src)
 
-    call_instrs = [instr for bb in cfg.nodes for instr in bb.instrs if isinstance(instr, CallInstr)]
+    call_instrs = [
+        instr for bb in cfg.nodes for instr in bb.instrs if isinstance(instr, ir_values.CallInstr)
+    ]
     (call,) = call_instrs
-    callee = checked_cast(call.callee, ir_module.FnInstance)
+    callee = asserts.checked_cast(call.callee, ir_module.FnInstance)
     assert callee.name == "id[i32]"

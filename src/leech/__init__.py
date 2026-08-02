@@ -1,12 +1,12 @@
 """The Leech compiler package."""
 
-from .main import run
+from leech import driver
 
 
 def main() -> None:
     """Run the ``leech`` console-script entry point.
 
     Parses command-line arguments, compiles the given source file, and
-    writes out the resulting LLVM IR (see :func:`leech.main.run`).
+    writes out the resulting LLVM IR (see :func:`leech.driver.run`).
     """
-    run()
+    driver.run()

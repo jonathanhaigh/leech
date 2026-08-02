@@ -1,14 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import (
-    EmptyArrayTypUnknownError,
-    IncompatibleTypInArrayExprError,
-    IndexIntoInvalidTypError,
-    InvalidArgTypError,
-    InvalidIndexTypError,
-    VoidArrayElementError,
-)
+from leech import errors
 
 
 def test_mod_array(tmp_path):
@@ -20,7 +13,7 @@ def test_mod_array(tmp_path):
         return arr.[idx] + arr.[1usize];
     }
     """
-    check_prog_output(tmp_path, src, "", 19)
+    util.check_prog_output(tmp_path, src, "", 19)
 
 
 def test_comptime_array_access(tmp_path):
@@ -35,7 +28,7 @@ def test_comptime_array_access(tmp_path):
         return x + y + z;
     }
     """
-    check_prog_output(tmp_path, src, "", 27)
+    util.check_prog_output(tmp_path, src, "", 27)
 
 
 def test_array_index_int_lit_infers_usize(tmp_path):
@@ -47,7 +40,7 @@ def test_array_index_int_lit_infers_usize(tmp_path):
         return arr.[0] + arr.[2];
     }
     """
-    check_prog_output(tmp_path, src, "", 40)
+    util.check_prog_output(tmp_path, src, "", 40)
 
 
 def test_array_index_widens_to_usize(tmp_path):
@@ -59,7 +52,7 @@ def test_array_index_widens_to_usize(tmp_path):
         return arr.[i];
     }
     """
-    check_prog_output(tmp_path, src, "", 30)
+    util.check_prog_output(tmp_path, src, "", 30)
 
 
 def test_array_index_signed_is_rejected(tmp_path):
@@ -71,8 +64,8 @@ def test_array_index_signed_is_rejected(tmp_path):
         return arr.[i];
     }
     """
-    with pytest.raises(InvalidIndexTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidIndexTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_array_index_int_lit_infers_usize(tmp_path):
@@ -83,7 +76,7 @@ def test_comptime_array_index_int_lit_infers_usize(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 3)
+    util.check_prog_output(tmp_path, src, "", 3)
 
 
 def test_comptime_array_elt_typ_from_suffixed_elt(tmp_path):
@@ -96,7 +89,7 @@ def test_comptime_array_elt_typ_from_suffixed_elt(tmp_path):
         return 0;
     }
     """
-    compile_str(tmp_path, src)
+    util.compile_str(tmp_path, src)
 
 
 def test_comptime_array_incompatible_typs(tmp_path):
@@ -108,8 +101,8 @@ def test_comptime_array_incompatible_typs(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleTypInArrayExprError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleTypInArrayExprError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_array_invalid_index(tmp_path):
@@ -121,8 +114,8 @@ def test_comptime_array_invalid_index(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidIndexTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidIndexTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_index_into_non_array(tmp_path):
@@ -134,8 +127,8 @@ def test_comptime_index_into_non_array(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IndexIntoInvalidTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IndexIntoInvalidTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_local_array(tmp_path):
@@ -147,7 +140,7 @@ def test_local_array(tmp_path):
         return arr.[idx + 1usize];
     }
     """
-    check_prog_output(tmp_path, src, "", 5)
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_local_array_incompatible_typs(tmp_path):
@@ -159,8 +152,8 @@ def test_local_array_incompatible_typs(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleTypInArrayExprError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleTypInArrayExprError):
+        util.compile_str(tmp_path, src)
 
 
 def test_local_array_invalid_index(tmp_path):
@@ -173,8 +166,8 @@ def test_local_array_invalid_index(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidIndexTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidIndexTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_local_index_into_non_array(tmp_path):
@@ -186,8 +179,8 @@ def test_local_index_into_non_array(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IndexIntoInvalidTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IndexIntoInvalidTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_array_ret_typ_and_param_typ(tmp_path):
@@ -200,7 +193,7 @@ def test_array_ret_typ_and_param_typ(tmp_path):
         return f([1, 2, 3, 4]).[1usize];
     }
     """
-    check_prog_output(tmp_path, src, "", 4)
+    util.check_prog_output(tmp_path, src, "", 4)
 
 
 def test_empty_array_expr_typ_unknown(tmp_path):
@@ -210,8 +203,8 @@ def test_empty_array_expr_typ_unknown(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(EmptyArrayTypUnknownError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.EmptyArrayTypUnknownError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_empty_array_expr_typ_unknown(tmp_path):
@@ -221,8 +214,8 @@ def test_comptime_empty_array_expr_typ_unknown(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(EmptyArrayTypUnknownError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.EmptyArrayTypUnknownError):
+        util.compile_str(tmp_path, src)
 
 
 def test_empty_array_expr_infers_from_let_typ(tmp_path):
@@ -232,7 +225,7 @@ def test_empty_array_expr_infers_from_let_typ(tmp_path):
         return 42;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_empty_array_as_call_arg(tmp_path):
@@ -244,7 +237,7 @@ def test_empty_array_as_call_arg(tmp_path):
         return f([]);
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_comptime_empty_array_as_call_arg(tmp_path):
@@ -257,7 +250,7 @@ def test_comptime_empty_array_as_call_arg(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_empty_array_wrong_expected_length(tmp_path):
@@ -269,8 +262,8 @@ def test_empty_array_wrong_expected_length(tmp_path):
         return f([]);
     }
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_empty_array_return(tmp_path):
@@ -283,7 +276,7 @@ def test_empty_array_return(tmp_path):
         return 42;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_empty_array_struct_field(tmp_path):
@@ -296,7 +289,7 @@ def test_empty_array_struct_field(tmp_path):
         return 55;
     }
     """
-    check_prog_output(tmp_path, src, "", 55)
+    util.check_prog_output(tmp_path, src, "", 55)
 
 
 def test_empty_array_assignment(tmp_path):
@@ -310,7 +303,7 @@ def test_empty_array_assignment(tmp_path):
         return f([]);
     }
     """
-    check_prog_output(tmp_path, src, "", 99)
+    util.check_prog_output(tmp_path, src, "", 99)
 
 
 def test_nested_empty_array_as_call_arg(tmp_path):
@@ -322,7 +315,7 @@ def test_nested_empty_array_as_call_arg(tmp_path):
         return f([[], []]);
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_void_array_element(tmp_path):
@@ -332,8 +325,8 @@ def test_void_array_element(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(VoidArrayElementError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.VoidArrayElementError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_void_array_element(tmp_path):
@@ -343,8 +336,8 @@ def test_comptime_void_array_element(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(VoidArrayElementError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.VoidArrayElementError):
+        util.compile_str(tmp_path, src)
 
 
 def test_void_array_element_from_later_element(tmp_path):
@@ -357,5 +350,5 @@ def test_void_array_element_from_later_element(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(VoidArrayElementError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.VoidArrayElementError):
+        util.compile_str(tmp_path, src)

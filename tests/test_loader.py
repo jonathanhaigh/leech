@@ -1,24 +1,20 @@
-from util import write_whole_file
+import util
 
-from leech.asserts import checked_cast
-from leech.ir_env import Env
-from leech.ir_loader import ModLoader
-from leech.ir_module import Mod
-from leech.typs import StructTyp
+from leech import asserts, ir_env, ir_loader, ir_module, typs
 
 
 def load_main(tmp_path, **modules):
     """Write the given modules and load main.leech, returning its loader."""
     for mod_name, mod_src in modules.items():
-        write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
-    loader = ModLoader()
+        util.write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
+    loader = ir_loader.ModLoader()
     loader.load(tmp_path / "main.leech")
     return loader
 
 
 def test_load_is_memoized(tmp_path):
-    write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
-    loader = ModLoader()
+    util.write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
+    loader = ir_loader.ModLoader()
     path = tmp_path / "main.leech"
     assert loader.load(path) is loader.load(path)
     assert len(loader.mods) == 1
@@ -28,8 +24,8 @@ def test_load_normalizes_paths(tmp_path):
     # The same file named two different ways is one module, which is what
     # keeps a cycle back to the file the CLI was invoked on from
     # reloading it.
-    write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
-    loader = ModLoader()
+    util.write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
+    loader = ir_loader.ModLoader()
     direct = loader.load(tmp_path / "main.leech")
     indirect = loader.load(tmp_path / "." / "main.leech")
     assert direct is indirect
@@ -61,11 +57,11 @@ def test_diamond_shares_one_struct_typ(tmp_path):
     # Each lookup is checked rather than chained straight through: a
     # failed lookup returns None, so two of them would otherwise both be
     # None and make the final assertion pass without proving anything.
-    containers = Env.Namespace.CONTAINERS
-    c_via_a = checked_cast(mods["a"].env.get(containers, "c"), Mod)
-    c_via_b = checked_cast(mods["b"].env.get(containers, "c"), Mod)
-    foo_via_a = checked_cast(c_via_a.env.get(containers, "Foo"), StructTyp)
-    foo_via_b = checked_cast(c_via_b.env.get(containers, "Foo"), StructTyp)
+    containers = ir_env.Env.Namespace.CONTAINERS
+    c_via_a = asserts.checked_cast(mods["a"].env.get(containers, "c"), ir_module.Mod)
+    c_via_b = asserts.checked_cast(mods["b"].env.get(containers, "c"), ir_module.Mod)
+    foo_via_a = asserts.checked_cast(c_via_a.env.get(containers, "Foo"), typs.StructTyp)
+    foo_via_b = asserts.checked_cast(c_via_b.env.get(containers, "Foo"), typs.StructTyp)
     assert foo_via_a is foo_via_b
 
 

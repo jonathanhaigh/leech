@@ -1,14 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import (
-    IncompatibleAssignmentTypError,
-    IncompatibleBinOpArgTypsError,
-    IncompatibleLetTypError,
-    IncompatibleStructFieldTypError,
-    InvalidArgTypError,
-    InvalidRetTypError,
-)
+from leech import errors
 
 
 def test_mut_ptr_coerces_to_const_ptr_arg(tmp_path):
@@ -21,7 +14,7 @@ def test_mut_ptr_coerces_to_const_ptr_arg(tmp_path):
         return get(&x);
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_mut_ptr_coerces_to_const_ptr_return(tmp_path):
@@ -34,7 +27,7 @@ def test_mut_ptr_coerces_to_const_ptr_return(tmp_path):
         return f(&x).*;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_mut_ptr_coerces_to_const_ptr_tail_expr(tmp_path):
@@ -45,7 +38,7 @@ def test_mut_ptr_coerces_to_const_ptr_tail_expr(tmp_path):
         return f(&x).*;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_mut_ptr_coerces_to_const_ptr_assignment(tmp_path):
@@ -58,7 +51,7 @@ def test_mut_ptr_coerces_to_const_ptr_assignment(tmp_path):
         return p.*;
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_mut_ptr_coerces_to_const_ptr_struct_field(tmp_path):
@@ -70,7 +63,7 @@ def test_mut_ptr_coerces_to_const_ptr_struct_field(tmp_path):
         return h.p.*;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_mut_ptr_coerces_to_const_ptr_array_element(tmp_path):
@@ -85,7 +78,7 @@ def test_mut_ptr_coerces_to_const_ptr_array_element(tmp_path):
         return first([&x, &y]);
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_const_ptr_does_not_coerce_to_mut_ptr_arg(tmp_path):
@@ -101,8 +94,8 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_arg(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_const_ptr_does_not_coerce_to_mut_ptr_return(tmp_path):
@@ -114,8 +107,8 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_return(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidRetTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidRetTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_const_ptr_does_not_coerce_to_mut_ptr_assignment(tmp_path):
@@ -128,8 +121,8 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_assignment(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleAssignmentTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleAssignmentTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_ptr_coercion_does_not_change_pointee(tmp_path):
@@ -143,8 +136,8 @@ def test_ptr_coercion_does_not_change_pointee(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleStructFieldTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleStructFieldTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_mut_ptr_coerces_to_const_ptr(tmp_path):
@@ -160,7 +153,7 @@ def test_comptime_mut_ptr_coerces_to_const_ptr(tmp_path):
         return y;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 @pytest.mark.parametrize(
@@ -189,7 +182,7 @@ def test_widening_int_coercion_allowed(src_typ, dst_typ, tmp_path):
         return 0;
     }}
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 @pytest.mark.parametrize(
@@ -218,8 +211,8 @@ def test_narrowing_int_coercion_rejected(src_typ, dst_typ, tmp_path):
         return 0;
     }}
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_widening_sign_extends_signed_source(tmp_path):
@@ -239,7 +232,7 @@ def test_widening_sign_extends_signed_source(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_widening_zero_extends_unsigned_source(tmp_path):
@@ -257,7 +250,7 @@ def test_widening_zero_extends_unsigned_source(tmp_path):
         };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_widening_int_coercion_return(tmp_path):
@@ -271,7 +264,7 @@ def test_widening_int_coercion_return(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_widening_int_coercion_tail_expr(tmp_path):
@@ -282,7 +275,7 @@ def test_widening_int_coercion_tail_expr(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_widening_int_coercion_assignment(tmp_path):
@@ -294,7 +287,7 @@ def test_widening_int_coercion_assignment(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_widening_int_coercion_struct_field(tmp_path):
@@ -306,7 +299,7 @@ def test_widening_int_coercion_struct_field(tmp_path):
         return t.a;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_widening_int_coercion_array_element(tmp_path):
@@ -320,7 +313,7 @@ def test_widening_int_coercion_array_element(tmp_path):
         return first([small, other]);
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_widening_int_coercion_let_initializer(tmp_path):
@@ -336,7 +329,7 @@ def test_widening_int_coercion_let_initializer(tmp_path):
         return if (y == 10i64) { 7 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_narrowing_int_coercion_let_rejected(tmp_path):
@@ -346,8 +339,8 @@ def test_narrowing_int_coercion_let_rejected(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleLetTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleLetTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_mut_ptr_coerces_to_const_ptr_let_initializer(tmp_path):
@@ -358,7 +351,7 @@ def test_mut_ptr_coerces_to_const_ptr_let_initializer(tmp_path):
         return p.*;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_comptime_widening_int_coercion_let(tmp_path):
@@ -371,7 +364,7 @@ def test_comptime_widening_int_coercion_let(tmp_path):
         return if (y == 43i64) { 7 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_comptime_widening_int_coercion(tmp_path):
@@ -391,7 +384,7 @@ def test_comptime_widening_int_coercion(tmp_path):
         return as_i32(small) + 35i32;
     }
     """
-    check_prog_output(tmp_path, src, "", 42)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_no_coercion_in_arithmetic(tmp_path):
@@ -405,8 +398,8 @@ def test_no_coercion_in_arithmetic(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleBinOpArgTypsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+        util.compile_str(tmp_path, src)
 
 
 def test_no_coercion_in_comparison(tmp_path):
@@ -418,8 +411,8 @@ def test_no_coercion_in_comparison(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IncompatibleBinOpArgTypsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+        util.compile_str(tmp_path, src)
 
 
 def test_no_coercion_in_let_initializer(tmp_path):
@@ -434,7 +427,7 @@ def test_no_coercion_in_let_initializer(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_bool_does_not_coerce_to_int(tmp_path):
@@ -445,5 +438,5 @@ def test_bool_does_not_coerce_to_int(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidArgTypError):
+        util.compile_str(tmp_path, src)

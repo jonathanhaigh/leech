@@ -1,7 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import InvalidBinOpArgTypError, InvalidUnaryOpArgTypError
+from leech import errors
 
 AND_CASES = (
     (True, True, True),
@@ -34,7 +34,7 @@ def test_and(lhs, rhs, result, tmp_path):
         return if ({_lit(lhs)} and {_lit(rhs)}) {{ 100 }} else {{ 200 }};
     }}
     """
-    check_prog_output(tmp_path, src, "", 100 if result else 200)
+    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
 
 
 @pytest.mark.parametrize("lhs,rhs,result", AND_CASES)
@@ -45,7 +45,7 @@ def test_comptime_and(lhs, rhs, result, tmp_path):
         return x;
     }}
     """
-    check_prog_output(tmp_path, src, "", 100 if result else 200)
+    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
 
 
 @pytest.mark.parametrize("lhs,rhs,result", OR_CASES)
@@ -55,7 +55,7 @@ def test_or(lhs, rhs, result, tmp_path):
         return if ({_lit(lhs)} or {_lit(rhs)}) {{ 100 }} else {{ 200 }};
     }}
     """
-    check_prog_output(tmp_path, src, "", 100 if result else 200)
+    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
 
 
 @pytest.mark.parametrize("lhs,rhs,result", OR_CASES)
@@ -66,7 +66,7 @@ def test_comptime_or(lhs, rhs, result, tmp_path):
         return x;
     }}
     """
-    check_prog_output(tmp_path, src, "", 100 if result else 200)
+    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
 
 
 @pytest.mark.parametrize("operand,result", NOT_CASES)
@@ -76,7 +76,7 @@ def test_not(operand, result, tmp_path):
         return if (not {_lit(operand)}) {{ 100 }} else {{ 200 }};
     }}
     """
-    check_prog_output(tmp_path, src, "", 100 if result else 200)
+    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
 
 
 @pytest.mark.parametrize("operand,result", NOT_CASES)
@@ -87,7 +87,7 @@ def test_comptime_not(operand, result, tmp_path):
         return x;
     }}
     """
-    check_prog_output(tmp_path, src, "", 100 if result else 200)
+    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
 
 
 def test_not_binds_tighter_than_and(tmp_path):
@@ -97,7 +97,7 @@ def test_not_binds_tighter_than_and(tmp_path):
         return if (not false and false) { 100 } else { 200 };
     }
     """
-    check_prog_output(tmp_path, src, "", 200)
+    util.check_prog_output(tmp_path, src, "", 200)
 
 
 def test_and_binds_tighter_than_or(tmp_path):
@@ -109,7 +109,7 @@ def test_and_binds_tighter_than_or(tmp_path):
         return if (true or false and false) { 100 } else { 200 };
     }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 def test_logic_ops_bind_looser_than_comparison(tmp_path):
@@ -119,7 +119,7 @@ def test_logic_ops_bind_looser_than_comparison(tmp_path):
         return if (not 1 == 2) { 100 } else { 200 };
     }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 # --- Short-circuiting is actually observed, not assumed ---
@@ -138,7 +138,7 @@ def test_and_short_circuits_at_runtime(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_and_evaluates_rhs_when_lhs_true(tmp_path):
@@ -154,7 +154,7 @@ def test_and_evaluates_rhs_when_lhs_true(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "side effect\n", 0)
+    util.check_prog_output(tmp_path, src, "side effect\n", 0)
 
 
 def test_or_short_circuits_at_runtime(tmp_path):
@@ -170,7 +170,7 @@ def test_or_short_circuits_at_runtime(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_or_evaluates_rhs_when_lhs_false(tmp_path):
@@ -186,7 +186,7 @@ def test_or_evaluates_rhs_when_lhs_false(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "side effect\n", 0)
+    util.check_prog_output(tmp_path, src, "side effect\n", 0)
 
 
 def test_comptime_and_short_circuits(tmp_path):
@@ -198,7 +198,7 @@ def test_comptime_and_short_circuits(tmp_path):
         return if (x) { 1 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 0)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_comptime_or_short_circuits(tmp_path):
@@ -208,7 +208,7 @@ def test_comptime_or_short_circuits(tmp_path):
         return if (x) { 1 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 # --- Type errors ---
@@ -222,8 +222,8 @@ def test_invalid_logic_bin_op_lhs(op, tmp_path):
         return 0;
     }}
     """
-    with pytest.raises(InvalidBinOpArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidBinOpArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 @pytest.mark.parametrize("op", ("and", "or"))
@@ -234,8 +234,8 @@ def test_invalid_logic_bin_op_rhs(op, tmp_path):
         return 0;
     }}
     """
-    with pytest.raises(InvalidBinOpArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidBinOpArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_not_operand(tmp_path):
@@ -245,8 +245,8 @@ def test_invalid_not_operand(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidUnaryOpArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidUnaryOpArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 @pytest.mark.parametrize("op", ("and", "or"))
@@ -262,7 +262,7 @@ def test_never_lhs_compiles(op, tmp_path):
         return f();
     }}
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 @pytest.mark.parametrize(
@@ -282,7 +282,7 @@ def test_never_rhs_compiles(op, lhs, tmp_path):
         return f();
     }}
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_deeply_nested_logic_ops(tmp_path):
@@ -300,4 +300,4 @@ def test_deeply_nested_logic_ops(tmp_path):
         return if (a and (b or (c and (d or e)))) { 7 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)

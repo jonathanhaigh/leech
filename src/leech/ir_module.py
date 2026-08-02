@@ -1,38 +1,26 @@
 """Module/program structure: functions, module-level variables, and modules."""
 
+import abc
+import dataclasses
 import enum
-from abc import abstractmethod
+import functools
 from collections.abc import Callable, Collection, Mapping
-from dataclasses import dataclass
-from functools import cached_property
 from typing import ClassVar, Final, Optional, override
 
-from leech import ast, comptime, ir_builder, ir_env, ir_loader, ir_traits, typcheck
-from leech.asserts import assert_eq, checked_cast
-from leech.errors import (
-    CircularVarInitializerError,
-    ImplForNonLocalStructTypError,
-    ImplForNonStructTypError,
-    ImplForNonTraitError,
-    ModDoesNotExistError,
-    SelfParamOutsideImplError,
-)
-from leech.ir_values import Cfg, ComptimePtr, ComptimeValue, Param, Value
-from leech.opt_util import opt_unwrap
-from leech.src import SrcFile, SrcSpan
-from leech.typs import (
-    BOOL,
-    CONST,
-    ISIZE,
-    NEVER,
-    USIZE,
-    VOID,
-    FnTyp,
-    Mutability,
-    PtrTyp,
-    StructTyp,
-    Typ,
-    TypParamTyp,
+from leech import (
+    asserts,
+    ast,
+    comptime,
+    errors,
+    ir_builder,
+    ir_env,
+    ir_loader,
+    ir_traits,
+    ir_values,
+    opt_util,
+    src,
+    typcheck,
+    typs,
 )
 
 
@@ -53,7 +41,7 @@ class Access(enum.Enum):
         """
         if ast is None:
             return PRIVATE
-        assert_eq(ast.value, "pub")
+        asserts.assert_eq(ast.value, "pub")
         return PUBLIC
 
 
@@ -61,7 +49,7 @@ PRIVATE = Access.PRIVATE
 PUBLIC = Access.PUBLIC
 
 
-@dataclass
+@dataclasses.dataclass
 class ModItem:
     """A single named item (function, variable, type, or import) in a module.
 
@@ -76,7 +64,7 @@ class ModItem:
     mod: Final[Mod]
     name: Final[str]
     access: Final[Access]
-    value: Final[Value[PtrTyp] | ir_env.Container | GenericFn]
+    value: Final[ir_values.Value[typs.PtrTyp] | ir_env.Container | GenericFn]
     qualify_name: Final[bool] = True
 
     @property
@@ -94,7 +82,7 @@ class ModItem:
         which is why its items are keyed on namespace as well as name
         (see :meth:`Mod.get_item`).
         """
-        if isinstance(self.value, (Value, GenericFn)):
+        if isinstance(self.value, (ir_values.Value, GenericFn)):
             return ir_env.Env.Namespace.VARS
         return ir_env.Env.Namespace.CONTAINERS
 
@@ -109,7 +97,7 @@ class ModItem:
         return self.name
 
 
-class FnSpec[FnAstT_co: ast.FnSpec](ComptimePtr[FnAstT_co]):
+class FnSpec[FnAstT_co: ast.FnSpec](ir_values.ComptimePtr[FnAstT_co]):
     """Base class for anything callable that can appear as a module item.
 
     A function pointer that can never be dereferenced to a plain value -
@@ -117,35 +105,35 @@ class FnSpec[FnAstT_co: ast.FnSpec](ComptimePtr[FnAstT_co]):
     """
 
     @override
-    def load(self) -> ComptimeValue:
+    def load(self) -> ir_values.ComptimeValue:
         raise AssertionError("Can't dereference a function pointer")
 
     @override
-    def store(self, value: ComptimeValue) -> None:
+    def store(self, value: ir_values.ComptimeValue) -> None:
         raise AssertionError("Can't dereference a function pointer")
 
     @override
     def is_temporary(self) -> bool:
         return False
 
-    @cached_property
-    def params(self) -> tuple[Param, ...]:
+    @functools.cached_property
+    def params(self) -> tuple[ir_values.Param, ...]:
         """This function's formal parameters, in declaration order."""
         return self.calculate_params()
 
-    @abstractmethod
-    def calculate_params(self) -> tuple[Param, ...]:
+    @abc.abstractmethod
+    def calculate_params(self) -> tuple[ir_values.Param, ...]:
         """Compute :attr:`params`; overridden by subclasses."""
 
     @property
-    @abstractmethod
+    @abc.abstractmethod
     def name(self) -> str:
         """This function's name."""
 
     @property
-    def fn_typ(self) -> FnTyp:
+    def fn_typ(self) -> typs.FnTyp:
         """This function's type, i.e. the pointee type of :attr:`typ`."""
-        return checked_cast(self.typ.pointee_typ, FnTyp)
+        return asserts.checked_cast(self.typ.pointee_typ, typs.FnTyp)
 
 
 class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
@@ -169,7 +157,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
 
     env: Final[ir_env.Env]
     mod_name: Final[str]
-    recv_typ: Final[Optional[Typ]]
+    recv_typ: Final[Optional[typs.Typ]]
 
     @override
     def __init__(
@@ -177,7 +165,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         ast: FnAstT_co,
         e: ir_env.Env,
         mod_name: str,
-        recv_typ: Optional[Typ] = None,
+        recv_typ: Optional[typs.Typ] = None,
     ) -> None:
         super().__init__(ast)
         self.env = e.new_child()
@@ -190,44 +178,47 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         # neither of which can have any.
         for index, param_ast in enumerate(ast.generic_params):
             self.env.add_container(
-                param_ast.ident.name, TypParamTyp.get_or_create(ast, index, param_ast)
+                param_ast.ident.name, typs.TypParamTyp.get_or_create(ast, index, param_ast)
             )
 
     @override
-    def calculate_typ(self) -> PtrTyp:
+    def calculate_typ(self) -> typs.PtrTyp:
         assert self.ast is not None
         if self.ast.ret_typ is None:
-            ret_typ = VOID
+            ret_typ = typs.VOID
         else:
             # "never" names a type only here, in return-type position: a
             # function that never returns normally is the one place a
             # bottom type is useful to write down. Elsewhere (params,
             # struct fields, ...) it stays unnameable, the same as "void".
             ret_typ_env = self.env.new_child()
-            ret_typ_env.add_container("never", NEVER)
-            ret_typ = Typ.from_ast(self.ast.ret_typ, ret_typ_env)
+            ret_typ_env.add_container("never", typs.NEVER)
+            ret_typ = typs.Typ.from_ast(self.ast.ret_typ, ret_typ_env)
 
-        param_typs: list[Typ] = [
-            Typ.from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
+        param_typs: list[typs.Typ] = [
+            typs.Typ.from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
         ]
         if self.ast.receiver is not None:
             assert self.recv_typ is not None
-            recv_typ = PtrTyp.get_or_create(
-                self.recv_typ, Mutability.from_ast(self.ast.receiver.mut)
+            recv_typ = typs.PtrTyp.get_or_create(
+                self.recv_typ, typs.Mutability.from_ast(self.ast.receiver.mut)
             )
             param_typs.insert(0, recv_typ)
 
-        return PtrTyp.get_or_create(FnTyp.get_or_create(ret_typ, tuple(param_typs)), CONST)
+        return typs.PtrTyp.get_or_create(
+            typs.FnTyp.get_or_create(ret_typ, tuple(param_typs)), typs.CONST
+        )
 
     @override
-    def calculate_params(self) -> tuple[Param, ...]:
+    def calculate_params(self) -> tuple[ir_values.Param, ...]:
         assert self.ast is not None
         offset = 1 if self.ast.receiver is not None else 0
         params = [
-            Param(self, pos + offset, param_ast) for pos, param_ast in enumerate(self.ast.params)
+            ir_values.Param(self, pos + offset, param_ast)
+            for pos, param_ast in enumerate(self.ast.params)
         ]
         if self.ast.receiver is not None:
-            params.insert(0, Param(self, 0, self.ast.receiver))
+            params.insert(0, ir_values.Param(self, 0, self.ast.receiver))
         return tuple(params)
 
     @property
@@ -244,7 +235,7 @@ class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
 class Fn(NonBuiltinFnSpec[ast.FnDefn]):
     """A function defined with a body in Leech source."""
 
-    @cached_property
+    @functools.cached_property
     def typ_check_results(self) -> typcheck.TypCheckResults:
         """This function's body, type-checked into a side table.
 
@@ -252,20 +243,20 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         lowering begins.
         """
         return typcheck.TypCheck().check_fn(
-            opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
+            opt_util.opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
         )
 
-    @cached_property
-    def cfg(self) -> Cfg:
+    @functools.cached_property
+    def cfg(self) -> ir_values.Cfg:
         """This function's body, lowered to a control-flow graph.
 
         Built lazily, on first access.
         """
         builder = ir_builder.CfgBuilder(self.typ_check_results, self)
-        builder.build_fn(opt_unwrap(self.ast), self.env)
+        builder.build_fn(opt_util.opt_unwrap(self.ast), self.env)
         return builder.cfg
 
-    def is_accessible_from(self, file: SrcFile) -> bool:
+    def is_accessible_from(self, file: src.SrcFile) -> bool:
         """Whether this function can be called from code in ``file``.
 
         Only relevant for associated functions (defined in an ``impl``
@@ -285,8 +276,8 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         assert self.ast is not None
         return Access.from_ast(self.ast.access) == PUBLIC or self.ast.span.file.path == file.path
 
-    @cached_property
-    def _instance_cache(self) -> dict[tuple[Typ, ...], FnInstance]:
+    @functools.cached_property
+    def _instance_cache(self) -> dict[tuple[typs.Typ, ...], FnInstance]:
         return {}
 
     @property
@@ -298,7 +289,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         """
         return self._instance_cache.values()
 
-    def instance(self, typ_args: tuple[Typ, ...]) -> FnInstance:
+    def instance(self, typ_args: tuple[typs.Typ, ...]) -> FnInstance:
         """Get this function's instantiation for ``typ_args``, building it if needed.
 
         Cached, so requesting the same ``typ_args`` twice - from two
@@ -338,29 +329,31 @@ class FnInstance(FnSpec[ast.FnDefn]):
     """
 
     fn: Final[Fn]
-    typ_args: Final[tuple[Typ, ...]]
-    _mapping: Final[Mapping[TypParamTyp, Typ]]
+    typ_args: Final[tuple[typs.Typ, ...]]
+    _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
 
-    def __init__(self, fn: Fn, typ_args: tuple[Typ, ...]) -> None:
+    def __init__(self, fn: Fn, typ_args: tuple[typs.Typ, ...]) -> None:
         super().__init__(fn.ast)
         self.fn = fn
         self.typ_args = typ_args
-        fn_ast = opt_unwrap(fn.ast)
+        fn_ast = opt_util.opt_unwrap(fn.ast)
         self._mapping = {
-            TypParamTyp.get_or_create(fn_ast, i, param_ast): typ_arg
+            typs.TypParamTyp.get_or_create(fn_ast, i, param_ast): typ_arg
             for i, (param_ast, typ_arg) in enumerate(
                 zip(fn_ast.generic_params, typ_args, strict=True)
             )
         }
 
     @override
-    def calculate_typ(self) -> PtrTyp:
-        substituted = checked_cast(self.fn.fn_typ.substitute_typ_params(self._mapping), FnTyp)
-        return PtrTyp.get_or_create(substituted, CONST)
+    def calculate_typ(self) -> typs.PtrTyp:
+        substituted = asserts.checked_cast(
+            self.fn.fn_typ.substitute_typ_params(self._mapping), typs.FnTyp
+        )
+        return typs.PtrTyp.get_or_create(substituted, typs.CONST)
 
     @override
-    def calculate_params(self) -> tuple[Param, ...]:
-        return tuple(Param(self, param.pos, param.ast) for param in self.fn.params)
+    def calculate_params(self) -> tuple[ir_values.Param, ...]:
+        return tuple(ir_values.Param(self, param.pos, param.ast) for param in self.fn.params)
 
     @property
     @override
@@ -380,7 +373,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
         """
         return f"{self.fn.mod_name}.{self.name}"
 
-    @cached_property
+    @functools.cached_property
     def env(self) -> ir_env.Env:
         """The scope to lower this instance's body in.
 
@@ -391,13 +384,13 @@ class FnInstance(FnSpec[ast.FnDefn]):
         the lowering code needing to know it's inside an instantiation.
         """
         e = self.fn.env.new_child()
-        fn_ast = opt_unwrap(self.fn.ast)
+        fn_ast = opt_util.opt_unwrap(self.fn.ast)
         for param_ast, typ_arg in zip(fn_ast.generic_params, self.typ_args, strict=True):
             e.add_container(param_ast.ident.name, typ_arg)
         return e
 
-    @cached_property
-    def cfg(self) -> Cfg:
+    @functools.cached_property
+    def cfg(self) -> ir_values.Cfg:
         """This instance's body, lowered to a control-flow graph.
 
         Built lazily, on first access, from :attr:`fn`'s own
@@ -406,7 +399,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
         back here against this instance's concrete type arguments.
         """
         builder = ir_builder.CfgBuilder(self.fn.typ_check_results, self, self._mapping)
-        builder.build_fn(opt_unwrap(self.fn.ast), self.env)
+        builder.build_fn(opt_util.opt_unwrap(self.fn.ast), self.env)
         return builder.cfg
 
 
@@ -441,12 +434,12 @@ class GenericFn:
         return self.fn.name
 
     @property
-    def span(self) -> Optional[SrcSpan]:
+    def span(self) -> Optional[src.SrcSpan]:
         """The source location of this function's declaration."""
         return self.fn.span
 
 
-class ModVar(ComptimePtr[ast.VarDefn]):
+class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     """A module-level ``let`` binding.
 
     Its initializer must be computable at compile time (see
@@ -459,7 +452,7 @@ class ModVar(ComptimePtr[ast.VarDefn]):
     """
 
     env: Final[ir_env.Env]
-    mut: Final[Mutability]
+    mut: Final[typs.Mutability]
 
     #: Module variables whose initializer is currently being evaluated,
     #: innermost last. Shared across every ``ModVar`` (and, since imports
@@ -472,7 +465,7 @@ class ModVar(ComptimePtr[ast.VarDefn]):
     def __init__(self, ast: ast.VarDefn, e: ir_env.Env) -> None:
         super().__init__(ast)
         self.env = e.new_child()
-        self.mut = Mutability.from_ast(ast.let_stmt.mut)
+        self.mut = typs.Mutability.from_ast(ast.let_stmt.mut)
 
     @property
     def name(self) -> str:
@@ -481,19 +474,19 @@ class ModVar(ComptimePtr[ast.VarDefn]):
         return self.ast.let_stmt.ident.name
 
     @override
-    def load(self) -> ComptimeValue:
+    def load(self) -> ir_values.ComptimeValue:
         return self.initializer
 
     @override
-    def store(self, value: ComptimeValue) -> None:
+    def store(self, value: ir_values.ComptimeValue) -> None:
         raise AssertionError("Cannot set mod var at comptime")
 
     @override
     def is_temporary(self) -> bool:
         return False
 
-    @cached_property
-    def initializer(self) -> ComptimeValue:
+    @functools.cached_property
+    def initializer(self) -> ir_values.ComptimeValue:
         """This variable's initial value, evaluated at compile time.
 
         Computed lazily, on first access.
@@ -506,7 +499,7 @@ class ModVar(ComptimePtr[ast.VarDefn]):
         assert self.ast is not None
         if self in ModVar._resolving:
             cycle = ModVar._resolving[ModVar._resolving.index(self) :]
-            raise CircularVarInitializerError(
+            raise errors.CircularVarInitializerError(
                 self.name, self.span, [(v.name, v.span) for v in cycle]
             )
 
@@ -516,28 +509,28 @@ class ModVar(ComptimePtr[ast.VarDefn]):
         finally:
             ModVar._resolving.pop()
 
-    @cached_property
+    @functools.cached_property
     def typ_check_results(self) -> typcheck.TypCheckResults:
         """This variable's initializer, type-checked into a side table.
 
         Built lazily, on first access; forced by :attr:`cfg` before
         lowering begins.
         """
-        return typcheck.TypCheck().check_var_initializer(opt_unwrap(self.ast), self.env)
+        return typcheck.TypCheck().check_var_initializer(opt_util.opt_unwrap(self.ast), self.env)
 
-    @cached_property
-    def cfg(self) -> Cfg:
+    @functools.cached_property
+    def cfg(self) -> ir_values.Cfg:
         """The initializer expression, lowered to a control-flow graph.
 
         Built lazily, on first access.
         """
         builder = ir_builder.CfgBuilder(self.typ_check_results)
-        builder.build_var_initializer(opt_unwrap(self.ast), self.env)
+        builder.build_var_initializer(opt_util.opt_unwrap(self.ast), self.env)
         return builder.cfg
 
     @override
-    def calculate_typ(self) -> PtrTyp:
-        return PtrTyp.get_or_create(self.initializer.typ, self.mut)
+    def calculate_typ(self) -> typs.PtrTyp:
+        return typs.PtrTyp.get_or_create(self.initializer.typ, self.mut)
 
 
 class Mod:
@@ -581,9 +574,9 @@ class Mod:
         self.env = builtin_env.new_child()
         self.loader = loader
 
-        builtin_env.add_container("usize", USIZE)
-        builtin_env.add_container("isize", ISIZE)
-        builtin_env.add_container("bool", BOOL)
+        builtin_env.add_container("usize", typs.USIZE)
+        builtin_env.add_container("isize", typs.ISIZE)
+        builtin_env.add_container("bool", typs.BOOL)
 
     def build(self) -> None:
         """Populate :attr:`items` from this module's parsed definitions.
@@ -660,7 +653,7 @@ class Mod:
                 )
             case ast.FnDecl():
                 if defn_ast.receiver is not None:
-                    raise SelfParamOutsideImplError(defn_ast.receiver.span)
+                    raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
                 self._add_item(
                     defn_ast.name.name,
                     Access.PUBLIC,
@@ -669,7 +662,7 @@ class Mod:
                 )
             case ast.FnDefn():
                 if defn_ast.receiver is not None:
-                    raise SelfParamOutsideImplError(defn_ast.receiver.span)
+                    raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
                 qualify_name = self.name != "main" or defn_ast.name.name != "main"
                 fn = Fn(defn_ast, self.env, self.name)
                 value: Fn | GenericFn = fn
@@ -683,7 +676,7 @@ class Mod:
                 self._add_item(
                     defn_ast.ident.name,
                     Access.from_ast(defn_ast.access),
-                    StructTyp.create(defn_ast, self.env, (), self.name),
+                    typs.StructTyp.create(defn_ast, self.env, (), self.name),
                 )
             case ast.TraitDefn():
                 self._add_item(
@@ -695,7 +688,7 @@ class Mod:
                 mod_name = defn_ast.ident.name
                 mod_path = defn_ast.span.file.path.with_stem(mod_name)
                 if not mod_path.exists():
-                    raise ModDoesNotExistError(mod_name, defn_ast.ident.span)
+                    raise errors.ModDoesNotExistError(mod_name, defn_ast.ident.span)
                 mod = self.loader.load(mod_path)
                 self._add_item(mod_name, PRIVATE, mod, span=defn_ast.ident.span)
             case _:
@@ -733,7 +726,7 @@ class Mod:
         impl_env = self.env.new_child()
         for index, param_ast in enumerate(impl_ast.generic_params):
             impl_env.add_container(
-                param_ast.ident.name, TypParamTyp.get_or_create(impl_ast, index, param_ast)
+                param_ast.ident.name, typs.TypParamTyp.get_or_create(impl_ast, index, param_ast)
             )
 
         if impl_ast.for_typ is None:
@@ -758,19 +751,19 @@ class Mod:
         """
         impl_typ_ast = impl_ast.typ
         if not isinstance(impl_typ_ast, ast.BasicTyp):
-            raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+            raise errors.ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
-        typ = Typ.from_ast(impl_typ_ast, impl_env)
-        if not isinstance(typ, StructTyp):
-            raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+        typ = typs.Typ.from_ast(impl_typ_ast, impl_env)
+        if not isinstance(typ, typs.StructTyp):
+            raise errors.ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         if len(impl_typ_ast.path.idents) > 1:
-            raise ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+            raise errors.ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         fn_env = typ.env.new_child()
         for index, param_ast in enumerate(impl_ast.generic_params):
             fn_env.add_container(
-                param_ast.ident.name, TypParamTyp.get_or_create(impl_ast, index, param_ast)
+                param_ast.ident.name, typs.TypParamTyp.get_or_create(impl_ast, index, param_ast)
             )
 
         self._build_impl_fns(impl_ast, fn_env, typ, generic_fns, typ.add_assoc_fn, typ.name)
@@ -806,16 +799,16 @@ class Mod:
         """
         trait_typ_ast = impl_ast.typ
         if not isinstance(trait_typ_ast, ast.BasicTyp):
-            raise ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
+            raise errors.ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
         trait = impl_env.resolve_path(ir_env.Env.Namespace.CONTAINERS, trait_typ_ast.path)
         if not isinstance(trait, ir_traits.Trait):
-            raise ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
+            raise errors.ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
         # A generic trait's own type parameters aren't supported yet -
         # nothing upstream rejects `impl Eq[i32] for i32` syntactically,
         # so fail loudly here rather than silently ignore the arguments.
         assert not trait_typ_ast.generic_args, "generic traits aren't supported yet"
 
-        self_typ = Typ.from_ast(opt_unwrap(impl_ast.for_typ), impl_env)
+        self_typ = typs.Typ.from_ast(opt_util.opt_unwrap(impl_ast.for_typ), impl_env)
 
         impl = ir_traits.Impl(impl_ast, trait, self_typ, impl_env, self.name)
         # Registered before building any method: two impls of the same
@@ -833,7 +826,7 @@ class Mod:
         self,
         impl_ast: ast.ImplDefn,
         fn_env: ir_env.Env,
-        recv_typ: Typ,
+        recv_typ: typs.Typ,
         generic_fns: list[Fn],
         register: Callable[[Fn], None],
         qualified_prefix: str,
@@ -871,9 +864,9 @@ class Mod:
         self,
         name: str,
         access: Access,
-        value: Value[PtrTyp] | ir_env.Container | GenericFn,
+        value: ir_values.Value[typs.PtrTyp] | ir_env.Container | GenericFn,
         qualify_name: bool = True,
-        span: Optional[SrcSpan] = None,
+        span: Optional[src.SrcSpan] = None,
     ) -> None:
         item = ModItem(self, name, access, value, qualify_name)
         # Bind in env before recording the item: Env.add is what rejects a

@@ -1,11 +1,10 @@
 """Loading the set of modules that make up one compilation."""
 
+import pathlib
 from collections.abc import Collection
-from pathlib import Path
 from typing import Final
 
-from leech import ir_module, ir_traits, parse
-from leech.src import SrcFile
+from leech import ir_module, ir_traits, parse, src
 
 
 class ModLoader:
@@ -23,17 +22,17 @@ class ModLoader:
     every module regardless of which one a lookup starts from.
 
     A loader is single-use in practice: one per invocation of
-    :func:`leech.main.compile_to_llvm_ir`.
+    :func:`leech.driver.compile_to_llvm_ir`.
     """
 
-    _mods: Final[dict[Path, ir_module.Mod]]
+    _mods: Final[dict[pathlib.Path, ir_module.Mod]]
     impl_registry: Final[ir_traits.ImplRegistry]
 
     def __init__(self) -> None:
         self._mods = {}
         self.impl_registry = ir_traits.ImplRegistry()
 
-    def load(self, path: Path) -> ir_module.Mod:
+    def load(self, path: pathlib.Path) -> ir_module.Mod:
         """Load the module at ``path``, or return the already-loaded one.
 
         :param path: The source file to load. Resolved before use, so
@@ -51,7 +50,7 @@ class ModLoader:
         if cached is not None:
             return cached
 
-        mod_ast = parse.parse_mod_ast(SrcFile(path))
+        mod_ast = parse.parse_mod_ast(src.SrcFile(path))
         mod = ir_module.Mod(path.stem, mod_ast, self)
         # Registered *before* building, so a module reached again while
         # it's still being built - i.e. an import cycle - gets this same

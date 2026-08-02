@@ -1,6 +1,6 @@
 import subprocess
 
-from leech.errors import ERROR, NOTE, WARNING
+from leech import errors
 
 
 def run_cli(*args) -> subprocess.CompletedProcess:
@@ -21,7 +21,7 @@ def test_cli_success_infers_output_path(tmp_path):
 
     proc = run_cli(src_path)
 
-    assert proc.returncode == NOTE
+    assert proc.returncode == errors.NOTE
     assert proc.stdout == ""
     assert proc.stderr == ""
     ll_path = src_path.with_suffix(".ll")
@@ -39,7 +39,7 @@ def test_cli_success_with_explicit_o(tmp_path):
 
     proc = run_cli(src_path, "-o", out_path)
 
-    assert proc.returncode == NOTE
+    assert proc.returncode == errors.NOTE
     assert out_path.exists()
 
 
@@ -66,7 +66,7 @@ def test_cli_error_renders_message_and_does_not_write_output(tmp_path):
 
     proc = run_cli(src_path)
 
-    assert proc.returncode == ERROR
+    assert proc.returncode == errors.ERROR
     assert proc.stdout == ""
     assert proc.stderr == (
         'ERROR: Left operand of binary operation "+" has invalid type "bool", '
@@ -90,7 +90,7 @@ def test_cli_warning_still_writes_output(tmp_path):
 
     proc = run_cli(src_path)
 
-    assert proc.returncode == WARNING
+    assert proc.returncode == errors.WARNING
     assert proc.stdout == ""
     assert proc.stderr == ("WARNING: return statement is unreachable\n3|     return 2;\n-------^\n")
     ll_path = src_path.with_suffix(".ll")
@@ -107,7 +107,7 @@ def test_cli_unexpected_character_error(tmp_path):
 
     proc = run_cli(src_path)
 
-    assert proc.returncode == ERROR
+    assert proc.returncode == errors.ERROR
     assert proc.stdout == ""
     assert proc.stderr == (
         'ERROR: Unexpected character "@"\n2|     return 0 @ 1;\n----------------^\n'
@@ -124,7 +124,7 @@ def test_cli_unexpected_token_error(tmp_path):
 
     proc = run_cli(src_path)
 
-    assert proc.returncode == ERROR
+    assert proc.returncode == errors.ERROR
     assert proc.stdout == ""
     assert proc.stderr == ('ERROR: Unexpected token "}"\n3| }\n---^\nNOTE: Expected one of: ";"\n')
     assert not src_path.with_suffix(".ll").exists()
@@ -138,7 +138,7 @@ def test_cli_unexpected_end_of_input_error(tmp_path):
 
     proc = run_cli(src_path)
 
-    assert proc.returncode == ERROR
+    assert proc.returncode == errors.ERROR
     assert proc.stdout == ""
     # The exact set of expected tokens is an implementation detail of the
     # grammar (e.g. it grows whenever a new prefix operator is added), so
@@ -163,6 +163,6 @@ def test_cli_warning_fires_once_for_multiple_dead_statements(tmp_path):
 
     proc = run_cli(src_path)
 
-    assert proc.returncode == WARNING
+    assert proc.returncode == errors.WARNING
     assert proc.stdout == ""
     assert proc.stderr == ("WARNING: let statement is unreachable\n3|     let y = 2;\n-------^\n")

@@ -1,7 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import CannotTakeAddressOfComptimeValueError, DerefInvalidTypError
+from leech import errors
 
 
 def test_addr_and_deref(tmp_path):
@@ -12,7 +12,7 @@ def test_addr_and_deref(tmp_path):
         return y.*;
     }
     """
-    check_prog_output(tmp_path, src, "", 10)
+    util.check_prog_output(tmp_path, src, "", 10)
 
 
 def test_comptime_addr_and_deref(tmp_path):
@@ -24,7 +24,7 @@ def test_comptime_addr_and_deref(tmp_path):
         return z;
     }
     """
-    check_prog_output(tmp_path, src, "", 10)
+    util.check_prog_output(tmp_path, src, "", 10)
 
 
 def test_addr_and_deref_fn(tmp_path):
@@ -36,8 +36,8 @@ def test_addr_and_deref_fn(tmp_path):
         return y();
     }
     """
-    with pytest.raises(DerefInvalidTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DerefInvalidTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_addr_and_deref_fn(tmp_path):
@@ -49,8 +49,8 @@ def test_comptime_addr_and_deref_fn(tmp_path):
         return y();
     }
     """
-    with pytest.raises(DerefInvalidTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DerefInvalidTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_addr_and_deref_field(tmp_path):
@@ -69,7 +69,7 @@ def test_addr_and_deref_field(tmp_path):
         return y.b.*;
     }
     """
-    check_prog_output(tmp_path, src, "", 11)
+    util.check_prog_output(tmp_path, src, "", 11)
 
 
 def test_addr_and_deref_comptime_field(tmp_path):
@@ -90,7 +90,7 @@ def test_addr_and_deref_comptime_field(tmp_path):
         return z;
     }
     """
-    check_prog_output(tmp_path, src, "", 11)
+    util.check_prog_output(tmp_path, src, "", 11)
 
 
 def test_addr_and_deref_array_elt(tmp_path):
@@ -101,7 +101,7 @@ def test_addr_and_deref_array_elt(tmp_path):
         return y.[1usize].*;
     }
     """
-    check_prog_output(tmp_path, src, "", 102)
+    util.check_prog_output(tmp_path, src, "", 102)
 
 
 def test_addr_and_deref_comptime_array_elt(tmp_path):
@@ -114,7 +114,7 @@ def test_addr_and_deref_comptime_array_elt(tmp_path):
         return z;
     }
     """
-    check_prog_output(tmp_path, src, "", 102)
+    util.check_prog_output(tmp_path, src, "", 102)
 
 
 def test_addr_and_deref_nested(tmp_path):
@@ -135,7 +135,7 @@ def test_addr_and_deref_nested(tmp_path):
         return ret;
     }
     """
-    check_prog_output(tmp_path, src, "", 103)
+    util.check_prog_output(tmp_path, src, "", 103)
 
 
 def test_addr_and_deref_comptime_nested(tmp_path):
@@ -157,7 +157,7 @@ def test_addr_and_deref_comptime_nested(tmp_path):
         return ret;
     }
     """
-    check_prog_output(tmp_path, src, "", 103)
+    util.check_prog_output(tmp_path, src, "", 103)
 
 
 def test_addr_of_tmp(tmp_path):
@@ -170,7 +170,7 @@ def test_addr_of_tmp(tmp_path):
         return deref(&100);
     }
     """
-    check_prog_output(tmp_path, src, "", 100)
+    util.check_prog_output(tmp_path, src, "", 100)
 
 
 def test_addr_of_comptime_value(tmp_path):
@@ -180,8 +180,8 @@ def test_addr_of_comptime_value(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CannotTakeAddressOfComptimeValueError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+        util.compile_str(tmp_path, src)
 
 
 def test_addr_of_comptime_addr_of_deref(tmp_path):
@@ -193,7 +193,7 @@ def test_addr_of_comptime_addr_of_deref(tmp_path):
         return z.*;
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_deref_non_ptr(tmp_path):
@@ -203,8 +203,8 @@ def test_deref_non_ptr(tmp_path):
         return x.*;
     }
     """
-    with pytest.raises(DerefInvalidTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DerefInvalidTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_deref_comptime_non_ptr(tmp_path):
@@ -215,8 +215,8 @@ def test_deref_comptime_non_ptr(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DerefInvalidTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DerefInvalidTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_return_addr_of_local(tmp_path):
@@ -230,8 +230,8 @@ def test_comptime_return_addr_of_local(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CannotTakeAddressOfComptimeValueError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_return_addr_of_local_in_array(tmp_path):
@@ -245,8 +245,8 @@ def test_comptime_return_addr_of_local_in_array(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CannotTakeAddressOfComptimeValueError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_return_addr_of_local_in_struct(tmp_path):
@@ -263,5 +263,5 @@ def test_comptime_return_addr_of_local_in_struct(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(CannotTakeAddressOfComptimeValueError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+        util.compile_str(tmp_path, src)

@@ -1,24 +1,22 @@
 """Turning source text into an AST: grammar loading and parse-error reporting."""
 
+import pathlib
 from collections.abc import Iterable
-from pathlib import Path
 
-from lark import Lark, UnexpectedCharacters, UnexpectedToken
+import lark
 
-from leech import ast
-from leech.errors import UnexpectedCharacterError, UnexpectedTokenError
-from leech.src import SrcFile, SrcSpan
+from leech import ast, errors, src
 
-GRAMMAR_PATH = Path(__file__).parent / "leech.lark"
+GRAMMAR_PATH = pathlib.Path(__file__).parent / "leech.lark"
 
 
-def build_parser(start_rule: str) -> Lark:
+def build_parser(start_rule: str) -> lark.Lark:
     """Build a Lark LALR parser for the Leech grammar.
 
     :param start_rule: The grammar rule to use as the parse entry point.
     :return: A configured, ready-to-use parser.
     """
-    return Lark.open(
+    return lark.Lark.open(
         str(GRAMMAR_PATH),
         start=start_rule,
         strict=True,
@@ -27,7 +25,7 @@ def build_parser(start_rule: str) -> Lark:
     )
 
 
-def _describe_expected_tokens(parser: Lark, names: Iterable[str]) -> list[str]:
+def _describe_expected_tokens(parser: lark.Lark, names: Iterable[str]) -> list[str]:
     """Describe a set of Lark terminal names for a diagnostic message.
 
     Literal-string terminals (punctuation and keywords) are shown as
@@ -54,7 +52,7 @@ def _describe_expected_tokens(parser: Lark, names: Iterable[str]) -> list[str]:
     return sorted(descriptions)
 
 
-def parse_mod_ast(file: SrcFile) -> ast.Mod:
+def parse_mod_ast(file: src.SrcFile) -> ast.Mod:
     """Parse a source file into a module AST.
 
     :param file: The source file to parse.
@@ -67,12 +65,12 @@ def parse_mod_ast(file: SrcFile) -> ast.Mod:
     parser = build_parser("mod")
     try:
         tree = parser.parse(file.src)
-    except UnexpectedCharacters as err:
-        span = SrcSpan.single_char(file, err.pos_in_stream, err.line, err.column)
-        raise UnexpectedCharacterError(err.char, span) from err
-    except UnexpectedToken as err:
-        span = SrcSpan(file, err.token)
+    except lark.UnexpectedCharacters as err:
+        span = src.SrcSpan.single_char(file, err.pos_in_stream, err.line, err.column)
+        raise errors.UnexpectedCharacterError(err.char, span) from err
+    except lark.UnexpectedToken as err:
+        span = src.SrcSpan(file, err.token)
         found = "end of input" if err.token.type == "$END" else f'token "{err.token}"'
         expected = _describe_expected_tokens(parser, err.accepts or err.expected)
-        raise UnexpectedTokenError(found, span, expected) from err
+        raise errors.UnexpectedTokenError(found, span, expected) from err
     return ast.Mod(file, tree)

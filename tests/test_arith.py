@@ -1,14 +1,7 @@
 import pytest
-from util import check_prog_output, compile_str
+import util
 
-from leech.errors import (
-    DivisionByZeroAtComptimeError,
-    IncompatibleBinOpArgTypsError,
-    IntLitOverflowError,
-    IntOverflowAtComptimeError,
-    InvalidBinOpArgTypError,
-    InvalidUnaryOpArgTypError,
-)
+from leech import errors
 
 
 def test_int_arith(tmp_path):
@@ -17,7 +10,7 @@ def test_int_arith(tmp_path):
         return 1 - 2 * 3 + 4 - 5 * 6 / 10;
     }
     """
-    check_prog_output(tmp_path, src, "", 256 - 4)
+    util.check_prog_output(tmp_path, src, "", 256 - 4)
 
 
 def test_comptime_int_arith(tmp_path):
@@ -27,7 +20,7 @@ def test_comptime_int_arith(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 256 - 4)
+    util.check_prog_output(tmp_path, src, "", 256 - 4)
 
 
 @pytest.mark.parametrize(
@@ -45,8 +38,8 @@ def test_incompatible_bin_op_args(lhs, rhs, tmp_path):
         return 0;
     }}
     """
-    with pytest.raises(IncompatibleBinOpArgTypsError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_bin_op_arg(tmp_path):
@@ -56,8 +49,8 @@ def test_invalid_bin_op_arg(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidBinOpArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidBinOpArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_division_by_non_comptime_value_is_not_a_compile_error(tmp_path):
@@ -75,7 +68,7 @@ def test_division_by_non_comptime_value_is_not_a_compile_error(tmp_path):
         return 0;
     }
     """
-    compile_str(tmp_path, src)
+    util.compile_str(tmp_path, src)
 
 
 def test_comptime_signed_division_by_zero(tmp_path):
@@ -85,8 +78,8 @@ def test_comptime_signed_division_by_zero(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DivisionByZeroAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DivisionByZeroAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_unsigned_division_by_zero(tmp_path):
@@ -96,8 +89,8 @@ def test_comptime_unsigned_division_by_zero(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(DivisionByZeroAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DivisionByZeroAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_division_by_zero_in_called_fn(tmp_path):
@@ -110,8 +103,8 @@ def test_comptime_division_by_zero_in_called_fn(tmp_path):
         return x;
     }
     """
-    with pytest.raises(DivisionByZeroAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.DivisionByZeroAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_add_at_typ_max_is_allowed(tmp_path):
@@ -124,7 +117,7 @@ def test_comptime_add_at_typ_max_is_allowed(tmp_path):
         return 0;
     }
     """
-    check_prog_output(tmp_path, src, "", 1)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_comptime_add_overflow(tmp_path):
@@ -134,8 +127,8 @@ def test_comptime_add_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntOverflowAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntOverflowAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_unsigned_sub_underflow(tmp_path):
@@ -145,8 +138,8 @@ def test_comptime_unsigned_sub_underflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntOverflowAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntOverflowAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_mul_overflow(tmp_path):
@@ -156,8 +149,8 @@ def test_comptime_mul_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntOverflowAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntOverflowAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_signed_sub_underflow(tmp_path):
@@ -171,8 +164,8 @@ def test_comptime_signed_sub_underflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntOverflowAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntOverflowAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_signed_div_overflow(tmp_path):
@@ -186,8 +179,8 @@ def test_comptime_signed_div_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntOverflowAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntOverflowAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 def test_int_arith_unary_minus(tmp_path):
@@ -197,7 +190,7 @@ def test_int_arith_unary_minus(tmp_path):
         return -x - 3;
     }
     """
-    check_prog_output(tmp_path, src, "", 256 - 8)
+    util.check_prog_output(tmp_path, src, "", 256 - 8)
 
 
 def test_comptime_unary_minus(tmp_path):
@@ -207,7 +200,7 @@ def test_comptime_unary_minus(tmp_path):
         return x;
     }
     """
-    check_prog_output(tmp_path, src, "", 256 - 8)
+    util.check_prog_output(tmp_path, src, "", 256 - 8)
 
 
 def test_comptime_neg_overflow(tmp_path):
@@ -220,8 +213,8 @@ def test_comptime_neg_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntOverflowAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntOverflowAtComptimeError):
+        util.compile_str(tmp_path, src)
 
 
 @pytest.mark.parametrize(
@@ -242,7 +235,7 @@ def test_negated_int_lit_at_signed_typ_min(tmp_path, decl):
         return if (x == 0i8 - 127i8 - 1i8) {{ 7 }} else {{ 0 }};
     }}
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_comptime_negated_int_lit_at_signed_typ_min(tmp_path):
@@ -252,7 +245,7 @@ def test_comptime_negated_int_lit_at_signed_typ_min(tmp_path):
         return if (x == 0i8 - 127i8 - 1i8) { 7 } else { 0 };
     }
     """
-    check_prog_output(tmp_path, src, "", 7)
+    util.check_prog_output(tmp_path, src, "", 7)
 
 
 def test_negated_int_lit_overflow(tmp_path):
@@ -262,8 +255,8 @@ def test_negated_int_lit_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntLitOverflowError) as exc_info:
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+        util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert "-200" in msg
@@ -277,8 +270,8 @@ def test_negated_int_lit_infers_unsigned_is_rejected(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidUnaryOpArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidUnaryOpArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_unary_op_arg_unsigned(tmp_path):
@@ -288,8 +281,8 @@ def test_invalid_unary_op_arg_unsigned(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidUnaryOpArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidUnaryOpArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_invalid_unary_op_arg_non_int(tmp_path):
@@ -299,8 +292,8 @@ def test_invalid_unary_op_arg_non_int(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(InvalidUnaryOpArgTypError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.InvalidUnaryOpArgTypError):
+        util.compile_str(tmp_path, src)
 
 
 def test_comptime_int_operation_overflow_distinct_from_lit_overflow(tmp_path):
@@ -313,5 +306,5 @@ def test_comptime_int_operation_overflow_distinct_from_lit_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(IntOverflowAtComptimeError):
-        compile_str(tmp_path, src)
+    with pytest.raises(errors.IntOverflowAtComptimeError):
+        util.compile_str(tmp_path, src)
