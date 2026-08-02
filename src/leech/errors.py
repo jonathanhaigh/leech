@@ -271,7 +271,6 @@ class InvalidArgTypError(UserError):
     def __init__(
         self,
         callee_diag: str,
-        _fn_span: Optional[src.SrcSpan],
         arg_num: int,
         given_typ: str,
         expected_typ: str,
@@ -364,7 +363,6 @@ class TooManyArgsError(UserError):
     def __init__(
         self,
         callee_diag: str,
-        _fn_span: Optional[src.SrcSpan],
         arg_span: Optional[src.SrcSpan],
         got: int,
         expected: int,

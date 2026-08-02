@@ -4,6 +4,7 @@
 
 """Turning source text into an AST: grammar loading and parse-error reporting."""
 
+import functools
 import pathlib
 from collections.abc import Iterable
 
@@ -14,8 +15,13 @@ from leech import ast, errors, src
 _GRAMMAR_PATH = pathlib.Path(__file__).parent / "leech.lark"
 
 
+@functools.cache
 def build_parser(start_rule: str) -> lark.Lark:
     """Build a Lark LALR parser for the Leech grammar.
+
+    Cached per start rule: rebuilding the LALR parse tables from the
+    grammar file is the same work every time for a given start rule, and
+    :func:`parse_mod_ast` calls this once per source file reached.
 
     :param start_rule: The grammar rule to use as the parse entry point.
     :return: A configured, ready-to-use parser.

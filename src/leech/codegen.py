@@ -14,6 +14,19 @@ from llvmlite import ir as ll
 
 from leech import asserts, ir_module, ir_traits, ir_values, naming, signage, typs
 
+_BIN_OP_LL_METHODS: Final[dict[type[ir_values.BinOpInstr], str]] = {
+    ir_values.AddInstr: "add",
+    ir_values.SubInstr: "sub",
+    ir_values.MulInstr: "mul",
+    ir_values.SdivInstr: "sdiv",
+    ir_values.UdivInstr: "udiv",
+}
+
+_UNARY_OP_LL_METHODS: Final[dict[type[ir_values.Instr], str]] = {
+    ir_values.NegInstr: "neg",
+    ir_values.NotInstr: "not_",
+}
+
 
 def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access) -> None:
     """Set an LLVM global's linkage to match a Leech item's access.
@@ -78,18 +91,26 @@ class Compiler:
             """
             return Compiler._LLItems(self._compiler, self._items.new_child())
 
+        def __contains__(self, item: ir_values.Value | typs.Typ) -> bool:
+            return item in self._items
+
         def get(self, item: ir_values.Value | typs.Typ) -> ll.Value | ll.Type:
             """Get the LLVM value or type for ``item``, compiling it if needed.
 
             :param item: The Leech IR value or type to look up.
             :return: The corresponding LLVM value or type.
             """
-            if item not in self._items:
+            try:
+                return self._items[item]
+            except KeyError:
                 if isinstance(item, ir_values.ComptimeValue):
-                    self._items[item] = self._compiler._compile_comptime_value(item)
+                    compiled = self._compiler._compile_comptime_value(item)
                 elif isinstance(item, typs.Typ):
-                    self._items[item] = self._compiler._ll_typ(item)
-            return self._items[item]
+                    compiled = self._compiler._ll_typ(item)
+                else:
+                    raise
+                self._items[item] = compiled
+                return compiled
 
         def set(self, item: ir_values.Value | typs.Typ, ll_item: ll.Value | ll.Type) -> None:
             """Record the LLVM value or type to use for ``item``.
@@ -155,7 +176,7 @@ class Compiler:
         self.ll_mod.triple = "x86_64-linux-gnu"
 
         for item in self._program_items():
-            if isinstance(item.value, typs.StructTyp) and not item.value.ast.generic_params:
+            if isinstance(item.value, typs.StructTyp) and not item.value.is_generic_template:
                 self._declare_mod_item(item)
 
         for item in self._program_items():
@@ -163,7 +184,7 @@ class Compiler:
                 self._declare_mod_item(item)
 
         for item in self._program_items():
-            if isinstance(item.value, typs.StructTyp) and not item.value.ast.generic_params:
+            if isinstance(item.value, typs.StructTyp) and not item.value.is_generic_template:
                 self._compile_mod_struct(item, item.value)
 
         # A generic struct's own fields are never lowered - only an
@@ -173,7 +194,7 @@ class Compiler:
         # runaway-instantiation-depth struct is rejected whether or not
         # anything in the program ever instantiates it.
         for item in self._program_items():
-            if isinstance(item.value, typs.StructTyp) and item.value.ast.generic_params:
+            if isinstance(item.value, typs.StructTyp) and item.value.is_generic_template:
                 _ = item.value.fields
 
         instances = self._discover_fn_instances()
@@ -296,7 +317,7 @@ class Compiler:
             new = []
             for mod in self._mod.loader.mods:
                 for item in mod.items:
-                    if isinstance(item.value, typs.StructTyp) and item.value.ast.generic_params:
+                    if isinstance(item.value, typs.StructTyp) and item.value.is_generic_template:
                         for inst in item.value.instances:
                             if inst.is_concrete() and inst not in seen:
                                 seen.add(inst)
@@ -357,8 +378,8 @@ class Compiler:
                 # (and cached here) by the earlier declare-types phase,
                 # so _LLItems.get() should never fall through to this
                 # method for one - if it does, that phase missed it.
-                assert typ in self._ll_mod_items._items, f'struct "{typ.name}" was never declared'
-                return asserts.checked_cast(self._ll_mod_items._items[typ], ll.Type)
+                assert typ in self._ll_mod_items, f'struct "{typ.name}" was never declared'
+                return asserts.checked_cast(self._ll_mod_items.get(typ), ll.Type)
             case typs.NeverTyp():
                 raise AssertionError("a never-typed value shouldn't need an LLVM type")
             case _:
@@ -508,39 +529,12 @@ class Compiler:
 
     def _compile_instr(self, instr: ir_values.Instr, ctx: Compiler._FnBuilderContext) -> ll.Value:
         match instr:
-            case ir_values.AddInstr():
-                return ctx.ll_builder.add(  # type: ignore
-                    ctx.ll_values.get(instr.lhs),
-                    ctx.ll_values.get(instr.rhs),
-                )
-            case ir_values.SubInstr():
-                return ctx.ll_builder.sub(  # type: ignore
-                    ctx.ll_values.get(instr.lhs),
-                    ctx.ll_values.get(instr.rhs),
-                )
-            case ir_values.MulInstr():
-                return ctx.ll_builder.mul(  # type: ignore
-                    ctx.ll_values.get(instr.lhs),
-                    ctx.ll_values.get(instr.rhs),
-                )
-            case ir_values.SdivInstr():
-                return ctx.ll_builder.sdiv(  # type: ignore
-                    ctx.ll_values.get(instr.lhs),
-                    ctx.ll_values.get(instr.rhs),
-                )
-            case ir_values.UdivInstr():
-                return ctx.ll_builder.udiv(  # type: ignore
-                    ctx.ll_values.get(instr.lhs),
-                    ctx.ll_values.get(instr.rhs),
-                )
-            case ir_values.NegInstr():
-                return ctx.ll_builder.neg(  # type: ignore
-                    ctx.ll_values.get(instr.operand),
-                )
-            case ir_values.NotInstr():
-                return ctx.ll_builder.not_(  # type: ignore
-                    ctx.ll_values.get(instr.operand),
-                )
+            case ir_values.BinOpInstr():
+                ll_method = getattr(ctx.ll_builder, _BIN_OP_LL_METHODS[type(instr)])
+                return ll_method(ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs))
+            case ir_values.NegInstr() | ir_values.NotInstr():
+                ll_method = getattr(ctx.ll_builder, _UNARY_OP_LL_METHODS[type(instr)])
+                return ll_method(ctx.ll_values.get(instr.operand))
             case ir_values.IcmpSignedInstr():
                 return ctx.ll_builder.icmp_signed(
                     instr.op,

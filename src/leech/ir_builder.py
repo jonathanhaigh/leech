@@ -149,13 +149,7 @@ class CfgBuilder:
         ret_ast = opt_util.opt_or_default(fn_ast.block.expr, fn_ast.block)
 
         if block.typ != typs.VOID:
-            if block.typ == typs.NEVER:
-                if not self._curr_bb.terminated:
-                    self._curr_bb.unreachable(ret_ast)
-                return
-            # TypCheck already confirmed block coerces to ret_typ.
-            coerced = opt_util.opt_unwrap(self._coerce(block, ret_ast))
-            self._ret(coerced, ret_ast)
+            self._finish_ret(block, ret_ast, ret_ast)
             return
 
         if self._curr_bb.terminated:
@@ -165,6 +159,30 @@ class CfgBuilder:
         # ret_typ is void too (else it would have raised MissingRetError).
         asserts.assert_eq(ret_typ, typs.VOID)
         self._ret(ir_values.VoidValue(ret_ast), ret_ast)
+
+    def _finish_ret(
+        self, value: ir_values.Value, attribute_ast: ast.Ast, coerce_ast: ast.Ast
+    ) -> None:
+        """Emit what a function or ``return`` statement's non-void value implies.
+
+        ``never``-typed (e.g. the value came from a call that never
+        returns) becomes ``unreachable`` instead of ``ret``, unless the
+        current block is already terminated; otherwise the value is
+        coerced to the function's return type (already confirmed valid by
+        TypCheck) and returned.
+
+        :param value: The lowered value to return.
+        :param attribute_ast: The AST node to attribute the emitted
+            ``unreachable``/``ret`` instruction to.
+        :param coerce_ast: The AST node ``value`` was checked against its
+            expected type with; see :meth:`_coerce`.
+        """
+        if value.typ == typs.NEVER:
+            if not self._curr_bb.terminated:
+                self._curr_bb.unreachable(attribute_ast)
+            return
+        coerced = opt_util.opt_unwrap(self._coerce(value, coerce_ast))
+        self._ret(coerced, attribute_ast)
 
     def _build_expr(
         self,
@@ -993,13 +1011,7 @@ class CfgBuilder:
 
         if ret_ast.expr is not None:
             expr = self._build_expr(ret_ast.expr, e, _ExprContext.VALUE, ret_typ)
-            if expr.typ == typs.NEVER:
-                if not self._curr_bb.terminated:
-                    self._curr_bb.unreachable(ret_ast)
-                return
-            # TypCheck already confirmed expr coerces to ret_typ.
-            coerced = opt_util.opt_unwrap(self._coerce(expr, ret_ast.expr))
-            self._ret(coerced, ret_ast)
+            self._finish_ret(expr, ret_ast, ret_ast.expr)
             return
 
         # TypCheck already confirmed a bare `return;` only appears where

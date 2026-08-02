@@ -6,7 +6,6 @@
 
 import collections
 import enum
-import re
 from typing import Any, Final, Optional
 
 from leech import (
@@ -17,7 +16,6 @@ from leech import (
     ir_traits,
     ir_values,
     opt_util,
-    signage,
     src,
     typs,
 )
@@ -119,15 +117,14 @@ class Env:
         :return: The bound item, or ``None`` if ``name`` is not bound.
         """
         key = (ns, name)
-        if key in self.items:
+        try:
             return self.items[key]
+        except KeyError:
+            pass
 
         if ns == Env.Namespace.CONTAINERS:
-            m = re.fullmatch("([iu])([1-9][0-9]*)", name)
-            if m:
-                sign = signage.SIGNED if m[1] == "i" else signage.UNSIGNED
-                width = int(m[2])
-                typ = typs.IntTyp.get_or_create(width, sign)
+            typ = typs.IntTyp.from_name(name)
+            if typ is not None:
                 self.items.maps[-1][key] = typ
                 return typ
 
@@ -159,7 +156,7 @@ class Env:
             existing = self.items[key]
             if span is None:
                 span = ast.opt_span(item)
-            existing_span = self._spans.get(key) or ast.opt_span(existing)
+            existing_span = opt_util.opt_or_default(self._spans.get(key), ast.opt_span(existing))
             raise errors.DuplicateItemDefnError(ns.item_kind(), name, span, existing_span)
         self.items[key] = item
         if span is not None:

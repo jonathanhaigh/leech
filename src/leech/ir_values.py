@@ -284,6 +284,10 @@ class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
         return len(self.fields)
 
     @override
+    def values(self) -> Sequence[ComptimeValue]:
+        return [self.fields[name] for name in self._typ.fields]
+
+    @override
     def calculate_typ(self) -> typs.StructTyp:
         return self._typ
 

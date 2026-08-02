@@ -716,10 +716,6 @@ class Typ(Ast):
     :meth:`leech.typs.Typ.from_ast`).
     """
 
-    def __init__(self, span: src.SrcSpan) -> None:
-        super().__init__(span)
-        self._typ = None
-
     @staticmethod
     def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Typ:
         """Build the appropriate :class:`Typ` subclass instance from a parse tree.

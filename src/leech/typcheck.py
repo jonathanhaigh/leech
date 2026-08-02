@@ -487,7 +487,6 @@ class TypCheck:
         if num_args > num_params:
             raise errors.TooManyArgsError(
                 callee_diag_str,
-                call_ast.span,
                 call_ast.args[-1].span,
                 num_args,
                 num_params,
@@ -498,7 +497,6 @@ class TypCheck:
             if isinstance(recv_coercion, Invalid):
                 raise errors.InvalidArgTypError(
                     callee_diag_str,
-                    call_ast.span,
                     1,
                     recv_typ.name,
                     param_typs[0].name,
@@ -512,7 +510,6 @@ class TypCheck:
             if isinstance(arg_coercion, Invalid):
                 raise errors.InvalidArgTypError(
                     callee_diag_str,
-                    call_ast.span,
                     i + 1,
                     arg_typ.name,
                     param_typs[i].name,
@@ -687,8 +684,7 @@ class TypCheck:
         :raises CannotInferTypArgError: If a type parameter is bound by
             neither an explicit type argument nor any call argument's type.
         """
-        callee_ast = call_ast.callee
-        assert isinstance(callee_ast, ast.VarExpr)
+        callee_ast = asserts.checked_cast(call_ast.callee, ast.VarExpr)
         typ_params = self._typ_params_of(fn)
 
         if callee_ast.generic_args:

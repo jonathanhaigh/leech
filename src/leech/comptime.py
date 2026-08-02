@@ -207,7 +207,7 @@ class Interpreter:
                 callee = asserts.checked_cast(
                     self._get_comptime_value(instr.callee), ir_module.FnSpec
                 )
-                cfg = getattr(callee, "cfg", None)
+                cfg = callee.body_cfg()
                 if cfg is None:
                     raise errors.CallExternFnAtComptimeError(callee.span)
                 args = tuple(self._get_comptime_value(arg) for arg in instr.args)

@@ -7,6 +7,7 @@
 import abc
 import enum
 import functools
+import re
 import types
 import weakref
 from collections.abc import Collection, Hashable, Mapping, Sequence
@@ -372,6 +373,21 @@ class IntTyp(Typ):
         return isinstance(target, IntTyp) and (
             target.min_value <= self.min_value and self.max_value <= target.max_value
         )
+
+    _NAME_RE: ClassVar[re.Pattern[str]] = re.compile("([iu])([1-9][0-9]*)")
+
+    @staticmethod
+    def from_name(name: str) -> Optional[IntTyp]:
+        """Recognize and build the interned builtin int type spelled ``name``.
+
+        :param name: The spelling to parse, e.g. ``"i32"`` or ``"u8"``.
+        :return: The int type, or ``None`` if ``name`` doesn't spell one.
+        """
+        m = IntTyp._NAME_RE.fullmatch(name)
+        if m is None:
+            return None
+        sign = signage.SIGNED if m[1] == "i" else signage.UNSIGNED
+        return IntTyp.get_or_create(int(m[2]), sign)
 
 
 class BoolTyp(Typ):
@@ -799,6 +815,17 @@ class StructTyp(Typ):
     @override
     def is_concrete(self) -> bool:
         return all(typ_arg.is_concrete() for typ_arg in self._typ_args)
+
+    @property
+    def is_generic_template(self) -> bool:
+        """Whether this is a generic struct's own, un-instantiated template.
+
+        True only for the ``StructTyp`` a generic struct's declaration
+        itself names (see the class docstring) - never for one of its
+        instantiations, which share the same declaration but have
+        concrete type arguments.
+        """
+        return bool(self.ast.generic_params) and not self._typ_args
 
     @override
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:

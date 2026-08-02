@@ -139,6 +139,15 @@ class FnSpec[FnAstT_co: ast.FnSpec](ir_values.ComptimePtr[FnAstT_co]):
         """This function's type, i.e. the pointee type of :attr:`typ`."""
         return asserts.checked_cast(self.typ.pointee_typ, typs.FnTyp)
 
+    def body_cfg(self) -> Optional[ir_values.Cfg]:
+        """This function's lowered body, if it has one.
+
+        Overridden by :class:`Fn` and :class:`FnInstance` to return their
+        (lazily built) :attr:`~Fn.cfg`; ``None`` here covers
+        :class:`FnDecl`, an extern declaration with no body to lower.
+        """
+        return None
+
 
 class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
     """Base class for functions declared or defined in Leech source.
@@ -259,6 +268,10 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         builder = ir_builder.CfgBuilder(self.typ_check_results, self)
         builder.build_fn(opt_util.opt_unwrap(self.ast), self.env)
         return builder.cfg
+
+    @override
+    def body_cfg(self) -> Optional[ir_values.Cfg]:
+        return self.cfg
 
     def is_accessible_from(self, file: src.SrcFile) -> bool:
         """Whether this function can be called from code in ``file``.
@@ -405,6 +418,10 @@ class FnInstance(FnSpec[ast.FnDefn]):
         builder = ir_builder.CfgBuilder(self._fn.typ_check_results, self, self._mapping)
         builder.build_fn(opt_util.opt_unwrap(self._fn.ast), self.env)
         return builder.cfg
+
+    @override
+    def body_cfg(self) -> Optional[ir_values.Cfg]:
+        return self.cfg
 
 
 class GenericFn:
