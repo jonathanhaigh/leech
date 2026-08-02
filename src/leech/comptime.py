@@ -106,13 +106,22 @@ class Interpreter:
                         ret = lhs.value - rhs.value
                     case ir_values.MulInstr():
                         ret = lhs.value * rhs.value
-                    case ir_values.SdivInstr() | ir_values.UdivInstr():
+                    case ir_values.SdivInstr():
+                        if rhs.value == 0:
+                            raise errors.DivisionByZeroAtComptimeError(instr.span)
+                        # LLVM's sdiv truncates toward zero (like C's `/`),
+                        # unlike Python's `//`, which floors toward negative
+                        # infinity - they only differ when truncation is
+                        # needed and the operands' signs differ.
+                        ret = abs(lhs.value) // abs(rhs.value)
+                        if (lhs.value < 0) != (rhs.value < 0):
+                            ret = -ret
+                    case ir_values.UdivInstr():
                         if rhs.value == 0:
                             raise errors.DivisionByZeroAtComptimeError(instr.span)
                         ret = lhs.value // rhs.value
                     case _:
                         raise AssertionError(f"invalid bin op instr {instr}")
-                # TODO: sdiv vs udiv?
                 if not lhs.typ.fits(ret):
                     raise errors.IntOverflowAtComptimeError(ret, lhs.typ.name, instr.span)
                 self._registers[instr] = ir_values.ComptimeInt(lhs.typ, ret, instr.ast)
@@ -155,7 +164,11 @@ class Interpreter:
                         ret = lhs.value > rhs.value
                     case _:
                         raise AssertionError(f"invalid icmp op {instr.op!r}")
-                # TODO: signed vs unsigned?
+                # ComptimeInt.value already holds each operand's canonical
+                # mathematical value (negative for signed types, always >= 0
+                # for unsigned ones - see ComptimeInt), so plain Python
+                # comparison is correct here regardless of whether this is a
+                # signed or unsigned icmp.
                 self._registers[instr] = ir_values.ComptimeBool(ret, instr.ast)
 
             case ir_values.LoadInstr():

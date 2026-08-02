@@ -187,6 +187,22 @@ def test_comptime_signed_div_overflow(tmp_path):
         util.compile_str(tmp_path, src)
 
 
+def test_comptime_signed_div_truncates_toward_zero(tmp_path):
+    # LLVM's sdiv truncates toward zero, unlike Python's `//`, which floors
+    # toward negative infinity: -7 / 2 and 7 / -2 must both be -3, not -4.
+    src = """
+    let neg7 = 0i8 - 7i8;
+    let neg2 = 0i8 - 2i8;
+    let neg3 = 0i8 - 3i8;
+    let a = neg7 / 2i8;
+    let b = 7i8 / neg2;
+    pub fn main() i32 {
+        return if (a == neg3 and b == neg3) { 1 } else { 0 };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 1)
+
+
 def test_int_arith_unary_minus(tmp_path):
     src = """
     pub fn main() i32 {
