@@ -1220,11 +1220,11 @@ class CfgBuilder:
         return value
 
     def _deref_in_context(
-        self, ptr: ir_values.Value, ctx: _ExprContext, ast: Optional[ast.Ast]
+        self, ptr: ir_values.Value, ctx: _ExprContext, ast_node: Optional[ast.Ast]
     ) -> ir_values.Value:
         if ctx == _ExprContext.PLACE:
             return ptr
-        return self._curr_bb.load(ptr, ast)
+        return self._curr_bb.load(ptr, ast_node)
 
     def _add_bb(self, basename: str) -> ir_values.BasicBlock:
         """Create a new, empty basic block and add it to :attr:`cfg`.
@@ -1247,7 +1247,7 @@ class CfgBuilder:
         asserts.assert_in(bb, self.cfg)
         self._curr_bb = bb
 
-    def _branch(self, target: ir_values.BasicBlock, ast: ast.Ast) -> None:
+    def _branch(self, target: ir_values.BasicBlock, ast_node: ast.Ast) -> None:
         """Terminate :attr:`_curr_bb` with an unconditional branch.
 
         Does not change :attr:`_curr_bb`, the same as :meth:`_cbranch` and
@@ -1260,10 +1260,10 @@ class CfgBuilder:
 
         :param target: The basic block to branch to; must already be in
             :attr:`cfg`.
-        :param ast: The AST node the branch instruction is attributed to.
+        :param ast_node: The AST node the branch instruction is attributed to.
         """
         asserts.assert_in(target, self.cfg)
-        self._curr_bb.branch(target, ast)
+        self._curr_bb.branch(target, ast_node)
         self.cfg.add_edge(self._curr_bb, target)
 
     def _cbranch(
@@ -1271,7 +1271,7 @@ class CfgBuilder:
         condition: ir_values.Value,
         true_target: ir_values.BasicBlock,
         false_target: ir_values.BasicBlock,
-        ast: ast.Ast,
+        ast_node: ast.Ast,
     ) -> None:
         """Terminate :attr:`_curr_bb` with a conditional branch.
 
@@ -1283,19 +1283,19 @@ class CfgBuilder:
             true; must already be in :attr:`cfg`.
         :param false_target: The block to branch to if ``condition`` is
             false; must already be in :attr:`cfg`.
-        :param ast: The AST node the branch instruction is attributed to.
+        :param ast_node: The AST node the branch instruction is attributed to.
         """
         asserts.assert_in(true_target, self.cfg)
         asserts.assert_in(false_target, self.cfg)
-        self._curr_bb.cbranch(condition, true_target, false_target, ast)
+        self._curr_bb.cbranch(condition, true_target, false_target, ast_node)
         self.cfg.add_edge(self._curr_bb, true_target)
         self.cfg.add_edge(self._curr_bb, false_target)
 
-    def _ret(self, value: ir_values.Value, ast: Optional[ast.Ast]) -> None:
+    def _ret(self, value: ir_values.Value, ast_node: Optional[ast.Ast]) -> None:
         """Terminate :attr:`_curr_bb` with a return of ``value``.
 
         :param value: The value to return.
-        :param ast: The AST node the return instruction is attributed to.
+        :param ast_node: The AST node the return instruction is attributed to.
         """
-        self._curr_bb.ret(value, ast)
+        self._curr_bb.ret(value, ast_node)
         self.cfg.add_edge(self._curr_bb, self.cfg.exit)

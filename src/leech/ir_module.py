@@ -35,17 +35,17 @@ class Access(enum.Enum):
     PUBLIC = 1
 
     @staticmethod
-    def from_ast(ast: Optional[ast.Access]) -> Access:
+    def from_ast(pub_ast: Optional[ast.Access]) -> Access:
         """Determine access from an optional ``pub`` keyword in the AST.
 
-        :param ast: The parsed ``pub`` keyword node, or ``None`` if
+        :param pub_ast: The parsed ``pub`` keyword node, or ``None`` if
             absent.
-        :return: :data:`PUBLIC` if ``ast`` is present, otherwise
+        :return: :data:`PUBLIC` if ``pub_ast`` is present, otherwise
             :data:`PRIVATE`.
         """
-        if ast is None:
+        if pub_ast is None:
             return PRIVATE
-        asserts.assert_eq(ast.value, "pub")
+        asserts.assert_eq(pub_ast.value, "pub")
         return PUBLIC
 
 
@@ -152,7 +152,7 @@ class FnSpec[FnAstT_co: ast.FnSpec](ir_values.ComptimePtr[FnAstT_co]):
 class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
     """Base class for functions declared or defined in Leech source.
 
-    :param ast: The parsed function declaration or definition.
+    :param fn_ast: The parsed function declaration or definition.
     :param e: The enclosing scope, used to resolve parameter and return
         types.
     :param mod_name: The name of the module this function is declared in,
@@ -175,12 +175,12 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
     @override
     def __init__(
         self,
-        ast: FnAstT_co,
+        fn_ast: FnAstT_co,
         e: ir_env.Env,
         mod_name: str,
         recv_typ: Optional[typs.Typ] = None,
     ) -> None:
-        super().__init__(ast)
+        super().__init__(fn_ast)
         self.env = e.new_child()
         self._mod_name = mod_name
         self.recv_typ = recv_typ
@@ -189,9 +189,9 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         # in a param or return type (below), or in an expression. A
         # no-op loop for a non-generic function or an extern declaration,
         # neither of which can have any.
-        for index, param_ast in enumerate(ast.generic_params):
+        for index, param_ast in enumerate(fn_ast.generic_params):
             self.env.add_container(
-                param_ast.ident.name, typs.TypParamTyp.get_or_create(ast, index, param_ast)
+                param_ast.ident.name, typs.TypParamTyp.get_or_create(fn_ast, index, param_ast)
             )
 
     @override
@@ -466,7 +466,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     :class:`leech.comptime.Interpreter`), since it becomes a global variable's
     initial value in the generated code.
 
-    :param ast: The parsed variable declaration.
+    :param var_ast: The parsed variable declaration.
     :param e: The enclosing scope, used to build and evaluate the
         initializer expression.
     """
@@ -482,10 +482,10 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     _resolving: ClassVar[list[ModVar]] = []
 
     @override
-    def __init__(self, ast: ast.VarDefn, e: ir_env.Env) -> None:
-        super().__init__(ast)
+    def __init__(self, var_ast: ast.VarDefn, e: ir_env.Env) -> None:
+        super().__init__(var_ast)
         self.env = e.new_child()
-        self._mut = typs.Mutability.from_ast(ast.let_stmt.mut)
+        self._mut = typs.Mutability.from_ast(var_ast.let_stmt.mut)
 
     @property
     def name(self) -> str:

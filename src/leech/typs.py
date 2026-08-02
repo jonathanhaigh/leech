@@ -154,8 +154,8 @@ class Typ(abc.ABC):
         """
         return (cls, *args)
 
-    def coerces_to(self, target: Typ) -> bool:
-        """Whether a value of this type may be implicitly converted to ``target``.
+    def coerces_to(self, target_typ: Typ) -> bool:
+        """Whether a value of this type may be implicitly converted to ``target_typ``.
 
         Coercion is only ever applied where the target type is
         unambiguous - a call argument, an assignment, a ``return``, a
@@ -165,10 +165,10 @@ class Typ(abc.ABC):
         This base implementation allows only the identity coercion;
         subclasses widen it.
 
-        :param target: The type being coerced to.
+        :param target_typ: The type being coerced to.
         :return: Whether the coercion is allowed.
         """
-        return self == target
+        return self == target_typ
 
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
         """Replace every type parameter within this type with its mapped type.
@@ -322,15 +322,15 @@ class IntTyp(Typ):
     """A fixed-width signed or unsigned integer type, e.g. ``i32`` or ``u8``.
 
     :param width: The bit width.
-    :param signage: Whether the type is signed or unsigned.
+    :param sign: Whether the type is signed or unsigned.
     """
 
     width: Final[int]
     signage: Final[signage.Signage]
 
-    def __init__(self, width: int, signage: signage.Signage) -> None:
+    def __init__(self, width: int, sign: signage.Signage) -> None:
         self.width = width
-        self.signage = signage
+        self.signage = sign
 
     @property
     @override
@@ -361,7 +361,7 @@ class IntTyp(Typ):
         return self.min_value <= value <= self.max_value
 
     @override
-    def coerces_to(self, target: Typ) -> bool:
+    def coerces_to(self, target_typ: Typ) -> bool:
         """Allow widening to an integer type that can represent every value.
 
         Comparing ranges is the whole rule, so the awkward cases fall out
@@ -370,8 +370,8 @@ class IntTyp(Typ):
         type coerces to an unsigned one, which could never hold its
         negative values.
         """
-        return isinstance(target, IntTyp) and (
-            target.min_value <= self.min_value and self.max_value <= target.max_value
+        return isinstance(target_typ, IntTyp) and (
+            target_typ.min_value <= self.min_value and self.max_value <= target_typ.max_value
         )
 
     _NAME_RE: ClassVar[re.Pattern[str]] = re.compile("([iu])([1-9][0-9]*)")
@@ -466,7 +466,7 @@ class PtrTyp(Typ):
         return f"*{mut_str}{self.pointee_typ.name}"
 
     @override
-    def coerces_to(self, target: Typ) -> bool:
+    def coerces_to(self, target_typ: Typ) -> bool:
         """Allow a mutable pointer where a const one is wanted.
 
         Giving up the ability to write through a pointer is always safe,
@@ -474,8 +474,8 @@ class PtrTyp(Typ):
         can't be used where writing is required. Nothing is emitted for
         this coercion - the two have the same representation.
         """
-        return super().coerces_to(target) or (
-            self.mut == MUT and self._new_with_mut(CONST) == target
+        return super().coerces_to(target_typ) or (
+            self.mut == MUT and self._new_with_mut(CONST) == target_typ
         )
 
     @override
@@ -602,7 +602,7 @@ class StructField:
     """A single field of a :class:`StructTyp`.
 
     :param index: The field's position among its struct's fields.
-    :param ast: The parsed field declaration.
+    :param field_ast: The parsed field declaration.
     :param e: The struct's scope, used to resolve the field's type.
     """
 
@@ -610,9 +610,9 @@ class StructField:
     ast: Final[ast.StructFieldDefn]
     env: Final[ir_env.Env]
 
-    def __init__(self, index: int, ast: ast.StructFieldDefn, e: ir_env.Env) -> None:
+    def __init__(self, index: int, field_ast: ast.StructFieldDefn, e: ir_env.Env) -> None:
         self.index = index
-        self.ast = ast
+        self.ast = field_ast
         self.env = e
 
     @property
@@ -698,7 +698,7 @@ class StructTyp(Typ):
     aren't functions - associated types or consts - that difference will
     need revisiting, and a shared abstraction will have more to share.
 
-    :param ast: The parsed struct declaration.
+    :param struct_ast: The parsed struct declaration.
     :param e: The enclosing scope, used to resolve field types and (for a
         generic struct) type parameters. Recorded for later reuse, so
         a later instantiation can be built against the same scope without
@@ -729,12 +729,12 @@ class StructTyp(Typ):
 
     def __init__(
         self,
-        ast: ast.StructDefn,
+        struct_ast: ast.StructDefn,
         e: ir_env.Env,
         typ_args: tuple[Typ, ...] = (),
         mod_name: str = "",
     ) -> None:
-        self.ast = ast
+        self.ast = struct_ast
         self._decl_env = e
         self._typ_args = typ_args
         self.mod_name = mod_name
@@ -746,12 +746,12 @@ class StructTyp(Typ):
         # fields are only ever checked against the parameters themselves,
         # never lowered.
         if typ_args:
-            for param_ast, typ_arg in zip(ast.generic_params, typ_args, strict=True):
+            for param_ast, typ_arg in zip(struct_ast.generic_params, typ_args, strict=True):
                 self.env.add_container(param_ast.ident.name, typ_arg)
         else:
-            for index, param_ast in enumerate(ast.generic_params):
+            for index, param_ast in enumerate(struct_ast.generic_params):
                 self.env.add_container(
-                    param_ast.ident.name, TypParamTyp.get_or_create(ast, index, param_ast)
+                    param_ast.ident.name, TypParamTyp.get_or_create(struct_ast, index, param_ast)
                 )
         self._members = {}
         # Registering fields here - rather than lazily, along with
@@ -759,7 +759,7 @@ class StructTyp(Typ):
         # stores its index, AST node and scope, so this is safe even
         # though a field's type may name a struct declared later in the
         # module.
-        for i, field_ast in enumerate(ast.fields):
+        for i, field_ast in enumerate(struct_ast.fields):
             self._add_member(StructField(i, field_ast, self.env))
 
     @functools.cached_property
@@ -1041,7 +1041,7 @@ class NeverTyp(Typ):
         return "never"
 
     @override
-    def coerces_to(self, target: Typ) -> bool:
+    def coerces_to(self, target_typ: Typ) -> bool:
         return True
 
 

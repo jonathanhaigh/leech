@@ -61,14 +61,14 @@ class Value[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](abc.ABC):
     """Base class for anything that has a type and a source location: IR
     values, instructions, and function parameters.
 
-    :param ast: The AST node this value was built from, if any (builtin
+    :param ast_node: The AST node this value was built from, if any (builtin
         values may have none).
     """
 
     ast: Final[Optional[AstT_co]]
 
-    def __init__(self, ast: Optional[AstT_co]) -> None:
-        self.ast = ast
+    def __init__(self, ast_node: Optional[AstT_co]) -> None:
+        self.ast = ast_node
 
     @functools.cached_property
     def typ(self) -> TypT_co:
@@ -115,15 +115,15 @@ class ComptimeInt(ComptimeValue[typs.IntTyp]):
 
     :param typ: The integer type.
     :param value: The integer value.
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     _typ: Final[typs.IntTyp]
     value: Final[int]
 
     @override
-    def __init__(self, typ: typs.IntTyp, value: int, ast: Optional[ast.Ast]) -> None:
-        super().__init__(ast)
+    def __init__(self, typ: typs.IntTyp, value: int, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(ast_node)
         self._typ = typ
         assert typ.fits(value), f"{value} does not fit in type {typ.name}"
         self.value = value
@@ -137,13 +137,13 @@ class ComptimeBool(ComptimeValue[typs.BoolTyp]):
     """A compile-time-known boolean value.
 
     :param value: The boolean value.
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     value: Final[bool]
 
-    def __init__(self, value: bool, ast: Optional[ast.Ast]) -> None:
-        super().__init__(ast)
+    def __init__(self, value: bool, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(ast_node)
         self.value = value
 
     @override
@@ -155,14 +155,14 @@ class ComptimeCStr(ComptimeValue[typs.PtrTyp]):
     """A compile-time-known, nul-terminated C string constant.
 
     :param value: The string's contents (excluding the nul terminator).
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     value: Final[bytearray]
     initializer_typ: Final[typs.ArrayTyp]
 
-    def __init__(self, value: str, ast: Optional[ast.Ast]) -> None:
-        super().__init__(ast)
+    def __init__(self, value: str, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(ast_node)
         self.value = bytearray(value.encode() + b"\0")
         self.initializer_typ = typs.ArrayTyp.get_or_create(typs.U8, len(self.value))
 
@@ -216,7 +216,7 @@ class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
     :param typ: The array type.
     :param elements: The element values, in index order; must match
         ``typ`` in length and element type.
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     elements: Final[list[ComptimeValue]]
@@ -224,11 +224,11 @@ class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
 
     @override
     def __init__(
-        self, typ: typs.ArrayTyp, elements: list[ComptimeValue], ast: Optional[ast.Ast]
+        self, typ: typs.ArrayTyp, elements: list[ComptimeValue], ast_node: Optional[ast.Ast]
     ) -> None:
         asserts.assert_eq(typ.length, len(elements))
         asserts.assert_all_eq([elt.typ for elt in elements], typ.element_typ)
-        super().__init__(ast)
+        super().__init__(ast_node)
         self._typ = typ
         self.elements = elements
 
@@ -261,7 +261,7 @@ class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
     :param typ: The struct type.
     :param fields: The field values, keyed by field name; must match
         ``typ``'s fields in names and types.
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     fields: Final[dict[str, ComptimeValue]]
@@ -269,13 +269,13 @@ class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
 
     @override
     def __init__(
-        self, typ: typs.StructTyp, fields: dict[str, ComptimeValue], ast: Optional[ast.Ast]
+        self, typ: typs.StructTyp, fields: dict[str, ComptimeValue], ast_node: Optional[ast.Ast]
     ) -> None:
         asserts.assert_eq(
             {k: v.typ for k, v in typ.fields.items()},
             {k: v.typ for k, v in fields.items()},
         )
-        super().__init__(ast)
+        super().__init__(ast_node)
         self._typ = typ
         self.fields = fields
 
@@ -345,17 +345,17 @@ class ComptimeAlloc(ComptimePtr):
 
     :param typ: The type of the allocated value.
     :param mut: The mutability of the allocated value.
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     value: ComptimeValue
     mut: Final[typs.Mutability]
 
     @override
-    def __init__(self, typ: typs.Typ, mut: typs.Mutability, ast: Optional[ast.Ast]) -> None:
-        super().__init__(ast)
+    def __init__(self, typ: typs.Typ, mut: typs.Mutability, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(ast_node)
         self.mut = mut
-        self.value = UndefValue(typ, ast)
+        self.value = UndefValue(typ, ast_node)
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
@@ -380,15 +380,15 @@ class ComptimeGep(ComptimePtr):
 
     :param base: The pointer being indexed into.
     :param index: The array or struct field index.
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     base: Final[ComptimePtr]
     index: Final[ComptimeInt]
 
     @override
-    def __init__(self, base: ComptimePtr, index: ComptimeInt, ast: Optional[ast.Ast]) -> None:
-        super().__init__(ast)
+    def __init__(self, base: ComptimePtr, index: ComptimeInt, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(ast_node)
         self.base = base
         self.index = index
 
@@ -414,12 +414,12 @@ class ComptimeGep(ComptimePtr):
 class VoidValue(ComptimeValue[typs.VoidTyp]):
     """The single, valueless result of a void-typed expression.
 
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     @override
-    def __init__(self, ast: Optional[ast.Ast]):
-        super().__init__(ast)
+    def __init__(self, ast_node: Optional[ast.Ast]):
+        super().__init__(ast_node)
 
     @override
     def calculate_typ(self) -> typs.VoidTyp:
@@ -436,12 +436,12 @@ class NeverValue(ComptimeValue[typs.NeverTyp]):
     :class:`UnreachableInstr`), this adds nothing to the block: one of
     those has already terminated it by the time this is used.
 
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     @override
-    def __init__(self, ast: Optional[ast.Ast]):
-        super().__init__(ast)
+    def __init__(self, ast_node: Optional[ast.Ast]):
+        super().__init__(ast_node)
 
     @override
     def calculate_typ(self) -> typs.NeverTyp:
@@ -452,14 +452,14 @@ class UndefValue(ComptimeValue):
     """A placeholder for a not-yet-initialized element of an aggregate being built.
 
     :param typ: The type the eventual value will have.
-    :param ast: The AST node this value was built from, if any.
+    :param ast_node: The AST node this value was built from, if any.
     """
 
     _typ: Final[typs.Typ]
 
     @override
-    def __init__(self, typ: typs.Typ, ast: Optional[ast.Ast]) -> None:
-        super().__init__(ast)
+    def __init__(self, typ: typs.Typ, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(ast_node)
         self._typ = typ
 
     @override
@@ -473,7 +473,7 @@ class Param(Value[typs.Typ, ast.Param | ast.Receiver]):
     :param fn: The function this is a parameter of.
     :param pos: The parameter's zero-based position in the parameter
         list.
-    :param ast: The AST node this value was built from, if any - a
+    :param ast_node: The AST node this value was built from, if any - a
         :class:`~leech.ast.Receiver` at position 0 for a method's ``self``,
         otherwise a :class:`~leech.ast.Param`.
     """
@@ -483,9 +483,9 @@ class Param(Value[typs.Typ, ast.Param | ast.Receiver]):
 
     @override
     def __init__(
-        self, fn: ir_module.FnSpec, pos: int, ast: Optional[ast.Param | ast.Receiver]
+        self, fn: ir_module.FnSpec, pos: int, ast_node: Optional[ast.Param | ast.Receiver]
     ) -> None:
-        super().__init__(ast)
+        super().__init__(ast_node)
         self.fn = fn
         self.pos = pos
 
@@ -499,14 +499,14 @@ class Instr[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT
     """Base class for a single instruction within a :class:`BasicBlock`.
 
     :param bb: The basic block this instruction belongs to.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     bb: Final[BasicBlock]
 
     @override
-    def __init__(self, bb: BasicBlock, ast: Optional[AstT_co]) -> None:
-        super().__init__(ast)
+    def __init__(self, bb: BasicBlock, ast_node: Optional[AstT_co]) -> None:
+        super().__init__(ast_node)
         self.bb = bb
 
     def __str__(self) -> str:
@@ -524,15 +524,15 @@ class BinOpInstr(Instr):
     :param bb: The basic block this instruction belongs to.
     :param lhs: The left-hand operand; must have the same type as ``rhs``.
     :param rhs: The right-hand operand.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     lhs: Final[Value]
     rhs: Final[Value]
 
     @override
-    def __init__(self, bb: BasicBlock, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> None:
-        super().__init__(bb, ast)
+    def __init__(self, bb: BasicBlock, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
         self.lhs = lhs
         self.rhs = rhs
 
@@ -567,14 +567,14 @@ class NegInstr(Instr):
 
     :param bb: The basic block this instruction belongs to.
     :param operand: The value to negate.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     operand: Final[Value]
 
     @override
-    def __init__(self, bb: BasicBlock, operand: Value, ast: Optional[ast.Ast]) -> None:
-        super().__init__(bb, ast)
+    def __init__(self, bb: BasicBlock, operand: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
         self.operand = operand
 
     @override
@@ -587,14 +587,14 @@ class NotInstr(Instr):
 
     :param bb: The basic block this instruction belongs to.
     :param operand: The value to negate.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     operand: Final[Value]
 
     @override
-    def __init__(self, bb: BasicBlock, operand: Value, ast: Optional[ast.Ast]) -> None:
-        super().__init__(bb, ast)
+    def __init__(self, bb: BasicBlock, operand: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
         self.operand = operand
 
     @override
@@ -609,7 +609,7 @@ class IcmpInstr(Instr):
     :param op: The comparison operator, e.g. ``"<"`` or ``"=="``.
     :param lhs: The left-hand operand; must have the same type as ``rhs``.
     :param rhs: The right-hand operand.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     op: Final[str]
@@ -618,9 +618,9 @@ class IcmpInstr(Instr):
 
     @override
     def __init__(
-        self, bb: BasicBlock, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
+        self, bb: BasicBlock, op: str, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
     ) -> None:
-        super().__init__(bb, ast)
+        super().__init__(bb, ast_node)
         self.op = op
         self.lhs = lhs
         self.rhs = rhs
@@ -642,17 +642,17 @@ class LoadInstr(Instr):
     """Reads the value pointed to by a pointer.
 
     :param bb: The basic block this instruction belongs to.
-    :param src: The pointer to read through.
-    :param ast: The AST node this instruction was built from, if any.
+    :param src_ptr: The pointer to read through.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     src: Final[Value]
 
     @override
-    def __init__(self, bb: BasicBlock, src: Value, ast: Optional[ast.Ast]) -> None:
-        super().__init__(bb, ast)
-        asserts.checked_cast(src.typ, typs.PtrTyp)
-        self.src = src
+    def __init__(self, bb: BasicBlock, src_ptr: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
+        asserts.checked_cast(src_ptr.typ, typs.PtrTyp)
+        self.src = src_ptr
 
     @override
     def calculate_typ(self) -> typs.Typ:
@@ -671,7 +671,7 @@ class IntExtInstr(Instr[typs.IntTyp]):
     :param bb: The basic block this instruction belongs to.
     :param value: The integer to widen.
     :param typ: The integer type to widen it to.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     value: Final[Value]
@@ -679,9 +679,9 @@ class IntExtInstr(Instr[typs.IntTyp]):
 
     @override
     def __init__(
-        self, bb: BasicBlock, value: Value, typ: typs.IntTyp, ast: Optional[ast.Ast]
+        self, bb: BasicBlock, value: Value, typ: typs.IntTyp, ast_node: Optional[ast.Ast]
     ) -> None:
-        super().__init__(bb, ast)
+        super().__init__(bb, ast_node)
         src_typ = asserts.checked_cast(value.typ, typs.IntTyp)
         assert src_typ.coerces_to(typ), f'"{src_typ.name}" does not widen to "{typ.name}"'
         self.value = value
@@ -699,7 +699,7 @@ class AllocaInstr(Instr[typs.PtrTyp]):
     :param typ: The type of value to allocate space for.
     :param mut: The mutability of the returned pointer.
     :param count: The number of contiguous values to allocate space for.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     allocated_typ: Final[typs.Typ]
@@ -713,9 +713,9 @@ class AllocaInstr(Instr[typs.PtrTyp]):
         typ: typs.Typ,
         mut: typs.Mutability,
         count: int,
-        ast: Optional[ast.Ast],
+        ast_node: Optional[ast.Ast],
     ) -> None:
-        super().__init__(bb, ast)
+        super().__init__(bb, ast_node)
         self.allocated_typ = typ
         self.mut = mut
         self.count = count
@@ -731,15 +731,17 @@ class StoreInstr(Instr[typs.VoidTyp]):
     :param bb: The basic block this instruction belongs to.
     :param value: The value to write; must match ``dest``'s pointee type.
     :param dest: The pointer to write through.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     value: Final[Value]
     dest: Final[Value]
 
     @override
-    def __init__(self, bb: BasicBlock, value: Value, dest: Value, ast: Optional[ast.Ast]) -> None:
-        super().__init__(bb, ast)
+    def __init__(
+        self, bb: BasicBlock, value: Value, dest: Value, ast_node: Optional[ast.Ast]
+    ) -> None:
+        super().__init__(bb, ast_node)
         dest_typ = asserts.checked_cast(dest.typ, typs.PtrTyp)
         asserts.assert_eq(value.typ, dest_typ.pointee_typ)
         self.value = value
@@ -762,7 +764,7 @@ class GepInstr(Instr[typs.PtrTyp]):
     :param bb: The basic block this instruction belongs to.
     :param base: The pointer to the array or struct being indexed into.
     :param index: The array or struct field index into ``base``'s pointee type.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     base: Final[Value]
@@ -774,9 +776,9 @@ class GepInstr(Instr[typs.PtrTyp]):
         bb: BasicBlock,
         base: Value,
         index: Value,
-        ast: Optional[ast.Ast],
+        ast_node: Optional[ast.Ast],
     ) -> None:
-        super().__init__(bb, ast)
+        super().__init__(bb, ast_node)
         self.base = base
         self.index = index
 
@@ -794,7 +796,7 @@ class InsertValueInstr(Instr):
     :param value: The value to insert.
     :param indeces: The path of indices identifying the element to
         replace within nested aggregates.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     aggregate: Final[Value]
@@ -808,9 +810,9 @@ class InsertValueInstr(Instr):
         aggregate: Value,
         value: Value,
         indeces: tuple[ComptimeInt, ...],
-        ast: Optional[ast.Ast],
+        ast_node: Optional[ast.Ast],
     ) -> None:
-        super().__init__(bb, ast)
+        super().__init__(bb, ast_node)
         self.aggregate = aggregate
         self.value = value
         self.indeces = indeces
@@ -826,7 +828,7 @@ class CallInstr(Instr[typs.Typ, ast.CallExpr]):
     :param bb: The basic block this instruction belongs to.
     :param callee: The function pointer to call.
     :param args: The argument values, in parameter order.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     callee: Final[Value]
@@ -838,9 +840,9 @@ class CallInstr(Instr[typs.Typ, ast.CallExpr]):
         bb: BasicBlock,
         callee: Value,
         args: tuple[Value, ...],
-        ast: Optional[ast.CallExpr],
+        ast_node: Optional[ast.CallExpr],
     ) -> None:
-        super().__init__(bb, ast)
+        super().__init__(bb, ast_node)
         self.callee = callee
         self.args = args
 
@@ -857,16 +859,16 @@ class PhiInstr(Instr):
     :param bb: The basic block this instruction belongs to.
     :param incoming: The value to select for each possible predecessor
         block; all values must have the same type.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     incoming: Final[dict[BasicBlock, Value]]
 
     @override
     def __init__(
-        self, bb: BasicBlock, incoming: dict[BasicBlock, Value], ast: Optional[ast.Ast]
+        self, bb: BasicBlock, incoming: dict[BasicBlock, Value], ast_node: Optional[ast.Ast]
     ) -> None:
-        super().__init__(bb, ast)
+        super().__init__(bb, ast_node)
         self.incoming = incoming
 
     @override
@@ -884,14 +886,14 @@ class BranchInstr(Instr[typs.NeverTyp]):
 
     :param bb: The basic block this instruction belongs to.
     :param target: The block to branch to.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     target: Final[BasicBlock]
 
     @override
-    def __init__(self, bb: BasicBlock, target: BasicBlock, ast: Optional[ast.Ast]) -> None:
-        super().__init__(bb, ast)
+    def __init__(self, bb: BasicBlock, target: BasicBlock, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
         self.target = target
 
     @override
@@ -907,7 +909,7 @@ class CbranchInstr(Instr[typs.NeverTyp]):
     :param true_target: The block to branch to if ``condition`` is true.
     :param false_target: The block to branch to if ``condition`` is
         false.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     condition: Final[Value]
@@ -921,9 +923,9 @@ class CbranchInstr(Instr[typs.NeverTyp]):
         condition: Value,
         true_target: BasicBlock,
         false_target: BasicBlock,
-        ast: Optional[ast.Ast],
+        ast_node: Optional[ast.Ast],
     ) -> None:
-        super().__init__(bb, ast)
+        super().__init__(bb, ast_node)
         self.condition = condition
         self.true_target = true_target
         self.false_target = false_target
@@ -938,14 +940,14 @@ class RetInstr(Instr[typs.NeverTyp]):
 
     :param bb: The basic block this instruction belongs to.
     :param value: The value to return.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     value: Final[Value]
 
     @override
-    def __init__(self, bb: BasicBlock, value: Value, ast: Optional[ast.Ast]) -> None:
-        super().__init__(bb, ast)
+    def __init__(self, bb: BasicBlock, value: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
         self.value = value
 
     @override
@@ -957,12 +959,12 @@ class UnreachableInstr(Instr[typs.NeverTyp]):
     """Marks a point control flow can never reach; terminates its block.
 
     :param bb: The basic block this instruction belongs to.
-    :param ast: The AST node this instruction was built from, if any.
+    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     @override
-    def __init__(self, bb: BasicBlock, ast: Optional[ast.Ast]) -> None:
-        super().__init__(bb, ast)
+    def __init__(self, bb: BasicBlock, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
 
     @override
     def calculate_typ(self) -> typs.NeverTyp:
@@ -1015,112 +1017,112 @@ class BasicBlock:
             self.terminated = True
         return instr
 
-    def add(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> AddInstr:
+    def add(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> AddInstr:
         """Append an :class:`AddInstr` to this block."""
-        return self._add_instr(AddInstr(self, lhs, rhs, ast))
+        return self._add_instr(AddInstr(self, lhs, rhs, ast_node))
 
-    def sub(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> SubInstr:
+    def sub(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> SubInstr:
         """Append a :class:`SubInstr` to this block."""
-        return self._add_instr(SubInstr(self, lhs, rhs, ast))
+        return self._add_instr(SubInstr(self, lhs, rhs, ast_node))
 
-    def mul(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> MulInstr:
+    def mul(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> MulInstr:
         """Append a :class:`MulInstr` to this block."""
-        return self._add_instr(MulInstr(self, lhs, rhs, ast))
+        return self._add_instr(MulInstr(self, lhs, rhs, ast_node))
 
-    def sdiv(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> SdivInstr:
+    def sdiv(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> SdivInstr:
         """Append a :class:`SdivInstr` to this block."""
-        return self._add_instr(SdivInstr(self, lhs, rhs, ast))
+        return self._add_instr(SdivInstr(self, lhs, rhs, ast_node))
 
-    def udiv(self, lhs: Value, rhs: Value, ast: Optional[ast.Ast]) -> UdivInstr:
+    def udiv(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> UdivInstr:
         """Append a :class:`UdivInstr` to this block."""
-        return self._add_instr(UdivInstr(self, lhs, rhs, ast))
+        return self._add_instr(UdivInstr(self, lhs, rhs, ast_node))
 
-    def neg(self, operand: Value, ast: Optional[ast.Ast]) -> NegInstr:
+    def neg(self, operand: Value, ast_node: Optional[ast.Ast]) -> NegInstr:
         """Append a :class:`NegInstr` to this block."""
-        return self._add_instr(NegInstr(self, operand, ast))
+        return self._add_instr(NegInstr(self, operand, ast_node))
 
-    def not_(self, operand: Value, ast: Optional[ast.Ast]) -> NotInstr:
+    def not_(self, operand: Value, ast_node: Optional[ast.Ast]) -> NotInstr:
         """Append a :class:`NotInstr` to this block."""
-        return self._add_instr(NotInstr(self, operand, ast))
+        return self._add_instr(NotInstr(self, operand, ast_node))
 
     def icmp_signed(
-        self, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
+        self, op: str, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
     ) -> IcmpSignedInstr:
         """Append an :class:`IcmpSignedInstr` to this block."""
-        return self._add_instr(IcmpSignedInstr(self, op, lhs, rhs, ast))
+        return self._add_instr(IcmpSignedInstr(self, op, lhs, rhs, ast_node))
 
     def icmp_unsigned(
-        self, op: str, lhs: Value, rhs: Value, ast: Optional[ast.Ast]
+        self, op: str, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
     ) -> IcmpUnsignedInstr:
         """Append an :class:`IcmpUnsignedInstr` to this block."""
-        return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast))
+        return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast_node))
 
-    def phi(self, incoming: dict[BasicBlock, Value], ast: Optional[ast.Ast]) -> PhiInstr:
+    def phi(self, incoming: dict[BasicBlock, Value], ast_node: Optional[ast.Ast]) -> PhiInstr:
         """Append a :class:`PhiInstr` to this block."""
-        return self._add_instr(PhiInstr(self, incoming, ast))
+        return self._add_instr(PhiInstr(self, incoming, ast_node))
 
-    def load(self, src: Value, ast: Optional[ast.Ast]) -> LoadInstr:
+    def load(self, src_ptr: Value, ast_node: Optional[ast.Ast]) -> LoadInstr:
         """Append a :class:`LoadInstr` to this block."""
-        return self._add_instr(LoadInstr(self, src, ast))
+        return self._add_instr(LoadInstr(self, src_ptr, ast_node))
 
-    def int_ext(self, value: Value, typ: typs.IntTyp, ast: Optional[ast.Ast]) -> IntExtInstr:
+    def int_ext(self, value: Value, typ: typs.IntTyp, ast_node: Optional[ast.Ast]) -> IntExtInstr:
         """Append an :class:`IntExtInstr` to this block."""
-        return self._add_instr(IntExtInstr(self, value, typ, ast))
+        return self._add_instr(IntExtInstr(self, value, typ, ast_node))
 
     def alloca(
-        self, typ: typs.Typ, mut: typs.Mutability, count: int, ast: Optional[ast.Ast]
+        self, typ: typs.Typ, mut: typs.Mutability, count: int, ast_node: Optional[ast.Ast]
     ) -> AllocaInstr:
         """Append an :class:`AllocaInstr` to this block."""
-        return self._add_instr(AllocaInstr(self, typ, mut, count, ast))
+        return self._add_instr(AllocaInstr(self, typ, mut, count, ast_node))
 
-    def store(self, value: Value, dest: Value, ast: Optional[ast.Ast]) -> StoreInstr:
+    def store(self, value: Value, dest: Value, ast_node: Optional[ast.Ast]) -> StoreInstr:
         """Append a :class:`StoreInstr` to this block."""
-        return self._add_instr(StoreInstr(self, value, dest, ast))
+        return self._add_instr(StoreInstr(self, value, dest, ast_node))
 
-    def gep(self, base: Value, index: Value, ast: Optional[ast.Ast]) -> GepInstr:
+    def gep(self, base: Value, index: Value, ast_node: Optional[ast.Ast]) -> GepInstr:
         """Append a :class:`GepInstr` to this block."""
-        return self._add_instr(GepInstr(self, base, index, ast))
+        return self._add_instr(GepInstr(self, base, index, ast_node))
 
     def insert_value(
         self,
         aggregate: Value,
         value: Value,
         indeces: tuple[ComptimeInt, ...],
-        ast: Optional[ast.Ast],
+        ast_node: Optional[ast.Ast],
     ) -> InsertValueInstr:
         """Append an :class:`InsertValueInstr` to this block."""
-        return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast))
+        return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast_node))
 
     def call(
-        self, callee: Value, args: tuple[Value, ...], ast: Optional[ast.CallExpr]
+        self, callee: Value, args: tuple[Value, ...], ast_node: Optional[ast.CallExpr]
     ) -> CallInstr:
         """Append a :class:`CallInstr` to this block."""
-        return self._add_instr(CallInstr(self, callee, args, ast))
+        return self._add_instr(CallInstr(self, callee, args, ast_node))
 
-    def branch(self, target: BasicBlock, ast: Optional[ast.Ast]) -> BranchInstr:
+    def branch(self, target: BasicBlock, ast_node: Optional[ast.Ast]) -> BranchInstr:
         """Append a terminating :class:`BranchInstr` to this block."""
-        return self._add_instr(BranchInstr(self, target, ast), terminate=True)
+        return self._add_instr(BranchInstr(self, target, ast_node), terminate=True)
 
     def cbranch(
         self,
         condition: Value,
         true_target: BasicBlock,
         false_target: BasicBlock,
-        ast: Optional[ast.Ast],
+        ast_node: Optional[ast.Ast],
     ) -> CbranchInstr:
         """Append a terminating :class:`CbranchInstr` to this block."""
         return self._add_instr(
-            CbranchInstr(self, condition, true_target, false_target, ast),
+            CbranchInstr(self, condition, true_target, false_target, ast_node),
             terminate=True,
         )
 
-    def ret(self, value: Value, ast: Optional[ast.Ast]) -> RetInstr:
+    def ret(self, value: Value, ast_node: Optional[ast.Ast]) -> RetInstr:
         """Append a terminating :class:`RetInstr` to this block."""
-        return self._add_instr(RetInstr(self, value, ast), terminate=True)
+        return self._add_instr(RetInstr(self, value, ast_node), terminate=True)
 
-    def unreachable(self, ast: Optional[ast.Ast]) -> UnreachableInstr:
+    def unreachable(self, ast_node: Optional[ast.Ast]) -> UnreachableInstr:
         """Append a terminating :class:`UnreachableInstr` to this block."""
-        return self._add_instr(UnreachableInstr(self, ast), terminate=True)
+        return self._add_instr(UnreachableInstr(self, ast_node), terminate=True)
 
 
 class Cfg(nx.DiGraph):

@@ -20,21 +20,21 @@ from leech import ast, errors, ir_env, ir_module, src, typs
 class TraitMethod:
     """One method prototype declared inside a :class:`Trait`.
 
-    :param ast: The parsed method prototype.
+    :param fn_ast: The parsed method prototype.
     :param trait: The declaring trait, used to resolve the prototype's
         parameter and return types (which may name the trait's own type
         parameters).
-    :raises TraitMethodMissingReceiverError: If ``ast`` has no ``self``
+    :raises TraitMethodMissingReceiverError: If ``fn_ast`` has no ``self``
         receiver.
     """
 
     ast: Final[ast.TraitFn]
     _trait: Final[Trait]
 
-    def __init__(self, ast: ast.TraitFn, trait: Trait) -> None:
-        if ast.receiver is None:
-            raise errors.TraitMethodMissingReceiverError(ast.name.name, ast.span)
-        self.ast = ast
+    def __init__(self, fn_ast: ast.TraitFn, trait: Trait) -> None:
+        if fn_ast.receiver is None:
+            raise errors.TraitMethodMissingReceiverError(fn_ast.name.name, fn_ast.span)
+        self.ast = fn_ast
         self._trait = trait
 
     @property
@@ -85,7 +85,7 @@ class Trait:
     itself a type: naming one where a type is expected is
     :class:`~leech.errors.TraitUsedAsTypError`.
 
-    :param ast: The parsed trait declaration.
+    :param trait_ast: The parsed trait declaration.
     :param e: The enclosing scope, used to resolve method signatures.
     :param mod_name: The name of the module this trait is declared in,
         used by the orphan rule (see :meth:`Impl.check_orphan_rule`).
@@ -98,16 +98,16 @@ class Trait:
     mod_name: Final[str]
     _methods: Final[dict[str, TraitMethod]]
 
-    def __init__(self, ast: ast.TraitDefn, e: ir_env.Env, mod_name: str) -> None:
-        self.ast = ast
+    def __init__(self, trait_ast: ast.TraitDefn, e: ir_env.Env, mod_name: str) -> None:
+        self.ast = trait_ast
         self.mod_name = mod_name
         self._env = e.new_child()
-        for index, param_ast in enumerate(ast.generic_params):
+        for index, param_ast in enumerate(trait_ast.generic_params):
             self._env.add_container(
-                param_ast.ident.name, typs.TypParamTyp.get_or_create(ast, index, param_ast)
+                param_ast.ident.name, typs.TypParamTyp.get_or_create(trait_ast, index, param_ast)
             )
         self._methods = {}
-        for method_ast in ast.methods:
+        for method_ast in trait_ast.methods:
             method = TraitMethod(method_ast, self)
             existing = self._methods.get(method.name)
             if existing is not None:
@@ -172,7 +172,7 @@ class Impl:
     fields are, see :meth:`~leech.typs.StructTyp.is_concrete`). Finding one
     from a receiver's type goes through :class:`ImplRegistry` instead.
 
-    :param ast: The parsed ``impl`` block.
+    :param impl_ast: The parsed ``impl`` block.
     :param trait: The trait this implements.
     :param self_typ: The type this implements ``trait`` for - the impl's
         own type parameters, if any, appear within it as opaque
@@ -193,13 +193,13 @@ class Impl:
 
     def __init__(
         self,
-        ast: ast.ImplDefn,
+        impl_ast: ast.ImplDefn,
         trait: Trait,
         self_typ: typs.Typ,
         e: ir_env.Env,
         mod_name: str,
     ) -> None:
-        self.ast = ast
+        self.ast = impl_ast
         self._trait = trait
         self._self_typ = self_typ
         self._mod_name = mod_name
