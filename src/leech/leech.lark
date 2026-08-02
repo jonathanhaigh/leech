@@ -4,6 +4,7 @@ defn: fn_defn
   | fn_decl
   | var_defn
   | struct_defn
+  | trait_defn
   | impl_defn
   | import
 
@@ -24,6 +25,9 @@ struct_defn: access "struct" ident [generic_params] "{" struct_field_defn_list "
 struct_field_defn_list: _struct_field_defn_list?
 _struct_field_defn_list: struct_field_defn ("," struct_field_defn)* ","?
 struct_field_defn: access mut ident ":" typ
+
+trait_defn: access "trait" ident [generic_params] "{" trait_fn* "}"
+trait_fn: _fn_prototype ";"
 
 impl_defn: "impl" [generic_params] typ ["for" typ] "{" fn_defn* "}"
 

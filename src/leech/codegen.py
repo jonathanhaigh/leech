@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from llvmlite import ir as ll
 from networkx import dfs_postorder_nodes
 
-from leech import ir_module, ir_values
+from leech import ir_module, ir_traits, ir_values
 from leech.asserts import assert_eq, checked_cast
 from leech.naming import VarNamer
 from leech.typs import (
@@ -196,8 +196,6 @@ class Compiler:
             self._declare_fn_instance(inst)
 
         for item in self.mod.items:
-            if isinstance(item.value, ir_module.GenericFn):
-                continue
             self._compile_mod_item(item)
 
         for inst in instances:
@@ -209,15 +207,19 @@ class Compiler:
         Imported modules contribute only their public items, since
         nothing outside them can refer to the rest. Items that are
         themselves imported modules are skipped: this walk already covers
-        every module, so recursing into them would be redundant. A
-        generic function is skipped too - it has no LLVM symbol of its
-        own, only its instances do (see :meth:`_discover_fn_instances`).
+        every module, so recursing into them would be redundant. Item
+        kinds with nothing to declare or compile - a generic function
+        (only its instances have an LLVM symbol, see
+        :meth:`_discover_fn_instances`) or a trait (a declaration, not a
+        value or type with anything to lower) - aren't filtered out here;
+        :meth:`_declare_mod_item` and :meth:`_compile_mod_item` are the
+        single place that decides what each item kind needs.
 
         :return: The items, grouped by module in load order.
         """
         for mod in self.mod.loader.mods:
             for item in mod.items:
-                if isinstance(item.value, (ir_module.Mod, ir_module.GenericFn)):
+                if isinstance(item.value, ir_module.Mod):
                     continue
                 if mod is self.mod or item.access == ir_module.PUBLIC:
                     yield item
@@ -380,6 +382,15 @@ class Compiler:
             case StructTyp():
                 ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
                 self._ll_mod_items.set(item.value, ll_item)
+            case ir_module.GenericFn():
+                # No LLVM symbol of its own - only its instances do (see
+                # _discover_fn_instances), declared separately.
+                pass
+            case ir_traits.Trait():
+                # A declaration, not a value or type with anything of its
+                # own to declare - only a trait impl's methods, registered
+                # as their own ordinary items, need one.
+                pass
             case _:
                 # An import (ir_module.Mod) is the only other possible
                 # item value, and _program_items() - the only source of
@@ -402,6 +413,13 @@ class Compiler:
                 # An import contributes no symbols of its own; the
                 # imported module's items are handled by compile()'s walk
                 # over the whole program.
+                return None
+            case ir_module.GenericFn():
+                # No LLVM symbol of its own to compile - only its
+                # instances do (compiled separately by compile()).
+                return None
+            case ir_traits.Trait():
+                # A declaration, not a value with a body to compile.
                 return None
             case _:
                 raise AssertionError(f"unhandled module item {item}")

@@ -555,6 +555,163 @@ class ModUsedAsTypError(UserError):
         )
 
 
+class TraitUsedAsTypError(UserError):
+    """Raised when a trait name is used where a type is required.
+
+    Traits share the ``CONTAINERS`` namespace with types and modules (so
+    none of the three can share a name), but a trait isn't itself a type -
+    only a bound on one, or the target of an ``impl ... for ...`` block.
+    """
+
+    def __init__(self, trait_name: str, span: SrcSpan | None) -> None:
+        super().__init__(ERROR, f'Trait "{trait_name}" cannot be used as a type', span)
+
+
+class TraitMethodMissingReceiverError(UserError):
+    """Raised when a trait method prototype has no ``self``/``mut self``
+    receiver. Every trait method dispatches on its receiver's type, so an
+    associated-function-style prototype with none isn't supported yet."""
+
+    def __init__(self, method_name: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            f'Trait method "{method_name}" must take a "self" parameter',
+            span,
+        )
+
+
+class OrphanImplError(UserError):
+    """Raised when neither a trait impl's trait nor its self type is
+    defined in the current module - Leech's orphan rule (similar to
+    Rust's), which keeps any two modules from being able to write
+    conflicting impls of the same trait for the same type."""
+
+    def __init__(self, trait_name: str, typ_name: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Cannot implement trait "{trait_name}" for type "{typ_name}": '
+                "neither is defined in this module"
+            ),
+            span,
+        )
+
+
+class ConflictingImplsError(UserError):
+    """Raised when two impls of the same trait could apply to overlapping
+    self types."""
+
+    def __init__(
+        self,
+        trait_name: str,
+        typ_name: str,
+        span: SrcSpan | None,
+        existing_span: SrcSpan | None,
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Conflicting implementations of trait "{trait_name}" for type "{typ_name}"',
+            span,
+        )
+        if existing_span is not None:
+            self.add_extra(NOTE, "Previous implementation here", existing_span)
+
+
+class TraitMethodNotImplementedError(UserError):
+    """Raised when an ``impl Trait for ...`` block omits a method the
+    trait declares."""
+
+    def __init__(
+        self,
+        trait_name: str,
+        method_name: str,
+        typ_name: str,
+        span: SrcSpan | None,
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Missing implementation of "{method_name}" required by trait "{trait_name}"'
+                f' in "impl {trait_name} for {typ_name}"'
+            ),
+            span,
+        )
+
+
+class ExtraMethodInImplError(UserError):
+    """Raised when an ``impl Trait for ...`` block defines a method the
+    trait doesn't declare."""
+
+    def __init__(self, trait_name: str, method_name: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            f'"{method_name}" is not a method of trait "{trait_name}"',
+            span,
+        )
+
+
+class TraitMethodSignatureMismatchError(UserError):
+    """Raised when an ``impl Trait for ...`` block's method doesn't match
+    the signature the trait declares for it."""
+
+    def __init__(
+        self,
+        trait_name: str,
+        method_name: str,
+        given_typ: str,
+        expected_typ: str,
+        span: SrcSpan | None,
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Method "{method_name}" of "impl {trait_name}" has type "{given_typ}",'
+                f' expected "{expected_typ}"'
+            ),
+            span,
+        )
+
+
+class AmbiguousMethodError(UserError):
+    """Raised when a method call could resolve to more than one trait's
+    method of the same name for the receiver's type."""
+
+    def __init__(self, method_name: str, typ_name: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            f'Call to "{method_name}" on type "{typ_name}" is ambiguous between multiple traits',
+            span,
+        )
+
+
+class BoundNotATraitError(UserError):
+    """Raised when a generic parameter's declared bound doesn't name a trait."""
+
+    def __init__(self, name: str, span: SrcSpan | None) -> None:
+        super().__init__(ERROR, f'"{name}" is not a trait, so it cannot be used as a bound', span)
+
+
+class UnsatisfiedBoundError(UserError):
+    """Raised when a generic instantiation's type argument doesn't
+    implement a bound its type parameter declares."""
+
+    def __init__(
+        self,
+        typ_arg_name: str,
+        trait_name: str,
+        typ_param_name: str,
+        span: SrcSpan | None,
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Type "{typ_arg_name}" does not implement trait "{trait_name}",'
+                f' required by bound on type parameter "{typ_param_name}"'
+            ),
+            span,
+        )
+
+
 class TypeOfStructExprNotStructError(UserError):
     """Raised when a struct literal's named type isn't actually a struct type."""
 
@@ -587,6 +744,17 @@ class ImplForNonLocalStructTypError(UserError):
                 '"impl" blocks are only supported for structs defined in the'
                 f" same module, found {typ_diag}"
             ),
+            span,
+        )
+
+
+class ImplForNonTraitError(UserError):
+    """Raised when an ``impl ... for ...`` block's head doesn't name a trait."""
+
+    def __init__(self, name_diag: str, span: SrcSpan | None) -> None:
+        super().__init__(
+            ERROR,
+            f'"impl ... for ..." blocks require a trait, found {name_diag}',
             span,
         )
 

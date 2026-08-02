@@ -4,7 +4,7 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Final
 
-from leech import ir_module, parse
+from leech import ir_module, ir_traits, parse
 from leech.src import SrcFile
 
 
@@ -17,14 +17,21 @@ class ModLoader:
     :class:`~leech.ir_module.Mod` - and therefore one set of
     :class:`~leech.typs.StructTyp` instances, which are compared by identity.
 
+    Also owns :attr:`impl_registry`, the program-wide index of every trait
+    impl across every module - it lives here, rather than on
+    :class:`~leech.ir_module.Mod`, because it's the one object that sees
+    every module regardless of which one a lookup starts from.
+
     A loader is single-use in practice: one per invocation of
     :func:`leech.main.compile_to_llvm_ir`.
     """
 
     _mods: Final[dict[Path, ir_module.Mod]]
+    impl_registry: Final[ir_traits.ImplRegistry]
 
     def __init__(self) -> None:
         self._mods = {}
+        self.impl_registry = ir_traits.ImplRegistry()
 
     def load(self, path: Path) -> ir_module.Mod:
         """Load the module at ``path``, or return the already-loaded one.

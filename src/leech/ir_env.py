@@ -5,23 +5,27 @@ import re
 from collections import ChainMap
 from typing import Any
 
-from leech import ast, ir_module, ir_values, typs
+from leech import ast, ir_module, ir_traits, ir_values, typs
 from leech.asserts import assert_ge, checked_cast
 from leech.errors import (
     DuplicateItemDefnError,
     ItemNotFoundError,
     ModUsedAsTypError,
     PrivateItemAccessError,
+    TraitUsedAsTypError,
 )
+from leech.opt_util import opt_map, opt_or_else
 from leech.src import SrcSpan
 
-type Container = typs.Typ | ir_module.Mod
+type Container = typs.Typ | ir_module.Mod | ir_traits.Trait
 """Anything bindable in the :attr:`Env.Namespace.CONTAINERS` namespace.
 
-A type or an imported module. Modules aren't types, but they share one
-namespace with them, so a module and a type in the same scope can't have
-the same name. Both can hold associated items, which is what the
-namespace's name refers to.
+A type, an imported module, or a trait. None of the three can share a
+name with another: a module isn't a type but shares this namespace with
+one so a module and a type can't collide, and a trait shares it too (see
+:meth:`Env.resolve_typ`) so that ``dyn Trait`` remains addable later
+without a namespace change. All three can hold associated items, which is
+what the namespace's name refers to.
 """
 
 type Var = ir_values.Value[typs.PtrTyp] | ir_module.GenericFn
@@ -44,6 +48,14 @@ class Env:
 
     :param parent: The enclosing scope, or ``None`` to create a fresh,
         top-level scope.
+    :param impl_registry: The program-wide trait impl registry (see
+        :class:`~leech.ir_traits.ImplRegistry`) to expose as
+        :attr:`impl_registry`. Only meaningful (and only ever passed) at a
+        top-level scope - a child inherits its parent's, always. Defaults
+        to a fresh, empty registry so tests and other isolated callers
+        that construct a bare top-level ``Env`` don't have to know traits
+        exist; real compilation always passes the loader's own (see
+        :meth:`~leech.ir_module.Mod.__init__`).
     """
 
     class Namespace(enum.Enum):
@@ -65,12 +77,23 @@ class Env:
     #: own definition site (see :meth:`add`'s ``span`` parameter). Scoped
     #: to this Env alone, mirroring ``items.maps[0]``.
     _spans: dict[tuple[Env.Namespace, str], SrcSpan]
+    #: The program-wide trait impl registry - reachable from any scope, so
+    #: that type and method resolution (which thread an ``Env`` through
+    #: pervasively already) don't need it passed as a second, parallel
+    #: parameter everywhere. See :class:`~leech.ir_traits.ImplRegistry`.
+    impl_registry: ir_traits.ImplRegistry
 
-    def __init__(self, parent: Env | None = None) -> None:
+    def __init__(
+        self,
+        parent: Env | None = None,
+        impl_registry: ir_traits.ImplRegistry | None = None,
+    ) -> None:
         if parent is None:
             self.items = ChainMap()
+            self.impl_registry = opt_or_else(impl_registry, ir_traits.ImplRegistry)
         else:
             self.items = parent.items.new_child()
+            self.impl_registry = parent.impl_registry
         self._spans = {}
 
     def new_child(self) -> Env:
@@ -186,6 +209,8 @@ class Env:
             return "variable", value.span
         if isinstance(value, typs.StructTyp):
             return "type", value.span
+        if isinstance(value, ir_traits.Trait):
+            return "trait", value.span
         return None
 
     @staticmethod
@@ -200,7 +225,7 @@ class Env:
             case ir_module.Mod():
                 item = scope.get_item(ns, ident.name)
                 if item is None or item.access == ir_module.PUBLIC:
-                    res = None if item is None else item.value
+                    res = opt_map(item, lambda i: i.value)
                 else:
                     diag_info = Env._private_item_diag_info(item.value)
                     if diag_info is None:
@@ -241,10 +266,15 @@ class Env:
             type, accessed from outside the module it's defined in.
         :raises ModUsedAsTypError: If the path resolves to a module, which
             shares a namespace with types but isn't one.
+        :raises TraitUsedAsTypError: If the path resolves to a trait,
+            which shares a namespace with types but isn't one - only a
+            bound on one, or an ``impl ... for ...`` target.
         """
         item = self.resolve_path(Env.Namespace.CONTAINERS, path)
         if isinstance(item, ir_module.Mod):
             raise ModUsedAsTypError(item.name, path.idents[-1].span)
+        if isinstance(item, ir_traits.Trait):
+            raise TraitUsedAsTypError(item.name, path.idents[-1].span)
         return checked_cast(item, typs.Typ)
 
     def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:

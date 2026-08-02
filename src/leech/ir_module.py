@@ -2,17 +2,18 @@
 
 import enum
 from abc import abstractmethod
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from typing import ClassVar, Final, override
 
-from leech import ast, comptime, ir_builder, ir_env, ir_loader, typcheck
+from leech import ast, comptime, ir_builder, ir_env, ir_loader, ir_traits, typcheck
 from leech.asserts import assert_eq, checked_cast
 from leech.errors import (
     CircularVarInitializerError,
     ImplForNonLocalStructTypError,
     ImplForNonStructTypError,
+    ImplForNonTraitError,
     ModDoesNotExistError,
     SelfParamOutsideImplError,
 )
@@ -158,15 +159,17 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         (see :attr:`FnInstance.qualified_name`) - an ordinary
         (non-generic) function is qualified by its own :class:`ModItem`
         instead, same as any other module item.
-    :param recv_struct_typ: The struct this function is an associated
-        function of, if any - only consulted when ``ast.receiver`` is
-        present, to synthesize the receiver's pointer-to-struct type
+    :param recv_typ: The type this function is an associated function or
+        method of, if any - only consulted when ``ast.receiver`` is
+        present, to synthesize the receiver's pointer-to-``recv_typ`` type
         (which, unlike an ordinary parameter's, isn't written in source).
+        A struct for an inherent method; any type - struct, int, bool,
+        pointer, array - for a trait impl's.
     """
 
     env: Final[ir_env.Env]
     mod_name: Final[str]
-    recv_struct_typ: Final[StructTyp | None]
+    recv_typ: Final[Typ | None]
 
     @override
     def __init__(
@@ -174,12 +177,12 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         ast: FnAstT_co,
         e: ir_env.Env,
         mod_name: str,
-        recv_struct_typ: StructTyp | None = None,
+        recv_typ: Typ | None = None,
     ) -> None:
         super().__init__(ast)
         self.env = e.new_child()
         self.mod_name = mod_name
-        self.recv_struct_typ = recv_struct_typ
+        self.recv_typ = recv_typ
         # Bound here rather than looked up on demand, so a type parameter
         # resolves like any other named type wherever the body names it -
         # in a param or return type (below), or in an expression. A
@@ -208,9 +211,9 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
             Typ.from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
         ]
         if self.ast.receiver is not None:
-            assert self.recv_struct_typ is not None
+            assert self.recv_typ is not None
             recv_typ = PtrTyp.get_or_create(
-                self.recv_struct_typ, Mutability.from_ast(self.ast.receiver.mut)
+                self.recv_typ, Mutability.from_ast(self.ast.receiver.mut)
             )
             param_typs.insert(0, recv_typ)
 
@@ -571,7 +574,7 @@ class Mod:
     loader: Final[ir_loader.ModLoader]
 
     def __init__(self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader) -> None:
-        builtin_env = ir_env.Env()
+        builtin_env = ir_env.Env(impl_registry=loader.impl_registry)
         self._name = name
         self.ast = mod_ast
         self._items = {}
@@ -682,6 +685,12 @@ class Mod:
                     Access.from_ast(defn_ast.access),
                     StructTyp.create(defn_ast, self.env, (), self.name),
                 )
+            case ast.TraitDefn():
+                self._add_item(
+                    defn_ast.ident.name,
+                    Access.from_ast(defn_ast.access),
+                    ir_traits.Trait(defn_ast, self.env, self.name),
+                )
             case ast.Import():
                 mod_name = defn_ast.ident.name
                 mod_path = defn_ast.span.file.path.with_stem(mod_name)
@@ -695,44 +704,61 @@ class Mod:
                 raise AssertionError(f"unhandled definition {defn_ast}")
 
     def _build_impl_defn(self, impl_ast: ast.ImplDefn, generic_fns: list[Fn]) -> None:
-        """Build one ``impl`` block's associated functions.
+        """Build one ``impl`` block: dispatches to :meth:`_build_inherent_impl_defn`
+        or :meth:`_build_trait_impl_defn` depending on whether it has a
+        ``for`` clause.
 
         :param impl_ast: The parsed ``impl`` block.
-        :param generic_fns: Accumulates every associated function defined
-            in a *generic* ``impl`` block (``impl_ast.generic_params``
-            non-empty), so :meth:`build` can force it to type-check
-            eagerly, the same as a free generic function - see its
-            docstring. Such a function is otherwise unreachable: it's
-            registered as one of its (generic) receiver type's members,
-            never as a :class:`ModItem`, since :attr:`typ`'s receiver -
-            built from the impl's own, still-opaque type parameters -
-            names no real, lowerable type for codegen to make sense of
-            (see :meth:`~leech.typs.StructTyp.is_concrete`). Calling such
-            a method isn't supported yet: that needs the general member
-            lookup and receiver substitution traits will add.
-        :raises ImplForNonStructTypError: If ``impl_ast.typ`` doesn't name
-            a struct type.
-        :raises ImplForNonLocalStructTypError: If ``impl_ast.typ`` names a
-            struct defined outside this module.
+        :param generic_fns: Accumulates every associated function or
+            method defined in a *generic* ``impl`` block
+            (``impl_ast.generic_params`` non-empty), so :meth:`build` can
+            force it to type-check eagerly, the same as a free generic
+            function - see its docstring. Such a function is otherwise
+            unreachable: it's registered as one of its (generic) receiver
+            type's members, never as a :class:`ModItem`, since the
+            receiver - built from the impl's own, still-opaque type
+            parameters - names no real, lowerable type for codegen to
+            make sense of (see :meth:`~leech.typs.StructTyp.is_concrete`).
+            Calling such a method isn't supported yet: that needs a
+            monomorphization mechanism for impl-level (as opposed to
+            function-level) type parameters, which
+            :meth:`~leech.ir_module.Fn.instance` doesn't provide.
         """
-        # Trait impls (`impl Trait for T { ... }`) parse but aren't
-        # supported yet.
-        assert impl_ast.for_typ is None, "trait impls aren't supported yet"
-
-        impl_typ_ast = impl_ast.typ
-        if not isinstance(impl_typ_ast, ast.BasicTyp):
-            raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
-
         # The impl's own type parameters, if any, are bound here - before
-        # impl_typ_ast is resolved - so a generic impl's target type
-        # (e.g. `Pair[T, T]`) can name them, and again below, alongside
-        # each associated function's receiver scope, so a method's own
-        # signature and body can too.
+        # either the inherent or trait branch resolves its target type(s)
+        # - so a generic impl's target (e.g. `Pair[T, T]`, or a trait
+        # impl's self type) can name them, and each associated function's
+        # or method's own signature and body can too (see
+        # `Impl.__init__`/the inherent branch's `fn_env`).
         impl_env = self.env.new_child()
         for index, param_ast in enumerate(impl_ast.generic_params):
             impl_env.add_container(
                 param_ast.ident.name, TypParamTyp.get_or_create(impl_ast, index, param_ast)
             )
+
+        if impl_ast.for_typ is None:
+            self._build_inherent_impl_defn(impl_ast, impl_env, generic_fns)
+        else:
+            self._build_trait_impl_defn(impl_ast, impl_env, generic_fns)
+
+    def _build_inherent_impl_defn(
+        self, impl_ast: ast.ImplDefn, impl_env: ir_env.Env, generic_fns: list[Fn]
+    ) -> None:
+        """Build one inherent ``impl SomeStruct { ... }`` block's associated functions.
+
+        :param impl_ast: The parsed ``impl`` block (``impl_ast.for_typ is
+            None``).
+        :param impl_env: The impl's own scope, with its type parameters
+            (if any) already bound.
+        :param generic_fns: See :meth:`_build_impl_defn`.
+        :raises ImplForNonStructTypError: If ``impl_ast.typ`` doesn't name
+            a struct type.
+        :raises ImplForNonLocalStructTypError: If ``impl_ast.typ`` names a
+            struct defined outside this module.
+        """
+        impl_typ_ast = impl_ast.typ
+        if not isinstance(impl_typ_ast, ast.BasicTyp):
+            raise ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         typ = Typ.from_ast(impl_typ_ast, impl_env)
         if not isinstance(typ, StructTyp):
@@ -747,18 +773,98 @@ class Mod:
                 param_ast.ident.name, TypParamTyp.get_or_create(impl_ast, index, param_ast)
             )
 
+        self._build_impl_fns(impl_ast, fn_env, typ, generic_fns, typ.add_assoc_fn, typ.name)
+
+    def _build_trait_impl_defn(
+        self, impl_ast: ast.ImplDefn, impl_env: ir_env.Env, generic_fns: list[Fn]
+    ) -> None:
+        """Build one ``impl Trait for SelfTyp { ... }`` block's methods.
+
+        Unlike an inherent impl's target, ``SelfTyp`` isn't restricted to
+        a local struct - it may be any type, since a trait impl's
+        coherence comes from the orphan rule instead (see below), not
+        from requiring the type to be local outright.
+
+        :param impl_ast: The parsed ``impl`` block (``impl_ast.for_typ is
+            not None``).
+        :param impl_env: The impl's own scope, with its type parameters
+            (if any) already bound.
+        :param generic_fns: See :meth:`_build_impl_defn`.
+        :raises ImplForNonTraitError: If ``impl_ast.typ`` doesn't name a
+            trait.
+        :raises OrphanImplError: If neither the trait nor the self type is
+            defined in this module.
+        :raises ExtraMethodInImplError: If a method here isn't declared by
+            the trait.
+        :raises TraitMethodSignatureMismatchError: If a method's signature
+            doesn't match the trait's declared prototype for it.
+        :raises TraitMethodNotImplementedError: If the trait declares a
+            method this impl doesn't define.
+        :raises ConflictingImplsError: If this impl's self type could
+            overlap with another already-registered impl of the same
+            trait.
+        """
+        trait_typ_ast = impl_ast.typ
+        if not isinstance(trait_typ_ast, ast.BasicTyp):
+            raise ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
+        trait = impl_env.resolve_path(ir_env.Env.Namespace.CONTAINERS, trait_typ_ast.path)
+        if not isinstance(trait, ir_traits.Trait):
+            raise ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
+        # A generic trait's own type parameters aren't supported yet -
+        # nothing upstream rejects `impl Eq[i32] for i32` syntactically,
+        # so fail loudly here rather than silently ignore the arguments.
+        assert not trait_typ_ast.generic_args, "generic traits aren't supported yet"
+
+        self_typ = Typ.from_ast(opt_unwrap(impl_ast.for_typ), impl_env)
+
+        impl = ir_traits.Impl(impl_ast, trait, self_typ, impl_env, self.name)
+        # Registered before building any method: two impls of the same
+        # trait for the same (or overlapping) self type would otherwise
+        # collide on method naming first (DuplicateItemDefnError), a less
+        # specific diagnostic than the coherence violation it actually is.
+        # This is also what checks the orphan rule (see
+        # `ir_traits.Impl.check_orphan_rule`).
+        self.loader.impl_registry.add_impl(impl)
+
+        self._build_impl_fns(impl_ast, impl.env, self_typ, generic_fns, impl.add_method, impl.name)
+        impl.check_complete()
+
+    def _build_impl_fns(
+        self,
+        impl_ast: ast.ImplDefn,
+        fn_env: ir_env.Env,
+        recv_typ: Typ,
+        generic_fns: list[Fn],
+        register: Callable[[Fn], None],
+        qualified_prefix: str,
+    ) -> None:
+        """Build every function in an ``impl`` block, shared by the inherent and
+        trait branches of :meth:`_build_impl_defn`.
+
+        :param impl_ast: The parsed ``impl`` block.
+        :param fn_env: Each function's enclosing scope.
+        :param recv_typ: The receiver type to build each function with.
+        :param generic_fns: See :meth:`_build_impl_defn`.
+        :param register: Called with each built function to record it as a
+            member of ``recv_typ`` (:meth:`~leech.typs.StructTyp.add_assoc_fn`)
+            or of the trait impl (:meth:`~leech.ir_traits.Impl.add_method`).
+        :param qualified_prefix: The prefix (a struct's or an impl's own
+            name) a non-generic function is registered as a
+            :class:`ModItem` under, as ``f"{qualified_prefix}::{name}"``.
+        """
         for fn_ast in impl_ast.fns:
-            # Generic associated functions aren't supported yet - nothing
-            # upstream rejects the syntax, so fail loudly here rather than
-            # silently mistreat the method's one literal FnTyp as real.
+            # Generic associated functions/methods aren't supported yet -
+            # nothing upstream rejects the syntax, so fail loudly here
+            # rather than silently mistreat the function's one literal
+            # FnTyp as real.
             assert not fn_ast.generic_params, "generic associated functions aren't supported yet"
-            fn = Fn(fn_ast, fn_env, self.name, recv_struct_typ=typ)
-            typ.add_assoc_fn(fn)
+            fn = Fn(fn_ast, fn_env, self.name, recv_typ=recv_typ)
+            register(fn)
             if impl_ast.generic_params:
                 generic_fns.append(fn)
             else:
                 self._add_item(
-                    f"{typ.name}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn
+                    f"{qualified_prefix}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn
                 )
 
     def _add_item(

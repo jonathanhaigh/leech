@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from leech import ast, ir_module
+from leech import ast, ir_module, ir_traits
 from leech.asserts import assert_eq, assert_in, checked_cast
 from leech.ir_env import Env
 from leech.ir_values import (
@@ -134,7 +134,7 @@ class CfgBuilder:
     ) -> None:
         self.fn = fn
         self.typ_check_results = typ_check_results
-        self.typ_arg_mapping = typ_arg_mapping if typ_arg_mapping is not None else {}
+        self.typ_arg_mapping = opt_or_default(typ_arg_mapping, {})
         self.cfg = Cfg()
         self._generate_bb_name = VarNamer()
         self.cfg._entry = self.add_bb("entry")
@@ -486,12 +486,13 @@ class CfgBuilder:
             callee: Value = self._resolve_fn_instance(*generic_call)
         elif isinstance(callee_ast, ast.StructAccessExpr):
             recv_place = self.build_expr(callee_ast.struct, e, ExprContext.PLACE)
-            method: ir_module.Fn | None = None
-            if isinstance(recv_place.typ, PtrTyp) and isinstance(
-                recv_place.typ.pointee_typ, StructTyp
-            ):
-                struct_typ = recv_place.typ.pointee_typ
-                method = struct_typ.get_assoc_fn(callee_ast.field.name)
+            recv_ptr_typ = checked_cast(recv_place.typ, PtrTyp)
+            method = ir_traits.lookup_member(
+                recv_ptr_typ.pointee_typ,
+                callee_ast.field.name,
+                e.impl_registry,
+                callee_ast.field.span,
+            )
 
             if method is not None:
                 recv_arg = recv_place

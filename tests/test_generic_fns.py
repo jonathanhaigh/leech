@@ -376,6 +376,23 @@ def test_generic_fn_with_struct_typ_arg(tmp_path):
     check_prog_output(tmp_path, src, "", 0)
 
 
+def test_generic_fn_infers_typ_arg_through_generic_struct_arg(tmp_path):
+    # The declared parameter type is itself a generic struct application,
+    # `Box[T]` - inferring T has to look inside the argument's own type
+    # arguments, not just match the whole argument type as an opaque unit.
+    src = """
+    struct Box[T] { mut val: T }
+
+    fn unwrap[T](b: Box[T]) T { return b.val; }
+
+    pub fn main() i32 {
+        let b = Box[i32] { val: 42 };
+        return unwrap(b) - 42;
+    }
+    """
+    check_prog_output(tmp_path, src, "", 0)
+
+
 def test_generic_fn_recursion_runtime_output(tmp_path):
     src = """
     fn depth[T](x: T, n: i32) T {

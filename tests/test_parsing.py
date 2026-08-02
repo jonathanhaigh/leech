@@ -934,6 +934,45 @@ COMMENTED_INTS = [
         ),
         (
             "defn",
+            "trait Show { fn show(*self) *u8; }",
+            T("defn", "trait_defn").cs(
+                T("access", Tok(None)),
+                T("ident", Tok("Show")),
+                None,
+                T("trait_fn").cs(
+                    T("ident", Tok("show")),
+                    T("param_list", "receiver", "mut", Tok(None)),
+                    T("ptr_typ").cs(
+                        T("mut", Tok(None)), T("basic_typ").cs(T("path", "ident", Tok("u8")), None)
+                    ),
+                ),
+            ),
+        ),
+        (
+            "defn",
+            "pub trait Eq[T] { fn eq(*self, other: *T) bool; }",
+            T("defn", "trait_defn").cs(
+                T("access", Tok("pub")),
+                T("ident", Tok("Eq")),
+                T("generic_params", "generic_param", "ident", Tok("T")),
+                T("trait_fn").cs(
+                    T("ident", Tok("eq")),
+                    T("param_list").cs(
+                        T("receiver", "mut", Tok(None)),
+                        T("param").cs(
+                            T("ident", Tok("other")),
+                            T("ptr_typ").cs(
+                                T("mut", Tok(None)),
+                                T("basic_typ").cs(T("path", "ident", Tok("T")), None),
+                            ),
+                        ),
+                    ),
+                    T("basic_typ").cs(T("path", "ident", Tok("bool")), None),
+                ),
+            ),
+        ),
+        (
+            "defn",
             "impl Foo {}",
             T("defn", "impl_defn").cs(
                 None,
@@ -1223,6 +1262,8 @@ def test_parse(rule, src, expected):
         ("expr", "f[](x)"),
         ("struct_defn", "struct Foo[] {}"),
         ("impl_defn", "impl[] Foo {}"),
+        ("trait_defn", "trait Foo { fn f() i32 {} }"),
+        ("trait_defn", "trait Foo { fn f() i32 }"),
         ("typ", "[x: -10]"),
         ("typ", "[x: N]"),
         ("param", ""),

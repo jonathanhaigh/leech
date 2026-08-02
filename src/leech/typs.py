@@ -11,12 +11,14 @@ from weakref import WeakValueDictionary
 from leech import ast, ir_env, ir_module
 from leech.asserts import assert_eq, assert_gt, assert_not_in, checked_cast
 from leech.errors import (
+    BoundNotATraitError,
     DuplicateFieldInStructDefnError,
     DuplicateItemDefnError,
     InfiniteSizeStructError,
     MissingTypArgsError,
     TypArgsOnNonGenericItemError,
     TypInstantiationDepthExceededError,
+    UnsatisfiedBoundError,
     WrongNumberOfTypArgsError,
 )
 from leech.signage import SIGNED, UNSIGNED, Signage
@@ -47,6 +49,48 @@ class Mutability(Enum):
 
 CONST = Mutability.CONST
 MUT = Mutability.MUT
+
+
+def check_typ_arg_bounds(
+    generic_params: list[ast.GenericParam],
+    typ_args: tuple[Typ, ...],
+    e: ir_env.Env,
+    span: SrcSpan | None,
+) -> None:
+    """Raise if any of ``typ_args`` doesn't implement a bound its parameter declares.
+
+    Shared by every generic instantiation site - a struct's (see
+    :meth:`Typ._basic_typ_from_ast`) and a generic function call's (see
+    :meth:`~leech.typcheck.TypCheck._resolve_generic_call`) - so a bound
+    means the same thing, and is enforced the same way, everywhere one can
+    be declared.
+
+    :param generic_params: The generic item's own declared type
+        parameters, in declaration order.
+    :param typ_args: The concrete type given for each of ``generic_params``,
+        in the same order.
+    :param e: The scope to resolve each bound name in.
+    :param span: Where to point a diagnostic at.
+    :raises BoundNotATraitError: If one of a parameter's declared bounds
+        doesn't name a trait.
+    :raises UnsatisfiedBoundError: If a type argument doesn't implement
+        one of its parameter's declared bounds.
+    """
+    # Real circular import: `ir_traits` imports this module at its own
+    # top level, so importing it back at this module's top level would
+    # try to bind the name before `ir_traits` - still mid-initialization
+    # at that point - exists to bind. A local import here, only ever run
+    # once every module has finished loading (this runs during
+    # typechecking, not import), sidesteps that entirely.
+    from leech import ir_traits  # noqa: PLC0415
+
+    for param_ast, typ_arg in zip(generic_params, typ_args, strict=True):
+        for bound_path in param_ast.bounds:
+            trait = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound_path)
+            if not isinstance(trait, ir_traits.Trait):
+                raise BoundNotATraitError(bound_path.str(), bound_path.span)
+            if e.impl_registry.find_impl(trait, typ_arg) is None:
+                raise UnsatisfiedBoundError(typ_arg.name, trait.name, param_ast.ident.name, span)
 
 
 class Typ(ABC):
@@ -281,6 +325,7 @@ class Typ(ABC):
                 item.name, len(typ_ast.generic_args), len(item.ast.generic_params), typ_ast.span
             )
         typ_args = tuple(Typ.from_ast(arg, e) for arg in typ_ast.generic_args)
+        check_typ_arg_bounds(item.ast.generic_params, typ_args, e, typ_ast.span)
         return item.instance(typ_args)
 
 
@@ -778,6 +823,12 @@ class StructTyp(Typ):
             return self
         template = StructTyp.get(self.ast, self.decl_env)
         return template.instance(substituted)
+
+    @override
+    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+        if isinstance(actual, StructTyp) and actual.ast is self.ast:
+            for declared_arg, actual_arg in zip(self.typ_args, actual.typ_args, strict=True):
+                declared_arg.infer_typ_args(actual_arg, bindings)
 
     @override
     @classmethod

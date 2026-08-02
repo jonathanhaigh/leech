@@ -881,6 +881,7 @@ class Defn(Ast):
             "fn_decl": FnDecl,
             "var_defn": VarDefn,
             "struct_defn": StructDefn,
+            "trait_defn": TraitDefn,
             "impl_defn": ImplDefn,
             "import": Import,
         }
@@ -953,6 +954,29 @@ class FnDecl(FnSpec):
     @override
     def diag_str(self) -> str:
         return "function declaration"
+
+
+class TraitFn(FnSpec):
+    """A method prototype declared inside a :class:`TraitDefn`.
+
+    Never generic itself - same restriction as an associated function (see
+    :meth:`~leech.ir_module.Mod._build_impl_defn`'s
+    ``generic associated functions aren't supported yet`` assertion), which
+    this shares the shape of. Has no body: a trait method is a promise every
+    implementing type keeps, not itself an implementation - default bodies
+    are deferred.
+    """
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert_eq(tree.data, "trait_fn")
+        ident, param_list, ret_typ = tree.children
+        super().__init__(
+            file, tree, as_tree(ident), None, as_tree(param_list), opt_map(ret_typ, as_tree)
+        )
+
+    @override
+    def diag_str(self) -> str:
+        return "trait method"
 
 
 class FnDefn(FnSpec):
@@ -1051,13 +1075,44 @@ class StructFieldDefn(Ast):
         return f'struct field "{self.ident.name}" definition'
 
 
-class ImplDefn(Defn):
-    """An ``impl SomeStruct { ... }`` block of associated functions, or -
-    once ``for_typ`` is supported - a trait implementation.
+class TraitDefn(Defn):
+    """A trait definition: a named set of method prototypes an ``impl ...
+    for ...`` block promises to provide."""
 
-    :param for_typ: The parsed ``for`` clause's type, if present. Parses
-        now but isn't supported yet: every :class:`ImplDefn` is currently
-        rejected unless this is ``None``.
+    access: Access | None
+    ident: Ident
+    #: Empty for a non-generic trait.
+    generic_params: list[GenericParam]
+    methods: list[TraitFn]
+
+    def __init__(self, file: SrcFile, tree: ParseTree) -> None:
+        assert_eq(tree.data, "trait_defn")
+        super().__init__(SrcSpan(file, tree.meta))
+        access, ident, generic_params, *method_trees = tree.children
+        self.access = Access.from_tree(file, as_tree(access))
+        self.ident = Ident(file, as_tree(ident))
+        if generic_params is not None:
+            self.generic_params = [
+                GenericParam(file, as_tree(c)) for c in as_tree(generic_params).children
+            ]
+        else:
+            self.generic_params = []
+        self.methods = [TraitFn(file, as_tree(m)) for m in method_trees]
+
+    @override
+    def diag_str(self) -> str:
+        return f'trait "{self.ident.name}" definition'
+
+
+class ImplDefn(Defn):
+    """An ``impl SomeStruct { ... }`` block of associated functions, or,
+    if ``for_typ`` is present, an ``impl Trait for SomeTyp { ... }``
+    trait implementation - see
+    :meth:`~leech.ir_module.Mod._build_inherent_impl_defn` and
+    :meth:`~leech.ir_module.Mod._build_trait_impl_defn` respectively.
+
+    :param for_typ: The parsed ``for`` clause's type, or ``None`` for an
+        inherent impl.
     """
 
     #: Empty for a non-generic impl block.

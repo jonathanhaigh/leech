@@ -29,6 +29,7 @@ from leech import ast
 from leech.asserts import checked_cast
 from leech.errors import (
     AssignToConstError,
+    BoundNotATraitError,
     BreakNotInLoopError,
     CannotInferTypArgError,
     ContinueNotInLoopError,
@@ -95,14 +96,16 @@ from leech.typs import (
     StructTyp,
     Typ,
     TypParamTyp,
+    check_typ_arg_bounds,
 )
 
 if TYPE_CHECKING:
-    # Annotation-only: `ir_module` imports this module at runtime, so an
-    # unconditional import here would be circular. Everywhere this module
-    # needs the actual class objects (for `isinstance`), it imports
-    # `ir_module` locally instead - see e.g. `check_var_expr`.
-    from leech import ir_module
+    # Annotation-only: `ir_module` (and, transitively through it,
+    # `ir_traits`) imports this module at runtime, so an unconditional
+    # import here would be circular. Everywhere this module needs the
+    # actual class objects (for `isinstance`), it imports them locally
+    # instead - see e.g. `check_var_expr`.
+    from leech import ir_module, ir_traits
 
 
 def is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
@@ -626,36 +629,92 @@ class TypCheck:
             return fn_typ, None, None
 
         recv_typ = self.check_place(callee_ast.struct, e)
-        struct_typ = recv_typ.pointee_typ if isinstance(recv_typ, PtrTyp) else VOID
-        method = (
-            struct_typ.get_assoc_fn(callee_ast.field.name)
-            if isinstance(struct_typ, StructTyp)
-            else None
-        )
-        if method is not None:
-            if not method.is_accessible_from(callee_ast.span.file):
-                raise PrivateItemAccessError(
-                    "function",
-                    callee_ast.field.name,
-                    callee_ast.field.span,
-                    method.span,
-                )
-            assert method.ast is not None
-            if method.ast.receiver is None:
-                raise NotAMethodError(
-                    callee_ast.field.name,
-                    struct_typ.name,
-                    callee_ast.field.span,
-                    method.span,
-                )
-            return method.fn_typ, callee_ast.struct, recv_typ
+        pointee_typ = recv_typ.pointee_typ
 
-        field_typ = _struct_field_typ(struct_typ, callee_ast.field.name)
+        if isinstance(pointee_typ, TypParamTyp):
+            # An unsubstituted type parameter has no inherent members and
+            # nothing registered against it in the impl registry - it
+            # isn't a real type yet. What it does have is its own
+            # declared bounds, which is the only thing a method call on
+            # one can resolve against inside a generic body (see
+            # _resolve_bound_method) - this is what makes trait bounds
+            # actually enforced, rather than duck-typed: only a method
+            # from a bound the parameter itself declares is callable.
+            method_fn_typ = self._resolve_bound_method(
+                pointee_typ, callee_ast.field.name, callee_ast.field.span, e
+            )
+            if method_fn_typ is not None:
+                return method_fn_typ, callee_ast.struct, recv_typ
+        else:
+            # Real circular import; see check_var_expr.
+            from leech import ir_traits  # noqa: PLC0415
+
+            method = ir_traits.lookup_member(
+                pointee_typ, callee_ast.field.name, e.impl_registry, callee_ast.field.span
+            )
+            if method is not None:
+                if not method.is_accessible_from(callee_ast.span.file):
+                    raise PrivateItemAccessError(
+                        "function",
+                        callee_ast.field.name,
+                        callee_ast.field.span,
+                        method.span,
+                    )
+                assert method.ast is not None
+                if method.ast.receiver is None:
+                    raise NotAMethodError(
+                        callee_ast.field.name,
+                        pointee_typ.name,
+                        callee_ast.field.span,
+                        method.span,
+                    )
+                return method.fn_typ, callee_ast.struct, recv_typ
+
+        field_typ = _struct_field_typ(pointee_typ, callee_ast.field.name)
         callee_typ = opt_or_default(field_typ, VOID)
         fn_typ = _callable_typ(callee_typ)
         if fn_typ is None:
             raise NotCallableError(callee_ast.diag_str(), callee_typ.name, callee_ast.span)
         return fn_typ, None, None
+
+    def _resolve_bound_method(
+        self, typ_param: TypParamTyp, name: str, span: SrcSpan | None, e: Env
+    ) -> FnTyp | None:
+        """Resolve a method call on an unsubstituted type parameter, against its declared bounds.
+
+        This is what makes calling a method inside a generic body sound
+        without knowing the concrete type yet: the call can only use what
+        every possible substitution is guaranteed to provide, i.e. what
+        the parameter's own bounds promise - never whatever happens to be
+        registered in the impl registry for some other, unrelated type.
+
+        :param typ_param: The (unsubstituted) type parameter the call's
+            receiver has.
+        :param name: The method name being called.
+        :param span: Where to point an ambiguity diagnostic at.
+        :param e: The scope to resolve ``typ_param``'s declared bound
+            names in.
+        :return: The method's signature, receiver included (with
+            ``typ_param`` itself standing in for ``Self``), or ``None`` if
+            no declared bound provides a method of that name.
+        :raises AmbiguousMethodError: If more than one declared bound
+            provides a method of that name.
+        :raises BoundNotATraitError: If one of ``typ_param``'s declared
+            bounds doesn't name a trait.
+        """
+        # Real circular import; see check_var_expr.
+        from leech import ir_traits  # noqa: PLC0415
+
+        matches: list[ir_traits.TraitMethod] = []
+        for bound_path in typ_param.ast.bounds:
+            item = e.resolve_path(Env.Namespace.CONTAINERS, bound_path)
+            if not isinstance(item, ir_traits.Trait):
+                raise BoundNotATraitError(bound_path.str(), bound_path.span)
+            method = item.get_method(name)
+            if method is not None:
+                matches.append(method)
+        method = ir_traits.disambiguate(matches, name, typ_param.name, span)
+        return opt_map(method, lambda m: m.fn_typ_for_self(typ_param))
 
     def _resolve_generic_call(self, fn: ir_module.Fn, call_ast: ast.CallExpr, e: Env) -> FnTyp:
         """Resolve a call to a generic function to its concrete instantiated type.
@@ -691,6 +750,7 @@ class TypCheck:
             mapping = self._infer_typ_args(fn, call_ast, e, typ_params)
 
         typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
+        check_typ_arg_bounds(opt_unwrap(fn.ast).generic_params, typ_args, e, call_ast.span)
         self.results._set_generic_call(call_ast, fn, typ_args)
         return checked_cast(fn.fn_typ.substitute_typ_params(mapping), FnTyp)
 
@@ -912,26 +972,47 @@ class TypCheck:
 
         var = e.resolve_path(Env.Namespace.VARS, var_ast.path)
         if isinstance(var, ir_module.GenericFn):
-            if not var_ast.generic_args:
-                raise MissingTypArgsError(var.name, var_ast.span)
-            # Named with explicit type arguments but never called - e.g.
-            # `let f = id[i32];` - so there's no call to infer from, but
-            # applying it explicitly is still enough to make it a value:
-            # its type is its instance's, same as an ordinary function
-            # reference's is that function's (see the FnSpec case below).
-            typ_params = self._typ_params_of(var.fn)
-            mapping = self._resolve_explicit_typ_args(
-                var.fn, typ_params, var_ast.generic_args, var_ast.span, e
-            )
-            typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
-            self.results._set_generic_var_ref(var_ast, var.fn, typ_args)
-            substituted = checked_cast(var.fn.fn_typ.substitute_typ_params(mapping), FnTyp)
-            return PtrTyp.get_or_create(substituted, CONST)
+            return self._generic_var_ref_typ(var_ast, var, e)
         if var_ast.generic_args:
             raise TypArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
         if isinstance(var, ir_module.FnSpec):
             return var.typ
         return var.typ.pointee_typ
+
+    def _generic_var_ref_typ(
+        self, var_ast: ast.VarExpr, var: ir_module.GenericFn, e: Env
+    ) -> PtrTyp:
+        """The type of ``var_ast``, an explicitly-applied but uncalled generic function reference.
+
+        Split out of :meth:`check_var_expr` so :meth:`check_place` - which
+        needs exactly this case, and already knows ``var`` is a
+        :class:`~leech.ir_module.GenericFn` before calling here - can get
+        a real :class:`~leech.typs.PtrTyp` back without re-resolving
+        ``var`` or asserting the type down again.
+
+        :param var_ast: The parsed variable expression naming ``var``.
+        :param var: The generic function ``var_ast`` names.
+        :param e: The scope to resolve names in.
+        :return: The type of the applied-but-uncalled reference.
+        :raises MissingTypArgsError: If ``var_ast`` has no explicit type
+            arguments.
+        """
+        if not var_ast.generic_args:
+            raise MissingTypArgsError(var.name, var_ast.span)
+        # Named with explicit type arguments but never called - e.g.
+        # `let f = id[i32];` - so there's no call to infer from, but
+        # applying it explicitly is still enough to make it a value: its
+        # type is its instance's, same as an ordinary function
+        # reference's is that function's (see check_var_expr's FnSpec
+        # case).
+        typ_params = self._typ_params_of(var.fn)
+        mapping = self._resolve_explicit_typ_args(
+            var.fn, typ_params, var_ast.generic_args, var_ast.span, e
+        )
+        typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
+        self.results._set_generic_var_ref(var_ast, var.fn, typ_args)
+        substituted = checked_cast(var.fn.fn_typ.substitute_typ_params(mapping), FnTyp)
+        return PtrTyp.get_or_create(substituted, CONST)
 
     def check_array_expr(self, arr_expr: ast.ArrayExpr, e: Env, expected_typ: Typ | None) -> Typ:
         expected_elt_typ = expected_typ.element_typ if isinstance(expected_typ, ArrayTyp) else None
@@ -1056,7 +1137,7 @@ class TypCheck:
             raise DerefInvalidTypError(ptr_typ.name, d_expr.ptr.span)
         return ptr_typ.pointee_typ
 
-    def check_place(self, expr_ast: ast.Expr, e: Env) -> Typ:
+    def check_place(self, expr_ast: ast.Expr, e: Env) -> PtrTyp:
         """The type of ``&expr_ast`` - the type of ``expr_ast``'s address.
 
         Only ``&``'s operand needs this: every other context cares about
@@ -1080,16 +1161,16 @@ class TypCheck:
             # Real circular import; see check_var_expr.
             from leech import ir_module  # noqa: PLC0415
 
-            # A variable's own type already *is* its place's pointer type
-            # (see check_var_expr) - a function reference doubly so, since
-            # taking its address is a no-op rather than an extra
-            # indirection (see CfgBuilder.build_var_expr's PLACE case) -
-            # true of an explicitly-applied generic one too, so delegate
-            # to check_var_expr for that case (including its
+            # A variable's own type already *is* its place's pointer type -
+            # a function reference doubly so, since taking its address is
+            # a no-op rather than an extra indirection (see
+            # CfgBuilder.build_var_expr's PLACE case) - true of an
+            # explicitly-applied generic one too, so delegate to
+            # _generic_var_ref_typ for that case (including its
             # MissingTypArgsError if it's named bare instead).
             var = e.resolve_path(Env.Namespace.VARS, expr_ast.path)
             if isinstance(var, ir_module.GenericFn):
-                return self.check_var_expr(expr_ast, e)
+                return self._generic_var_ref_typ(expr_ast, var, e)
             return var.typ
 
         value_typ = self.check_expr(expr_ast, e, None)
@@ -1107,13 +1188,11 @@ class TypCheck:
                 # an earlier check_expr/check_place pass over the same
                 # node has already succeeded) GenericFn has no .typ of
                 # its own to check - but like any other function
-                # reference (see the isinstance(var.typ, PtrTyp) case
-                # below), its place is const regardless.
+                # reference, its place is const regardless. Every other
+                # binding's .typ is a PtrTyp - see check_place.
                 if isinstance(var, ir_module.GenericFn):
                     return CONST
-                if isinstance(var.typ, PtrTyp):
-                    return var.typ.mut
-                return CONST
+                return checked_cast(var.typ, PtrTyp).mut
             case ast.ArrayAccessExpr():
                 return self._place_mut(expr_ast.array, e)
             case ast.StructAccessExpr():
@@ -1127,10 +1206,11 @@ class TypCheck:
                     return self._place_mut(expr_ast.struct, e)
                 return CONST
             case ast.DerefExpr():
+                # check_place already ran check_expr on this same DerefExpr
+                # before calling here, which only succeeds (via
+                # check_deref_expr) if .ptr is a PtrTyp.
                 ptr_typ = self.check_expr(expr_ast.ptr, e, None)
-                if isinstance(ptr_typ, PtrTyp):
-                    return ptr_typ.mut
-                return CONST
+                return checked_cast(ptr_typ, PtrTyp).mut
             case _:
                 return CONST
 
