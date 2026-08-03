@@ -1,0 +1,19 @@
+// SPDX-FileCopyrightText: 2026 Jonathan Haigh
+//
+// SPDX-License-Identifier: MPL-2.0
+
+extern fn write(fd: i32, buf: *u8, count: usize) isize;
+extern fn strlen(s: *u8) usize;
+extern fn abort() never;
+
+pub fn panic(msg: *u8) never {
+    write(2, msg, strlen(msg));
+    write(2, "\n", 1);
+    return abort();
+}
+
+pub fn assert(cond: bool) {
+    if (not cond) {
+        panic("assertion failed");
+    }
+}

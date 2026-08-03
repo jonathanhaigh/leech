@@ -2,12 +2,15 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import functools
 import pathlib
 import subprocess
 from typing import Optional
 
 from leech import ast, driver, ir_module, opt_util, parse
 from leech import src as leech_src
+
+_PRELUDE_PATH = pathlib.Path(parse.__file__).parent / "std" / "prelude.leech"
 
 
 def find_pos(src: str, substr: str) -> tuple[int, int]:
@@ -97,6 +100,21 @@ def compile_modules(
     ]
 
 
+@functools.cache
+def _prelude_llvm_ir() -> str:
+    """The compiled prelude module's LLVM IR, computed once per test run.
+
+    A real compilation only ever *declares* an imported module's items
+    (see :meth:`~leech.codegen.Compiler.compile`'s docstring) - the
+    prelude module, though always loaded, is no exception, so its
+    ``panic``/``assert`` bodies need to be compiled (as their own root,
+    the same way :func:`compile_modules` compiles every sibling test
+    fixture module standalone) and linked in separately for a program
+    that actually calls them to run.
+    """
+    return driver.compile_to_llvm_ir(leech_src.SrcFile(_PRELUDE_PATH), "prelude")
+
+
 def check_prog_output(
     tmp_path: pathlib.Path,
     src: str,
@@ -109,6 +127,10 @@ def check_prog_output(
     modules["main"] = src
     llir_mod_paths = compile_modules(tmp_path, qualified_names, **modules)
 
+    prelude_llir_path = tmp_path / "prelude.ll"
+    write_whole_file(prelude_llir_path, _prelude_llvm_ir())
+    llir_mod_paths = [*llir_mod_paths, prelude_llir_path]
+
     llir_path = tmp_path / "exe.bc"
     subprocess.run(["llvm-link", "-o", llir_path, *llir_mod_paths], check=True)
 
@@ -119,5 +141,17 @@ def check_prog_output(
         text=True,
         check=False,
     )
-    assert proc.stdout == f"{expected_output}"
+    if expected_exit_status < 0:
+        # A negative expected_exit_status means the process is expected to
+        # be killed by a signal (e.g. -signal.SIGABRT for an abort()) - lli
+        # itself installs a SIGABRT handler that prints a large, address-
+        # dependent crash backtrace to stderr (merged into proc.stdout
+        # above) whenever *any* code running under it aborts, including an
+        # ordinary, intentional one from JIT'd Leech code, not just an
+        # internal lli crash. That backtrace can't be matched exactly, so
+        # only the expected prefix - whatever the program itself wrote
+        # before aborting - is checked here.
+        assert proc.stdout.startswith(f"{expected_output}")
+    else:
+        assert proc.stdout == f"{expected_output}"
     assert proc.returncode == expected_exit_status

@@ -21,7 +21,8 @@ def test_load_is_memoized(tmp_path):
     loader = ir_loader.ModLoader()
     path = tmp_path / "main.leech"
     assert loader.load(path, "main") is loader.load(path, "main")
-    assert len(loader.mods) == 1
+    # +1 for the bundled prelude module, always loaded by ModLoader.__init__.
+    assert len(loader.mods) == 2
 
 
 def test_load_normalizes_paths(tmp_path):
@@ -33,7 +34,8 @@ def test_load_normalizes_paths(tmp_path):
     direct = loader.load(tmp_path / "main.leech", "main")
     indirect = loader.load(tmp_path / "." / "main.leech", "main")
     assert direct is indirect
-    assert len(loader.mods) == 1
+    # +1 for the bundled prelude module, always loaded by ModLoader.__init__.
+    assert len(loader.mods) == 2
 
 
 def test_diamond_loads_each_module_once(tmp_path):
@@ -44,7 +46,7 @@ def test_diamond_loads_each_module_once(tmp_path):
         b="import c;\npub fn viab() i32 { return c::base(); }",
         c="pub fn base() i32 { return 5; }",
     )
-    assert sorted(mod.name for mod in loader.mods) == ["a", "b", "c", "main"]
+    assert sorted(mod.name for mod in loader.mods) == ["a", "b", "c", "main", "prelude"]
 
 
 def test_diamond_shares_one_struct_typ(tmp_path):
@@ -76,4 +78,4 @@ def test_circular_import_loads_each_module_once(tmp_path):
         a="import b;\npub fn f() i32 { return b::g(); }",
         b="import a;\npub fn g() i32 { return 1; }",
     )
-    assert sorted(mod.name for mod in loader.mods) == ["a", "b", "main"]
+    assert sorted(mod.name for mod in loader.mods) == ["a", "b", "main", "prelude"]

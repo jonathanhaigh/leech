@@ -6,9 +6,15 @@
 
 import pathlib
 from collections.abc import Collection, Sequence
-from typing import Final
+from typing import Final, Optional
 
 from leech import ast, errors, ir_module, ir_traits, parse, src
+
+#: The directory holding the bundled standard library (``std::...``
+#: imports), shipped alongside the installed ``leech`` package - the same
+#: ``pathlib.Path(__file__).parent``-relative pattern :mod:`leech.parse`
+#: already uses to find ``leech.lark``.
+_BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent
 
 
 class ModLoader:
@@ -38,11 +44,30 @@ class ModLoader:
     _mods: Final[dict[pathlib.Path, ir_module.Mod]]
     impl_registry: Final[ir_traits.ImplRegistry]
     _extra_search_roots: Final[Sequence[pathlib.Path]]
+    _prelude: Optional[ir_module.Mod]
 
     def __init__(self, extra_search_roots: Sequence[pathlib.Path] = ()) -> None:
         self._mods = {}
         self.impl_registry = ir_traits.ImplRegistry()
         self._extra_search_roots = extra_search_roots
+        # Set to None first, so building the prelude module itself (below)
+        # sees `self.prelude is None` and skips injecting the prelude into
+        # its own builtin_env - otherwise loading the prelude would need
+        # to load the prelude, forever. Nothing else is special-cased by
+        # name or path; this is the only thing that breaks the cycle.
+        self._prelude = None
+        self._prelude = self.load(_BUNDLED_ROOT / "std" / "prelude.leech", "prelude")
+
+    @property
+    def prelude(self) -> Optional[ir_module.Mod]:
+        """The bundled prelude module, whose public items are auto-bound
+        into every other module's scope (see
+        :meth:`~leech.ir_module.Mod.__init__`).
+
+        ``None`` only while the prelude module itself is being built -
+        see :meth:`__init__`.
+        """
+        return self._prelude
 
     def resolve_import(
         self, importing_file: src.SrcFile, path: ast.Path
@@ -52,9 +77,11 @@ class ModLoader:
         Tries, in order, the importing file's own directory (so a plain
         sibling-file import like ``import a;`` resolves exactly as it
         always has, including for an import written inside a file reached
-        via :attr:`_extra_search_roots` - it's resolved relative to *that*
-        file's own directory, not the original root's), then each of
-        :attr:`_extra_search_roots`. The first candidate that exists wins.
+        via :data:`_BUNDLED_ROOT` or :attr:`_extra_search_roots` - it's
+        resolved relative to *that* file's own directory, not the original
+        root's), then :data:`_BUNDLED_ROOT` (the installed standard
+        library), then each of :attr:`_extra_search_roots`. The first
+        candidate that exists wins.
 
         :param importing_file: The source file the ``import`` statement
             appears in.
@@ -67,7 +94,7 @@ class ModLoader:
         :raises ModDoesNotExistError: If no search root has a matching file.
         """
         idents = [ident.name for ident in path.idents]
-        roots = (importing_file.path.parent, *self._extra_search_roots)
+        roots = (importing_file.path.parent, _BUNDLED_ROOT, *self._extra_search_roots)
         for root in roots:
             candidate = root.joinpath(*idents[:-1], f"{idents[-1]}.leech")
             if candidate.exists():

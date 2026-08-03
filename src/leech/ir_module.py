@@ -596,6 +596,19 @@ class Mod:
         builtin_env.add_container("isize", typs.ISIZE)
         builtin_env.add_container("bool", typs.BOOL)
 
+        # The prelude module's own construction (see
+        # ir_loader.ModLoader.__init__) is what makes `loader.prelude` be
+        # None here - for every other module, it's already built by the
+        # time this runs, so every one of its PUBLIC items becomes
+        # ambiently available, the same way `usize`/`isize`/`bool` are.
+        # An ordinary definition of the same name in this module still
+        # wins: it's bound in `self.env` (a child of `builtin_env`) later,
+        # by `build()`, shadowing whatever's bound here.
+        if loader.prelude is not None:
+            for item in loader.prelude.items:
+                if item.access == PUBLIC:
+                    builtin_env.add(item._ns, item.name, item.value)
+
     def build(self) -> None:
         """Populate :attr:`items` from this module's parsed definitions.
 
