@@ -155,8 +155,8 @@ class CfgBuilder:
         if self._curr_bb.terminated:
             return
 
-        # TypCheck already confirmed a void body only reaches here when
-        # ret_typ is void too (else it would have raised MissingRetError).
+        # Only reachable if ret_typ is void too - else TypCheck would have
+        # raised MissingRetError.
         asserts.assert_eq(ret_typ, typs.VOID)
         self._ret(ir_values.VoidValue(ret_ast), ret_ast)
 
@@ -168,14 +168,15 @@ class CfgBuilder:
         ``never``-typed (e.g. the value came from a call that never
         returns) becomes ``unreachable`` instead of ``ret``, unless the
         current block is already terminated; otherwise the value is
-        coerced to the function's return type (already confirmed valid by
-        TypCheck) and returned.
+        coerced to the function's return type and returned.
 
         :param value: The lowered value to return.
         :param attribute_ast: The AST node to attribute the emitted
             ``unreachable``/``ret`` instruction to.
         :param coerce_ast: The AST node ``value`` was checked against its
             expected type with; see :meth:`_coerce`.
+
+        :pre: value coerces to the enclosing function's return type [opt_unwrap]
         """
         if value.typ == typs.NEVER:
             if not self._curr_bb.terminated:
@@ -296,9 +297,11 @@ class CfgBuilder:
             which is always ``bool``).
         :return: The value of whichever branch is taken, merged via a phi
             instruction if both branches complete normally.
+
+        :pre: if_ast.condition coerces to bool [opt_unwrap]
+        :pre: if both arms produce a value, they have the same type [assert_eq]
         """
         cond = self._build_expr(if_ast.condition, e, _ExprContext.VALUE)
-        # TypCheck already confirmed cond coerces to bool.
         cond = opt_util.opt_unwrap(self._coerce(cond, if_ast.condition))
         then_bb = self._add_bb("if")
         end_bb = self._add_bb("endif")
@@ -349,8 +352,6 @@ class CfgBuilder:
             )
 
         if have_then_value and have_els_value:
-            # TypCheck already confirmed then and els have the same
-            # type - the phi below requires it.
             asserts.assert_eq(then.typ, els.typ)
             self._set_position(end_bb)
             return self._curr_bb.phi({els_last_bb: els, then_last_bb: then}, if_ast)
@@ -405,6 +406,8 @@ class CfgBuilder:
         :param while_ast: The parsed ``while`` expression.
         :param e: The scope to resolve names in.
         :return: A void value.
+
+        :pre: while_ast.condition coerces to bool [opt_unwrap]
         """
         cond_bb = self._add_bb("while_cond")
         loop_bb = self._add_bb("while_loop")
@@ -413,7 +416,6 @@ class CfgBuilder:
         self._branch(cond_bb, while_ast)
         self._set_position(cond_bb)
         cond = self._build_expr(while_ast.condition, e, _ExprContext.VALUE)
-        # TypCheck already confirmed cond coerces to bool.
         cond = opt_util.opt_unwrap(self._coerce(cond, while_ast.condition))
 
         self._cbranch(cond, loop_bb, end_bb, while_ast)
@@ -469,6 +471,8 @@ class CfgBuilder:
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The call's result.
+
+        :pre: every arg, including the receiver if any, coerces to its param type [opt_unwrap]
         """
         callee_ast = call_ast.callee
         recv_ast: Optional[ast.Expr] = None
@@ -512,8 +516,6 @@ class CfgBuilder:
         )
         args = ((recv_arg,) if recv_arg is not None else ()) + lowered_args
 
-        # TypCheck already confirmed each argument (including the
-        # receiver, if any) coerces to its parameter's type.
         coerced_args = tuple(
             opt_util.opt_unwrap(self._coerce(arg, arg_asts[i])) for i, arg in enumerate(args)
         )
@@ -624,6 +626,9 @@ class CfgBuilder:
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The operation's result.
+
+        :pre: op_ast.lhs coerces to bool [opt_unwrap]
+        :pre: op_ast.rhs coerces to bool [opt_unwrap]
         """
         is_and = op_ast.op.name == "and"
         lhs = self._build_expr(op_ast.lhs, e, _ExprContext.VALUE)
@@ -638,7 +643,6 @@ class CfgBuilder:
         propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
         if propagated is not None:
             return propagated
-        # TypCheck already confirmed lhs coerces to bool.
         lhs = opt_util.opt_unwrap(self._coerce(lhs, op_ast.lhs))
 
         rhs_bb = self._add_bb("and_rhs" if is_and else "or_rhs")
@@ -656,7 +660,6 @@ class CfgBuilder:
         self._set_position(rhs_bb)
         rhs = self._build_expr(op_ast.rhs, e, _ExprContext.VALUE)
         rhs_last_bb = self._curr_bb  # building the rhs may have moved it
-        # TypCheck already confirmed rhs coerces to bool.
         coerced_rhs = opt_util.opt_unwrap(self._coerce(rhs, op_ast.rhs))
 
         if rhs_last_bb.terminated:
@@ -804,6 +807,8 @@ class CfgBuilder:
         :param expected_typ: This array literal's expected type, if known
             from the surrounding context.
         :return: The constructed array value.
+
+        :pre: every arr_expr.elements[i] coerces to the resolved elt_typ [opt_unwrap]
         """
         expected_elt_typ = (
             expected_typ.element_typ if isinstance(expected_typ, typs.ArrayTyp) else None
@@ -841,7 +846,6 @@ class CfgBuilder:
             arr_expr,
         )
 
-        # TypCheck already confirmed every element coerces to elt_typ.
         for i, elt in enumerate(elts):
             elt_ast = arr_expr.elements[i]
             coerced = opt_util.opt_unwrap(self._coerce(elt, elt_ast))
@@ -888,6 +892,10 @@ class CfgBuilder:
             address.
         :return: The constructed struct value.
         :raises ItemNotFoundError: If the named type cannot be resolved.
+
+        :pre: every struct_expr.fields[i].ident.name in struct_typ.fields [assert_in]
+        :pre: every struct_typ.fields name in field_values [assert_in]
+        :pre: each field name given exactly once, accessible, value coerces [TypCheck]
         """
         resolved_typ = typs.Typ.from_ast(struct_expr.typ, e)
         struct_typ = asserts.checked_cast(resolved_typ, typs.StructTyp)
@@ -1016,8 +1024,8 @@ class CfgBuilder:
             self._finish_ret(expr, ret_ast, ret_ast.expr)
             return
 
-        # TypCheck already confirmed a bare `return;` only appears where
-        # ret_typ is void (else it would have raised InvalidVoidRetError).
+        # Only reachable if ret_typ is void - else TypCheck would have
+        # raised InvalidVoidRetError.
         asserts.assert_eq(ret_typ, typs.VOID)
         self._ret(ir_values.VoidValue(ret_ast), ret_ast)
 
@@ -1114,13 +1122,14 @@ class CfgBuilder:
         :param ctx: Whether to lower the result for its value or its
             address.
         :return: The (possibly coerced) initializer's value.
+
+        :pre: let_ast.typ is not None implies let_ast.expr coerces to it [opt_unwrap]
         """
         declared_typ_ast = let_ast.typ
         expected_typ = opt_util.opt_map(declared_typ_ast, lambda t: typs.Typ.from_ast(t, e))
         expr = self._build_expr(let_ast.expr, e, ctx, expected_typ)
         if declared_typ_ast is None:
             return expr
-        # TypCheck already confirmed expr coerces to expected_typ.
         return opt_util.opt_unwrap(self._coerce(expr, let_ast.expr))
 
     def _build_int_lit(self, lit_ast: ast.IntLit, negated: bool) -> ir_values.Value:
