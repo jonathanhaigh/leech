@@ -36,6 +36,8 @@ type Var = ir_values.Value[typs.PtrTyp] | ir_module.GenericFn
 
 A value, or a :class:`~leech.ir_module.GenericFn` standing in for one
 until it's applied to type arguments (see that class's docstring).
+
+:invariant: every bound Value is PtrTyp-typed [unchecked: hot path]
 """
 
 

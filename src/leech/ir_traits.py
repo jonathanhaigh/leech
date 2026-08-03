@@ -330,6 +330,8 @@ class ImplRegistry:
     Owned by :class:`~leech.ir_loader.ModLoader` - the only object that
     sees every module in a compilation - so a trait impl in one module is
     visible while checking another's, regardless of import direction.
+
+    :invariant: for every t in _traits_by_shape[s], (t, s) in _impls [ctor]
     """
 
     _impls: Final[dict[tuple[Trait, Hashable], list[Impl]]]
