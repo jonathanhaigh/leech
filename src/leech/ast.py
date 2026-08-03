@@ -1161,19 +1161,19 @@ class ImplDefn(Defn):
 
 
 class Import(Defn):
-    """An ``import some_mod;`` statement."""
+    """An ``import some_mod;`` or ``import some_mod::sub_mod;`` statement."""
 
-    ident: Final[Ident]
+    path: Final[Path]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "import")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        (ident,) = map(_as_tree, tree.children)
-        self.ident = Ident.from_tree(file, ident)
+        (path,) = map(_as_tree, tree.children)
+        self.path = Path(file, path)
 
     @override
     def diag_str(self) -> str:
-        return f'import "{self.ident.name}"'
+        return f'import "{self.path.str()}"'
 
 
 class Access(Ast):

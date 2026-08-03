@@ -1149,14 +1149,21 @@ COMMENTED_INTS = [
         (
             "defn",
             "import xyz;",
-            T("defn", "import", "ident", Tok("xyz")),
+            T("defn", "import", "path", "ident", Tok("xyz")),
+        ),
+        (
+            "defn",
+            "import std::mem;",
+            T("defn", "import").cs(
+                T("path").cs(T("ident", Tok("std")), T("ident", Tok("mem"))),
+            ),
         ),
         ("mod", "", T("mod")),
         (
             "mod",
             "import a; fn ab_cd(x: a, y: b) _rt { return 9; } fn x() y {}",
             T("mod").cs(
-                T("defn", "import", "ident", Tok("a")),
+                T("defn", "import", "path", "ident", Tok("a")),
                 T("defn", "fn_defn").cs(
                     T("access", Tok(None)),
                     T("ident", Tok("ab_cd")),

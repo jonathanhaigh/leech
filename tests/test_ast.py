@@ -130,6 +130,28 @@ def test_var_expr_generic_args(tmp_path):
     assert arg.path.str() == "i32"
 
 
+def test_import_single_segment_path(tmp_path):
+    src = """
+    import xyz;
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (imp,) = mod.defns
+    assert isinstance(imp, ast.Import)
+    assert [ident.name for ident in imp.path.idents] == ["xyz"]
+    assert imp.path.str() == "xyz"
+
+
+def test_import_multi_segment_path(tmp_path):
+    src = """
+    import std::mem;
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (imp,) = mod.defns
+    assert isinstance(imp, ast.Import)
+    assert [ident.name for ident in imp.path.idents] == ["std", "mem"]
+    assert imp.path.str() == "std::mem"
+
+
 def test_impl_defn_multiple_fns(tmp_path):
     src = """
     struct Foo {}

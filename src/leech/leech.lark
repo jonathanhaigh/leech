@@ -35,7 +35,7 @@ trait_fn: _fn_prototype ";"
 
 impl_defn: "impl" [generic_params] typ ["for" typ] "{" fn_defn* "}"
 
-import: "import" ident ";"
+import: "import" path ";"
 
 generic_params: "[" _generic_param_list "]"
 _generic_param_list: generic_param ("," generic_param)* ","?
