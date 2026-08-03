@@ -12,7 +12,7 @@ def load_main(tmp_path, **modules):
     for mod_name, mod_src in modules.items():
         util.write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
     loader = ir_loader.ModLoader()
-    loader.load(tmp_path / "main.leech")
+    loader.load(tmp_path / "main.leech", "main")
     return loader
 
 
@@ -20,7 +20,7 @@ def test_load_is_memoized(tmp_path):
     util.write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
     loader = ir_loader.ModLoader()
     path = tmp_path / "main.leech"
-    assert loader.load(path) is loader.load(path)
+    assert loader.load(path, "main") is loader.load(path, "main")
     assert len(loader.mods) == 1
 
 
@@ -30,8 +30,8 @@ def test_load_normalizes_paths(tmp_path):
     # reloading it.
     util.write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
     loader = ir_loader.ModLoader()
-    direct = loader.load(tmp_path / "main.leech")
-    indirect = loader.load(tmp_path / "." / "main.leech")
+    direct = loader.load(tmp_path / "main.leech", "main")
+    indirect = loader.load(tmp_path / "." / "main.leech", "main")
     assert direct is indirect
     assert len(loader.mods) == 1
 

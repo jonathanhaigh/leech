@@ -4,8 +4,9 @@
 
 import pathlib
 import subprocess
+from typing import Optional
 
-from leech import ast, driver, ir_module, parse
+from leech import ast, driver, ir_module, opt_util, parse
 from leech import src as leech_src
 
 
@@ -19,6 +20,7 @@ def find_pos(src: str, substr: str) -> tuple[int, int]:
 
 
 def write_whole_file(path: pathlib.Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         f.write(content)
 
@@ -26,8 +28,8 @@ def write_whole_file(path: pathlib.Path, content: str) -> None:
     print(content)
 
 
-def compile_file(path: pathlib.Path) -> pathlib.Path:
-    llir = driver.compile_to_llvm_ir(leech_src.SrcFile(path))
+def compile_file(path: pathlib.Path, qualified_name: Optional[str] = None) -> pathlib.Path:
+    llir = driver.compile_to_llvm_ir(leech_src.SrcFile(path), qualified_name)
     llir_path = path.with_suffix(".ll")
     write_whole_file(llir_path, llir)
     return llir_path
@@ -59,18 +61,53 @@ def build_ir_mod(tmp_path: pathlib.Path, src: str) -> ir_module.Mod:
     return driver.compile_to_ir(leech_src.SrcFile(path))
 
 
-def compile_modules(tmp_path: pathlib.Path, **modules: str) -> list[pathlib.Path]:
+def compile_modules(
+    tmp_path: pathlib.Path,
+    qualified_names: Optional[dict[str, str]] = None,
+    /,
+    **modules: str,
+) -> list[pathlib.Path]:
+    """Write and compile each of ``modules`` as its own standalone root file.
+
+    :param qualified_names: Per-module override for the qualified name
+        :func:`compile_file` gives it, keyed by the same name used in
+        ``modules``. Defaults (for any module not present here) to
+        ``mod_name`` with ``/`` replaced by ``.`` - correct whenever
+        ``mod_name`` is reached by exactly one import hop directly from
+        another module in this same fixture, whose own ``import`` names
+        exactly ``mod_name``'s path. That default is *wrong* for a module
+        reached only transitively (e.g. ``pkg/a.leech`` importing
+        ``sub::helper``, found at ``pkg/sub/helper.leech``): the real
+        compiler gives it the qualified name ``sub.helper`` (from ``a``'s
+        own two-segment import text, resolved relative to ``a``'s
+        directory), not ``pkg.sub.helper`` (the fixture path relative to
+        ``tmp_path``) - such a case must pass its qualified name here
+        explicitly so this standalone recompilation agrees with it.
+    """
+    qualified_names = opt_util.opt_or_default(qualified_names, {})
     for mod_name, mod_src in modules.items():
         write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
 
-    return [compile_file(tmp_path / f"{mod_name}.leech") for mod_name in modules]
+    return [
+        compile_file(
+            tmp_path / f"{mod_name}.leech",
+            qualified_name=qualified_names.get(mod_name, mod_name.replace("/", ".")),
+        )
+        for mod_name in modules
+    ]
 
 
 def check_prog_output(
-    tmp_path: pathlib.Path, src: str, expected_output, expected_exit_status, **modules: str
+    tmp_path: pathlib.Path,
+    src: str,
+    expected_output,
+    expected_exit_status,
+    qualified_names: Optional[dict[str, str]] = None,
+    /,
+    **modules: str,
 ) -> None:
     modules["main"] = src
-    llir_mod_paths = compile_modules(tmp_path, **modules)
+    llir_mod_paths = compile_modules(tmp_path, qualified_names, **modules)
 
     llir_path = tmp_path / "exe.bc"
     subprocess.run(["llvm-link", "-o", llir_path, *llir_mod_paths], check=True)

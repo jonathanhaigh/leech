@@ -7,14 +7,22 @@
 import argparse
 import pathlib
 import sys
+from typing import Optional
 
-from leech import codegen, errors, ir_loader, ir_module, src
+from leech import codegen, errors, ir_loader, ir_module, opt_util, src
 
 
-def compile_to_ir(file: src.SrcFile) -> ir_module.Mod:
+def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir_module.Mod:
     """Parse and lower a source file, and everything it imports, into IR.
 
     :param file: The source file to compile.
+    :param qualified_name: The name to give ``file``'s own module - used to
+        qualify its items' mangled symbol names (see
+        :attr:`~leech.ir_module.ModItem.qualified_name`). Defaults to
+        ``file``'s bare filename stem, the normal behavior for a real
+        top-level compilation; only overridden by tests that need to
+        compile a non-root module standalone under the same qualified name
+        it would get if reached via ``import``.
     :return: The resulting IR module, whose
         :attr:`~leech.ir_module.Mod.loader` holds every module reached from
         it.
@@ -23,16 +31,18 @@ def compile_to_ir(file: src.SrcFile) -> ir_module.Mod:
     :raises UnexpectedTokenError: If a token in ``file`` doesn't fit the
         grammar at that point (including the input ending too soon).
     """
-    return ir_loader.ModLoader().load(file.path)
+    qualified_name = opt_util.opt_or_default(qualified_name, file.path.stem)
+    return ir_loader.ModLoader().load(file.path, qualified_name)
 
 
-def compile_to_llvm_ir(file: src.SrcFile) -> str:
+def compile_to_llvm_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> str:
     """Compile a source file all the way down to textual LLVM IR.
 
     :param file: The source file to compile.
+    :param qualified_name: Forwarded to :func:`compile_to_ir`.
     :return: The generated LLVM IR, as text.
     """
-    mod = compile_to_ir(file)
+    mod = compile_to_ir(file, qualified_name)
     compiler = codegen.Compiler(mod)
     compiler.compile()
     return str(compiler.ll_mod) + "\n"

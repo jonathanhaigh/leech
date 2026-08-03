@@ -704,12 +704,11 @@ class Mod:
                 )
             case ast.Import():
                 last_ident = defn_ast.path.idents[-1]
-                mod_name = last_ident.name
-                mod_path = defn_ast.span.file.path.with_stem(mod_name)
-                if not mod_path.exists():
-                    raise errors.ModDoesNotExistError(mod_name, last_ident.span)
-                mod = self.loader.load(mod_path)
-                self._add_item(mod_name, PRIVATE, mod, span=last_ident.span)
+                mod_path, qualified_name = self.loader.resolve_import(
+                    defn_ast.span.file, defn_ast.path
+                )
+                mod = self.loader.load(mod_path, qualified_name)
+                self._add_item(last_ident.name, PRIVATE, mod, span=last_ident.span)
             case _:
                 # ImplDefn is the only other Defn subclass; the caller
                 # (Mod.build) filters those out before calling here.
