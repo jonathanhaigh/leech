@@ -19,7 +19,7 @@ than re-deriving them.
 import dataclasses
 import enum
 from collections.abc import Mapping
-from typing import Final, Optional
+from typing import Final, Optional, cast
 
 from leech import (
     asserts,
@@ -482,10 +482,9 @@ class CfgBuilder:
             # need it) the one instance that pairs them.
             callee: ir_values.Value = self._resolve_fn_instance(*generic_call)
         elif isinstance(callee_ast, ast.FieldAccessExpr):
-            recv_place = self._build_expr(callee_ast.value, e, _ExprContext.PLACE)
-            recv_ptr_typ = asserts.checked_cast(recv_place.typ, typs.PtrTyp)
+            recv_place = self._build_place(callee_ast.value, e)
             method = ir_traits.lookup_member(
-                recv_ptr_typ.pointee_typ,
+                recv_place.typ.pointee_typ,
                 callee_ast.field.name,
                 e.impl_registry,
                 callee_ast.field.span,
@@ -688,16 +687,14 @@ class CfgBuilder:
             if known. Negation preserves its operand's type, so this is
             passed on to the operand; ``&`` and ``not`` ignore it.
         :return: The operation's result.
+
+        :pre: op_ast.op.name == "not" implies operand coerces to bool [opt_unwrap]
         """
         match op_ast.op.name:
             case "&":
-                return self._in_context(
-                    self._build_expr(op_ast.operand, e, _ExprContext.PLACE),
-                    ctx,
-                )
+                return self._in_context(self._build_place(op_ast.operand, e), ctx)
             case "not":
                 operand = self._build_expr(op_ast.operand, e, _ExprContext.VALUE)
-                # TypCheck already confirmed operand coerces to bool.
                 coerced_operand = opt_util.opt_unwrap(self._coerce(operand, op_ast.operand))
                 return self._in_context(self._curr_bb.not_(coerced_operand, op_ast), ctx)
             case "-":
@@ -864,12 +861,14 @@ class CfgBuilder:
             address.
         :return: The indexed element, or a pointer to it if ``ctx`` is
             :attr:`~_ExprContext.PLACE`.
+
+        :pre: aa_expr.index coerces to usize [opt_unwrap]
         """
-        arr_ptr = self._build_expr(aa_expr.array, e, _ExprContext.PLACE)
+        arr_ptr = self._build_place(aa_expr.array, e)
 
         # An index is a coercion point like any other unambiguous target
         # type: a bare literal infers as usize, and a narrower unsigned
-        # value widens to it. TypCheck already confirmed it coerces.
+        # value widens to it.
         index = self._build_expr(aa_expr.index, e, _ExprContext.VALUE, typs.USIZE)
         index = opt_util.opt_unwrap(self._coerce(index, aa_expr.index))
 
@@ -899,12 +898,10 @@ class CfgBuilder:
             struct_expr,
         )
 
-        # TypCheck already confirmed every given field name is real,
-        # accessible and given only once, and that every field of
-        # struct_typ is given a value that coerces to its type.
         field_values: dict[str, ir_values.Value] = {}
         field_value_asts: dict[str, ast.Expr] = {}
         for field_expr in struct_expr.fields:
+            asserts.assert_in(field_expr.ident.name, struct_typ.fields)
             field = struct_typ.fields[field_expr.ident.name]
             field_values[field_expr.ident.name] = self._build_expr(
                 field_expr.value, e, _ExprContext.VALUE, field.typ
@@ -912,6 +909,7 @@ class CfgBuilder:
             field_value_asts[field_expr.ident.name] = field_expr.value
 
         for i, field in enumerate(struct_typ.fields.values()):
+            asserts.assert_in(field.name, field_values)
             field_value = field_values[field.name]
             coerced = opt_util.opt_unwrap(self._coerce(field_value, field_value_asts[field.name]))
             field_index = ir_values.ComptimeInt(typs.I32, i, field_value.ast)
@@ -931,20 +929,21 @@ class CfgBuilder:
         :return: The field's value, or a pointer to it if ``ctx`` is
             :attr:`~_ExprContext.PLACE`.
         """
-        struct_ptr = self._build_expr(fa_expr.value, e, _ExprContext.PLACE)
+        struct_ptr = self._build_place(fa_expr.value, e)
         return self._build_struct_field_access(struct_ptr, fa_expr, ctx)
 
     def _build_struct_field_access(
-        self, struct_ptr: ir_values.Value, fa_expr: ast.FieldAccessExpr, ctx: _ExprContext
+        self,
+        struct_ptr: ir_values.Value[typs.PtrTyp],
+        fa_expr: ast.FieldAccessExpr,
+        ctx: _ExprContext,
     ) -> ir_values.Value:
         """Lower ``s.field`` given ``s``'s already-lowered place pointer.
 
         Split out of :meth:`_build_field_access_expr` so
         :meth:`_build_call_expr` can fall back to plain field access
         (e.g. a struct field that happens to hold a callable value)
-        without re-lowering ``fa_expr.value`` a second time. TypCheck
-        already confirmed ``struct_ptr``'s pointee is a struct type with
-        an accessible field named ``fa_expr.field``.
+        without re-lowering ``fa_expr.value`` a second time.
 
         :param struct_ptr: ``fa_expr.value`` already lowered in
             :attr:`~_ExprContext.PLACE` context.
@@ -953,9 +952,12 @@ class CfgBuilder:
             address.
         :return: The field's value, or a pointer to it if ``ctx`` is
             :attr:`~_ExprContext.PLACE`.
+
+        :pre: struct_ptr.typ.pointee_typ is a StructTyp [checked_cast]
+        :pre: fa_expr.field.name in struct_typ.fields [assert_in]
         """
-        struct_ptr_typ = asserts.checked_cast(struct_ptr.typ, typs.PtrTyp)
-        struct_typ = asserts.checked_cast(struct_ptr_typ.pointee_typ, typs.StructTyp)
+        struct_typ = asserts.checked_cast(struct_ptr.typ.pointee_typ, typs.StructTyp)
+        asserts.assert_in(fa_expr.field.name, struct_typ.fields)
         field = struct_typ.fields[fa_expr.field.name]
 
         index = ir_values.ComptimeInt(typs.I32, field.index, fa_expr)
@@ -1038,15 +1040,16 @@ class CfgBuilder:
     def _resolve_loop_label(self, label: Optional[ast.Ident]) -> CfgBuilder._LoopCtx:
         """Find the loop a ``break``/``continue`` targets.
 
-        TypCheck already confirmed :attr:`_loop_stack` is non-empty and,
-        if ``label`` is given, that some enclosing loop has it.
-
         :param label: The target label, or ``None`` for the innermost
             enclosing loop.
         :return: The named loop, or the innermost one if ``label`` is
             ``None``.
+
+        :pre: label is None implies len(_loop_stack) > 0 [assert_gt]
+        :pre: label is not None implies some ctx in _loop_stack has ctx.label == label.name [assert]
         """
         if label is None:
+            asserts.assert_gt(len(self._loop_stack), 0)
             return self._loop_stack[-1]
         for ctx in reversed(self._loop_stack):
             if ctx.label == label.name:
@@ -1083,13 +1086,15 @@ class CfgBuilder:
 
         :param ass_ast: The parsed assignment statement.
         :param e: The scope to resolve names in.
+
+        :pre: ass_ast.place is mut [assert_eq]
+        :pre: ass_ast.expr coerces to ass_ast.place's type [opt_unwrap]
         """
-        place = self._build_expr(ass_ast.place, e, _ExprContext.PLACE)
-        place_typ = asserts.checked_cast(place.typ, typs.PtrTyp)
+        place = self._build_place(ass_ast.place, e)
+        place_typ = place.typ
         assert place_typ.pointee_typ != typs.VOID, "assignment place cannot be void"
         expr = self._build_expr(ass_ast.expr, e, _ExprContext.VALUE, place_typ.pointee_typ)
 
-        # TypCheck already confirmed place isn't const and expr coerces.
         asserts.assert_eq(place_typ.mut, typs.MUT)
         coerced = opt_util.opt_unwrap(self._coerce(expr, ass_ast.expr))
         self._curr_bb.store(coerced, place, ass_ast)
@@ -1208,6 +1213,25 @@ class CfgBuilder:
         if not self._curr_bb.terminated:
             self._curr_bb.unreachable(ast_node)
         return self._in_context(ir_values.NeverValue(ast_node), ctx)
+
+    def _build_place(self, expr_ast: ast.Expr, e: ir_env.Env) -> ir_values.Value[typs.PtrTyp]:
+        """Lower ``expr_ast`` for its address rather than its value.
+
+        The narrow counterpart of :meth:`_build_expr` for callers that
+        always need a place (a method call's receiver, ``&``'s operand, an
+        array or field access's base, an assignment's target) - see
+        :class:`_ExprContext`.
+
+        :param expr_ast: The parsed expression to lower as a place.
+        :param e: The scope to resolve names in.
+        :return: A pointer to ``expr_ast``'s storage.
+
+        :pre: expr_ast is a place expr [TypCheck]
+        :post: isinstance(result.typ, PtrTyp) [checked_cast]
+        """
+        value = self._build_expr(expr_ast, e, _ExprContext.PLACE)
+        asserts.checked_cast(value.typ, typs.PtrTyp)
+        return cast(ir_values.Value[typs.PtrTyp], value)
 
     def _value_to_ptr(self, value: ir_values.Value) -> ir_values.Value[typs.PtrTyp]:
         alloca = self._curr_bb.alloca(value.typ, typs.CONST, 1, value.ast)
