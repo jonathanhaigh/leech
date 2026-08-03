@@ -91,6 +91,8 @@ class Typ(abc.ABC):
     return the *same* object, so types can be compared and hashed by
     identity. The cache holds only weak references, so a type is
     collected once nothing else references it.
+
+    :invariant: get_or_create(*a) is get_or_create(*a) [assert_not_in @ create]
     """
 
     _cache: ClassVar[weakref.WeakValueDictionary[Hashable, Typ]] = weakref.WeakValueDictionary()
@@ -576,6 +578,8 @@ class TypParamTyp(Typ):
             :meth:`~Typ.get_or_create`; ``args[0]`` must be the owning
             item's AST node and ``args[1]`` the parameter's index.
         :return: The cache key.
+
+        :pre: len(args) > 1 [assert_gt]
         """
         asserts.assert_gt(len(args), 1)
         return (cls, args[0], args[1])
@@ -794,6 +798,8 @@ class StructTyp(Typ):
         :param typ_args: The concrete type to substitute for each of this
             struct's own type parameters, in declaration order.
         :return: The (possibly newly-built, possibly cached) instantiation.
+
+        :post: instance(a) is instance(a) for equal a [cache]
         """
         inst = self._instance_cache.get(typ_args)
         if inst is None:
