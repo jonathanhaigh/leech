@@ -1,0 +1,20 @@
+// SPDX-FileCopyrightText: 2026 Jonathan Haigh
+//
+// SPDX-License-Identifier: MPL-2.0
+
+import prelude;
+
+pub fn print(s: *u8) {
+    prelude::write(1, s, prelude::strlen(s));
+}
+
+pub fn println(s: *u8) {
+    // Deliberately not `puts`: that goes through libc's buffered stdio,
+    // while `print` above writes straight to the fd - mixing the two
+    // within one program makes their outputs interleave unpredictably
+    // (a buffered `puts` call's output can be deferred past a later
+    // unbuffered `write`). Using the same raw write()-based mechanism as
+    // `print` for both keeps their relative ordering exactly as called.
+    prelude::write(1, s, prelude::strlen(s));
+    prelude::write(1, "\n", 1);
+}

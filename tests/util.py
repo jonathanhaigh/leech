@@ -5,12 +5,14 @@
 import functools
 import pathlib
 import subprocess
+from collections.abc import Sequence
 from typing import Optional
 
 from leech import ast, driver, ir_module, opt_util, parse
 from leech import src as leech_src
 
-_PRELUDE_PATH = pathlib.Path(parse.__file__).parent / "std" / "prelude.leech"
+_STD_ROOT = pathlib.Path(parse.__file__).parent / "std"
+_PRELUDE_PATH = _STD_ROOT / "prelude.leech"
 
 
 def find_pos(src: str, substr: str) -> tuple[int, int]:
@@ -115,6 +117,23 @@ def _prelude_llvm_ir() -> str:
     return driver.compile_to_llvm_ir(leech_src.SrcFile(_PRELUDE_PATH), "prelude")
 
 
+@functools.cache
+def _bundled_std_llvm_ir(mod_name: str) -> str:
+    """The compiled LLVM IR of the real bundled ``std::{mod_name}``, once per
+    test run.
+
+    Same rationale as :func:`_prelude_llvm_ir`: any test whose fixture
+    ``import``s a real ``std::...`` module (resolved via
+    :meth:`~leech.ir_loader.ModLoader.resolve_import`'s bundled-root search
+    path, not a ``tmp_path`` fixture) needs that module's body compiled and
+    linked in too, under the same qualified name real import resolution
+    would give it (``"std.{mod_name}"``, from the two-segment ``std::...``
+    import path).
+    """
+    path = _STD_ROOT / f"{mod_name}.leech"
+    return driver.compile_to_llvm_ir(leech_src.SrcFile(path), f"std.{mod_name}")
+
+
 def check_prog_output(
     tmp_path: pathlib.Path,
     src: str,
@@ -122,14 +141,30 @@ def check_prog_output(
     expected_exit_status,
     qualified_names: Optional[dict[str, str]] = None,
     /,
+    *,
+    std_modules: Sequence[str] = (),
     **modules: str,
 ) -> None:
+    """Compile ``src`` (as ``main``) plus every module in ``modules``, link,
+    and run, asserting the program's captured output and exit status.
+
+    :param std_modules: Names (relative to ``std/``, e.g. ``"io"`` for
+        ``std::io``) of real bundled standard-library modules ``src`` (or
+        one of ``modules``) imports and that therefore need their own
+        compiled body linked in too - the prelude module is always
+        included regardless, since it's always loaded.
+    """
     modules["main"] = src
     llir_mod_paths = compile_modules(tmp_path, qualified_names, **modules)
 
     prelude_llir_path = tmp_path / "prelude.ll"
     write_whole_file(prelude_llir_path, _prelude_llvm_ir())
     llir_mod_paths = [*llir_mod_paths, prelude_llir_path]
+
+    for mod_name in std_modules:
+        std_llir_path = tmp_path / f"std_{mod_name}.ll"
+        write_whole_file(std_llir_path, _bundled_std_llvm_ir(mod_name))
+        llir_mod_paths.append(std_llir_path)
 
     llir_path = tmp_path / "exe.bc"
     subprocess.run(["llvm-link", "-o", llir_path, *llir_mod_paths], check=True)
