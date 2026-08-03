@@ -154,6 +154,30 @@ Cross-cutting pieces:
   often the authoritative explanation of *why* code is structured a certain
   way (e.g. import-cycle workarounds, two-phase construction) — read them
   before assuming something is incidental.
+- Preconditions, postconditions, and class invariants get terse Sphinx
+  fields, not prose: `:pre:`/`:post:` in a method's own docstring,
+  `:invariant:` in a class's docstring for something true across its whole
+  lifetime. Use them liberally - anywhere a function assumes something
+  about its inputs, or promises something about its output, that isn't
+  obvious from the signature and types alone, state it explicitly rather
+  than leaving it implicit. Place them at the very end of the docstring,
+  after every other field (`:param:`, `:return:`, `:raises:`), separated by
+  a blank line. State the condition as a terse Python-like boolean
+  expression - what holds, not why - ending in a bracketed keyword for how
+  it's checked: an `asserts.*` name (`[checked_cast]`, `[assert_in]`, ...),
+  `[assert]` for a bare `assert`, `[TypCheck]` for "an earlier pass already
+  enforced this, trusted here," `[ctor]`/`[cache]` for "structurally
+  guaranteed," or `[unchecked]` if deliberately not enforced. Multiple
+  conditions get multiple `:pre:`/`:post:` lines, like this codebase's
+  existing repeated `:raises:` lines. An untagged prose contract claim
+  ("TypCheck already confirmed ...") is exactly the drift this is meant to
+  prevent. See `CfgBuilder._build_place` in `ir_builder.py` for a worked
+  example. This project deliberately does not use a third-party
+  design-by-contract library (`icontract`, `deal`): their lambda-based
+  `@require`/`@ensure` predicates don't integrate with basedpyright's
+  static narrowing the way `asserts.checked_cast`'s generic signature
+  does, which matters given how much of this codebase's type narrowing
+  (`Value[TypT_co]`, interned `Typ`s) leans on that integration.
 - `Typ` and `ast.Typ` are different things: `ast.Typ` is a parsed type
   *expression*; `typs.Typ` is the resolved, interned type it's turned into via
   `typs.Typ.from_ast`.
