@@ -116,6 +116,8 @@ class ComptimeInt(ComptimeValue[typs.IntTyp]):
     :param typ: The integer type.
     :param value: The integer value.
     :param ast_node: The AST node this value was built from, if any.
+
+    :pre: typ.fits(value) [assert]
     """
 
     _typ: Final[typs.IntTyp]
