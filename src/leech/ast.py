@@ -855,16 +855,45 @@ class GenericParam(Ast):
     ident: Final[Ident]
     bounds: Final[tuple[Path, ...]]
 
-    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+    def __init__(self, span: src.SrcSpan, ident: Ident, bounds: tuple[Path, ...]) -> None:
+        super().__init__(span)
+        self.ident = ident
+        self.bounds = bounds
+
+    @classmethod
+    def from_tree(cls, file: src.SrcFile, tree: lark.tree.ParseTree) -> GenericParam:
+        """Build a :class:`GenericParam` from a parse tree.
+
+        :param file: The source file ``tree`` was parsed from.
+        :param tree: The parse tree to build from.
+        :return: The constructed generic parameter.
+        """
         asserts.assert_eq(tree.data, "generic_param")
-        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        span = src.SrcSpan.from_lark_meta(file, tree.meta)
         ident, *rest = list(map(_as_tree, tree.children))
-        self.ident = Ident.from_tree(file, ident)
+        bounds: tuple[Path, ...]
         if rest:
             (bound_list,) = rest
-            self.bounds = tuple(Path(file, _as_tree(p)) for p in bound_list.children)
+            bounds = tuple(Path(file, _as_tree(p)) for p in bound_list.children)
         else:
-            self.bounds = ()
+            bounds = ()
+        return cls(span, Ident.from_tree(file, ident), bounds)
+
+    @staticmethod
+    def _synthetic(ident: Ident, span: src.SrcSpan) -> GenericParam:
+        """Construct a :class:`GenericParam` not backed by a parse tree.
+
+        Used for a compiler-intrinsic builtin's own declared type
+        parameter (see :class:`~leech.ir_module.BuiltinFn`), which has no
+        ``generic_param`` subtree of its own to build one from - always
+        unbounded, since a builtin's type parameter is never constrained
+        by a trait bound.
+
+        :param ident: The type parameter's name.
+        :param span: The source location to attribute it to.
+        :return: The synthesized generic parameter.
+        """
+        return GenericParam(span, ident, ())
 
     @override
     def diag_str(self) -> str:
@@ -933,7 +962,7 @@ class FnSpec(Defn):
         self.name = Ident.from_tree(file, ident)
         if generic_params is not None:
             self.generic_params = tuple(
-                GenericParam(file, _as_tree(c)) for c in generic_params.children
+                GenericParam.from_tree(file, _as_tree(c)) for c in generic_params.children
             )
         else:
             self.generic_params = ()
@@ -1059,7 +1088,7 @@ class StructDefn(Defn):
         self.ident = Ident.from_tree(file, _as_tree(ident))
         if generic_params is not None:
             self.generic_params = tuple(
-                GenericParam(file, _as_tree(c)) for c in _as_tree(generic_params).children
+                GenericParam.from_tree(file, _as_tree(c)) for c in _as_tree(generic_params).children
             )
         else:
             self.generic_params = ()
@@ -1115,7 +1144,7 @@ class TraitDefn(Defn):
         self.ident = Ident.from_tree(file, _as_tree(ident))
         if generic_params is not None:
             self.generic_params = tuple(
-                GenericParam(file, _as_tree(c)) for c in _as_tree(generic_params).children
+                GenericParam.from_tree(file, _as_tree(c)) for c in _as_tree(generic_params).children
             )
         else:
             self.generic_params = ()
@@ -1147,7 +1176,7 @@ class ImplDefn(Defn):
         generic_params, typ, for_typ, *fn_trees = tree.children
         if generic_params is not None:
             self.generic_params = tuple(
-                GenericParam(file, _as_tree(c)) for c in _as_tree(generic_params).children
+                GenericParam.from_tree(file, _as_tree(c)) for c in _as_tree(generic_params).children
             )
         else:
             self.generic_params = ()

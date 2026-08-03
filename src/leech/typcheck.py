@@ -17,7 +17,7 @@ docstring.
 A function body or module-variable initializer is checked as a whole,
 in one pass, before any of it is lowered (forced by
 :attr:`~leech.ir_module.Fn.cfg`/:attr:`~leech.ir_module.ModVar.cfg` via
-:attr:`~leech.ir_module.Fn.typ_check_results`/
+:attr:`~leech.ir_module.GenericCapableFnSpec.typ_check_results`/
 :attr:`~leech.ir_module.ModVar.typ_check_results`). One consequence:
 unreachable code is still fully type-checked, unlike
 :class:`~leech.ir_builder.CfgBuilder`'s own control-flow handling, which
@@ -182,8 +182,12 @@ class TypCheckResults:
 
     _int_lit_typs: Final[dict[ast.IntLit, typs.IntTyp]]
     _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
-    _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.Fn, tuple[typs.Typ, ...]]]]
-    _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.Fn, tuple[typs.Typ, ...]]]]
+    _generic_calls: Final[
+        dict[ast.CallExpr, tuple[ir_module.GenericCapableFnSpec, tuple[typs.Typ, ...]]]
+    ]
+    _generic_var_refs: Final[
+        dict[ast.VarExpr, tuple[ir_module.GenericCapableFnSpec, tuple[typs.Typ, ...]]]
+    ]
 
     def __init__(self) -> None:
         self._int_lit_typs = {}
@@ -217,7 +221,7 @@ class TypCheckResults:
 
     def generic_call(
         self, node: ast.CallExpr
-    ) -> Optional[tuple[ir_module.Fn, tuple[typs.Typ, ...]]]:
+    ) -> Optional[tuple[ir_module.GenericCapableFnSpec, tuple[typs.Typ, ...]]]:
         """The resolved callee and type arguments for a call to a generic function.
 
         :param node: The call's AST node.
@@ -228,13 +232,13 @@ class TypCheckResults:
         return self._generic_calls.get(node)
 
     def _set_generic_call(
-        self, node: ast.CallExpr, fn: ir_module.Fn, typ_args: tuple[typs.Typ, ...]
+        self, node: ast.CallExpr, fn: ir_module.GenericCapableFnSpec, typ_args: tuple[typs.Typ, ...]
     ) -> None:
         self._generic_calls[node] = (fn, typ_args)
 
     def generic_var_ref(
         self, node: ast.VarExpr
-    ) -> Optional[tuple[ir_module.Fn, tuple[typs.Typ, ...]]]:
+    ) -> Optional[tuple[ir_module.GenericCapableFnSpec, tuple[typs.Typ, ...]]]:
         """The resolved function and type arguments for an explicitly
         applied generic function named as a value, e.g. the ``id[i32]``
         in ``let f = id[i32];`` - not called, just referenced.
@@ -247,7 +251,7 @@ class TypCheckResults:
         return self._generic_var_refs.get(node)
 
     def _set_generic_var_ref(
-        self, node: ast.VarExpr, fn: ir_module.Fn, typ_args: tuple[typs.Typ, ...]
+        self, node: ast.VarExpr, fn: ir_module.GenericCapableFnSpec, typ_args: tuple[typs.Typ, ...]
     ) -> None:
         self._generic_var_refs[node] = (fn, typ_args)
 
@@ -661,7 +665,7 @@ class TypCheck:
         return opt_util.opt_map(method, lambda m: m.fn_typ_for_self(typ_param))
 
     def _resolve_generic_call(
-        self, fn: ir_module.Fn, call_ast: ast.CallExpr, e: ir_env.Env
+        self, fn: ir_module.GenericCapableFnSpec, call_ast: ast.CallExpr, e: ir_env.Env
     ) -> typs.FnTyp:
         """Resolve a call to a generic function to its concrete instantiated type.
 
@@ -696,23 +700,19 @@ class TypCheck:
 
         typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
         typs.check_typ_arg_bounds(
-            opt_util.opt_unwrap(fn.ast).generic_params, typ_args, e, call_ast.span
+            [typ_param.ast for typ_param in typ_params], typ_args, e, call_ast.span
         )
         self.results._set_generic_call(call_ast, fn, typ_args)
         return asserts.checked_cast(fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
 
-    def _typ_params_of(self, fn: ir_module.Fn) -> list[typs.TypParamTyp]:
+    def _typ_params_of(self, fn: ir_module.GenericCapableFnSpec) -> list[typs.TypParamTyp]:
         """``fn``'s own type parameters, as interned type parameter types,
         in declaration order."""
-        fn_ast = opt_util.opt_unwrap(fn.ast)
-        return [
-            typs.TypParamTyp.get_or_create(fn_ast, i, param_ast)
-            for i, param_ast in enumerate(fn_ast.generic_params)
-        ]
+        return list(fn.typ_params)
 
     def _resolve_explicit_typ_args(
         self,
-        fn: ir_module.Fn,
+        fn: ir_module.GenericCapableFnSpec,
         typ_params: list[typs.TypParamTyp],
         generic_args: Sequence[ast.Typ],
         span: Optional[src.SrcSpan],
@@ -743,7 +743,7 @@ class TypCheck:
 
     def _infer_typ_args(
         self,
-        fn: ir_module.Fn,
+        fn: ir_module.GenericCapableFnSpec,
         call_ast: ast.CallExpr,
         e: ir_env.Env,
         typ_params: list[typs.TypParamTyp],
