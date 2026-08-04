@@ -145,6 +145,8 @@ class ModLoader:
             can't start any valid token.
         :raises UnexpectedTokenError: If a token in the file doesn't fit
             the grammar at that point.
+
+        :post: load(a) is load(b) for a.resolve() == b.resolve() [cache]
         """
         key = path.resolve()
         cached = self._mods.get(key)

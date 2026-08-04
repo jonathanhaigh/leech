@@ -32,6 +32,8 @@ def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir
         grammar at that point (including the input ending too soon).
     """
     qualified_name = opt_util.opt_or_default(qualified_name, file.path.stem)
+    # TODO: thread a --search-path/env-var CLI option through to
+    # ModLoader's extra_search_roots once one exists.
     return ir_loader.ModLoader().load(file.path, qualified_name)
 
 

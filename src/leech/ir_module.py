@@ -330,6 +330,8 @@ class FnTemplate(Protocol):
             function's own type parameters, in declaration order - empty
             for a non-generic function.
         :return: The (possibly newly-built, possibly cached) instantiation.
+
+        :post: instance(a) is instance(a) for equal a [cache]
         """
         ...
 
@@ -351,7 +353,12 @@ class FnTemplate(Protocol):
 
 
 class Fn(NonBuiltinFnSpec[ast.FnDefn]):
-    """A function defined with a body in Leech source."""
+    """A function defined with a body in Leech source.
+
+    Structurally satisfies :class:`FnTemplate` (without declaring it as a
+    base - see that class's own docstring for why), the same way
+    :class:`GenericBuiltinFn` does.
+    """
 
     @functools.cached_property
     def _instance_cache(self) -> dict[tuple[typs.Typ, ...], FnInstance]:
