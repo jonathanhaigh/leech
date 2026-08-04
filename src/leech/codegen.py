@@ -236,6 +236,16 @@ class Compiler:
                 if mod is self._mod or item.access == ir_module.PUBLIC:
                     yield item
 
+    def _fn_templates(self) -> Iterator[ir_module.FnTemplate]:
+        """Every generic function or compiler-intrinsic builtin in the
+        program, whose :attr:`~leech.ir_module.FnTemplate.instances` might
+        need discovering (see :meth:`_discover_fn_instances`)."""
+        for mod in self._mod.loader.mods:
+            for item in mod.items:
+                if isinstance(item.value, ir_module.GenericFn):
+                    yield item.value.fn
+        yield from self._mod.loader.builtins
+
     def _discover_fn_instances(self) -> list[ir_module.FnInstance]:
         """Find every generic function instance a call anywhere in the
         program could request.
@@ -259,9 +269,9 @@ class Compiler:
         :class:`~leech.ir_module.GenericBuiltinFn`) is never a
         :class:`~leech.ir_module.ModItem` - it's bound directly into every
         module's ``builtin_env``, not through the ordinary
-        ``ast.defns``-driven path the ``mod.items`` walk below relies on -
-        so the sweep also checks :attr:`~leech.ir_loader.ModLoader.builtins`
-        directly on every pass, alongside the ordinary walk.
+        ``ast.defns``-driven path - so :meth:`_fn_templates` yields it
+        alongside every real generic function, and the sweep below doesn't
+        need to tell the two apart.
 
         :return: Every instance discovered, in discovery order.
         """
@@ -270,15 +280,8 @@ class Compiler:
 
         def newly_requested() -> list[ir_module.FnInstance]:
             new = []
-            for mod in self._mod.loader.mods:
-                for item in mod.items:
-                    if isinstance(item.value, ir_module.GenericFn):
-                        for inst in item.value.fn.instances:
-                            if inst not in seen:
-                                seen.add(inst)
-                                new.append(inst)
-            for builtin in self._mod.loader.builtins:
-                for inst in builtin.instances:
+            for template in self._fn_templates():
+                for inst in template.instances:
                     if inst not in seen:
                         seen.add(inst)
                         new.append(inst)

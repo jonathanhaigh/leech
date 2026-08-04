@@ -189,13 +189,8 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         # in a param or return type (below), or in an expression. A
         # no-op loop for a non-generic function or an extern declaration,
         # neither of which can have any.
-        for index, param_ast in enumerate(fn_ast.generic_params):
-            self.env.add_container(
-                param_ast.ident.name,
-                typs.TypParamTyp.get_or_create(
-                    fn_ast, index, param_ast.ident.name, param_ast.bounds
-                ),
-            )
+        for typ_param in typs.typ_params_from_ast(fn_ast, fn_ast.generic_params):
+            self.env.add_container(typ_param.name, typ_param)
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
@@ -389,10 +384,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         """This function's own declared type parameters, as interned type
         parameter types, in declaration order."""
         fn_ast = opt_util.opt_unwrap(self.ast)
-        return tuple(
-            typs.TypParamTyp.get_or_create(fn_ast, i, param_ast.ident.name, param_ast.bounds)
-            for i, param_ast in enumerate(fn_ast.generic_params)
-        )
+        return typs.typ_params_from_ast(fn_ast, fn_ast.generic_params)
 
     @functools.cached_property
     def typ_check_results(self) -> typcheck.TypCheckResults:
@@ -1016,13 +1008,8 @@ class Mod:
         # or method's own signature and body can too (see
         # `Impl.__init__`/the inherent branch's `fn_env`).
         impl_env = self.env.new_child()
-        for index, param_ast in enumerate(impl_ast.generic_params):
-            impl_env.add_container(
-                param_ast.ident.name,
-                typs.TypParamTyp.get_or_create(
-                    impl_ast, index, param_ast.ident.name, param_ast.bounds
-                ),
-            )
+        for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params):
+            impl_env.add_container(typ_param.name, typ_param)
 
         if impl_ast.for_typ is None:
             self._build_inherent_impl_defn(impl_ast, impl_env, generic_fns)
@@ -1056,13 +1043,8 @@ class Mod:
             raise errors.ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         fn_env = typ.env.new_child()
-        for index, param_ast in enumerate(impl_ast.generic_params):
-            fn_env.add_container(
-                param_ast.ident.name,
-                typs.TypParamTyp.get_or_create(
-                    impl_ast, index, param_ast.ident.name, param_ast.bounds
-                ),
-            )
+        for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params):
+            fn_env.add_container(typ_param.name, typ_param)
 
         self._build_impl_fns(impl_ast, fn_env, typ, generic_fns, typ.add_assoc_fn, typ.name)
 

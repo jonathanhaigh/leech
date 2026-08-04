@@ -314,11 +314,7 @@ class Typ(abc.ABC):
                 item.name, len(typ_ast.generic_args), len(item.ast.generic_params), typ_ast.span
             )
         typ_args = tuple(Typ.from_ast(arg, e) for arg in typ_ast.generic_args)
-        typ_params = [
-            TypParamTyp.get_or_create(item.ast, i, p.ident.name, p.bounds)
-            for i, p in enumerate(item.ast.generic_params)
-        ]
-        check_typ_arg_bounds(typ_params, typ_args, e, typ_ast.span)
+        check_typ_arg_bounds(item.typ_params, typ_args, e, typ_ast.span)
         return item.instance(typ_args)
 
 
@@ -620,6 +616,24 @@ class TypParamTyp(Typ):
         return False
 
 
+def typ_params_from_ast(
+    owner: Hashable, generic_params: Sequence[ast.GenericParam]
+) -> tuple[TypParamTyp, ...]:
+    """Turn a generic item's parsed type parameters into interned :class:`TypParamTyp`\\ s.
+
+    :param owner: The declaring item, identifying these type parameters'
+        cache key (see :meth:`TypParamTyp.cache_key`).
+    :param generic_params: The parsed type parameter declarations, in
+        declaration order.
+    :return: One interned :class:`TypParamTyp` per element of
+        ``generic_params``, in the same order.
+    """
+    return tuple(
+        TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds)
+        for index, param_ast in enumerate(generic_params)
+    )
+
+
 class StructField:
     """A single field of a :class:`StructTyp`.
 
@@ -771,13 +785,8 @@ class StructTyp(Typ):
             for param_ast, typ_arg in zip(struct_ast.generic_params, typ_args, strict=True):
                 self.env.add_container(param_ast.ident.name, typ_arg)
         else:
-            for index, param_ast in enumerate(struct_ast.generic_params):
-                self.env.add_container(
-                    param_ast.ident.name,
-                    TypParamTyp.get_or_create(
-                        struct_ast, index, param_ast.ident.name, param_ast.bounds
-                    ),
-                )
+            for typ_param in self.typ_params:
+                self.env.add_container(typ_param.name, typ_param)
         self._members = {}
         # Registering fields here - rather than lazily, along with
         # `fields` - deliberately resolves no types: a StructField only
@@ -786,6 +795,16 @@ class StructTyp(Typ):
         # module.
         for i, field_ast in enumerate(struct_ast.fields):
             self._add_member(StructField(i, field_ast, self.env))
+
+    @functools.cached_property
+    def typ_params(self) -> tuple[TypParamTyp, ...]:
+        """This struct's own declared type parameters, as interned type
+        parameter types, in declaration order. Empty for a non-generic
+        struct or for a real instantiation (``self._typ_args`` non-empty),
+        which has no type parameters of its own left to speak of."""
+        if self._typ_args:
+            return ()
+        return typ_params_from_ast(self.ast, self.ast.generic_params)
 
     @functools.cached_property
     def _instance_cache(self) -> dict[tuple[Typ, ...], StructTyp]:
