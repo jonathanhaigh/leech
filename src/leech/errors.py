@@ -1156,6 +1156,26 @@ class DivisionByZeroAtComptimeError(UserError):
         super().__init__(ERROR, "Division by zero", span)
 
 
+class SizeOfNotComptimeEvaluableError(UserError):
+    """Raised when ``__size_of`` is evaluated at compile time for a type
+    (a struct or array) whose layout isn't computed in Python, to avoid
+    disagreeing with LLVM's own struct-layout/padding rules."""
+
+    def __init__(self, typ: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(ERROR, f'Cannot compute size of "{typ}" at comptime', span)
+
+
+class PtrCastNotComptimeEvaluableError(UserError):
+    """Raised when ``__ptr_cast_mut`` is evaluated at compile time - the
+    ``Comptime*`` value model is value-oriented, not byte-oriented, and
+    never records a pointer's mutability separately from its pointee, so
+    it has no sound way to reinterpret one as a different pointer type,
+    not even a mutability-only change."""
+
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(ERROR, "Cannot cast pointer at comptime", span)
+
+
 class ModDoesNotExistError(UserError):
     """Raised when an ``import`` names a module file that doesn't exist."""
 

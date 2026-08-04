@@ -255,6 +255,14 @@ class Compiler:
         use, built) here purely to complete the search, well before
         :meth:`_compile_fn_instance` compiles it into LLVM IR.
 
+        A compiler-intrinsic builtin (see
+        :class:`~leech.ir_module.GenericBuiltinFn`) is never a
+        :class:`~leech.ir_module.ModItem` - it's bound directly into every
+        module's ``builtin_env``, not through the ordinary
+        ``ast.defns``-driven path the ``mod.items`` walk below relies on -
+        so the sweep also checks :attr:`~leech.ir_loader.ModLoader.builtins`
+        directly on every pass, alongside the ordinary walk.
+
         :return: Every instance discovered, in discovery order.
         """
         instances: list[ir_module.FnInstance] = []
@@ -269,6 +277,11 @@ class Compiler:
                             if inst not in seen:
                                 seen.add(inst)
                                 new.append(inst)
+            for builtin in self._mod.loader.builtins:
+                for inst in builtin.instances:
+                    if inst not in seen:
+                        seen.add(inst)
+                        new.append(inst)
             return new
 
         for item in self._mod.items:
@@ -576,6 +589,29 @@ class Compiler:
                 zero = ll.Constant(self._ll_mod_items.get(typs.USIZE), 0)
                 ll_index = ctx.ll_values.get(instr.index)
                 return ctx.ll_builder.gep(ctx.ll_values.get(instr.base), [zero, ll_index])
+            case ir_values.SizeOfInstr():
+                # The standard portable idiom for sizeof(T): index one T
+                # past a null T* and read the resulting address, so LLVM's
+                # own (platform-dependent, padding-including) layout rules
+                # compute the size, rather than reimplementing them here.
+                ll_ptr_typ = self._ll_mod_items.get(
+                    typs.PtrTyp.get_or_create(instr.sized_typ, typs.CONST)
+                )
+                null_ptr = ll.Constant(ll_ptr_typ, None)
+                one = ll.Constant(self._ll_mod_items.get(typs.USIZE), 1)
+                elt_ptr = ctx.ll_builder.gep(null_ptr, [one])
+                return ctx.ll_builder.ptrtoint(  # type: ignore
+                    elt_ptr, self._ll_mod_items.get(typs.USIZE)
+                )
+            case ir_values.PtrCastInstr():
+                return ctx.ll_builder.bitcast(  # type: ignore
+                    ctx.ll_values.get(instr.operand), self._ll_mod_items.get(instr.target_typ)
+                )
+            case ir_values.IsNullInstr():
+                null_ptr = ll.Constant(self._ll_mod_items.get(instr.operand.typ), None)
+                return ctx.ll_builder.icmp_unsigned(
+                    "==", ctx.ll_values.get(instr.operand), null_ptr
+                )
             case ir_values.InsertValueInstr():
                 return ctx.ll_builder.insert_value(
                     ctx.ll_values.get(instr.aggregate),

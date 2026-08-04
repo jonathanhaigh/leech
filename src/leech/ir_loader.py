@@ -8,7 +8,7 @@ import pathlib
 from collections.abc import Collection, Sequence
 from typing import Final, Optional
 
-from leech import ast, errors, ir_module, ir_traits, parse, src
+from leech import ast, errors, ir_env, ir_module, ir_traits, parse, src
 
 #: The directory holding the bundled standard library (``std::...``
 #: imports), shipped alongside the installed ``leech`` package - the same
@@ -45,11 +45,27 @@ class ModLoader:
     impl_registry: Final[ir_traits.ImplRegistry]
     _extra_search_roots: Final[Sequence[pathlib.Path]]
     _prelude: Optional[ir_module.Mod]
+    size_of_builtin: Final[ir_module.GenericBuiltinFn]
+    ptr_cast_mut_builtin: Final[ir_module.GenericBuiltinFn]
+    is_null_builtin: Final[ir_module.GenericBuiltinFn]
 
     def __init__(self, extra_search_roots: Sequence[pathlib.Path] = ()) -> None:
+        # Deferred to break an import cycle - see ir_builtins.py's own
+        # module docstring.
+        from leech import ir_builtins  # noqa: PLC0415
+
         self._mods = {}
         self.impl_registry = ir_traits.ImplRegistry()
         self._extra_search_roots = extra_search_roots
+
+        # Built before the prelude (below): Mod.__init__ binds these three
+        # into every module's builtin_env, the prelude module's own
+        # included, so they must already exist by the time it's loaded.
+        builtin_env = ir_env.Env(impl_registry=self.impl_registry)
+        self.size_of_builtin = ir_builtins.SizeOfBuiltinFn(builtin_env)
+        self.ptr_cast_mut_builtin = ir_builtins.PtrCastMutBuiltinFn(builtin_env)
+        self.is_null_builtin = ir_builtins.IsNullBuiltinFn(builtin_env)
+
         # Set to None first, so building the prelude module itself (below)
         # sees `self.prelude is None` and skips injecting the prelude into
         # its own builtin_env - otherwise loading the prelude would need
@@ -68,6 +84,16 @@ class ModLoader:
         see :meth:`__init__`.
         """
         return self._prelude
+
+    @property
+    def builtins(self) -> tuple[ir_module.GenericBuiltinFn, ...]:
+        """Every compiler-intrinsic builtin this loader owns, for codegen's
+        instance discovery (see
+        :meth:`~leech.codegen.Compiler._discover_fn_instances`) - a
+        builtin has no :class:`~leech.ir_module.ModItem` of its own to be
+        found through, unlike a real generic function.
+        """
+        return (self.size_of_builtin, self.ptr_cast_mut_builtin, self.is_null_builtin)
 
     def resolve_import(
         self, importing_file: src.SrcFile, path: ast.Path

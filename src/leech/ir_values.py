@@ -790,6 +790,96 @@ class GepInstr(Instr[typs.PtrTyp]):
         return _gep_typ(base_typ, self.index)
 
 
+class SizeOfInstr(Instr[typs.IntTyp]):
+    """Computes the size in bytes of a type.
+
+    Backs the ``__size_of`` compiler intrinsic (see
+    :class:`~leech.ir_builtins.SizeOfBuiltinFn`). Lowers (see
+    :mod:`leech.codegen`) to the portable ``getelementptr``/``ptrtoint``
+    idiom, rather than a hand-computed size, so it always agrees with
+    LLVM's own (platform-dependent, padding-including) notion of a type's
+    size.
+
+    :param bb: The basic block this instruction belongs to.
+    :param sized_typ: The type whose size is computed.
+    :param ast_node: The AST node this instruction was built from, if any.
+    """
+
+    sized_typ: Final[typs.Typ]
+
+    @override
+    def __init__(self, bb: BasicBlock, sized_typ: typs.Typ, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
+        self.sized_typ = sized_typ
+
+    @override
+    def calculate_typ(self) -> typs.IntTyp:
+        return typs.USIZE
+
+
+class PtrCastInstr(Instr[typs.PtrTyp]):
+    """Reinterprets a pointer as a different pointer type.
+
+    Backs the ``__ptr_cast_mut`` compiler intrinsic (see
+    :class:`~leech.ir_builtins.PtrCastMutBuiltinFn`). Lowers to a real
+    LLVM ``bitcast``, not a no-op - unlike a mut-to-const pointer coercion,
+    the source and target LLVM pointer types can genuinely differ here.
+
+    :param bb: The basic block this instruction belongs to.
+    :param operand: The pointer value to cast; must already be
+        :class:`~leech.typs.PtrTyp`-typed.
+    :param target_typ: The pointer type to cast to.
+    :param ast_node: The AST node this instruction was built from, if any.
+    """
+
+    operand: Final[Value]
+    target_typ: Final[typs.PtrTyp]
+
+    @override
+    def __init__(
+        self,
+        bb: BasicBlock,
+        operand: Value,
+        target_typ: typs.PtrTyp,
+        ast_node: Optional[ast.Ast],
+    ) -> None:
+        super().__init__(bb, ast_node)
+        asserts.checked_cast(operand.typ, typs.PtrTyp)
+        self.operand = operand
+        self.target_typ = target_typ
+
+    @override
+    def calculate_typ(self) -> typs.PtrTyp:
+        return self.target_typ
+
+
+class IsNullInstr(Instr[typs.BoolTyp]):
+    """Tests whether a pointer is null.
+
+    Backs the ``__is_null`` compiler intrinsic (see
+    :class:`~leech.ir_builtins.IsNullBuiltinFn`) - the only way a null
+    pointer is ever produced or observed in Leech, since there is no
+    null-pointer literal or ``==``/``!=`` operator on pointers.
+
+    :param bb: The basic block this instruction belongs to.
+    :param operand: The pointer value to test; must already be
+        :class:`~leech.typs.PtrTyp`-typed.
+    :param ast_node: The AST node this instruction was built from, if any.
+    """
+
+    operand: Final[Value]
+
+    @override
+    def __init__(self, bb: BasicBlock, operand: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
+        asserts.checked_cast(operand.typ, typs.PtrTyp)
+        self.operand = operand
+
+    @override
+    def calculate_typ(self) -> typs.BoolTyp:
+        return typs.BOOL
+
+
 class InsertValueInstr(Instr):
     """Returns a copy of an aggregate value with one element replaced.
 
@@ -1084,6 +1174,20 @@ class BasicBlock:
     def gep(self, base: Value, index: Value, ast_node: Optional[ast.Ast]) -> GepInstr:
         """Append a :class:`GepInstr` to this block."""
         return self._add_instr(GepInstr(self, base, index, ast_node))
+
+    def size_of(self, sized_typ: typs.Typ, ast_node: Optional[ast.Ast]) -> SizeOfInstr:
+        """Append a :class:`SizeOfInstr` to this block."""
+        return self._add_instr(SizeOfInstr(self, sized_typ, ast_node))
+
+    def ptr_cast(
+        self, operand: Value, target_typ: typs.PtrTyp, ast_node: Optional[ast.Ast]
+    ) -> PtrCastInstr:
+        """Append a :class:`PtrCastInstr` to this block."""
+        return self._add_instr(PtrCastInstr(self, operand, target_typ, ast_node))
+
+    def is_null(self, operand: Value, ast_node: Optional[ast.Ast]) -> IsNullInstr:
+        """Append an :class:`IsNullInstr` to this block."""
+        return self._add_instr(IsNullInstr(self, operand, ast_node))
 
     def insert_value(
         self,
