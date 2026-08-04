@@ -97,7 +97,7 @@ class ModItem:
         Used as the symbol name emitted into the generated LLVM IR.
         """
         if self.qualify_name:
-            return f"{self.mod.name}.{self.name}"
+            return f"{self.mod.name}::{self.name}"
         return self.name
 
 
@@ -622,7 +622,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
 
     @property
     def qualified_name(self) -> str:
-        """This instance's mangled symbol name, e.g. ``mod.id[i32]`` for a
+        """This instance's mangled symbol name, e.g. ``mod::id[i32]`` for a
         real generic function, or ``__size_of[i32]`` (no module prefix -
         see :attr:`FnTemplate._qualified_name_prefix`) for a
         :class:`GenericBuiltinFn`.
@@ -635,7 +635,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
         """
         prefix = self._fn._qualified_name_prefix
         if prefix:
-            return f"{prefix}.{self.name}"
+            return f"{prefix}::{self.name}"
         return self.name
 
     @functools.cached_property

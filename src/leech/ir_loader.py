@@ -112,10 +112,10 @@ class ModLoader:
         :param importing_file: The source file the ``import`` statement
             appears in.
         :param path: The parsed ``::``-separated import path.
-        :return: The resolved file path, and the dotted qualified name
-            (``"std.mem"`` for ``std::mem``) to give the resulting
-            :class:`~leech.ir_module.Mod` - used to qualify its items'
-            mangled symbol names (see
+        :return: The resolved file path, and the ``::``-separated
+            qualified name (``"std::mem"`` for ``std::mem``) to give the
+            resulting :class:`~leech.ir_module.Mod` - used to qualify its
+            items' mangled symbol names (see
             :attr:`~leech.ir_module.ModItem.qualified_name`).
         :raises ModDoesNotExistError: If no search root has a matching file.
         """
@@ -124,7 +124,7 @@ class ModLoader:
         for root in roots:
             candidate = root.joinpath(*idents[:-1], f"{idents[-1]}.leech")
             if candidate.exists():
-                return candidate, ".".join(idents)
+                return candidate, "::".join(idents)
         raise errors.ModDoesNotExistError(path.str(), path.span)
 
     def load(self, path: pathlib.Path, qualified_name: str) -> ir_module.Mod:

@@ -535,7 +535,7 @@ def test_fn_instance_mangled_name(tmp_path):
 
     inst = fn.instance((typs.I32,))
     assert inst.name == "id[i32]"
-    assert inst.qualified_name == "main.id[i32]"
+    assert inst.qualified_name == "main::id[i32]"
 
 
 def test_fn_instance_mangled_name_with_multiple_typ_args(tmp_path):

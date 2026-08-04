@@ -849,14 +849,14 @@ class StructTyp(Typ):
 
     @property
     def qualified_name(self) -> str:
-        """This instantiation's mangled symbol name, e.g. ``mod.Pair[i32, i32]``.
+        """This instantiation's mangled symbol name, e.g. ``mod::Pair[i32, i32]``.
 
         Extends :attr:`~leech.ir_module.ModItem.qualified_name`'s
         module-prefixed scheme - an instantiation is never itself a
         ``ModItem`` (nothing declares one directly; it's built on demand
         by :meth:`instance`), so it computes the same form independently.
         """
-        return f"{self.mod_name}.{self.name}"
+        return f"{self.mod_name}::{self.name}"
 
     @override
     def is_concrete(self) -> bool:

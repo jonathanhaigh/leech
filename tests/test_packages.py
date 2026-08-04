@@ -65,7 +65,7 @@ def test_transitive_nested_import_resolves_relative_to_its_own_file(tmp_path):
     """
     llir_mod_paths = util.compile_modules(
         tmp_path,
-        {"pkg/sub/helper": "sub.helper"},
+        {"pkg/sub/helper": "sub::helper"},
         main=main_src,
         **{"pkg/a": a_src, "pkg/sub/helper": helper_src},
     )

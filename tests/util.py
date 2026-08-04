@@ -77,15 +77,15 @@ def compile_modules(
     :param qualified_names: Per-module override for the qualified name
         :func:`compile_file` gives it, keyed by the same name used in
         ``modules``. Defaults (for any module not present here) to
-        ``mod_name`` with ``/`` replaced by ``.`` - correct whenever
+        ``mod_name`` with ``/`` replaced by ``::`` - correct whenever
         ``mod_name`` is reached by exactly one import hop directly from
         another module in this same fixture, whose own ``import`` names
         exactly ``mod_name``'s path. That default is *wrong* for a module
         reached only transitively (e.g. ``pkg/a.leech`` importing
         ``sub::helper``, found at ``pkg/sub/helper.leech``): the real
-        compiler gives it the qualified name ``sub.helper`` (from ``a``'s
+        compiler gives it the qualified name ``sub::helper`` (from ``a``'s
         own two-segment import text, resolved relative to ``a``'s
-        directory), not ``pkg.sub.helper`` (the fixture path relative to
+        directory), not ``pkg::sub::helper`` (the fixture path relative to
         ``tmp_path``) - such a case must pass its qualified name here
         explicitly so this standalone recompilation agrees with it.
     """
@@ -96,7 +96,7 @@ def compile_modules(
     return [
         compile_file(
             tmp_path / f"{mod_name}.leech",
-            qualified_name=qualified_names.get(mod_name, mod_name.replace("/", ".")),
+            qualified_name=qualified_names.get(mod_name, mod_name.replace("/", "::")),
         )
         for mod_name in modules
     ]
@@ -127,11 +127,11 @@ def _bundled_std_llvm_ir(mod_name: str) -> str:
     :meth:`~leech.ir_loader.ModLoader.resolve_import`'s bundled-root search
     path, not a ``tmp_path`` fixture) needs that module's body compiled and
     linked in too, under the same qualified name real import resolution
-    would give it (``"std.{mod_name}"``, from the two-segment ``std::...``
+    would give it (``"std::{mod_name}"``, from the two-segment ``std::...``
     import path).
     """
     path = _STD_ROOT / f"{mod_name}.leech"
-    return driver.compile_to_llvm_ir(leech_src.SrcFile(path), f"std.{mod_name}")
+    return driver.compile_to_llvm_ir(leech_src.SrcFile(path), f"std::{mod_name}")
 
 
 def link_and_run(

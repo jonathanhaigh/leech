@@ -292,7 +292,7 @@ def test_generic_struct_instance_qualified_name(tmp_path):
 
     inst = pair.instance((typs.I32, typs.BOOL))
     assert inst.name == "Pair[i32, bool]"
-    assert inst.qualified_name == "main.Pair[i32, bool]"
+    assert inst.qualified_name == "main::Pair[i32, bool]"
 
 
 def test_generic_struct_field_typs_are_substituted(tmp_path):
