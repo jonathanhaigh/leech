@@ -161,7 +161,14 @@ def link_and_run(
     subprocess.run(["llvm-link", "-o", llir_path, *all_llir_paths], check=True)
 
     return subprocess.run(
-        ["lli", llir_path],
+        # --disable-symbolication: lli's default crash handler shells out
+        # to llvm-symbolizer to pretty-print a backtrace on a signal death
+        # (e.g. the SIGABRT a panic()/failed assert() test expects) - in
+        # some environments that subprocess hangs indefinitely instead of
+        # returning, and none of these tests' assertions need a symbolized
+        # backtrace anyway (a signal-killed test only checks the expected
+        # stdout prefix, never the backtrace itself).
+        ["lli", "--disable-symbolication", llir_path],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

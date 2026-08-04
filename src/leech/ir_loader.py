@@ -4,6 +4,7 @@
 
 """Loading the set of modules that make up one compilation."""
 
+import functools
 import pathlib
 from collections.abc import Collection, Sequence
 from typing import Final, Optional
@@ -13,8 +14,33 @@ from leech import ast, errors, ir_env, ir_module, ir_traits, parse, src
 #: The directory holding the bundled standard library (``std::...``
 #: imports), shipped alongside the installed ``leech`` package - the same
 #: ``pathlib.Path(__file__).parent``-relative pattern :mod:`leech.parse`
-#: already uses to find ``leech.lark``.
-_BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent
+#: already uses to find ``leech.lark``. Resolved once here so it compares
+#: reliably against the already-resolved paths :meth:`ModLoader.load`
+#: checks it against.
+_BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
+
+
+@functools.cache
+def _parse_bundled_mod_ast(path: pathlib.Path) -> ast.Mod:
+    """Parse a bundled standard-library file's AST once per process.
+
+    Every :class:`ModLoader` instance re-loads the same handful of bundled
+    ``std/`` files (the prelude always, others on import) - safe to share
+    process-wide since parsing is pure and an installed package's own
+    files don't change during a process's lifetime, unlike a project's own
+    source (reached through the importing file's directory or an
+    ``--extra-search-root``, never cached here). Sharing the parsed AST
+    only - not the built :class:`~leech.ir_module.Mod` - keeps every
+    :class:`ModLoader` fully independent downstream: type-check results
+    live in an out-of-band side table rather than on the AST (see
+    :mod:`leech.typcheck`), so two builds from the same AST never see each
+    other's state.
+
+    :param path: An already-resolved path known to be under
+        :data:`_BUNDLED_ROOT`.
+    :return: The parsed AST.
+    """
+    return parse.parse_mod_ast(src.SrcFile(path))
 
 
 class ModLoader:
@@ -153,7 +179,10 @@ class ModLoader:
         if cached is not None:
             return cached
 
-        mod_ast = parse.parse_mod_ast(src.SrcFile(path))
+        if key.is_relative_to(_BUNDLED_ROOT):
+            mod_ast = _parse_bundled_mod_ast(key)
+        else:
+            mod_ast = parse.parse_mod_ast(src.SrcFile(path))
         mod = ir_module.Mod(qualified_name, mod_ast, self)
         # Registered *before* building, so a module reached again while
         # it's still being built - i.e. an import cycle - gets this same
