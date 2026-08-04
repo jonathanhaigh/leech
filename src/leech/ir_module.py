@@ -8,9 +8,8 @@ import abc
 import dataclasses
 import enum
 import functools
-import pathlib
 from collections.abc import Callable, Collection, Mapping
-from typing import ClassVar, Final, Optional, override
+from typing import ClassVar, Final, Optional, Protocol, override
 
 from leech import (
     asserts,
@@ -192,7 +191,10 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         # neither of which can have any.
         for index, param_ast in enumerate(fn_ast.generic_params):
             self.env.add_container(
-                param_ast.ident.name, typs.TypParamTyp.get_or_create(fn_ast, index, param_ast)
+                param_ast.ident.name,
+                typs.TypParamTyp.get_or_create(
+                    fn_ast, index, param_ast.ident.name, param_ast.bounds
+                ),
             )
 
     @override
@@ -246,24 +248,110 @@ class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
     """A function declared without a body (e.g. an external/builtin function)."""
 
 
-class GenericCapableFnSpec(FnSpec[ast.FnDefn]):
-    """Base for anything that can be called generically: a real :class:`Fn`
-    (source-backed) or a :class:`BuiltinFn` (compiler intrinsic, with a
+class FnTemplate(Protocol):
+    """Structural contract for anything :class:`FnInstance`/:class:`GenericFn`
+    can build a monomorphized instantiation from: a real generic :class:`Fn`
+    (source-backed) or a :class:`GenericBuiltinFn` (compiler intrinsic, with a
     Python-authored body).
 
-    Both share the exact same monomorphization machinery -
-    :attr:`instances`/:meth:`instance`/:class:`FnInstance` - so calling
-    either goes through :meth:`~leech.typcheck.TypCheck._resolve_generic_call`
-    and :meth:`~leech.ir_builder.CfgBuilder._build_call_expr` completely
+    Neither concrete class declares this as a base - pyright checks the fit
+    structurally wherever this is used as a type. Both share the same
+    monomorphization *shape* - an ``instances``/``instance()``/
+    :class:`FnInstance` cache - so calling either goes through
+    :meth:`~leech.typcheck.TypCheck._resolve_generic_call` and
+    :meth:`~leech.ir_builder.CfgBuilder._build_call_expr` completely
     uniformly; the only place the two kinds differ is how one concrete
-    instantiation's body actually gets built (see :meth:`_build_body`).
+    instantiation's body actually gets built (see :meth:`_build_body`). That
+    small amount of caching logic (~15 lines) is intentionally *not* shared
+    via a common base - :class:`Fn` and :class:`GenericBuiltinFn` are
+    otherwise different enough (one AST-backed, one Python-backed) that
+    forcing them under one abstract parent for it isn't worth the coupling.
     """
 
-    #: The scope to resolve this item's own signature (and, for :class:`Fn`,
-    #: body) in - the parent of :attr:`FnInstance.env`. Declared here so
-    #: :class:`FnInstance` can reach it through either concrete subclass;
-    #: set by each one's own ``__init__``.
-    env: ir_env.Env
+    @property
+    def ast(self) -> Optional[ast.FnDefn]: ...
+
+    @property
+    def env(self) -> ir_env.Env: ...
+
+    @property
+    def span(self) -> Optional[src.SrcSpan]: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def fn_typ(self) -> typs.FnTyp: ...
+
+    @functools.cached_property
+    def params(self) -> tuple[ir_values.Param, ...]:
+        """This function's formal parameters, in declaration order."""
+        ...
+
+    @functools.cached_property
+    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+        """This item's own declared type parameters, as interned type
+        parameter types, in declaration order."""
+        ...
+
+    @functools.cached_property
+    def typ_check_results(self) -> typcheck.TypCheckResults:
+        """The (possibly empty) type-checking facts to lower this item's
+        body against - unsubstituted, the same facts every instantiation
+        shares (see :meth:`Mod.build`)."""
+        ...
+
+    @property
+    def _qualified_name_prefix(self) -> str:
+        """The module-qualifying prefix for an instantiation's mangled
+        symbol name (see :attr:`FnInstance.qualified_name`), or ``""`` if
+        none applies (a :class:`GenericBuiltinFn` isn't declared in any
+        particular module)."""
+        ...
+
+    @property
+    def instances(self) -> Collection[FnInstance]:
+        """Every instantiation of this function requested so far.
+
+        Used by codegen to discover instances to emit - see
+        :meth:`~leech.codegen.Compiler.compile`.
+        """
+        ...
+
+    def instance(self, typ_args: tuple[typs.Typ, ...]) -> FnInstance:
+        """Get this function's instantiation for ``typ_args``, building it if needed.
+
+        Cached, so requesting the same ``typ_args`` twice - from two
+        different call sites, or the same one lowered more than once -
+        returns the same :class:`FnInstance`, and its body is only ever
+        lowered once.
+
+        :param typ_args: The concrete type to substitute for each of this
+            function's own type parameters, in declaration order - empty
+            for a non-generic function.
+        :return: The (possibly newly-built, possibly cached) instantiation.
+        """
+        ...
+
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
+    ) -> None:
+        """Lower one instantiation's body into ``builder.cfg``.
+
+        :param builder: The builder to lower into - already constructed
+            against this instantiation's own type-argument mapping.
+        :param e: The scope to lower the body in.
+        :param typ_args: This instantiation's concrete type arguments, in
+            declaration order - unused by :class:`Fn` (whose body resolves
+            everything fresh from ``e``, which already shadows each type
+            parameter with its concrete argument - see
+            :attr:`FnInstance.env`), used directly by :class:`GenericBuiltinFn`.
+        """
+        ...
+
+
+class Fn(NonBuiltinFnSpec[ast.FnDefn]):
+    """A function defined with a body in Leech source."""
 
     @functools.cached_property
     def _instance_cache(self) -> dict[tuple[typs.Typ, ...], FnInstance]:
@@ -281,15 +369,7 @@ class GenericCapableFnSpec(FnSpec[ast.FnDefn]):
     def instance(self, typ_args: tuple[typs.Typ, ...]) -> FnInstance:
         """Get this function's instantiation for ``typ_args``, building it if needed.
 
-        Cached, so requesting the same ``typ_args`` twice - from two
-        different call sites, or the same one lowered more than once -
-        returns the same :class:`FnInstance`, and its body is only ever
-        lowered once.
-
-        :param typ_args: The concrete type to substitute for each of this
-            function's own type parameters, in declaration order - empty
-            for a non-generic function.
-        :return: The (possibly newly-built, possibly cached) instantiation.
+        See :meth:`FnTemplate.instance`.
         """
         inst = self._instance_cache.get(typ_args)
         if inst is None:
@@ -299,79 +379,34 @@ class GenericCapableFnSpec(FnSpec[ast.FnDefn]):
 
     @functools.cached_property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """This item's own declared type parameters, as interned type
+        """This function's own declared type parameters, as interned type
         parameter types, in declaration order."""
-        return self.calculate_typ_params()
-
-    @abc.abstractmethod
-    def calculate_typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """Compute :attr:`typ_params`; overridden by subclasses."""
+        fn_ast = opt_util.opt_unwrap(self.ast)
+        return tuple(
+            typs.TypParamTyp.get_or_create(fn_ast, i, param_ast.ident.name, param_ast.bounds)
+            for i, param_ast in enumerate(fn_ast.generic_params)
+        )
 
     @functools.cached_property
     def typ_check_results(self) -> typcheck.TypCheckResults:
-        """The (possibly empty) type-checking facts to lower this item's
+        """The (possibly empty) type-checking facts to lower this function's
         body against - unsubstituted, the same facts every instantiation
         shares (see :meth:`Mod.build`).
 
         Built lazily, on first access.
         """
-        return self.calculate_typ_check_results()
-
-    @abc.abstractmethod
-    def calculate_typ_check_results(self) -> typcheck.TypCheckResults:
-        """Compute :attr:`typ_check_results`; overridden by subclasses."""
-
-    @property
-    @abc.abstractmethod
-    def _qualified_name_prefix(self) -> str:
-        """The module-qualifying prefix for an instantiation's mangled
-        symbol name (see :attr:`FnInstance.qualified_name`), or ``""`` if
-        none applies (a :class:`BuiltinFn` isn't declared in any
-        particular module)."""
-
-    @abc.abstractmethod
-    def _build_body(
-        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
-    ) -> None:
-        """Lower one instantiation's body into ``builder.cfg``.
-
-        :param builder: The builder to lower into - already constructed
-            against this instantiation's own type-argument mapping.
-        :param e: The scope to lower the body in.
-        :param typ_args: This instantiation's concrete type arguments, in
-            declaration order - unused by :class:`Fn` (whose body resolves
-            everything fresh from ``e``, which already shadows each type
-            parameter with its concrete argument - see
-            :attr:`FnInstance.env`), used directly by :class:`BuiltinFn`.
-        """
-
-
-class Fn(NonBuiltinFnSpec[ast.FnDefn], GenericCapableFnSpec):
-    """A function defined with a body in Leech source."""
-
-    @override
-    def calculate_typ_check_results(self) -> typcheck.TypCheckResults:
         return typcheck.TypCheck().check_fn(
             opt_util.opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
         )
 
-    @override
-    def calculate_typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        fn_ast = opt_util.opt_unwrap(self.ast)
-        return tuple(
-            typs.TypParamTyp.get_or_create(fn_ast, i, param_ast)
-            for i, param_ast in enumerate(fn_ast.generic_params)
-        )
-
     @property
-    @override
     def _qualified_name_prefix(self) -> str:
         return self._mod_name
 
-    @override
     def _build_body(
         self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
     ) -> None:
+        del typ_args
         builder.build_fn(opt_util.opt_unwrap(self.ast), e)
 
     @functools.cached_property
@@ -407,38 +442,37 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn], GenericCapableFnSpec):
         return Access.from_ast(self.ast.access) == PUBLIC or self.ast.span.file.path == file.path
 
 
-#: A nominal source location for a compiler-intrinsic builtin's own
-#: synthesized AST nodes (see :class:`BuiltinFn`) - never actually read as
-#: a file, only carried around to satisfy the ordinary AST node shape
-#: (:class:`~leech.ast.GenericParam`) other machinery expects.
-_BUILTIN_SPAN: Final[src.SrcSpan] = src.SrcSpan(
-    src.SrcFile(pathlib.Path("<builtin>")), 0, 0, 1, 1, 1, 1
-)
-
-
-class BuiltinFn(GenericCapableFnSpec):
+class GenericBuiltinFn(FnSpec[ast.FnDefn]):
     """A compiler-intrinsic generic function with no Leech-source body.
 
     Bound into an :class:`~leech.ir_env.Env` via :class:`GenericFn` exactly
-    like an ordinary generic :class:`Fn`, and shares the same
-    :attr:`~GenericCapableFnSpec.instances`/:meth:`~GenericCapableFnSpec.instance`/
-    :class:`FnInstance` monomorphization machinery - a call resolves,
+    like an ordinary generic :class:`Fn`, and structurally satisfies
+    :class:`FnTemplate` the same way :class:`Fn` does - a call resolves,
     infers or takes explicit type arguments, and gets discovered and
     compiled by codegen exactly the way a call to a real generic function
     does. The only difference is :meth:`_build_body`: instead of lowering
     a parsed ``ast.FnDefn.block``, it runs a Python callable that emits
     whatever instructions the intrinsic needs directly.
 
+    Named for what it is now, not what a future builtin might be: a
+    non-generic builtin (should one ever be needed) doesn't need any of
+    this class's instantiation machinery at all - it would be a much
+    simpler, direct :class:`FnSpec` subclass with its own plain
+    ``body_cfg()``, a sibling of :class:`FnDecl`, not part of this
+    hierarchy. Naming this class ``GenericBuiltinFn`` rather than a bare
+    ``BuiltinFn`` leaves that name free and unambiguous for when that day
+    comes.
+
     :param name: The builtin's name (e.g. ``"__size_of"``).
     :param typ_param_names: The names of this builtin's own declared type
         parameters, in declaration order.
     :param fn_typ_for_typ_args: Computes this builtin's ``FnTyp`` given a
         sequence standing in for its own type parameters - called with
-        :attr:`~GenericCapableFnSpec.typ_params` itself (each still an
-        opaque :class:`~leech.typs.TypParamTyp`) to build the builtin's own
-        opaque self-describing type (see :meth:`calculate_typ`), the same
-        role resolving ``ast.Typ`` nodes against an env that shadows each
-        type parameter plays for an ordinary :class:`Fn` (see
+        :attr:`typ_params` itself (each still an opaque
+        :class:`~leech.typs.TypParamTyp`) to build the builtin's own opaque
+        self-describing type (see :meth:`calculate_typ`), the same role
+        resolving ``ast.Typ`` nodes against an env that shadows each type
+        parameter plays for an ordinary :class:`Fn` (see
         :meth:`NonBuiltinFnSpec.calculate_typ`). Never called with
         concrete type arguments - :class:`FnInstance` gets those by
         substituting into this same opaque type instead (see
@@ -458,6 +492,7 @@ class BuiltinFn(GenericCapableFnSpec):
     _typ_param_names: Final[tuple[str, ...]]
     _fn_typ_for_typ_args: Final[Callable[[tuple[typs.Typ, ...]], typs.FnTyp]]
     _body_builder: Final[Callable[[ir_builder.CfgBuilder, tuple[typs.Typ, ...]], None]]
+    env: ir_env.Env
 
     def __init__(
         self,
@@ -474,15 +509,39 @@ class BuiltinFn(GenericCapableFnSpec):
         self.env = e.new_child()
         self._body_builder = body_builder
 
-    @override
-    def calculate_typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+    @functools.cached_property
+    def _instance_cache(self) -> dict[tuple[typs.Typ, ...], FnInstance]:
+        return {}
+
+    @property
+    def instances(self) -> Collection[FnInstance]:
+        """Every instantiation of this builtin requested so far.
+
+        Used by codegen to discover instances to emit - see
+        :meth:`~leech.codegen.Compiler.compile`.
+        """
+        return self._instance_cache.values()
+
+    def instance(self, typ_args: tuple[typs.Typ, ...]) -> FnInstance:
+        """Get this builtin's instantiation for ``typ_args``, building it if needed.
+
+        See :meth:`FnTemplate.instance`.
+        """
+        inst = self._instance_cache.get(typ_args)
+        if inst is None:
+            inst = FnInstance(self, typ_args)
+            self._instance_cache[typ_args] = inst
+        return inst
+
+    @functools.cached_property
+    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+        """This builtin's own declared type parameters, as interned type
+        parameter types, in declaration order - plain strings, nothing
+        synthesized (unlike a real :class:`Fn`, a builtin has no parsed
+        ``ast.GenericParam`` to extract a name/bounds from)."""
         return tuple(
-            typs.TypParamTyp.get_or_create(
-                self,
-                i,
-                ast.GenericParam._synthetic(ast.Ident(_BUILTIN_SPAN, param_name), _BUILTIN_SPAN),
-            )
-            for i, param_name in enumerate(self._typ_param_names)
+            typs.TypParamTyp.get_or_create(self, i, name)
+            for i, name in enumerate(self._typ_param_names)
         )
 
     @override
@@ -498,28 +557,27 @@ class BuiltinFn(GenericCapableFnSpec):
     def name(self) -> str:
         return self._fn_name
 
-    @override
-    def calculate_typ_check_results(self) -> typcheck.TypCheckResults:
+    @functools.cached_property
+    def typ_check_results(self) -> typcheck.TypCheckResults:
         # A builtin's body-builder never consults type-checking facts (it
         # emits instructions directly, from typ_args, not by re-checking
         # any AST) - a fresh, empty table satisfies FnInstance.cfg's
         # CfgBuilder(...) construction without needing a real TypCheck
         # pass, which Mod.build()'s eager generic-body check also never
-        # forces for a builtin (see BuiltinFn's own docstring).
+        # forces for a builtin (see this class's own docstring).
         return typcheck.TypCheckResults()
 
     @property
-    @override
     def _qualified_name_prefix(self) -> str:
         # A builtin isn't declared in any particular module - it's shared,
         # global, and bound identically into every module's builtin_env -
         # so its mangled symbol name has no module prefix at all.
         return ""
 
-    @override
     def _build_body(
         self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
     ) -> None:
+        del e
         self._body_builder(builder, typ_args)
 
 
@@ -527,27 +585,27 @@ class FnInstance(FnSpec[ast.FnDefn]):
     """One concrete instantiation of a generic function's body, for one
     fixed sequence of type arguments.
 
-    Built (and cached) by :meth:`GenericCapableFnSpec.instance`. A generic
-    function's own :attr:`~leech.ir_values.Value.typ` and
-    :attr:`FnSpec.params` are only ever used to type-check (or, for a
-    :class:`BuiltinFn`, describe) its body against its own type
-    parameters, treated opaquely; they aren't real types anything should
-    be lowered or called against. This is: its
-    :attr:`~leech.ir_values.Value.typ` and :attr:`FnSpec.params` are
-    ``fn``'s own, with every type parameter replaced by its entry in
-    ``typ_args``, and it has its own :attr:`cfg`, lowered once per
-    distinct instantiation rather than once for the generic declaration.
+    Built (and cached) by :meth:`FnTemplate.instance`. A generic function's
+    own :attr:`~leech.ir_values.Value.typ` and :attr:`FnSpec.params` are
+    only ever used to type-check (or, for a :class:`GenericBuiltinFn`,
+    describe) its body against its own type parameters, treated opaquely;
+    they aren't real types anything should be lowered or called against.
+    This is: its :attr:`~leech.ir_values.Value.typ` and
+    :attr:`FnSpec.params` are ``fn``'s own, with every type parameter
+    replaced by its entry in ``typ_args``, and it has its own :attr:`cfg`,
+    lowered once per distinct instantiation rather than once for the
+    generic declaration.
 
     :param fn: The generic function this is an instantiation of.
     :param typ_args: The concrete type to substitute for each of ``fn``'s
         own type parameters, in declaration order.
     """
 
-    _fn: Final[GenericCapableFnSpec]
+    _fn: Final[FnTemplate]
     _typ_args: Final[tuple[typs.Typ, ...]]
     _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
 
-    def __init__(self, fn: GenericCapableFnSpec, typ_args: tuple[typs.Typ, ...]) -> None:
+    def __init__(self, fn: FnTemplate, typ_args: tuple[typs.Typ, ...]) -> None:
         super().__init__(fn.ast)
         self._fn = fn
         self._typ_args = typ_args
@@ -574,14 +632,14 @@ class FnInstance(FnSpec[ast.FnDefn]):
     def qualified_name(self) -> str:
         """This instance's mangled symbol name, e.g. ``mod.id[i32]`` for a
         real generic function, or ``__size_of[i32]`` (no module prefix -
-        see :attr:`GenericCapableFnSpec._qualified_name_prefix`) for a
-        :class:`BuiltinFn`.
+        see :attr:`FnTemplate._qualified_name_prefix`) for a
+        :class:`GenericBuiltinFn`.
 
         Extends :attr:`ModItem.qualified_name`'s module-prefixed scheme -
         an instance is never itself a :class:`ModItem` (nothing declares
         one directly; it's built on demand by
-        :meth:`GenericCapableFnSpec.instance`), so it computes the same
-        form independently.
+        :meth:`FnTemplate.instance`), so it computes the same form
+        independently.
         """
         prefix = self._fn._qualified_name_prefix
         if prefix:
@@ -629,12 +687,12 @@ class GenericFn:
     Bound into :attr:`~leech.ir_env.Env.Namespace.VARS` in place of
     :attr:`fn` itself, under its name. A generic function's type isn't
     well-defined until it's applied to concrete type arguments (see
-    :meth:`GenericCapableFnSpec.instance`) - :attr:`fn`'s own
+    :meth:`FnTemplate.instance`) - :attr:`fn`'s own
     :attr:`~leech.ir_values.Value.typ` is one arbitrary, meaningless
     ``FnTyp`` built from its type parameters taken literally (needed only
     to type-check :attr:`fn`'s body against itself, with each parameter
     opaque - see :meth:`~leech.ir_module.NonBuiltinFnSpec.__init__` and
-    :class:`BuiltinFn`), not a type any caller should see. Binding
+    :class:`GenericBuiltinFn`), not a type any caller should see. Binding
     :attr:`fn` directly would let it be resolved and called as though that
     were a real type; naming a ``GenericFn`` the way an ordinary value is
     named is instead a :class:`~leech.errors.MissingTypArgsError`.
@@ -642,9 +700,9 @@ class GenericFn:
     :param fn: The wrapped generic function.
     """
 
-    fn: Final[GenericCapableFnSpec]
+    fn: Final[FnTemplate]
 
-    def __init__(self, fn: GenericCapableFnSpec) -> None:
+    def __init__(self, fn: FnTemplate) -> None:
         self.fn = fn
 
     @property
@@ -956,7 +1014,10 @@ class Mod:
         impl_env = self.env.new_child()
         for index, param_ast in enumerate(impl_ast.generic_params):
             impl_env.add_container(
-                param_ast.ident.name, typs.TypParamTyp.get_or_create(impl_ast, index, param_ast)
+                param_ast.ident.name,
+                typs.TypParamTyp.get_or_create(
+                    impl_ast, index, param_ast.ident.name, param_ast.bounds
+                ),
             )
 
         if impl_ast.for_typ is None:
@@ -993,7 +1054,10 @@ class Mod:
         fn_env = typ.env.new_child()
         for index, param_ast in enumerate(impl_ast.generic_params):
             fn_env.add_container(
-                param_ast.ident.name, typs.TypParamTyp.get_or_create(impl_ast, index, param_ast)
+                param_ast.ident.name,
+                typs.TypParamTyp.get_or_create(
+                    impl_ast, index, param_ast.ident.name, param_ast.bounds
+                ),
             )
 
         self._build_impl_fns(impl_ast, fn_env, typ, generic_fns, typ.add_assoc_fn, typ.name)

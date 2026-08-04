@@ -42,7 +42,7 @@ MUT = Mutability.MUT
 
 
 def check_typ_arg_bounds(
-    generic_params: Sequence[ast.GenericParam],
+    typ_params: Sequence[TypParamTyp],
     typ_args: tuple[Typ, ...],
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
@@ -53,10 +53,10 @@ def check_typ_arg_bounds(
     function call's - so a bound means the same thing, and is enforced
     the same way, everywhere one can be declared.
 
-    :param generic_params: The generic item's own declared type
-        parameters, in declaration order.
-    :param typ_args: The concrete type given for each of ``generic_params``,
-        in the same order.
+    :param typ_params: The generic item's own declared type parameters, in
+        declaration order.
+    :param typ_args: The concrete type given for each of ``typ_params``, in
+        the same order.
     :param e: The scope to resolve each bound name in.
     :param span: Where to point a diagnostic at.
     :raises BoundNotATraitError: If one of a parameter's declared bounds
@@ -72,15 +72,13 @@ def check_typ_arg_bounds(
     # typechecking, not import), sidesteps that entirely.
     from leech import ir_traits  # noqa: PLC0415
 
-    for param_ast, typ_arg in zip(generic_params, typ_args, strict=True):
-        for bound_path in param_ast.bounds:
+    for typ_param, typ_arg in zip(typ_params, typ_args, strict=True):
+        for bound_path in typ_param.bounds:
             trait = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound_path)
             if not isinstance(trait, ir_traits.Trait):
                 raise errors.BoundNotATraitError(bound_path.str(), bound_path.span)
             if e.impl_registry.find_impl(trait, typ_arg) is None:
-                raise errors.UnsatisfiedBoundError(
-                    typ_arg.name, trait.name, param_ast.ident.name, span
-                )
+                raise errors.UnsatisfiedBoundError(typ_arg.name, trait.name, typ_param.name, span)
 
 
 class Typ(abc.ABC):
@@ -316,7 +314,11 @@ class Typ(abc.ABC):
                 item.name, len(typ_ast.generic_args), len(item.ast.generic_params), typ_ast.span
             )
         typ_args = tuple(Typ.from_ast(arg, e) for arg in typ_ast.generic_args)
-        check_typ_arg_bounds(item.ast.generic_params, typ_args, e, typ_ast.span)
+        typ_params = [
+            TypParamTyp.get_or_create(item.ast, i, p.ident.name, p.bounds)
+            for i, p in enumerate(item.ast.generic_params)
+        ]
+        check_typ_arg_bounds(typ_params, typ_args, e, typ_ast.span)
         return item.instance(typ_args)
 
 
@@ -474,7 +476,8 @@ class PtrTyp(Typ):
         Giving up the ability to write through a pointer is always safe,
         so ``*mut T`` coerces to ``*T``. The reverse doesn't: a ``*T``
         can't be used where writing is required. Nothing is emitted for
-        this coercion - the two have the same representation.
+        this coercion - a pointer's own type and its mut/const variant
+        share the same representation.
         """
         return super().coerces_to(target_typ) or (
             self.mut == MUT and self._new_with_mut(CONST) == target_typ
@@ -539,35 +542,50 @@ class ArrayTyp(Typ):
 class TypParamTyp(Typ):
     """A generic item's type parameter, e.g. the ``T`` in ``fn id[T](x: T) T``.
 
-    Interned by the declaring item's AST node together with the
-    parameter's position in its parameter list (:meth:`cache_key`), not by
-    name: two parameters called ``T`` on two different generic items - or
-    two parameters of the same item - are never the same type, preserving
-    the identity-equality invariant every other :class:`Typ` relies on.
+    Interned by the declaring item together with the parameter's position
+    in its parameter list (:meth:`cache_key`), not by name: two parameters
+    called ``T`` on two different generic items - or two parameters of the
+    same item - are never the same type, preserving the identity-equality
+    invariant every other :class:`Typ` relies on.
 
     Stands for an as-yet-unknown type: it has no LLVM representation of
     its own, since a generic body is never lowered directly (see
     :meth:`substitute_typ_params` and :meth:`~leech.ir_module.Fn.instance`)
     - codegen asserts it never has to translate one.
 
-    :param owner_ast: The AST node of the generic item that declares this
-        parameter.
-    :param index: The parameter's position in ``owner_ast``'s
-        ``generic_params``.
-    :param param_ast: The parameter's own declaration, i.e.
-        ``owner_ast.generic_params[index]`` - passed separately rather
-        than looked up, since only ``owner_ast`` and ``index`` identify
-        the type (see :meth:`cache_key`).
+    Deliberately holds no reference to a parsed ``ast.GenericParam`` (or
+    any other AST node): the only two things a type parameter needs -
+    given its identity is already fully determined by ``owner``/``index``
+    (see :meth:`cache_key`) - are its display name and its declared trait
+    bounds, both plain data. A compiler-intrinsic builtin's own type
+    parameter (see :class:`~leech.ir_module.GenericBuiltinFn`) has no
+    parsed declaration to point at, so passing a name string directly
+    (rather than synthesizing a fake parse-tree node just to read the same
+    string back out of it) is both simpler and the only case that needs
+    handling specially.
+
+    :param owner: Any hashable value identifying the declaring generic
+        item - together with ``index``, this is the type's whole identity
+        (:meth:`cache_key`); never read for any other purpose.
+    :param index: The parameter's position in the declaring item's type
+        parameter list.
+    :param name: The type parameter's name, e.g. ``"T"``.
+    :param bounds: The trait bounds this parameter declares, if any -
+        empty for an unbounded parameter (always empty for a builtin's).
     """
 
-    _owner_ast: Final[ast.Ast]
+    _owner: Final[Hashable]
     _index: Final[int]
-    ast: Final[ast.GenericParam]
+    _name: Final[str]
+    bounds: Final[tuple[ast.Path, ...]]
 
-    def __init__(self, owner_ast: ast.Ast, index: int, param_ast: ast.GenericParam) -> None:
-        self._owner_ast = owner_ast
+    def __init__(
+        self, owner: Hashable, index: int, name: str, bounds: tuple[ast.Path, ...] = ()
+    ) -> None:
+        self._owner = owner
         self._index = index
-        self.ast = param_ast
+        self._name = name
+        self.bounds = bounds
 
     @override
     @classmethod
@@ -576,7 +594,7 @@ class TypParamTyp(Typ):
 
         :param args: The arguments passed to :meth:`~Typ.create` or
             :meth:`~Typ.get_or_create`; ``args[0]`` must be the owning
-            item's AST node and ``args[1]`` the parameter's index.
+            item and ``args[1]`` the parameter's index.
         :return: The cache key.
 
         :pre: len(args) > 1 [assert_gt]
@@ -587,7 +605,7 @@ class TypParamTyp(Typ):
     @property
     @override
     def name(self) -> str:
-        return self.ast.ident.name
+        return self._name
 
     @override
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
@@ -755,7 +773,10 @@ class StructTyp(Typ):
         else:
             for index, param_ast in enumerate(struct_ast.generic_params):
                 self.env.add_container(
-                    param_ast.ident.name, TypParamTyp.get_or_create(struct_ast, index, param_ast)
+                    param_ast.ident.name,
+                    TypParamTyp.get_or_create(
+                        struct_ast, index, param_ast.ident.name, param_ast.bounds
+                    ),
                 )
         self._members = {}
         # Registering fields here - rather than lazily, along with

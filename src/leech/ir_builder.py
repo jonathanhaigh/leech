@@ -721,7 +721,7 @@ class CfgBuilder:
                 raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
     def _resolve_fn_instance(
-        self, fn: ir_module.GenericCapableFnSpec, typ_args: tuple[typs.Typ, ...]
+        self, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
     ) -> ir_module.FnInstance:
         """Get the concrete instance a generic call or reference resolves to.
 

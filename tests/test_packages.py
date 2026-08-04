@@ -63,14 +63,15 @@ def test_transitive_nested_import_resolves_relative_to_its_own_file(tmp_path):
         return 10;
     }
     """
-    util.check_prog_output(
+    llir_mod_paths = util.compile_modules(
         tmp_path,
-        main_src,
-        "",
-        11,
         {"pkg/sub/helper": "sub.helper"},
+        main=main_src,
         **{"pkg/a": a_src, "pkg/sub/helper": helper_src},
     )
+    proc = util.link_and_run(tmp_path, llir_mod_paths)
+    assert proc.stdout == ""
+    assert proc.returncode == 11
 
 
 def test_nested_import_does_not_exist(tmp_path):

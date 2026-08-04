@@ -104,7 +104,10 @@ class Trait:
         self._env = e.new_child()
         for index, param_ast in enumerate(trait_ast.generic_params):
             self._env.add_container(
-                param_ast.ident.name, typs.TypParamTyp.get_or_create(trait_ast, index, param_ast)
+                param_ast.ident.name,
+                typs.TypParamTyp.get_or_create(
+                    trait_ast, index, param_ast.ident.name, param_ast.bounds
+                ),
             )
         self._methods = {}
         for method_ast in trait_ast.methods:

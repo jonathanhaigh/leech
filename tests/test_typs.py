@@ -271,9 +271,9 @@ def test_typ_param_typ_interns_by_owner_and_index(tmp_path):
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
-    t0 = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
-    t0_again = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
-    t1 = typs.TypParamTyp.get_or_create(fn, 1, fn.generic_params[1])
+    t0 = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
+    t0_again = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
+    t1 = typs.TypParamTyp.get_or_create(fn, 1, fn.generic_params[1].ident.name)
 
     assert t0 is t0_again
     assert t0 is not t1
@@ -293,8 +293,8 @@ def test_typ_param_typ_distinct_across_owners(tmp_path):
     assert isinstance(f_defn, ast.FnDefn)
     assert isinstance(g_defn, ast.FnDefn)
 
-    t_f = typs.TypParamTyp.get_or_create(f_defn, 0, f_defn.generic_params[0])
-    t_g = typs.TypParamTyp.get_or_create(g_defn, 0, g_defn.generic_params[0])
+    t_f = typs.TypParamTyp.get_or_create(f_defn, 0, f_defn.generic_params[0].ident.name)
+    t_g = typs.TypParamTyp.get_or_create(g_defn, 0, g_defn.generic_params[0].ident.name)
     assert t_f is not t_g
     assert t_f.name == t_g.name == "T"
 
@@ -303,7 +303,7 @@ def test_substitute_typ_params_replaces_mapped_typ_param(tmp_path):
     mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
-    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
 
     assert t.substitute_typ_params({t: typs.I32}) is typs.I32
 
@@ -312,8 +312,8 @@ def test_substitute_typ_params_leaves_unmapped_typ_param_unchanged(tmp_path):
     mod = util.parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
-    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
-    u = typs.TypParamTyp.get_or_create(fn, 1, fn.generic_params[1])
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
+    u = typs.TypParamTyp.get_or_create(fn, 1, fn.generic_params[1].ident.name)
 
     assert t.substitute_typ_params({u: typs.I32}) is t
 
@@ -327,7 +327,7 @@ def test_substitute_typ_params_recurses_through_composite_typs(tmp_path):
     mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
-    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0])
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
     mapping = {t: typs.I32}
 
     assert typs.PtrTyp.get_or_create(t, typs.MUT).substitute_typ_params(

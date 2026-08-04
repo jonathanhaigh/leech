@@ -134,13 +134,46 @@ def _bundled_std_llvm_ir(mod_name: str) -> str:
     return driver.compile_to_llvm_ir(leech_src.SrcFile(path), f"std.{mod_name}")
 
 
+def link_and_run(
+    tmp_path: pathlib.Path,
+    llir_mod_paths: Sequence[pathlib.Path],
+    std_modules: Sequence[str] = (),
+) -> subprocess.CompletedProcess[str]:
+    """Link ``llir_mod_paths`` (plus the prelude and any ``std_modules``)
+    into one program and run it, returning the completed process.
+
+    :param std_modules: Names (relative to ``std/``, e.g. ``"io"`` for
+        ``std::io``) of real bundled standard-library modules the linked
+        program imports and that therefore need their own compiled body
+        linked in too - the prelude module is always included regardless,
+        since it's always loaded.
+    """
+    prelude_llir_path = tmp_path / "prelude.ll"
+    write_whole_file(prelude_llir_path, _prelude_llvm_ir())
+    all_llir_paths = [*llir_mod_paths, prelude_llir_path]
+
+    for mod_name in std_modules:
+        std_llir_path = tmp_path / f"std_{mod_name}.ll"
+        write_whole_file(std_llir_path, _bundled_std_llvm_ir(mod_name))
+        all_llir_paths.append(std_llir_path)
+
+    llir_path = tmp_path / "exe.bc"
+    subprocess.run(["llvm-link", "-o", llir_path, *all_llir_paths], check=True)
+
+    return subprocess.run(
+        ["lli", llir_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+
+
 def check_prog_output(
     tmp_path: pathlib.Path,
     src: str,
     expected_output,
     expected_exit_status,
-    qualified_names: Optional[dict[str, str]] = None,
-    /,
     *,
     std_modules: Sequence[str] = (),
     **modules: str,
@@ -148,34 +181,12 @@ def check_prog_output(
     """Compile ``src`` (as ``main``) plus every module in ``modules``, link,
     and run, asserting the program's captured output and exit status.
 
-    :param std_modules: Names (relative to ``std/``, e.g. ``"io"`` for
-        ``std::io``) of real bundled standard-library modules ``src`` (or
-        one of ``modules``) imports and that therefore need their own
-        compiled body linked in too - the prelude module is always
-        included regardless, since it's always loaded.
+    :param std_modules: See :func:`link_and_run`.
     """
     modules["main"] = src
-    llir_mod_paths = compile_modules(tmp_path, qualified_names, **modules)
+    llir_mod_paths = compile_modules(tmp_path, **modules)
+    proc = link_and_run(tmp_path, llir_mod_paths, std_modules)
 
-    prelude_llir_path = tmp_path / "prelude.ll"
-    write_whole_file(prelude_llir_path, _prelude_llvm_ir())
-    llir_mod_paths = [*llir_mod_paths, prelude_llir_path]
-
-    for mod_name in std_modules:
-        std_llir_path = tmp_path / f"std_{mod_name}.ll"
-        write_whole_file(std_llir_path, _bundled_std_llvm_ir(mod_name))
-        llir_mod_paths.append(std_llir_path)
-
-    llir_path = tmp_path / "exe.bc"
-    subprocess.run(["llvm-link", "-o", llir_path, *llir_mod_paths], check=True)
-
-    proc = subprocess.run(
-        ["lli", llir_path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=False,
-    )
     if expected_exit_status < 0:
         # A negative expected_exit_status means the process is expected to
         # be killed by a signal (e.g. -signal.SIGABRT for an abort()) - lli
