@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: 2026 Jonathan Haigh
+//
+// SPDX-License-Identifier: MPL-2.0
+
+extern fn malloc(size: usize) *mut u8;
+extern fn free(p: *mut u8);
+
+pub fn alloc[T]() *mut T {
+    let raw = malloc(__size_of[T]());
+    if (__is_null(raw)) {
+        panic("out of memory");
+    };
+    return __ptr_cast_mut[u8, T](raw);
+}
+
+pub fn dealloc[T](p: *mut T) {
+    if (__is_null(p)) {
+        return;
+    };
+    free(__ptr_cast_mut[T, u8](p));
+}
