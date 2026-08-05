@@ -1,0 +1,57 @@
+<!--
+SPDX-FileCopyrightText: 2026 Jonathan Haigh
+
+SPDX-License-Identifier: MPL-2.0
+-->
+
+# Repository Guidelines
+
+## Project Structure & Module Organization
+
+Leech is a Python 3.14 compiler. Compiler code lives in `src/leech/`: parsing uses
+`parse.py` and `leech.lark`, semantic and IR work uses `typcheck.py`, `ir_*.py`, and
+`comptime.py`, and LLVM output is produced by
+`codegen.py`. Standard-library sources are under `src/leech/std/`. Tests mirror language
+features in `tests/test_*.py`; shared test helpers live in `tests/util.py`.
+
+## Build, Test, and Development Commands
+
+- `uv sync` installs the locked runtime and development dependencies.
+- `uv run pytest` runs the full suite with the console script on `PATH`.
+- `uv run pytest tests/test_traits.py::test_name` runs one test.
+- `uv run ruff check .` checks lint and import rules; `uv run ruff format .` formats code.
+- `uv run basedpyright` performs static type checking.
+- `uv run leech input.leech -o output.ll` compiles a source file to LLVM IR.
+- `uv run reuse lint` verifies license metadata.
+
+Tests that execute generated programs require `llvm-link` and `lli` on `PATH`.
+
+## Coding Style & Naming Conventions
+
+Use four-space indentation and Ruff's 100-column limit. Follow standard Python naming:
+`snake_case` for functions and modules, `PascalCase` for classes, and `UPPER_CASE` for
+constants. Prefer `Optional[T]` for nullable annotations. Keep imports module-qualified
+(for example, `from leech import typs`, then `typs.Typ`) rather than importing individual
+symbols. Use Sphinx-style docstrings and record non-obvious contracts with final
+`:pre:`, `:post:`, or `:invariant:` fields. Include only what is needed to use an item
+effectively. Avoid excessive cross-references, caller lists, and details coupled to other
+code. Non-public items need docstrings
+only when their behavior is surprising. Use comments sparingly and keep them concise.
+Use assertions liberally—prefer helpers from the `asserts` module—and use `opt_util.py`
+helpers where applicable.
+
+## Testing Guidelines
+
+Pytest is configured with strict `xfail` handling. Name files `test_<feature>.py` and
+tests `test_<behavior>`. Add focused unit tests beside the closest feature coverage and
+use `tests/util.py` for compile/run assertions. Run the full suite, lint, and type checks
+before submitting. No numeric coverage threshold is configured; new behavior and
+regressions should be covered explicitly.
+
+## Commit & Pull Request Guidelines
+
+Recent commits use concise, imperative subjects such as `Add std::mem...` and
+`Fix pytest suite...`. Keep each commit scoped to one coherent change. Pull requests
+should explain behavior and impact, link issues, list validation commands,
+and include sample diagnostics or generated IR when compiler output changes. Update SPDX
+headers for new files and avoid committing generated `.ll` files unless they are fixtures.
