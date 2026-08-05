@@ -596,20 +596,128 @@ class CfgBuilder:
                 else:
                     res = self._curr_bb.icmp_unsigned(op, lhs, rhs, op_ast)
             case "+":
-                res = self._curr_bb.add(lhs, rhs, op_ast)
+                res = self._build_checked_bin_op("add", lhs, rhs, e, op_ast)
             case "-":
-                res = self._curr_bb.sub(lhs, rhs, op_ast)
+                res = self._build_checked_bin_op("sub", lhs, rhs, e, op_ast)
             case "*":
-                res = self._curr_bb.mul(lhs, rhs, op_ast)
+                res = self._build_checked_bin_op("mul", lhs, rhs, e, op_ast)
             case "/":
-                if lhs_typ.signage == signage.SIGNED:
-                    res = self._curr_bb.sdiv(lhs, rhs, op_ast)
-                else:
-                    res = self._curr_bb.udiv(lhs, rhs, op_ast)
+                res = self._build_checked_div(lhs, rhs, lhs_typ, e, op_ast)
             case _:
                 raise AssertionError(f"unhandled binary operator {op!r}")
 
         return self._in_context(res, ctx)
+
+    def _is_typ_min(
+        self, value: ir_values.Value, typ: typs.IntTyp, op_ast: ast.Ast
+    ) -> ir_values.Value:
+        """Whether ``value`` equals ``typ.min_value`` - the one value a
+        signed type's negation, or division by ``-1``, overflows on.
+
+        :param value: The value to check; must have type ``typ``.
+        :param typ: ``value``'s own (signed) type.
+        :param op_ast: The AST node the emitted instruction is attributed to.
+        :return: A ``bool``-typed value.
+        """
+        return self._curr_bb.icmp_signed(
+            "==", value, ir_values.ComptimeInt(typ, typ.min_value, op_ast), op_ast
+        )
+
+    def _build_checked_bin_op(
+        self,
+        op: str,
+        lhs: ir_values.Value,
+        rhs: ir_values.Value,
+        e: ir_env.Env,
+        op_ast: ast.Ast,
+    ) -> ir_values.Value:
+        """Lower ``add``/``sub``/``mul``, panicking if the exact result
+        overflows ``lhs``/``rhs``'s type.
+
+        Builds a :class:`~leech.ir_values.CheckedAddInstr`/``CheckedSubInstr``/
+        ``CheckedMulInstr`` - a plain :class:`~leech.ir_values.BinOpInstr`
+        subclass, computing the operation's own (possibly wrapped) result
+        exactly like the corresponding unchecked instruction, but paired
+        with an :class:`~leech.ir_values.OverflowFlagInstr` that reports
+        whether it overflowed - both lower to a single
+        ``llvm.*.with.overflow`` intrinsic call between them (see
+        :class:`~leech.codegen.Compiler`), rather than computing the
+        operation twice. :class:`~leech.comptime.Interpreter` evaluates
+        the two exactly as generically (no special-casing arithmetic
+        overflow at all) - the checked instruction wraps like its LLVM
+        counterpart, and the flag instruction reports whether it did -
+        so :meth:`_panic_if`'s ``panic`` call is what reports overflow
+        both at runtime and at compile time.
+
+        :param op: Which operation to build: ``"add"``, ``"sub"``, or
+            ``"mul"`` - the name of the :class:`~leech.ir_values.BasicBlock`
+            ``checked_*`` method to call.
+        :param lhs: The left operand.
+        :param rhs: The right operand.
+        :param e: The scope to resolve ``panic`` in.
+        :param op_ast: The AST node the emitted instructions are
+            attributed to.
+        :return: The operation's result.
+        """
+        res = getattr(self._curr_bb, f"checked_{op}")(lhs, rhs, op_ast)
+        overflowed = self._curr_bb.overflow_flag(res, op_ast)
+        self._panic_if(overflowed, "integer overflow", e, op_ast)
+        return res
+
+    def _build_checked_div(
+        self,
+        lhs: ir_values.Value,
+        rhs: ir_values.Value,
+        typ: typs.IntTyp,
+        e: ir_env.Env,
+        op_ast: ast.Ast,
+    ) -> ir_values.Value:
+        """Lower ``/``, panicking on division by zero or (for a signed
+        type) the one case where the exact quotient doesn't fit:
+        ``typ.min_value / -1``.
+
+        Unlike :meth:`_build_checked_bin_op`'s operations, an actual
+        ``sdiv``/``udiv`` by zero is a trap, not a well-defined wrapping
+        result - so, unlike there, the checks here have to run *before*
+        the real division, not after.
+
+        :param lhs: The dividend.
+        :param rhs: The divisor.
+        :param typ: ``lhs`` and ``rhs``'s common type.
+        :param e: The scope to resolve ``panic`` in.
+        :param op_ast: The AST node the emitted instructions are
+            attributed to.
+        :return: The quotient, at ``typ``.
+        """
+        is_signed = typ.signage == signage.SIGNED
+        zero = ir_values.ComptimeInt(typ, 0, op_ast)
+        rhs_is_zero = (
+            self._curr_bb.icmp_signed("==", rhs, zero, op_ast)
+            if is_signed
+            else self._curr_bb.icmp_unsigned("==", rhs, zero, op_ast)
+        )
+        self._panic_if(rhs_is_zero, "division by zero", e, op_ast)
+
+        if not is_signed:
+            return self._curr_bb.udiv(lhs, rhs, op_ast)
+
+        if self._curr_bb.terminated:
+            # Already-dead code (see _panic_if) - stay inert rather than
+            # build the remaining check's own control flow into it.
+            return self._curr_bb.sdiv(lhs, rhs, op_ast)
+
+        lhs_is_min = self._is_typ_min(lhs, typ, op_ast)
+        maybe_overflow_bb = self._add_bb("div_maybe_overflow")
+        ok_bb = self._add_bb("div_ok")
+        self._cbranch(lhs_is_min, maybe_overflow_bb, ok_bb, op_ast)
+
+        self._set_position(maybe_overflow_bb)
+        rhs_is_neg_one = self._curr_bb.icmp_signed(
+            "==", rhs, ir_values.ComptimeInt(typ, -1, op_ast), op_ast
+        )
+        self._panic_if(rhs_is_neg_one, "integer overflow", e, op_ast, ok_bb)
+
+        return self._curr_bb.sdiv(lhs, rhs, op_ast)
 
     def _build_logic_bin_op_expr(
         self, op_ast: ast.BinOpExpr, e: ir_env.Env, ctx: _ExprContext
@@ -716,7 +824,18 @@ class CfgBuilder:
                 propagated = self._propagate_never(operand, op_ast.operand, ctx)
                 if propagated is not None:
                     return propagated
-                return self._in_context(self._curr_bb.neg(operand, op_ast), ctx)
+                # Negation is well-defined (just wrapping) however its
+                # operand's bit pattern, so - like _build_checked_bin_op,
+                # and unlike division - it's safe to compute first and
+                # check after. Negation is only well-typed for a signed
+                # int (enforced by TypCheck), and only overflows for one
+                # value: its own type's minimum, whose positive
+                # counterpart doesn't fit.
+                res = self._curr_bb.neg(operand, op_ast)
+                operand_typ = asserts.checked_cast(operand.typ, typs.IntTyp)
+                is_min = self._is_typ_min(operand, operand_typ, op_ast)
+                self._panic_if(is_min, "integer overflow", e, op_ast)
+                return self._in_context(res, ctx)
             case _:
                 raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
@@ -876,7 +995,11 @@ class CfgBuilder:
         index = self._build_expr(aa_expr.index, e, _ExprContext.VALUE, typs.USIZE)
         index = opt_util.opt_unwrap(self._coerce(index, aa_expr.index))
 
-        # TODO: bounds check
+        array_typ = asserts.checked_cast(arr_ptr.typ, typs.PtrTyp).pointee_typ
+        array_typ = asserts.checked_cast(array_typ, typs.ArrayTyp)
+        length = ir_values.ComptimeInt(typs.USIZE, array_typ.length, aa_expr)
+        out_of_bounds = self._curr_bb.icmp_unsigned(">=", index, length, aa_expr)
+        self._panic_if(out_of_bounds, "index out of bounds", e, aa_expr)
 
         elt_ptr = self._curr_bb.gep(arr_ptr, index, aa_expr)
         return self._deref_in_context(elt_ptr, ctx, aa_expr)
@@ -1332,3 +1455,61 @@ class CfgBuilder:
         """
         self._curr_bb.ret(value, ast_node)
         self.cfg.add_edge(self._curr_bb, self.cfg.exit)
+
+    def _panic_if(
+        self,
+        cond: ir_values.Value,
+        message: str,
+        e: ir_env.Env,
+        ast_node: ast.Ast,
+        ok_bb: Optional[ir_values.BasicBlock] = None,
+    ) -> None:
+        """Insert a compiler-synthesized runtime check: call ``panic`` if
+        ``cond`` holds, otherwise fall through.
+
+        Used for safety checks with no source-level ``if`` behind them -
+        array bounds, integer overflow, division by zero - built directly
+        out of basic blocks rather than :meth:`_build_if_expr`, since
+        there's no ``ast.IfExpr`` to lower. Always calls the real prelude
+        ``panic`` (:attr:`~leech.ir_env.Env.panic_fn`), never whatever a
+        module's own same-named definition might shadow it with locally -
+        these checks exist to enforce the language's own safety
+        guarantees, which user code shouldn't be able to opt out of by
+        happening to define a function called ``panic``.
+
+        Already-dead code (:attr:`_curr_bb` terminated - e.g. this check
+        would follow a ``return`` earlier in the same block) is left alone
+        rather than given new blocks of its own: every instruction built
+        into an already-terminated block is silently dropped (see
+        :meth:`~leech.ir_values.BasicBlock._add_instr`), but :meth:`_cbranch`
+        unconditionally records a graph edge to wherever it points
+        regardless of whether its own instruction actually landed - so
+        without this, an unreachable check would still make its ``ok``
+        block reachable *in the graph*, resuming real instruction-building
+        there and letting anything built afterwards - not just this
+        check's own - reference values (e.g. an also-silently-dropped
+        ``alloca``) that were never actually compiled.
+
+        :param cond: A ``bool``-typed value; true means the check failed.
+        :param message: The literal message to pass to ``panic``.
+        :param e: Any scope in the same compilation - only consulted for
+            :attr:`~leech.ir_env.Env.panic_fn`, which every scope shares.
+        :param ast_node: The AST node the emitted instructions are
+            attributed to.
+        :param ok_bb: The block to continue into when ``cond`` is false,
+            if the caller already has one to merge into (e.g. a nested
+            check's own continuation) - built fresh otherwise.
+
+        :post: _curr_bb.terminated or (_curr_bb is ok_bb, reached only when cond was false) [ctor]
+        """
+        if self._curr_bb.terminated:
+            return
+        fail_bb = self._add_bb("panic")
+        if ok_bb is None:
+            ok_bb = self._add_bb("ok")
+        self._cbranch(cond, fail_bb, ok_bb, ast_node)
+        self._set_position(fail_bb)
+        panic_fn = opt_util.opt_unwrap(e.panic_fn)
+        self._curr_bb.call(panic_fn, (ir_values.ComptimeCStr(message, None),), None)
+        self._curr_bb.unreachable(ast_node)
+        self._set_position(ok_bb)

@@ -18,6 +18,42 @@ def _is_power_of_two(n: int) -> bool:
     return n & (n - 1) == 0
 
 
+def _panic_message(args: tuple[ir_values.ComptimeValue, ...]) -> Optional[str]:
+    """Extract ``panic``'s message argument as plain text, if possible.
+
+    :param args: ``panic``'s (already-evaluated) call arguments.
+    :return: The message, or ``None`` if it isn't a compile-time-known
+        string literal (e.g. a pointer computed some other way).
+    """
+    if len(args) != 1 or not isinstance(args[0], ir_values.ComptimeCStr):
+        return None
+    return args[0].value.rstrip(b"\0").decode()
+
+
+def _wrap(value: int, typ: typs.IntTyp) -> int:
+    """Reduce ``value`` to the value a real, ``typ``-width two's-complement
+    ``add``/``sub``/``mul``/``neg`` would actually produce.
+
+    Mirrors LLVM's wrapping arithmetic (and codegen's real,
+    ``llvm.*.with.overflow``-based instructions - see
+    :class:`~leech.ir_values.CheckedAddInstr`): this is the interpreter's
+    equivalent computation, used unconditionally rather than only on
+    overflow, so a wrapped result and an in-range one are computed (and
+    look) exactly the same way. Overflow itself is reported separately,
+    by whatever compiler-synthesized check (see
+    :meth:`~leech.ir_builder.CfgBuilder._panic_if`) follows the operation
+    in the same CFG - this never raises.
+
+    :param value: The exact, unbounded mathematical result.
+    :param typ: The type to wrap it into.
+    :return: The wrapped value, canonicalized the same way
+        :class:`~leech.ir_values.ComptimeInt` always is (negative for a
+        signed type, never negative for an unsigned one).
+    """
+    span = typ.max_value - typ.min_value + 1
+    return (value - typ.min_value) % span + typ.min_value
+
+
 class Interpreter:
     """Executes the instructions of a :class:`~leech.ir_values.Cfg` at compile time.
 
@@ -29,6 +65,19 @@ class Interpreter:
     :param params: The callee's formal parameters, used to bind ``args``.
     :param args: The compile-time-known argument values, positionally
         matched to ``params``.
+    :param panic_fn: The program's real ``panic`` function (see
+        :attr:`~leech.ir_env.Env.panic_fn`), if known yet - a call to
+        exactly this function is recognized and reported as
+        :class:`~leech.errors.PanicAtComptimeError` instead of being
+        recursed into (where it would otherwise fail with a confusing
+        :class:`~leech.errors.CallExternFnAtComptimeError`, from the
+        ``write``/``abort`` extern calls inside ``panic``'s own body).
+        This is how every compiler-synthesized runtime check (array
+        bounds, integer overflow, division by zero) is caught at compile
+        time too - there's no separate compile-time-only detection of any
+        of those; they're all just ``panic`` calls, like any the source
+        itself might write. Propagated unchanged into every nested call's
+        own ``Interpreter``.
     """
 
     _registers: Final[dict[ir_values.Value, ir_values.ComptimeValue]]
@@ -37,12 +86,20 @@ class Interpreter:
     _prev_bb: Optional[ir_values.BasicBlock]
     _curr_instr_index: int
     _ret_value: Optional[ir_values.ComptimeValue]
+    _panic_fn: Final[Optional[ir_module.FnSpec]]
+    #: Whether a CheckedAddInstr/CheckedSubInstr/CheckedMulInstr's own
+    #: result overflowed, keyed by the instruction itself - consulted by
+    #: its paired OverflowFlagInstr. Mirrors codegen's own
+    #: Compiler._FnBuilderContext.overflow_calls, which the same pairing
+    #: relies on at runtime.
+    _overflow_flags: Final[dict[ir_values.Instr, bool]]
 
     def __init__(
         self,
         cfg: ir_values.Cfg,
         params: tuple[ir_values.Param, ...],
         args: tuple[ir_values.ComptimeValue, ...],
+        panic_fn: Optional[ir_module.FnSpec] = None,
     ) -> None:
         self._cfg = cfg
         self._registers = dict(zip(params, args, strict=True))
@@ -50,6 +107,8 @@ class Interpreter:
         self._prev_bb = None
         self._curr_instr_index = 0
         self._ret_value = None
+        self._panic_fn = panic_fn
+        self._overflow_flags = {}
 
     def eval(self) -> ir_values.ComptimeValue:
         """Run the interpreter to completion and return the result.
@@ -66,11 +125,11 @@ class Interpreter:
             evaluated).
         :raises CallExternFnAtComptimeError: If a ``call`` instruction
             (directly, or in a nested call) calls a function with no body.
-        :raises DivisionByZeroAtComptimeError: If a ``div`` instruction
-            (directly, or in a nested call) divides by zero.
-        :raises IntOverflowAtComptimeError: If an arithmetic instruction's
-            result (directly, or in a nested call) doesn't fit in its
-            operands' type.
+        :raises PanicAtComptimeError: If a ``call`` instruction (directly,
+            or in a nested call) calls ``panic_fn`` - including a call a
+            compiler-synthesized runtime check made, so this is also how
+            array-bounds, integer-overflow, and division-by-zero failures
+            are reported at compile time.
         """
         while True:
             if self._ret_value is not None:
@@ -106,13 +165,22 @@ class Interpreter:
                 match instr:
                     case ir_values.AddInstr():
                         ret = lhs.value + rhs.value
+                        self._overflow_flags[instr] = not lhs.typ.fits(ret)
                     case ir_values.SubInstr():
                         ret = lhs.value - rhs.value
+                        self._overflow_flags[instr] = not lhs.typ.fits(ret)
                     case ir_values.MulInstr():
                         ret = lhs.value * rhs.value
+                        self._overflow_flags[instr] = not lhs.typ.fits(ret)
                     case ir_values.SdivInstr():
-                        if rhs.value == 0:
-                            raise errors.DivisionByZeroAtComptimeError(instr.span)
+                        # CfgBuilder._build_checked_div always builds a
+                        # runtime check ahead of the actual sdiv that
+                        # panics on a zero divisor (an unchecked divide by
+                        # zero is a trap, not a wrapping result, unlike
+                        # add/sub/mul/neg - see that method's docstring) -
+                        # so reaching an sdiv at all already proves rhs
+                        # isn't zero.
+                        assert rhs.value != 0
                         # LLVM's sdiv truncates toward zero (like C's `/`),
                         # unlike Python's `//`, which floors toward negative
                         # infinity - they only differ when truncation is
@@ -121,23 +189,21 @@ class Interpreter:
                         if (lhs.value < 0) != (rhs.value < 0):
                             ret = -ret
                     case ir_values.UdivInstr():
-                        if rhs.value == 0:
-                            raise errors.DivisionByZeroAtComptimeError(instr.span)
+                        assert rhs.value != 0
                         ret = lhs.value // rhs.value
                     case _:
                         raise AssertionError(f"invalid bin op instr {instr}")
-                if not lhs.typ.fits(ret):
-                    raise errors.IntOverflowAtComptimeError(ret, lhs.typ.name, instr.span)
-                self._registers[instr] = ir_values.ComptimeInt(lhs.typ, ret, instr.ast)
+                self._registers[instr] = ir_values.ComptimeInt(
+                    lhs.typ, _wrap(ret, lhs.typ), instr.ast
+                )
 
             case ir_values.NegInstr():
                 operand = asserts.checked_cast(
                     self._get_comptime_value(instr.operand), ir_values.ComptimeInt
                 )
-                ret = -operand.value
-                if not operand.typ.fits(ret):
-                    raise errors.IntOverflowAtComptimeError(ret, operand.typ.name, instr.span)
-                self._registers[instr] = ir_values.ComptimeInt(operand.typ, ret, instr.ast)
+                self._registers[instr] = ir_values.ComptimeInt(
+                    operand.typ, _wrap(-operand.value, operand.typ), instr.ast
+                )
 
             case ir_values.NotInstr():
                 operand = asserts.checked_cast(
@@ -174,6 +240,16 @@ class Interpreter:
                 # comparison is correct here regardless of whether this is a
                 # signed or unsigned icmp.
                 self._registers[instr] = ir_values.ComptimeBool(ret, instr.ast)
+
+            case ir_values.OverflowFlagInstr():
+                # instr.checked_op - a CheckedAddInstr/CheckedSubInstr/
+                # CheckedMulInstr - already ran (registers are only ever
+                # read after being written) and recorded whether it
+                # overflowed in _overflow_flags, in the BinOpInstr case
+                # above.
+                self._registers[instr] = ir_values.ComptimeBool(
+                    self._overflow_flags[instr.checked_op], instr.ast
+                )
 
             case ir_values.LoadInstr():
                 src = asserts.checked_cast(
@@ -224,11 +300,15 @@ class Interpreter:
                 callee = asserts.checked_cast(
                     self._get_comptime_value(instr.callee), ir_module.FnSpec
                 )
+                args = tuple(self._get_comptime_value(arg) for arg in instr.args)
+                if self._panic_fn is not None and callee is self._panic_fn:
+                    raise errors.PanicAtComptimeError(_panic_message(args), instr.span)
                 cfg = callee.body_cfg()
                 if cfg is None:
                     raise errors.CallExternFnAtComptimeError(callee.span)
-                args = tuple(self._get_comptime_value(arg) for arg in instr.args)
-                self._registers[instr] = Interpreter(cfg, callee.params, args).eval()
+                self._registers[instr] = Interpreter(
+                    cfg, callee.params, args, self._panic_fn
+                ).eval()
             case ir_values.PhiInstr():
                 assert self._prev_bb is not None
                 self._registers[instr] = self._get_comptime_value(instr.incoming[self._prev_bb])

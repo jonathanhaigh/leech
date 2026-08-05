@@ -774,7 +774,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
 
         ModVar._resolving.append(self)
         try:
-            return comptime.Interpreter(self.cfg, (), ()).eval()
+            return comptime.Interpreter(self.cfg, (), (), self.env.panic_fn).eval()
         finally:
             ModVar._resolving.pop()
 
@@ -840,7 +840,9 @@ class Mod:
         # own module docstring.
         from leech import ir_builtins  # noqa: PLC0415
 
-        builtin_env = ir_env.Env(impl_registry=loader.impl_registry)
+        builtin_env = ir_env.Env(
+            impl_registry=loader.impl_registry, panic_fn=loader.prelude_panic_fn
+        )
         self._name = name
         self.ast = mod_ast
         self._items = {}

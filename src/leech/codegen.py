@@ -27,6 +27,15 @@ _UNARY_OP_LL_METHODS: Final[dict[type[ir_values.Instr], str]] = {
     ir_values.NotInstr: "not_",
 }
 
+_OVERFLOW_INTRINSIC_PREFIXES: Final[dict[tuple[type[ir_values.Instr], signage.Signage], str]] = {
+    (ir_values.CheckedAddInstr, signage.SIGNED): "sadd",
+    (ir_values.CheckedAddInstr, signage.UNSIGNED): "uadd",
+    (ir_values.CheckedSubInstr, signage.SIGNED): "ssub",
+    (ir_values.CheckedSubInstr, signage.UNSIGNED): "usub",
+    (ir_values.CheckedMulInstr, signage.SIGNED): "smul",
+    (ir_values.CheckedMulInstr, signage.UNSIGNED): "umul",
+}
+
 
 def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access) -> None:
     """Set an LLVM global's linkage to match a Leech item's access.
@@ -51,6 +60,7 @@ class Compiler:
     ll_mod: Final[ll.Module]
     _ll_mod_items: Final[Compiler._LLItems]
     _tmp_name: Final[naming.VarNamer]
+    _overflow_intrinsics: Final[dict[str, ll.Function]]
 
     class _LLItems:
         """A cache mapping Leech IR values and types to their LLVM counterparts.
@@ -126,12 +136,21 @@ class Compiler:
         ll_builder: ll.IRBuilder
         ll_values: Compiler._LLItems
         ll_bbs: collections.ChainMap[ir_values.BasicBlock, ll.Block]
+        #: A CheckedAddInstr/CheckedSubInstr/CheckedMulInstr's own raw
+        #: ``{typ, i1}`` `llvm.*.with.overflow` call result, keyed by the
+        #: instruction itself - consulted by its paired OverflowFlagInstr,
+        #: which needs the overflow flag out of the very same call rather
+        #: than issuing one of its own. Function-body-local, like ll_bbs
+        #: and (the outermost of) ll_values - a checked instruction and
+        #: its paired flag instruction never span two function bodies.
+        overflow_calls: dict[ir_values.CheckedBinOpInstr, ll.Value]
 
     def __init__(self, mod: ir_module.Mod) -> None:
         self._mod = mod
         self.ll_mod = ll.Module(context=ll.Context())
         self._ll_mod_items = Compiler._LLItems(self)
         self._tmp_name = naming.VarNamer()
+        self._overflow_intrinsics = {}
 
     def compile(self) -> None:
         """Compile the module passed to the constructor into :attr:`ll_mod`.
@@ -510,6 +529,7 @@ class Compiler:
             ll_builder=ll.IRBuilder(),
             ll_values=self._ll_mod_items.new_child(),
             ll_bbs=collections.ChainMap(),
+            overflow_calls={},
         )
 
         ll_fn = asserts.checked_cast(self._ll_mod_items.get(fn_value), ll.Function)
@@ -543,8 +563,52 @@ class Compiler:
         for instr in bb.instrs:
             ctx.ll_values.set(instr, self._compile_instr(instr, ctx))
 
+    def _overflow_intrinsic(
+        self, instr_typ: type[ir_values.Instr], typ: typs.IntTyp
+    ) -> ll.Function:
+        """Get (declaring, and caching, on first use) the LLVM intrinsic
+        function that computes ``instr_typ``'s operation on ``typ`` and
+        detects overflow in one call.
+
+        Declared to return ``{typ, i1}``: the operation's own result
+        alongside the overflow flag - see the
+        :class:`~leech.ir_values.CheckedAddInstr`/``CheckedSubInstr``/
+        ``CheckedMulInstr`` case in :meth:`_compile_instr`, which reads
+        both back out (via ``extractvalue``, once each, from its shared
+        call result) rather than computing the operation separately.
+
+        :param instr_typ: Which checked instruction to get the intrinsic
+            for: :class:`~leech.ir_values.CheckedAddInstr`, ``CheckedSubInstr``,
+            or ``CheckedMulInstr``.
+        :param typ: The operands' type.
+        :return: The (possibly newly-declared) intrinsic function.
+        """
+        prefix = _OVERFLOW_INTRINSIC_PREFIXES[(instr_typ, typ.signage)]
+        name = f"llvm.{prefix}.with.overflow.i{typ.width}"
+        intrinsic = self._overflow_intrinsics.get(name)
+        if intrinsic is None:
+            ll_typ = self._ll_mod_items.get(typ)
+            fn_typ = ll.FunctionType(
+                ll.LiteralStructType([ll_typ, ll.IntType(1)]), [ll_typ, ll_typ]
+            )
+            intrinsic = ll.Function(self.ll_mod, fn_typ, name)
+            self._overflow_intrinsics[name] = intrinsic
+        return intrinsic
+
     def _compile_instr(self, instr: ir_values.Instr, ctx: Compiler._FnBuilderContext) -> ll.Value:
         match instr:
+            case (
+                ir_values.CheckedAddInstr()
+                | ir_values.CheckedSubInstr()
+                | ir_values.CheckedMulInstr()
+            ):
+                typ = asserts.checked_cast(instr.lhs.typ, typs.IntTyp)
+                intrinsic = self._overflow_intrinsic(type(instr), typ)
+                call = ctx.ll_builder.call(
+                    intrinsic, [ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs)]
+                )
+                ctx.overflow_calls[instr] = call
+                return ctx.ll_builder.extract_value(call, 0)  # type: ignore
             case ir_values.BinOpInstr():
                 ll_method = getattr(ctx.ll_builder, _BIN_OP_LL_METHODS[type(instr)])
                 return ll_method(ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs))
@@ -563,6 +627,9 @@ class Compiler:
                     ctx.ll_values.get(instr.lhs),
                     ctx.ll_values.get(instr.rhs),
                 )
+            case ir_values.OverflowFlagInstr():
+                call = ctx.overflow_calls[instr.checked_op]
+                return ctx.ll_builder.extract_value(call, 1)  # type: ignore
             case ir_values.LoadInstr():
                 return ctx.ll_builder.load(
                     ctx.ll_values.get(instr.src), typ=self._ll_mod_items.get(instr.typ)

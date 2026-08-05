@@ -61,6 +61,11 @@ class Env:
         that construct a bare top-level ``Env`` don't have to know traits
         exist; real compilation always passes the loader's own (see
         :meth:`~leech.ir_module.Mod.__init__`).
+    :param panic_fn: The program's real ``panic`` function (the bundled
+        prelude's own, never whatever a module's own same-named
+        definition shadows it with locally) to expose as
+        :attr:`panic_fn`. Only meaningful (and only ever passed) at a
+        top-level scope, same as ``impl_registry``.
     """
 
     class Namespace(enum.Enum):
@@ -87,18 +92,35 @@ class Env:
     #: pervasively already) don't need it passed as a second, parallel
     #: parameter everywhere. See :class:`~leech.ir_traits.ImplRegistry`.
     impl_registry: Final[ir_traits.ImplRegistry]
+    #: The program's real ``panic`` function, reachable from any scope for
+    #: the same reason ``impl_registry`` is - used to build compiler-
+    #: synthesized runtime checks (array bounds, integer overflow,
+    #: division by zero; see
+    #: :meth:`~leech.ir_builder.CfgBuilder._panic_if`) and to recognize
+    #: them again during compile-time evaluation (see
+    #: :class:`~leech.comptime.Interpreter`). Always the bundled prelude's
+    #: own ``panic`` - deliberately *not* looked up by name through the
+    #: ordinary scope chain, so a module defining its own same-named
+    #: ``panic`` can't suppress or redirect these checks. ``None`` only
+    #: while the prelude module itself is being built (see
+    #: :attr:`~leech.ir_loader.ModLoader.prelude`) - nothing needs it
+    #: before then.
+    panic_fn: Final[Optional[ir_module.FnSpec]]
 
     def __init__(
         self,
         parent: Optional[Env] = None,
         impl_registry: Optional[ir_traits.ImplRegistry] = None,
+        panic_fn: Optional[ir_module.FnSpec] = None,
     ) -> None:
         if parent is None:
             self.items = collections.ChainMap()
             self.impl_registry = opt_util.opt_or_else(impl_registry, ir_traits.ImplRegistry)
+            self.panic_fn = panic_fn
         else:
             self.items = parent.items.new_child()
             self.impl_registry = parent.impl_registry
+            self.panic_fn = parent.panic_fn
         self._spans = {}
 
     def new_child(self) -> Env:

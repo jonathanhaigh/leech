@@ -105,13 +105,16 @@ class ComptimeInt(ComptimeValue[typs.IntTyp]):
     """A compile-time-known integer value.
 
     Callers that construct a ``ComptimeInt`` from a value that isn't
-    already known to fit ``typ`` (e.g. from a source-level integer
-    literal, or the result of a compile-time arithmetic operation) are
-    responsible for validating it themselves first, and raising the
-    appropriate diagnostic (:class:`~leech.errors.IntLitOverflowError` or
-    :class:`~leech.errors.IntOverflowAtComptimeError` respectively) -
-    :meth:`~leech.typs.IntTyp.fits` does the check. This constructor only
-    asserts that ``value`` fits, as a last-resort invariant check.
+    already known to fit ``typ`` are responsible for making it fit first:
+    a source-level integer literal is validated and rejected outright
+    (:class:`~leech.errors.IntLitOverflowError`,
+    :meth:`~leech.typs.IntTyp.fits` doing the check), while the result of
+    a compile-time arithmetic operation is wrapped into range instead (see
+    :func:`~leech.comptime._wrap`) - overflow there isn't an error in its
+    own right, only ever reported (uniformly with every other
+    compiler-synthesized runtime check) via whichever ``panic`` call, if
+    any, follows in the same CFG. This constructor only asserts that
+    ``value`` fits, as a last-resort invariant check.
 
     :param typ: The integer type.
     :param value: The integer value.
@@ -640,6 +643,57 @@ class IcmpUnsignedInstr(IcmpInstr):
     """A comparison between unsigned integers."""
 
 
+class CheckedAddInstr(AddInstr):
+    """Integer addition, paired with an :class:`OverflowFlagInstr` that
+    reports whether it overflowed.
+
+    Behaves exactly like a plain :class:`AddInstr` - comptime evaluation,
+    in particular, treats it as one unchanged (inherited, not overridden) -
+    and exists purely so codegen can tell the two apart: this lowers to
+    ``llvm.{s,u}add.with.overflow`` instead of plain ``add``, computing the
+    result and detecting overflow in a single operation (see
+    :meth:`~leech.ir_builder.CfgBuilder._build_checked_bin_op` and
+    :class:`~leech.codegen.Compiler`), rather than needing two separate
+    instructions to do each.
+    """
+
+
+class CheckedSubInstr(SubInstr):
+    """Integer subtraction; see :class:`CheckedAddInstr`."""
+
+
+class CheckedMulInstr(MulInstr):
+    """Integer multiplication; see :class:`CheckedAddInstr`."""
+
+
+#: Any instruction :meth:`BasicBlock.checked_add`/``checked_sub``/``checked_mul``
+#: can build - the only instructions :class:`OverflowFlagInstr` can pair with.
+type CheckedBinOpInstr = CheckedAddInstr | CheckedSubInstr | CheckedMulInstr
+
+
+class OverflowFlagInstr(Instr[typs.BoolTyp]):
+    """Whether a :class:`CheckedBinOpInstr` overflowed.
+
+    :param bb: The basic block this instruction belongs to.
+    :param checked_op: The instruction to report the overflow of; must
+        already be in ``bb``'s :class:`Cfg`.
+    :param ast_node: The AST node this instruction was built from, if any.
+    """
+
+    checked_op: Final[CheckedBinOpInstr]
+
+    @override
+    def __init__(
+        self, bb: BasicBlock, checked_op: CheckedBinOpInstr, ast_node: Optional[ast.Ast]
+    ) -> None:
+        super().__init__(bb, ast_node)
+        self.checked_op = checked_op
+
+    @override
+    def calculate_typ(self) -> typs.BoolTyp:
+        return typs.BOOL
+
+
 class LoadInstr(Instr):
     """Reads the value pointed to by a pointer.
 
@@ -1121,6 +1175,18 @@ class BasicBlock:
         """Append a :class:`MulInstr` to this block."""
         return self._add_instr(MulInstr(self, lhs, rhs, ast_node))
 
+    def checked_add(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> CheckedAddInstr:
+        """Append a :class:`CheckedAddInstr` to this block."""
+        return self._add_instr(CheckedAddInstr(self, lhs, rhs, ast_node))
+
+    def checked_sub(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> CheckedSubInstr:
+        """Append a :class:`CheckedSubInstr` to this block."""
+        return self._add_instr(CheckedSubInstr(self, lhs, rhs, ast_node))
+
+    def checked_mul(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> CheckedMulInstr:
+        """Append a :class:`CheckedMulInstr` to this block."""
+        return self._add_instr(CheckedMulInstr(self, lhs, rhs, ast_node))
+
     def sdiv(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> SdivInstr:
         """Append a :class:`SdivInstr` to this block."""
         return self._add_instr(SdivInstr(self, lhs, rhs, ast_node))
@@ -1148,6 +1214,12 @@ class BasicBlock:
     ) -> IcmpUnsignedInstr:
         """Append an :class:`IcmpUnsignedInstr` to this block."""
         return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast_node))
+
+    def overflow_flag(
+        self, checked_op: CheckedBinOpInstr, ast_node: Optional[ast.Ast]
+    ) -> OverflowFlagInstr:
+        """Append an :class:`OverflowFlagInstr` to this block."""
+        return self._add_instr(OverflowFlagInstr(self, checked_op, ast_node))
 
     def phi(self, incoming: dict[BasicBlock, Value], ast_node: Optional[ast.Ast]) -> PhiInstr:
         """Append a :class:`PhiInstr` to this block."""

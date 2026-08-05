@@ -598,9 +598,15 @@ def test_calling_generic_fn_lowers_to_an_instance_call(tmp_path):
     """
     cfg = _lower_main(tmp_path, src)
 
-    call_instrs = [
-        instr for bb in cfg.nodes for instr in bb.instrs if isinstance(instr, ir_values.CallInstr)
+    # Filtered to calls to a generic instance specifically, not every
+    # CallInstr in the function - `- 5`'s own compiler-synthesized
+    # overflow check also compiles to a (non-generic) call, to `panic`.
+    instance_calls = [
+        instr
+        for bb in cfg.nodes
+        for instr in bb.instrs
+        if isinstance(instr, ir_values.CallInstr) and isinstance(instr.callee, ir_module.FnInstance)
     ]
-    (call,) = call_instrs
+    (call,) = instance_calls
     callee = asserts.checked_cast(call.callee, ir_module.FnInstance)
     assert callee.name == "id[i32]"

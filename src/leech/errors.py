@@ -1071,23 +1071,6 @@ class IntLitOverflowError(UserError):
         super().__init__(ERROR, f'Integer literal {value} does not fit in type "{typ}"', span)
 
 
-class IntOverflowAtComptimeError(UserError):
-    """Raised when a compile-time arithmetic operation's result doesn't fit
-    in its operands' type.
-
-    Unlike :class:`IntLitOverflowError`, this is raised for the *result*
-    of an operation (e.g. ``add``, ``sub``, ``mul``, ``div``) evaluated at
-    compile time, not for an integer literal written in source.
-    """
-
-    def __init__(self, value: int, typ: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'Result of compile-time integer operation ({value}) does not fit in type "{typ}"',
-            span,
-        )
-
-
 class DerefInvalidTypError(UserError):
     """Raised when dereferencing a value whose type isn't a data pointer."""
 
@@ -1149,11 +1132,17 @@ class SetNonLocalVarAtComptimeError(UserError):
         super().__init__(ERROR, "Cannot set non-local variable at comptime", span)
 
 
-class DivisionByZeroAtComptimeError(UserError):
-    """Raised when compile-time evaluation divides by a value of zero."""
+class PanicAtComptimeError(UserError):
+    """Raised when compile-time evaluation calls ``panic`` - either directly,
+    or via a compiler-synthesized runtime check (array bounds, integer
+    overflow, division by zero) evaluated at compile time.
+    """
 
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, "Division by zero", span)
+    def __init__(self, message: Optional[str], span: Optional[src.SrcSpan]) -> None:
+        text = "Compile-time evaluation panicked"
+        if message is not None:
+            text += f': "{message}"'
+        super().__init__(ERROR, text, span)
 
 
 class SizeOfNotComptimeEvaluableError(UserError):

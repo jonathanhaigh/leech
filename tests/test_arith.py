@@ -76,13 +76,16 @@ def test_division_by_non_comptime_value_is_not_a_compile_error(tmp_path):
 
 
 def test_comptime_signed_division_by_zero(tmp_path):
+    # Compile-time evaluation shares the same runtime safety checks as
+    # codegen (see CfgBuilder._panic_if): this hits the same `panic` call
+    # a runtime division by zero would, reported as PanicAtComptimeError.
     src = """
     let x = 5 / 0;
     pub fn main() i32 {
         return 0;
     }
     """
-    with pytest.raises(errors.DivisionByZeroAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -93,7 +96,7 @@ def test_comptime_unsigned_division_by_zero(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.DivisionByZeroAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -107,7 +110,7 @@ def test_comptime_division_by_zero_in_called_fn(tmp_path):
         return x;
     }
     """
-    with pytest.raises(errors.DivisionByZeroAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -131,7 +134,7 @@ def test_comptime_add_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.IntOverflowAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -142,7 +145,7 @@ def test_comptime_unsigned_sub_underflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.IntOverflowAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -153,7 +156,7 @@ def test_comptime_mul_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.IntOverflowAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -168,7 +171,7 @@ def test_comptime_signed_sub_underflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.IntOverflowAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -183,7 +186,7 @@ def test_comptime_signed_div_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.IntOverflowAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -233,7 +236,7 @@ def test_comptime_neg_overflow(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.IntOverflowAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
 
 
@@ -318,13 +321,14 @@ def test_invalid_unary_op_arg_non_int(tmp_path):
 
 def test_comptime_int_operation_overflow_distinct_from_lit_overflow(tmp_path):
     # Neither operand literal (100i8) overflows on its own - only the
-    # result of adding them does. This must raise IntOverflowAtComptimeError,
-    # not IntLitOverflowError.
+    # result of adding them does. This must raise PanicAtComptimeError (the
+    # runtime overflow check, evaluated at compile time), not
+    # IntLitOverflowError (which only ever rejects a literal itself).
     src = """
     let x = 100i8 + 100i8;
     pub fn main() i32 {
         return 0;
     }
     """
-    with pytest.raises(errors.IntOverflowAtComptimeError):
+    with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)

@@ -9,7 +9,7 @@ import pathlib
 from collections.abc import Collection, Sequence
 from typing import Final, Optional
 
-from leech import ast, errors, ir_env, ir_module, ir_traits, parse, src
+from leech import asserts, ast, errors, ir_env, ir_module, ir_traits, parse, src
 
 #: The directory holding the bundled standard library (``std::...``
 #: imports), shipped alongside the installed ``leech`` package - the same
@@ -110,6 +110,29 @@ class ModLoader:
         see :meth:`__init__`.
         """
         return self._prelude
+
+    @property
+    def prelude_panic_fn(self) -> Optional[ir_module.FnSpec]:
+        """The bundled prelude's own ``panic`` function - see
+        :attr:`~leech.ir_env.Env.panic_fn`, which this feeds every
+        module's top-level scope with.
+
+        Not cached (unlike :attr:`prelude`, whose identity is stable once
+        set): the prelude module's own ``Mod.__init__`` reads this - via
+        :attr:`~leech.ir_env.Env.panic_fn` on the very ``builtin_env`` it's
+        constructing - while :attr:`prelude` is still ``None``, so a
+        cached ``None`` from that first read would stick forever and break
+        every other module's.
+
+        ``None`` only while the prelude module itself is being built -
+        see :meth:`__init__` - since nothing needs it before then either.
+        """
+        if self._prelude is None:
+            return None
+        item = self._prelude.get_item(ir_env.Env.Namespace.VARS, "panic")
+        if item is None:
+            return None
+        return asserts.checked_cast(item.value, ir_module.FnSpec)
 
     @property
     def builtins(self) -> tuple[ir_module.GenericBuiltinFn, ...]:
