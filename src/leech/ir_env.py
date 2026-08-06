@@ -23,8 +23,11 @@ from leech import (
 type Container = typs.Typ | ir_module.Mod | ir_traits.Trait
 """A type, module, or trait bound in the shared container namespace."""
 
-type Var = ir_values.Value[typs.PtrTyp] | ir_module.GenericFn
-"""A value or unapplied generic function bound in the variable namespace.
+type Var = (
+    ir_values.Value[typs.PtrTyp] | ir_module.GenericFn | ast.Param | ast.Receiver | ast.LetStmt
+)
+"""A value, unapplied generic function, or local binding's declaration-site
+AST node, bound in the variable namespace.
 
 :invariant: every bound Value is PtrTyp-typed [unchecked: hot path]
 """

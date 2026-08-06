@@ -107,6 +107,30 @@ def test_var_not_found_at_fn_scope(tmp_path):
         util.compile_str(tmp_path, src)
 
 
+def test_var_not_found_as_assignment_target(tmp_path):
+    # An assignment target is resolved through _place_mut, not _check_var_expr.
+    src = """
+    pub fn main() i32 {
+        x = 1;
+        return 0;
+    }
+    """
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
+
+
+def test_var_not_found_behind_addr_of(tmp_path):
+    # `&x` is resolved through _check_place, not _check_var_expr.
+    src = """
+    pub fn main() i32 {
+        let p = &x;
+        return 0;
+    }
+    """
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
+
+
 def test_shadowed_mod_var(tmp_path):
     src = """
     let x = 100;

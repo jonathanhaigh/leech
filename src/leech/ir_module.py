@@ -434,6 +434,23 @@ class FnInstance(FnSpec[ast.FnDefn]):
         return e
 
     @functools.cached_property
+    def sibling_instances(self) -> Mapping[Fn, FnInstance]:
+        """Each impl-block sibling, mapped to its own instance for
+        :attr:`_self_typ`.
+
+        A bare-name or dot-call reference to a sibling (see
+        :meth:`~leech.typs.StructTyp.add_assoc_fn`) resolves, via TypCheck,
+        to the raw, unsubstituted ``Fn`` - :class:`~leech.ir_builder.CfgBuilder`
+        maps it through this to the correct monomorphized callee instead.
+        Empty unless this is a method instance.
+        """
+        if self._self_typ is None:
+            return {}
+        recv_typ = asserts.checked_cast(self._fn, Fn).recv_typ
+        assert isinstance(recv_typ, typs.StructTyp)
+        return {sibling: sibling.impl_instance(self._self_typ) for sibling in recv_typ.assoc_fns}
+
+    @functools.cached_property
     def cfg(self) -> ir_values.Cfg:
         """This instance's body, lowered to a control-flow graph. Built
         lazily, on first access."""

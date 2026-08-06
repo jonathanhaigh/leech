@@ -12,7 +12,7 @@ import dataclasses
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Final, Optional
 
-from leech import asserts, ast, errors, ir_env, ir_values, opt_util, signage, src, typs
+from leech import asserts, ast, errors, ir_env, ir_values, opt_util, resolve, signage, src, typs
 
 if TYPE_CHECKING:
     # Runtime imports are local because ir_module imports this module.
@@ -86,28 +86,17 @@ class Invalid(Coercion):
     """The value's type doesn't coerce to the target at all."""
 
 
-class _TypedPlace(ir_values.Value[typs.PtrTyp]):
-    """A local variable's pointer type without a lowered allocation."""
-
-    _typ: Final[typs.PtrTyp]
-
-    def __init__(self, typ: typs.PtrTyp) -> None:
-        super().__init__(None)
-        self._typ = typ
-
-    def calculate_typ(self) -> typs.PtrTyp:
-        return self._typ
-
-
 class TypCheckResults:
     """Lowering facts for one checked body, keyed by AST-node identity."""
 
+    resolutions: Final[resolve.Resolutions]
     _int_lit_typs: Final[dict[ast.IntLit, typs.IntTyp]]
     _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
     _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]]
     _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]]
 
     def __init__(self) -> None:
+        self.resolutions = resolve.Resolutions()
         self._int_lit_typs = {}
         self._coercions = {}
         self._generic_calls = {}
@@ -159,6 +148,8 @@ class TypCheck:
     _fn_name: Optional[str]
     #: Enclosing ``while`` labels, innermost last.
     _loop_labels: Final[list[Optional[str]]]
+    #: Local bindings' pointer types, keyed by their declaration-site AST node.
+    _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
 
     def __init__(self) -> None:
         self.results = TypCheckResults()
@@ -166,6 +157,7 @@ class TypCheck:
         self._ret_typ_span = None
         self._fn_name = None
         self._loop_labels = []
+        self._local_typs = {}
 
     def check_fn(
         self,
@@ -184,7 +176,8 @@ class TypCheck:
         for param in params:
             assert param.ast is not None
             param_typ = typs.PtrTyp.get_or_create(param.typ, typs.CONST)
-            e.add_var(param.ast.name.name, _TypedPlace(param_typ))
+            self._local_typs[param.ast] = param_typ
+            e.add_var(param.ast.name.name, param.ast)
         block_typ = self._check_expr(fn_ast.block, e, ret_typ)
         ret_ast = opt_util.opt_or_default(fn_ast.block.expr, fn_ast.block)
 
@@ -392,7 +385,7 @@ class TypCheck:
             # Local to avoid the ir_module import cycle.
             from leech import ir_module  # noqa: PLC0415
 
-            var = e.resolve_path(ir_env.Env.Namespace.VARS, callee_ast.path)
+            var = self._resolve_var(callee_ast, e)
             if isinstance(var, ir_module.GenericFn):
                 return self._resolve_generic_call(var.fn, call_ast, e), None, None
 
@@ -670,11 +663,20 @@ class TypCheck:
             )
         return operand_typ
 
+    def _resolve_var(self, var_ast: ast.VarExpr, e: ir_env.Env) -> resolve.VarTarget:
+        """Resolve ``var_ast``'s path, memoizing the result across repeat visits."""
+        try:
+            return self.results.resolutions.var(var_ast)
+        except KeyError:
+            target = e.resolve_path(ir_env.Env.Namespace.VARS, var_ast.path)
+            self.results.resolutions.set_var(var_ast, target)
+            return target
+
     def _check_var_expr(self, var_ast: ast.VarExpr, e: ir_env.Env) -> typs.Typ:
         # Local because runtime isinstance checks cannot use the TYPE_CHECKING import.
         from leech import ir_module  # noqa: PLC0415
 
-        var = e.resolve_path(ir_env.Env.Namespace.VARS, var_ast.path)
+        var = self._resolve_var(var_ast, e)
         if isinstance(var, ir_module.GenericFn):
             return self._generic_var_ref_typ(var_ast, var, e)
         if var_ast.generic_args:
@@ -685,6 +687,8 @@ class TypCheck:
             # no address at all - see `Env._resolve_path_segment`'s
             # `EnumTyp` case.
             return var.typ
+        if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
+            return self._local_typs[var].pointee_typ
         return var.typ.pointee_typ
 
     def _generic_var_ref_typ(
@@ -850,9 +854,11 @@ class TypCheck:
             # explicitly-applied generic one too, so delegate to
             # _generic_var_ref_typ for that case (including its
             # MissingTypArgsError if it's named bare instead).
-            var = e.resolve_path(ir_env.Env.Namespace.VARS, expr_ast.path)
+            var = self._resolve_var(expr_ast, e)
             if isinstance(var, ir_module.GenericFn):
                 return self._generic_var_ref_typ(expr_ast, var, e)
+            if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
+                return self._local_typs[var]
             # An enum variant (see Env._resolve_path_segment's EnumTyp
             # case) isn't a place either - it falls through to the
             # general, value-copying case below, same as any other
@@ -870,7 +876,7 @@ class TypCheck:
                 # Local to avoid the ir_module import cycle.
                 from leech import ir_module  # noqa: PLC0415
 
-                var = e.resolve_path(ir_env.Env.Namespace.VARS, expr_ast.path)
+                var = self._resolve_var(expr_ast, e)
                 # An (explicitly-applied, since this is only reached once
                 # an earlier _check_expr/_check_place pass over the same
                 # node has already succeeded) GenericFn has no .typ of
@@ -878,10 +884,12 @@ class TypCheck:
                 # reference, its place is const regardless. An enum
                 # variant isn't a place at all (see _check_place), so it
                 # falls into the same "temporary, always const" case.
-                # Every other binding's .typ is a PtrTyp - see
-                # _check_place.
                 if isinstance(var, (ir_module.GenericFn, ir_values.ComptimeEnum)):
                     return typs.CONST
+                if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
+                    return self._local_typs[var].mut
+                # Every remaining binding (a ModVar or function reference)
+                # has a PtrTyp .typ - see _check_place.
                 return asserts.checked_cast(var.typ, typs.PtrTyp).mut
             case ast.ArrayAccessExpr():
                 return self._place_mut(expr_ast.array, e)
@@ -976,7 +984,8 @@ class TypCheck:
         bound_typ = opt_util.opt_or_default(declared_typ, expr_typ)
         mut = typs.Mutability.from_ast(let_ast.mut)
         place_typ = typs.PtrTyp.get_or_create(bound_typ, mut)
-        e.add_var(let_ast.ident.name, _TypedPlace(place_typ))
+        self._local_typs[let_ast] = place_typ
+        e.add_var(let_ast.ident.name, let_ast)
         return expr_typ == typs.NEVER
 
     def _check_let_initializer(

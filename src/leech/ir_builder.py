@@ -21,6 +21,7 @@ from leech import (
     ir_values,
     naming,
     opt_util,
+    resolve,
     signage,
     typcheck,
     typs,
@@ -58,6 +59,9 @@ class CfgBuilder:
     #: The ``while`` loops currently being lowered, innermost last - used
     #: to resolve unlabeled and labeled ``break``/``continue`` targets.
     _loop_stack: Final[list[CfgBuilder._LoopCtx]]
+    #: Each local binding's lowered storage, keyed by its declaration-site
+    #: AST node - the same identity TypCheck resolved a VarExpr to.
+    _local_values: Final[dict[resolve.LocalDecl, ir_values.Value]]
 
     def __init__(
         self,
@@ -76,6 +80,7 @@ class CfgBuilder:
         self._generate_bb_name("exit")
         self._curr_bb = self.cfg.entry
         self._loop_stack = []
+        self._local_values = {}
 
     def build_var_initializer(self, defn_ast: ast.VarDefn, e: ir_env.Env) -> None:
         """Lower a module-level initializer into ``cfg``."""
@@ -94,7 +99,7 @@ class CfgBuilder:
             assert param.ast is not None
             alloca = self._curr_bb.alloca(param.typ, typs.CONST, 1, param.ast)
             self._curr_bb.store(param, alloca, param.ast)
-            e.add_var(param.ast.name.name, alloca)
+            self._local_values[param.ast] = alloca
 
         ret_typ = self._fn.fn_typ.ret_typ
         block = self._build_expr(fn_ast.block, e, _ExprContext.VALUE, ret_typ)
@@ -736,6 +741,16 @@ class CfgBuilder:
             case _:
                 raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
+    def _resolve_sibling(self, target: ir_module.Fn) -> ir_module.FnSpec:
+        """Map a resolved impl-block sibling to this build's own instance.
+
+        A no-op unless this build is itself a method instance - see
+        :attr:`~leech.ir_module.FnInstance.sibling_instances`.
+        """
+        if isinstance(self._fn, ir_module.FnInstance):
+            return self._fn.sibling_instances.get(target, target)
+        return target
+
     def _resolve_fn_instance(
         self, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
     ) -> ir_module.FnInstance:
@@ -777,15 +792,25 @@ class CfgBuilder:
             # (building, if needed) the instance they name.
             return self._resolve_fn_instance(*generic_ref)
 
-        var = e.resolve_path(ir_env.Env.Namespace.VARS, var_ast.path)
-        if isinstance(var, ir_module.FnSpec):
-            return var
-        if isinstance(var, ir_values.ComptimeEnum):
+        target = self._typ_check_results.resolutions.var(var_ast)
+        if isinstance(target, ir_module.Fn):
+            return self._resolve_sibling(target)
+        if isinstance(target, ir_module.FnSpec):
+            return target
+        if isinstance(target, ir_values.ComptimeEnum):
             # Not a place (see Env._resolve_path_segment's EnumTyp case)
             # - in PLACE context, copy it into a temporary and address
             # that, the same as any other non-place value (see
             # _in_context/_value_to_ptr).
-            return self._in_context(var, ctx)
+            return self._in_context(target, ctx)
+        if isinstance(target, (ast.Param, ast.Receiver, ast.LetStmt)):
+            var = self._local_values[target]
+        else:
+            # A bare, uncalled GenericFn can't reach here - TypCheck
+            # rejects it (MissingTypArgsError) unless generic_ref above
+            # already handled it - so only a ModVar remains.
+            var = asserts.checked_cast(target, ir_module.ModVar)
+
         if ctx == _ExprContext.PLACE:
             return var
 
@@ -1081,14 +1106,12 @@ class CfgBuilder:
         """Lower a local ``let`` statement.
 
         :param let_ast: The parsed ``let`` statement.
-        :param e: The scope to resolve names in, and to bind the new
-            variable in.
+        :param e: The scope to resolve names in.
         """
         expr = self._build_let_initializer(let_ast, e, _ExprContext.VALUE)
-        name = let_ast.ident.name
         mut = typs.Mutability.from_ast(let_ast.mut)
         alloca = self._curr_bb.alloca(expr.typ, mut, 1, let_ast)
-        e.add_var(name, alloca)
+        self._local_values[let_ast] = alloca
         self._curr_bb.store(expr, alloca, let_ast)
 
     def _build_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: ir_env.Env) -> None:

@@ -170,6 +170,24 @@ def test_dot_call_on_receiverless_assoc_fn_rejected(tmp_path):
         util.compile_str(tmp_path, src)
 
 
+def test_method_passes_self_by_value_to_free_function(tmp_path):
+    # `self` used bare, as a plain value argument, exercises Receiver
+    # resolution as an ordinary VarExpr - distinct from every other test
+    # here, which only ever reaches self through self.* / self.*.field.
+    src = """
+    struct Counter { n: i32 }
+    fn get_n(c: *Counter) i32 { c.*.n }
+    impl Counter {
+        fn get(*self) i32 { get_n(self) }
+    }
+    pub fn main() i32 {
+        let c = Counter { n: 42 };
+        return c.get();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
 def test_field_access_of_non_method_name_still_works(tmp_path):
     # Non-call field access (no trailing `(...)`) is untouched by method
     # resolution - it never goes through _build_call_expr at all.

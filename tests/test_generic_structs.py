@@ -373,6 +373,31 @@ def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
+def test_generic_impl_block_sibling_method_calls_across_instantiations(tmp_path):
+    # Each concrete instantiation must get its own sibling-resolution
+    # mapping - a leak would make one instantiation's bare `helper` call
+    # resolve to a different instantiation's `helper`.
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn helper(*self) T { self.*.val }
+        fn get(*self) T { helper(self) }
+    }
+    pub fn main() i32 {
+        let a = Box[i32] { val: 3 };
+        let b = Box[u8] { val: 7u8 };
+        let c = Box[bool] { val: true };
+        if (a.get() != 3) { return 1; };
+        if (b.get() != 7u8) { return 2; };
+        if (c.get()) {
+            return 0;
+        };
+        return 3;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(tmp_path):
     src = """
     struct Box[T] { mut val: T }
