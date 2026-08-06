@@ -890,6 +890,7 @@ class Defn(Ast):
             "fn_decl": FnDecl,
             "var_defn": VarDefn,
             "struct_defn": StructDefn,
+            "enum_defn": EnumDefn,
             "trait_defn": TraitDefn,
             "impl_defn": ImplDefn,
             "import": Import,
@@ -1095,6 +1096,62 @@ class StructFieldDefn(Ast):
     @override
     def diag_str(self) -> str:
         return f'struct field "{self.ident.name}" definition'
+
+
+class EnumDefn(Defn):
+    """An enum type definition."""
+
+    access: Final[Optional[Access]]
+    ident: Final[Ident]
+    #: The explicit backing integer type in parentheses, if written.
+    backing_typ: Final[Optional[Typ]]
+    variants: Final[tuple[EnumVariantDefn, ...]]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "enum_defn")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        access, ident, backing_typ, variant_list = tree.children
+        self.access = Access.from_tree(file, _as_tree(access))
+        self.ident = Ident.from_tree(file, _as_tree(ident))
+        self.backing_typ = opt_util.opt_map(backing_typ, lambda x: Typ.from_tree(file, _as_tree(x)))
+
+        variant_list = _as_tree(variant_list)
+        asserts.assert_eq(variant_list.data, "enum_variant_list")
+        self.variants = tuple(
+            EnumVariantDefn(file, _as_tree(child)) for child in variant_list.children
+        )
+
+    @override
+    def diag_str(self) -> str:
+        return f'enum "{self.ident.name}" definition'
+
+
+class EnumVariantDefn(Ast):
+    """A single variant declaration within an :class:`EnumDefn`."""
+
+    ident: Final[Ident]
+    #: The explicit ``= N`` discriminant's magnitude, if written.
+    value: Final[Optional[IntLit]]
+    #: Whether the discriminant is negative. Only meaningful when
+    #: ``value`` is not ``None``.
+    negative: Final[bool]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "enum_variant")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        ident, value = tree.children
+        self.ident = Ident.from_tree(file, _as_tree(ident))
+        value_tree = opt_util.opt_map(value, _as_tree)
+        if value_tree is not None:
+            asserts.assert_eq(value_tree.data, "enum_variant_value")
+        self.negative = opt_util.opt_or_default(
+            opt_util.opt_map(value_tree, lambda vt: vt.children[0] is not None), False
+        )
+        self.value = opt_util.opt_map(value_tree, lambda vt: IntLit(file, _as_tree(vt.children[1])))
+
+    @override
+    def diag_str(self) -> str:
+        return f'enum variant "{self.ident.name}" definition'
 
 
 class TraitDefn(Defn):

@@ -217,9 +217,19 @@ class Compiler:
         # every other declared struct's: an infinite-size or
         # runaway-instantiation-depth struct is rejected whether or not
         # anything in the program ever instantiates it.
+        #
+        # An enum has nothing to declare or compile (see _ll_typ's EnumTyp
+        # case), so it's forced here purely to validate it (duplicate
+        # variants, a non-integer or overflowing explicit backing type)
+        # whether or not the program ever references it, the same as a
+        # generic struct's. backing_typ itself reads every variant, so
+        # forcing it alone already forces (and catches duplicates in)
+        # variants too.
         for item in self._program_items():
             if isinstance(item.value, typs.StructTyp) and item.value.is_generic_template:
                 _ = item.value.fields
+            elif isinstance(item.value, typs.EnumTyp):
+                _ = item.value.backing_typ
 
         instances = self._discover_fn_instances()
         struct_instances = self._discover_struct_instances()
@@ -439,6 +449,10 @@ class Compiler:
                 return ll.ArrayType(self._ll_mod_items.get(typ.element_typ), typ.length)
             case typs.VoidTyp():
                 return ll.VoidType()
+            case typs.EnumTyp():
+                # No LLVM type of its own - an enum lowers directly to its
+                # backing integer type's.
+                return asserts.checked_cast(self._ll_mod_items.get(typ.backing_typ), ll.Type)
             case typs.StructTyp():
                 # Every StructTyp reachable during codegen is declared
                 # (and cached here) by the earlier declare-types phase,
@@ -460,6 +474,10 @@ class Compiler:
             case typs.StructTyp():
                 ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
                 self._ll_mod_items.set(item.value, ll_item)
+            case typs.EnumTyp():
+                # No LLVM symbol of its own - it lowers directly to its
+                # backing integer type's, declared (if a builtin) already.
+                pass
             case ir_module.GenericFn():
                 # No LLVM symbol of its own - only its instances do (see
                 # _discover_fn_instances), declared separately.
@@ -486,6 +504,8 @@ class Compiler:
             case typs.StructTyp():
                 # Already compiled, along with every other module's, by
                 # the struct-body phase of compile().
+                return None
+            case typs.EnumTyp():
                 return None
             case ir_module.Mod():
                 # An import contributes no symbols of its own; the
@@ -713,6 +733,11 @@ class Compiler:
                 return ctx.ll_builder.icmp_unsigned(
                     "==", ctx.ll_values.get(instr.operand), null_ptr
                 )
+            case ir_values.EnumToIntInstr():
+                # A no-op: an enum's LLVM type already is its backing
+                # type's, so the operand's own compiled value already is
+                # the answer.
+                return asserts.checked_cast(ctx.ll_values.get(instr.operand), ll.Value)
             case ir_values.InsertValueInstr():
                 return ctx.ll_builder.insert_value(
                     ctx.ll_values.get(instr.aggregate),
@@ -751,6 +776,8 @@ class Compiler:
             case ir_values.VoidValue():
                 raise AssertionError("a void value should never need a runtime representation")
             case ir_values.ComptimeInt():
+                return ll.Constant(self._ll_mod_items.get(value.typ), value.value)
+            case ir_values.ComptimeEnum():
                 return ll.Constant(self._ll_mod_items.get(value.typ), value.value)
             case ir_values.ComptimeBool():
                 return ll.Constant(self._ll_mod_items.get(value.typ), 1 if value.value else 0)

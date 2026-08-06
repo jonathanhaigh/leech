@@ -138,6 +138,28 @@ class ComptimeInt(ComptimeValue[typs.IntTyp]):
         return self._typ
 
 
+class ComptimeEnum(ComptimeValue[typs.EnumTyp]):
+    """A compile-time-known enum value - one of its type's variants.
+
+    :param typ: The enum type.
+    :param value: The variant's discriminant value.
+    :param ast_node: The AST node this value was built from, if any.
+    """
+
+    _typ: Final[typs.EnumTyp]
+    value: Final[int]
+
+    @override
+    def __init__(self, typ: typs.EnumTyp, value: int, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(ast_node)
+        self._typ = typ
+        self.value = value
+
+    @override
+    def calculate_typ(self) -> typs.EnumTyp:
+        return self._typ
+
+
 class ComptimeBool(ComptimeValue[typs.BoolTyp]):
     """A compile-time-known boolean value.
 
@@ -907,6 +929,32 @@ class PtrCastInstr(Instr[typs.PtrTyp]):
         return self.target_typ
 
 
+class EnumToIntInstr(Instr[typs.IntTyp]):
+    """Reads an enum value as its backing integer type.
+
+    Backs the ``__enum_to_int`` compiler intrinsic (see
+    :class:`~leech.ir_builtins.EnumToIntBuiltinFn`). A no-op at codegen: an
+    enum's own LLVM type already *is* its backing type's.
+
+    :param bb: The basic block this instruction belongs to.
+    :param operand: The enum value to read; must already be
+        :class:`~leech.typs.EnumTyp`-typed.
+    :param ast_node: The AST node this instruction was built from, if any.
+    """
+
+    operand: Final[Value]
+
+    @override
+    def __init__(self, bb: BasicBlock, operand: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
+        asserts.checked_cast(operand.typ, typs.EnumTyp)
+        self.operand = operand
+
+    @override
+    def calculate_typ(self) -> typs.IntTyp:
+        return asserts.checked_cast(self.operand.typ, typs.EnumTyp).backing_typ
+
+
 class IsNullInstr(Instr[typs.BoolTyp]):
     """Tests whether a pointer is null.
 
@@ -1260,6 +1308,10 @@ class BasicBlock:
     def is_null(self, operand: Value, ast_node: Optional[ast.Ast]) -> IsNullInstr:
         """Append an :class:`IsNullInstr` to this block."""
         return self._add_instr(IsNullInstr(self, operand, ast_node))
+
+    def enum_to_int(self, operand: Value, ast_node: Optional[ast.Ast]) -> EnumToIntInstr:
+        """Append an :class:`EnumToIntInstr` to this block."""
+        return self._add_instr(EnumToIntInstr(self, operand, ast_node))
 
     def insert_value(
         self,

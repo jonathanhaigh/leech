@@ -74,6 +74,7 @@ class ModLoader:
     size_of_builtin: Final[ir_module.GenericBuiltinFn]
     ptr_cast_mut_builtin: Final[ir_module.GenericBuiltinFn]
     is_null_builtin: Final[ir_module.GenericBuiltinFn]
+    enum_to_int_builtin: Final[ir_module.GenericBuiltinFn]
 
     def __init__(self, extra_search_roots: Sequence[pathlib.Path] = ()) -> None:
         # Deferred to break an import cycle - see ir_builtins.py's own
@@ -84,13 +85,14 @@ class ModLoader:
         self.impl_registry = ir_traits.ImplRegistry()
         self._extra_search_roots = extra_search_roots
 
-        # Built before the prelude (below): Mod.__init__ binds these three
-        # into every module's builtin_env, the prelude module's own
-        # included, so they must already exist by the time it's loaded.
+        # Built before the prelude (below): Mod.__init__ binds these into
+        # every module's builtin_env, the prelude module's own included,
+        # so they must already exist by the time it's loaded.
         builtin_env = ir_env.Env(impl_registry=self.impl_registry)
         self.size_of_builtin = ir_builtins.SizeOfBuiltinFn(builtin_env)
         self.ptr_cast_mut_builtin = ir_builtins.PtrCastMutBuiltinFn(builtin_env)
         self.is_null_builtin = ir_builtins.IsNullBuiltinFn(builtin_env)
+        self.enum_to_int_builtin = ir_builtins.EnumToIntBuiltinFn(builtin_env)
 
         # Set to None first, so building the prelude module itself (below)
         # sees `self.prelude is None` and skips injecting the prelude into
@@ -142,7 +144,12 @@ class ModLoader:
         builtin has no :class:`~leech.ir_module.ModItem` of its own to be
         found through, unlike a real generic function.
         """
-        return (self.size_of_builtin, self.ptr_cast_mut_builtin, self.is_null_builtin)
+        return (
+            self.size_of_builtin,
+            self.ptr_cast_mut_builtin,
+            self.is_null_builtin,
+            self.enum_to_int_builtin,
+        )
 
     def resolve_import(
         self, importing_file: src.SrcFile, path: ast.Path

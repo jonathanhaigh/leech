@@ -896,6 +896,12 @@ class CfgBuilder:
         var = e.resolve_path(ir_env.Env.Namespace.VARS, var_ast.path)
         if isinstance(var, ir_module.FnSpec):
             return var
+        if isinstance(var, ir_values.ComptimeEnum):
+            # Not a place (see Env._resolve_path_segment's EnumTyp case)
+            # - in PLACE context, copy it into a temporary and address
+            # that, the same as any other non-place value (see
+            # _in_context/_value_to_ptr).
+            return self._in_context(var, ctx)
         if ctx == _ExprContext.PLACE:
             return var
 

@@ -924,7 +924,11 @@ class TypCheck:
             return self._generic_var_ref_typ(var_ast, var, e)
         if var_ast.generic_args:
             raise errors.TypArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
-        if isinstance(var, ir_module.FnSpec):
+        if isinstance(var, (ir_module.FnSpec, ir_values.ComptimeEnum)):
+            # Neither has a place to unwrap: a function reference's own
+            # type already is its pointer type, and an enum variant has
+            # no address at all - see `Env._resolve_path_segment`'s
+            # `EnumTyp` case.
             return var.typ
         return var.typ.pointee_typ
 
@@ -1128,7 +1132,12 @@ class TypCheck:
             var = e.resolve_path(ir_env.Env.Namespace.VARS, expr_ast.path)
             if isinstance(var, ir_module.GenericFn):
                 return self._generic_var_ref_typ(expr_ast, var, e)
-            return var.typ
+            # An enum variant (see Env._resolve_path_segment's EnumTyp
+            # case) isn't a place either - it falls through to the
+            # general, value-copying case below, same as any other
+            # non-place expression.
+            if not isinstance(var, ir_values.ComptimeEnum):
+                return var.typ
 
         value_typ = self._check_expr(expr_ast, e, None)
         return typs.PtrTyp.get_or_create(value_typ, self._place_mut(expr_ast, e))
@@ -1145,9 +1154,12 @@ class TypCheck:
                 # an earlier _check_expr/_check_place pass over the same
                 # node has already succeeded) GenericFn has no .typ of
                 # its own to check - but like any other function
-                # reference, its place is const regardless. Every other
-                # binding's .typ is a PtrTyp - see _check_place.
-                if isinstance(var, ir_module.GenericFn):
+                # reference, its place is const regardless. An enum
+                # variant isn't a place at all (see _check_place), so it
+                # falls into the same "temporary, always const" case.
+                # Every other binding's .typ is a PtrTyp - see
+                # _check_place.
+                if isinstance(var, (ir_module.GenericFn, ir_values.ComptimeEnum)):
                     return typs.CONST
                 return asserts.checked_cast(var.typ, typs.PtrTyp).mut
             case ast.ArrayAccessExpr():

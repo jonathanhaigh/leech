@@ -1111,6 +1111,164 @@ class StructTyp(Typ):
         return self.ast.span
 
 
+class EnumTyp(Typ):
+    """An enum type: a fixed, named set of integer discriminants backed by
+    an explicit or inferred integer type.
+
+    Unlike :class:`StructTyp`, never generic and never instantiated - one
+    ``enum`` declaration is always exactly one ``EnumTyp``.
+
+    :param enum_ast: The parsed enum declaration.
+    :param e: The enclosing scope, used to resolve the backing type.
+    :param mod_name: The name of the module this enum is declared in.
+    """
+
+    ast: Final[ast.EnumDefn]
+    mod_name: Final[str]
+    _env: Final[ir_env.Env]
+
+    def __init__(self, enum_ast: ast.EnumDefn, e: ir_env.Env, mod_name: str) -> None:
+        self.ast = enum_ast
+        self.mod_name = mod_name
+        self._env = e
+
+    @override
+    @classmethod
+    def cache_key(cls, *args: Hashable) -> Hashable:
+        asserts.assert_gt(len(args), 0)
+        return (cls, args[0])
+
+    @property
+    @override
+    def name(self) -> str:
+        return self.ast.ident.name
+
+    @functools.cached_property
+    def variants(self) -> types.MappingProxyType[str, int]:
+        """This enum's variants, keyed by name, in declaration order, each
+        mapped to its discriminant value - the previous variant's value
+        plus one, or an explicit ``= N`` override.
+
+        :raises DuplicateVariantInEnumDefnError: If two variants share a name.
+        """
+        result: dict[str, int] = {}
+        next_value = 0
+        for variant_ast in self.ast.variants:
+            if variant_ast.value is None:
+                value = next_value
+            elif variant_ast.negative:
+                value = -variant_ast.value.value
+            else:
+                value = variant_ast.value.value
+            name = variant_ast.ident.name
+            if name in result:
+                previous_span = next(v.span for v in self.ast.variants if v.ident.name == name)
+                raise errors.DuplicateVariantInEnumDefnError(name, variant_ast.span, previous_span)
+            result[name] = value
+            next_value = value + 1
+        return result.items().mapping
+
+    @functools.cached_property
+    def backing_typ(self) -> IntTyp:
+        """This enum's backing integer type: explicit, or the smallest
+        unsigned builtin integer type fitting every discriminant.
+
+        :raises EnumBackingTypNotIntError: If an explicit backing type is
+            given and isn't an integer type.
+        :raises EnumVariantValueTypMismatchError: If an explicit backing
+            type is given and a discriminant literal's own explicit type
+            suffix doesn't coerce to it.
+        :raises IntLitOverflowError: If an explicit backing type is given
+            and a discriminant doesn't fit it.
+        :raises EnumDiscriminantOverflowError: If no explicit backing type
+            is given and a discriminant doesn't fit any builtin integer type.
+        """
+        if self.ast.backing_typ is not None:
+            typ = Typ.from_ast(self.ast.backing_typ, self._env)
+            if not isinstance(typ, IntTyp):
+                raise errors.EnumBackingTypNotIntError(typ.name, self.ast.backing_typ.span)
+            for variant_ast, value in zip(self.ast.variants, self.variants.values(), strict=True):
+                literal = variant_ast.value
+                if literal is not None and literal.explicit_width is not None:
+                    assert literal.explicit_signage is not None
+                    literal_typ = IntTyp.get_or_create(
+                        literal.explicit_width, literal.explicit_signage
+                    )
+                    if not literal_typ.coerces_to(typ):
+                        raise errors.EnumVariantValueTypMismatchError(
+                            literal_typ.name, typ.name, variant_ast.span
+                        )
+                if not typ.fits(value):
+                    raise errors.IntLitOverflowError(value, typ.name, variant_ast.span)
+            return typ
+
+        values = self.variants.values()
+        min_value = min(values, default=0)
+        max_value = max(values, default=0)
+        inferred_signage = signage.SIGNED if min_value < 0 else signage.UNSIGNED
+        for width in (8, 16, 32, 64):
+            candidate = IntTyp.get_or_create(width, inferred_signage)
+            if candidate.fits(min_value) and candidate.fits(max_value):
+                return candidate
+
+        widest = IntTyp.get_or_create(64, inferred_signage)
+        overflowing_value = min_value if not widest.fits(min_value) else max_value
+        overflowing_span = next(
+            variant_ast.span
+            for variant_ast, value in zip(self.ast.variants, values, strict=True)
+            if value == overflowing_value
+        )
+        raise errors.EnumDiscriminantOverflowError(overflowing_value, overflowing_span)
+
+    @property
+    def span(self) -> src.SrcSpan:
+        """The source location of this enum's declaration."""
+        return self.ast.span
+
+
+class EnumBackingTyp(Typ):
+    """The backing integer type of whatever (possibly still opaque) type
+    ``inner`` becomes once substituted.
+
+    Exists only inside a generic builtin's own opaque self-describing
+    signature (see ``__enum_to_int``'s :class:`~leech.ir_builtins.EnumToIntBuiltinFn`,
+    whose return type can't be spelled as any concrete type until its own
+    type argument is known to be a concrete :class:`EnumTyp`) - substituting
+    a concrete enum type for ``inner`` collapses this straight to that
+    enum's real :attr:`EnumTyp.backing_typ`, so it never survives into a
+    fully-substituted, lowerable signature.
+
+    :param inner: The (possibly still a type parameter) type whose backing
+        type this stands for; must resolve to an :class:`EnumTyp` once
+        every type parameter within it is substituted away.
+    """
+
+    inner: Final[Typ]
+
+    def __init__(self, inner: Typ) -> None:
+        self.inner = inner
+
+    @property
+    @override
+    def name(self) -> str:
+        return f"<backing type of {self.inner.name}>"
+
+    @override
+    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+        substituted_inner = self.inner.substitute_typ_params(mapping)
+        if isinstance(substituted_inner, EnumTyp):
+            return substituted_inner.backing_typ
+        if substituted_inner.is_concrete():
+            raise AssertionError(
+                f"EnumBackingTyp's inner type must resolve to an enum, got {substituted_inner.name}"
+            )
+        return EnumBackingTyp.get_or_create(substituted_inner)
+
+    @override
+    def is_concrete(self) -> bool:
+        return self.inner.is_concrete()
+
+
 class VoidTyp(Typ):
     """The type of an expression that produces no value."""
 

@@ -366,6 +366,13 @@ class Interpreter:
                 # to observe an actual null pointer is via malloc, which is
                 # extern and already blocked at comptime above.
                 self._registers[instr] = ir_values.ComptimeBool(False, instr.ast)
+            case ir_values.EnumToIntInstr():
+                # Sound, unlike PtrCastInstr: this reads the same value
+                # under its backing type, not a different type's bytes.
+                operand = asserts.checked_cast(
+                    self._get_comptime_value(instr.operand), ir_values.ComptimeEnum
+                )
+                self._registers[instr] = ir_values.ComptimeInt(instr.typ, operand.value, instr.ast)
             case ir_values.UnreachableInstr():
                 raise AssertionError("Should never reach unreachable instruction")
             case _:

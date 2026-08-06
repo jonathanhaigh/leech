@@ -233,7 +233,7 @@ class Env:
             return "function", value.span
         if isinstance(value, ir_module.ModVar):
             return "variable", value.span
-        if isinstance(value, typs.StructTyp):
+        if isinstance(value, (typs.StructTyp, typs.EnumTyp)):
             return "type", value.span
         if isinstance(value, ir_traits.Trait):
             return "trait", value.span
@@ -242,7 +242,7 @@ class Env:
     @staticmethod
     def _resolve_path_segment(
         ns: Env.Namespace,
-        scope: Env | ir_module.Mod | typs.StructTyp,
+        scope: Env | ir_module.Mod | typs.StructTyp | typs.EnumTyp,
         ident: ast.Ident,
     ) -> Any:
         match scope:
@@ -274,6 +274,21 @@ class Env:
                     raise errors.PrivateItemAccessError(
                         "function", ident.name, ident.span, res.span
                     )
+            case typs.EnumTyp():
+                # An enum's variants are reachable by path, e.g.
+                # `SomeEnum::A`; there's nothing else to reach in the
+                # CONTAINERS namespace. A variant's visibility follows its
+                # enum's own - there's no separate per-variant access
+                # specifier - so no extra check is needed here. Unlike
+                # every other VARS-namespace binding, this isn't a place
+                # (a variant has no address) - it's a bare value, handled
+                # as one the same way a `FnSpec` reference is (see
+                # `TypCheck._check_var_expr`/`CfgBuilder._build_var_expr`).
+                res = (
+                    ir_values.ComptimeEnum(scope, scope.variants[ident.name], None)
+                    if ns == Env.Namespace.VARS and ident.name in scope.variants
+                    else None
+                )
 
         if res is None:
             raise errors.ItemNotFoundError(ns.item_kind(), ident.name, ident.span)

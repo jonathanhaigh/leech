@@ -926,6 +926,59 @@ class DuplicateFieldInStructDefnError(UserError):
             )
 
 
+class DuplicateVariantInEnumDefnError(UserError):
+    """Raised when an enum declaration defines the same variant name twice."""
+
+    def __init__(
+        self,
+        variant_name: str,
+        duplicate_span: Optional[src.SrcSpan],
+        previous_span: Optional[src.SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Duplicate variant "{variant_name}" in enum definition',
+            duplicate_span,
+        )
+        if previous_span is not None:
+            self._add_extra(
+                NOTE,
+                f'Variant "{variant_name}" previously given here',
+                previous_span,
+            )
+
+
+class EnumBackingTypNotIntError(UserError):
+    """Raised when an enum's explicit backing type isn't an integer type."""
+
+    def __init__(self, typ_name: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(ERROR, f'Enum backing type "{typ_name}" is not an integer type', span)
+
+
+class EnumVariantValueTypMismatchError(UserError):
+    """Raised when a variant's explicitly-suffixed discriminant literal
+    doesn't match its enum's explicit backing type."""
+
+    def __init__(self, value_typ: str, backing_typ: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'Enum variant value has type "{value_typ}", but the enum\'s backing '
+            f'type is "{backing_typ}"',
+            span,
+        )
+
+
+class EnumDiscriminantOverflowError(UserError):
+    """Raised when an enum has no explicit backing type and one of its
+    discriminants doesn't fit any builtin integer type, so no backing type
+    can be inferred."""
+
+    def __init__(self, value: int, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR, f"Enum discriminant {value} does not fit in any built-in integer type", span
+        )
+
+
 class InfiniteSizeStructError(UserError):
     """Raised when a struct contains itself by value - directly, through
     other structs, or through arrays of any length (including zero: LLVM

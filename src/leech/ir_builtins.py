@@ -87,6 +87,28 @@ class IsNullBuiltinFn(ir_module.GenericBuiltinFn):
         builder._curr_bb.ret(result, None)
 
 
+class EnumToIntBuiltinFn(ir_module.GenericBuiltinFn):
+    """``__enum_to_int[E](v: E) <E's backing type>``."""
+
+    def __init__(self, e: ir_env.Env) -> None:
+        super().__init__("__enum_to_int", ("E",), e)
+
+    @override
+    def fn_typ_for_typ_args(self, typ_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
+        (e_typ,) = typ_params
+        return typs.FnTyp.get_or_create(typs.EnumBackingTyp.get_or_create(e_typ), (e_typ,))
+
+    @override
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
+    ) -> None:
+        del e, typ_args
+        assert builder._fn is not None
+        param = builder._fn.params[0]
+        result = builder._curr_bb.enum_to_int(param, None)
+        builder._curr_bb.ret(result, None)
+
+
 def register(builtin_env: ir_env.Env, loader: ir_loader.ModLoader) -> None:
     """Bind every ambient name - the built-in types and the compiler-
     intrinsic builtins - into ``builtin_env``.
@@ -104,3 +126,4 @@ def register(builtin_env: ir_env.Env, loader: ir_loader.ModLoader) -> None:
     builtin_env.add_var("__size_of", ir_module.GenericFn(loader.size_of_builtin))
     builtin_env.add_var("__ptr_cast_mut", ir_module.GenericFn(loader.ptr_cast_mut_builtin))
     builtin_env.add_var("__is_null", ir_module.GenericFn(loader.is_null_builtin))
+    builtin_env.add_var("__enum_to_int", ir_module.GenericFn(loader.enum_to_int_builtin))
