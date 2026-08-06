@@ -429,7 +429,7 @@ def lookup_member(
     name: str,
     registry: ImplRegistry,
     span: Optional[src.SrcSpan],
-) -> Optional[ir_module.Fn]:
+) -> Optional[ir_module.Fn | ir_module.FnInstance]:
     """Find ``typ``'s member (inherent or via a trait impl) called ``name``.
 
     The generalisation :attr:`~leech.typs.StructTyp.get_assoc_fn` used to be

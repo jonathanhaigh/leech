@@ -265,6 +265,114 @@ def test_generic_impl_block_body_typechecks(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_generic_impl_block_method_callable_through_concrete_instantiation(tmp_path):
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn get(*self) T { self.*.val }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 42 };
+        return b.get();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
+def test_generic_impl_block_method_mutates_and_reads_through_typ_param(tmp_path):
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn set(*mut self, v: T) { self.*.val = v; }
+        fn get(*self) T { self.*.val }
+    }
+    pub fn main() i32 {
+        let mut b = Box[i32] { val: 1 };
+        b.set(9);
+        return b.get();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 9)
+
+
+def test_generic_impl_block_method_called_through_distinct_instantiations(tmp_path):
+    # Box[i32] and Box[bool] each monomorphize their own `get`.
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn get(*self) T { self.*.val }
+    }
+    pub fn main() i32 {
+        let a = Box[i32] { val: 3 };
+        let b = Box[bool] { val: true };
+        let x = a.get();
+        if (b.get()) { return x - 3; };
+        return 99;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_impl_block_method_instances_get_distinct_mangled_symbols(tmp_path):
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn get(*self) T { self.*.val }
+    }
+    pub fn main() i32 {
+        let a = Box[i32] { val: 1 };
+        let b = Box[bool] { val: true };
+        let x = a.get();
+        let y = b.get();
+        return 0;
+    }
+    """
+    (llir_path,) = util.compile_modules(tmp_path, main=src)
+    ir_text = llir_path.read_text()
+    assert '@"main::Box[i32]::get"' in ir_text
+    assert '@"main::Box[bool]::get"' in ir_text
+
+
+def test_generic_impl_block_method_calls_free_generic_function(tmp_path):
+    # A generic-impl method's own body can request a free generic function
+    # instance the compiled module's own bodies never directly request -
+    # discovery must find that instance too, not just ones reachable from
+    # main() directly.
+    src = """
+    fn id[T](v: T) T { return v; }
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn get(*self) T { id(self.*.val) }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 42 };
+        return b.get();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
+def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
+    # A generic-impl method's body can call a sibling method from the same
+    # impl block by bare name, not just via `self.method()` - the sibling
+    # is bound in the impl's own scope (see
+    # StructTyp.add_assoc_fn). That bare reference must resolve to the
+    # sibling's own instance for the same concrete receiver, not the
+    # still-generic original.
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn helper(*self) T { self.*.val }
+        fn get(*self) T { helper(self) }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 42 };
+        return b.get();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
 def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(tmp_path):
     src = """
     struct Box[T] { mut val: T }

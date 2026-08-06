@@ -356,7 +356,9 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
     """
 
     @functools.cached_property
-    def _instance_cache(self) -> dict[tuple[typs.Typ, ...], FnInstance]:
+    def _instance_cache(
+        self,
+    ) -> dict[tuple[Optional[typs.StructTyp], tuple[typs.Typ, ...]], FnInstance]:
         return {}
 
     @property
@@ -373,10 +375,33 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
 
         See :meth:`FnTemplate.instance`.
         """
-        inst = self._instance_cache.get(typ_args)
+        return self._get_instance(None, typ_args)
+
+    def impl_instance(
+        self, self_typ: typs.StructTyp, typ_args: tuple[typs.Typ, ...] = ()
+    ) -> FnInstance:
+        """Get this method's instantiation for ``self_typ``, building it if
+        needed. Only for a method declared in a generic inherent ``impl``
+        block.
+
+        :param self_typ: The concrete struct instantiation to substitute
+            for the enclosing ``impl`` block's own type parameters.
+        :param typ_args: The concrete type to substitute for each of this
+            method's own type parameters, if it's separately generic.
+
+        :pre: self.recv_typ is not None [assert]
+        """
+        assert self.recv_typ is not None
+        return self._get_instance(self_typ, typ_args)
+
+    def _get_instance(
+        self, self_typ: Optional[typs.StructTyp], typ_args: tuple[typs.Typ, ...]
+    ) -> FnInstance:
+        key = (self_typ, typ_args)
+        inst = self._instance_cache.get(key)
         if inst is None:
-            inst = FnInstance(self, typ_args)
-            self._instance_cache[typ_args] = inst
+            inst = FnInstance(self, self_typ, typ_args)
+            self._instance_cache[key] = inst
         return inst
 
     @functools.cached_property
@@ -441,6 +466,105 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         return Access.from_ast(self.ast.access) == PUBLIC or self.ast.span.file.path == file.path
 
 
+class FnInstance(FnSpec[ast.FnDefn]):
+    """One concrete, monomorphized instantiation of a generic function or
+    method's already-checked body.
+
+    :param fn: The generic function or method this is an instantiation of.
+    :param self_typ: The concrete receiver type to infer the enclosing
+        ``impl`` block's own type parameters from - only for a method
+        declared in a generic inherent ``impl`` block; ``None`` otherwise.
+    :param typ_args: The concrete type to substitute for each of ``fn``'s
+        own type parameters, in declaration order.
+    """
+
+    _fn: Final[FnTemplate]
+    _self_typ: Final[Optional[typs.StructTyp]]
+    _typ_args: Final[tuple[typs.Typ, ...]]
+    _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
+
+    def __init__(
+        self,
+        fn: FnTemplate,
+        self_typ: Optional[typs.StructTyp],
+        typ_args: tuple[typs.Typ, ...],
+    ) -> None:
+        super().__init__(fn.ast)
+        self._fn = fn
+        self._self_typ = self_typ
+        self._typ_args = typ_args
+        mapping: dict[typs.TypParamTyp, typs.Typ] = dict(zip(fn.typ_params, typ_args, strict=True))
+        if self_typ is not None:
+            recv_typ = asserts.checked_cast(fn, Fn).recv_typ
+            assert isinstance(recv_typ, typs.StructTyp)
+            recv_typ.infer_typ_args(self_typ, mapping)
+        self._mapping = mapping
+
+    @override
+    def calculate_typ(self) -> typs.PtrTyp:
+        substituted = asserts.checked_cast(
+            self._fn.fn_typ.substitute_typ_params(self._mapping), typs.FnTyp
+        )
+        return typs.PtrTyp.get_or_create(substituted, typs.CONST)
+
+    @override
+    def calculate_params(self) -> tuple[ir_values.Param, ...]:
+        return tuple(ir_values.Param(self, param.pos, param.ast) for param in self._fn.params)
+
+    @property
+    @override
+    def name(self) -> str:
+        arg_names = ", ".join(typ_arg.name for typ_arg in self._typ_args)
+        return f"{self._fn.name}[{arg_names}]" if arg_names else self._fn.name
+
+    @property
+    def qualified_name(self) -> str:
+        """This instance's mangled symbol name, e.g. ``mod::id[i32]``,
+        ``main::Box[i32]::get``, or ``__size_of[i32]`` (no module prefix)
+        for a builtin."""
+        if self._self_typ is not None:
+            return f"{self._self_typ.qualified_name}::{self.name}"
+        prefix = self._fn._qualified_name_prefix
+        return f"{prefix}::{self.name}" if prefix else self.name
+
+    def is_accessible_from(self, file: src.SrcFile) -> bool:
+        return asserts.checked_cast(self._fn, Fn).is_accessible_from(file)
+
+    @functools.cached_property
+    def env(self) -> ir_env.Env:
+        """The scope to lower this instance's body in, with each type
+        parameter shadowed by its concrete substitution.
+
+        For a method instance, also shadows each of its impl block's
+        sibling associated functions with their own instance for
+        :attr:`_self_typ`, so a bare-name call from one to another (see
+        :meth:`~leech.typs.StructTyp.add_assoc_fn`) resolves to a
+        monomorphized, compilable callee instead of the still-generic
+        original.
+        """
+        e = self._fn.env.new_child()
+        for typ_param, typ_arg in self._mapping.items():
+            e.add_container(typ_param.name, typ_arg)
+        if self._self_typ is not None:
+            recv_typ = asserts.checked_cast(self._fn, Fn).recv_typ
+            assert isinstance(recv_typ, typs.StructTyp)
+            for sibling in recv_typ.assoc_fns:
+                e.add_var(sibling.name, sibling.impl_instance(self._self_typ))
+        return e
+
+    @functools.cached_property
+    def cfg(self) -> ir_values.Cfg:
+        """This instance's body, lowered to a control-flow graph. Built
+        lazily, on first access."""
+        builder = ir_builder.CfgBuilder(self._fn.typ_check_results, self, self._mapping)
+        self._fn._build_body(builder, self.env, self._typ_args)
+        return builder.cfg
+
+    @override
+    def body_cfg(self) -> Optional[ir_values.Cfg]:
+        return self.cfg
+
+
 class GenericBuiltinFn(FnSpec[ast.FnDefn]):
     """Base class for a compiler-intrinsic generic function with no
     Leech-source body - one concrete Python subclass per intrinsic (see
@@ -503,7 +627,7 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn]):
         """
         inst = self._instance_cache.get(typ_args)
         if inst is None:
-            inst = FnInstance(self, typ_args)
+            inst = FnInstance(self, None, typ_args)
             self._instance_cache[typ_args] = inst
         return inst
 
@@ -571,106 +695,6 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn]):
     ) -> None:
         """Emit this builtin's body directly into ``builder`` (ending in a
         ``ret``), given this instantiation's concrete type arguments."""
-
-
-class FnInstance(FnSpec[ast.FnDefn]):
-    """One concrete instantiation of a generic function's body, for one
-    fixed sequence of type arguments.
-
-    Built (and cached) by :meth:`FnTemplate.instance`. A generic function's
-    own :attr:`~leech.ir_values.Value.typ` and :attr:`FnSpec.params` are
-    only ever used to type-check (or, for a :class:`GenericBuiltinFn`,
-    describe) its body against its own type parameters, treated opaquely;
-    they aren't real types anything should be lowered or called against.
-    This is: its :attr:`~leech.ir_values.Value.typ` and
-    :attr:`FnSpec.params` are ``fn``'s own, with every type parameter
-    replaced by its entry in ``typ_args``, and it has its own :attr:`cfg`,
-    lowered once per distinct instantiation rather than once for the
-    generic declaration.
-
-    :param fn: The generic function this is an instantiation of.
-    :param typ_args: The concrete type to substitute for each of ``fn``'s
-        own type parameters, in declaration order.
-    """
-
-    _fn: Final[FnTemplate]
-    _typ_args: Final[tuple[typs.Typ, ...]]
-    _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
-
-    def __init__(self, fn: FnTemplate, typ_args: tuple[typs.Typ, ...]) -> None:
-        super().__init__(fn.ast)
-        self._fn = fn
-        self._typ_args = typ_args
-        self._mapping = dict(zip(fn.typ_params, typ_args, strict=True))
-
-    @override
-    def calculate_typ(self) -> typs.PtrTyp:
-        substituted = asserts.checked_cast(
-            self._fn.fn_typ.substitute_typ_params(self._mapping), typs.FnTyp
-        )
-        return typs.PtrTyp.get_or_create(substituted, typs.CONST)
-
-    @override
-    def calculate_params(self) -> tuple[ir_values.Param, ...]:
-        return tuple(ir_values.Param(self, param.pos, param.ast) for param in self._fn.params)
-
-    @property
-    @override
-    def name(self) -> str:
-        arg_names = ", ".join(typ_arg.name for typ_arg in self._typ_args)
-        return f"{self._fn.name}[{arg_names}]"
-
-    @property
-    def qualified_name(self) -> str:
-        """This instance's mangled symbol name, e.g. ``mod::id[i32]`` for a
-        real generic function, or ``__size_of[i32]`` (no module prefix -
-        see :attr:`FnTemplate._qualified_name_prefix`) for a
-        :class:`GenericBuiltinFn`.
-
-        Extends :attr:`ModItem.qualified_name`'s module-prefixed scheme -
-        an instance is never itself a :class:`ModItem` (nothing declares
-        one directly; it's built on demand by
-        :meth:`FnTemplate.instance`), so it computes the same form
-        independently.
-        """
-        prefix = self._fn._qualified_name_prefix
-        if prefix:
-            return f"{prefix}::{self.name}"
-        return self.name
-
-    @functools.cached_property
-    def env(self) -> ir_env.Env:
-        """The scope to lower this instance's body in.
-
-        The own scope of the generic function this instantiates, with
-        each type parameter shadowed here by its concrete type argument -
-        so anything resolved fresh from source while lowering (a
-        ``let``'s declared type, a struct literal's, ...) picks up the
-        concrete type automatically, without the lowering code needing to
-        know it's inside an instantiation.
-        """
-        e = self._fn.env.new_child()
-        for typ_param, typ_arg in zip(self._fn.typ_params, self._typ_args, strict=True):
-            e.add_container(typ_param.name, typ_arg)
-        return e
-
-    @functools.cached_property
-    def cfg(self) -> ir_values.Cfg:
-        """This instance's body, lowered to a control-flow graph.
-
-        Built lazily, on first access, from the unsubstituted type-check
-        results of the generic function this instantiates - a generic
-        body is checked once, not once per instantiation (see
-        :meth:`Mod.build`) - read back here against this instance's
-        concrete type arguments.
-        """
-        builder = ir_builder.CfgBuilder(self._fn.typ_check_results, self, self._mapping)
-        self._fn._build_body(builder, self.env, self._typ_args)
-        return builder.cfg
-
-    @override
-    def body_cfg(self) -> Optional[ir_values.Cfg]:
-        return self.cfg
 
 
 class GenericFn:
@@ -832,6 +856,7 @@ class Mod:
     _items: Final[dict[tuple[ir_env.Env.Namespace, str], ModItem]]
     env: Final[ir_env.Env]
     loader: Final[ir_loader.ModLoader]
+    _generic_fns: tuple[Fn, ...]
 
     def __init__(self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader) -> None:
         # Deferred to break an import cycle: ir_builtins.py's builtin
@@ -848,6 +873,7 @@ class Mod:
         self._items = {}
         self.env = builtin_env.new_child()
         self.loader = loader
+        self._generic_fns = ()
 
         ir_builtins.register(builtin_env, loader)
 
@@ -865,7 +891,8 @@ class Mod:
                     builtin_env.add(item._ns, item.name, item.value)
 
     def build(self) -> None:
-        """Populate :attr:`items` from this module's parsed definitions.
+        """Populate :attr:`items` and :attr:`generic_fns` from this module's
+        parsed definitions.
 
         Called once, by the loader, immediately after construction.
         ``impl`` blocks are built last so the structs they attach to are
@@ -907,6 +934,8 @@ class Mod:
         for fn in generic_fns:
             _ = fn.typ_check_results
 
+        self._generic_fns = tuple(generic_fns)
+
     @property
     def name(self) -> str:
         """This module's name, used to qualify its items' symbol names."""
@@ -916,6 +945,15 @@ class Mod:
     def items(self) -> Collection[ModItem]:
         """Every item this module declares, in declaration order."""
         return self._items.values()
+
+    @property
+    def generic_fns(self) -> Collection[Fn]:
+        """Every generic function or method this module declares, checked
+        eagerly against its own type parameters left opaque - a free
+        generic function, or one declared inside a generic ``impl`` block
+        (:attr:`Fn.recv_typ` non-``None``). A generic method here is never
+        itself a :class:`ModItem`, unlike :attr:`items`."""
+        return self._generic_fns
 
     def get_item(self, ns: ir_env.Env.Namespace, name: str) -> Optional[ModItem]:
         """Find the item this module declares as ``name`` in ``ns``.
@@ -989,19 +1027,9 @@ class Mod:
 
         :param impl_ast: The parsed ``impl`` block.
         :param generic_fns: Accumulates every associated function or
-            method defined in a *generic* ``impl`` block
-            (``impl_ast.generic_params`` non-empty), so :meth:`build` can
-            force it to type-check eagerly, the same as a free generic
-            function - see its docstring. Such a function is otherwise
-            unreachable: it's registered as one of its (generic) receiver
-            type's members, never as a :class:`ModItem`, since the
-            receiver - built from the impl's own, still-opaque type
-            parameters - names no real, lowerable type for codegen to
-            make sense of (see :meth:`~leech.typs.StructTyp.is_concrete`).
-            Calling such a method isn't supported yet: that needs a
-            monomorphization mechanism for impl-level (as opposed to
-            function-level) type parameters, which
-            :meth:`~leech.ir_module.Fn.instance` doesn't provide.
+            method defined in a *generic* ``impl`` block, so :meth:`build`
+            can force it to type-check eagerly, the same as a free generic
+            function.
         """
         # The impl's own type parameters, if any, are bound here - before
         # either the inherent or trait branch resolves its target type(s)

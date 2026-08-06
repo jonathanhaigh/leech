@@ -6,7 +6,7 @@
 
 import collections
 import dataclasses
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Final, Optional
 
 import networkx as nx
@@ -191,6 +191,11 @@ class Compiler:
         the same on-demand way as a generic function instance, and for
         the same reason: nothing else names them until something asks
         for one.
+
+        A method declared inside a generic inherent ``impl`` block is
+        discovered and declared the same on-demand way too (see
+        :meth:`_discover_fn_instances`), just keyed by concrete receiver
+        type rather than by explicit type arguments.
         """
         self.ll_mod.triple = "x86_64-linux-gnu"
 
@@ -255,6 +260,28 @@ class Compiler:
                 if mod is self._mod or item.access == ir_module.PUBLIC:
                     yield item
 
+    def _fixpoint[T](
+        self, newly_requested: Callable[[], list[T]], resolve: Callable[[T], None]
+    ) -> list[T]:
+        """Repeatedly call ``newly_requested``, resolving each result, until
+        a sweep turns up nothing new.
+
+        :param newly_requested: Returns every not-yet-seen item found
+            since the last call, or ``[]`` once a sweep turns up nothing
+            new.
+        :param resolve: Called once per newly found item, to force
+            whatever laziness of its own might request further items.
+        :return: Every item discovered, in discovery order.
+        """
+        instances: list[T] = []
+        pending = newly_requested()
+        while pending:
+            instances.extend(pending)
+            for inst in pending:
+                resolve(inst)
+            pending = newly_requested()
+        return instances
+
     def _fn_templates(self) -> Iterator[ir_module.FnTemplate]:
         """Every generic function or compiler-intrinsic builtin in the
         program, whose :attr:`~leech.ir_module.FnTemplate.instances` might
@@ -265,19 +292,33 @@ class Compiler:
                     yield item.value.fn
         yield from self._mod.loader.builtins
 
+    def _generic_impl_method_fns(self) -> Iterator[ir_module.Fn]:
+        """Every method declared inside a generic inherent ``impl`` block in
+        the program, whose instances might need discovering (see
+        :meth:`_discover_fn_instances`). Never a :class:`~leech.ir_module.ModItem`,
+        so found via :attr:`~leech.ir_module.Mod.generic_fns` instead of
+        :meth:`_fn_templates`."""
+        for mod in self._mod.loader.mods:
+            for fn in mod.generic_fns:
+                if fn.recv_typ is not None:
+                    yield fn
+
     def _discover_fn_instances(self) -> list[ir_module.FnInstance]:
-        """Find every generic function instance a call anywhere in the
-        program could request.
+        """Find every generic function or generic-impl method instance a
+        call anywhere in the program could request.
 
         An instance is created only as a side effect of lowering (see
         :attr:`~leech.ir_module.Fn.cfg`) a body that calls one - and
-        lowering one instance's own body can request further instances of
-        the same or another generic function (a nested or recursive
-        generic call). So this forces every one of :attr:`_mod`'s own
-        functions to be lowered first, seeding the search, then keeps
-        lowering whatever instances that turns up - regardless of which
-        module's generic function they instantiate - until a full sweep
-        turns up nothing new.
+        lowering one instance's own body can request further instances,
+        of either kind (a free generic function's body can call a
+        generic-impl method, and vice versa). So this forces every one of
+        :attr:`_mod`'s own functions to be lowered first, seeding the
+        search, then keeps lowering whatever instances that turns up -
+        from both :meth:`_fn_templates` and :meth:`_generic_impl_method_fns`
+        together, in one shared fixpoint - until a full sweep turns up
+        nothing new. Discovering the two kinds in separate fixpoints would
+        miss whatever the second one's own lowering requests of the
+        first's kind, once the first has already finished.
 
         This is pure IR-building, with no LLVM involved: an instance's
         own :attr:`~leech.ir_module.Fn.cfg` is looked up (and, on first
@@ -294,30 +335,25 @@ class Compiler:
 
         :return: Every instance discovered, in discovery order.
         """
-        instances: list[ir_module.FnInstance] = []
         seen: set[ir_module.FnInstance] = set()
 
         def newly_requested() -> list[ir_module.FnInstance]:
             new = []
-            for template in self._fn_templates():
+            for template in (*self._fn_templates(), *self._generic_impl_method_fns()):
                 for inst in template.instances:
                     if inst not in seen:
                         seen.add(inst)
                         new.append(inst)
             return new
 
+        def lower(inst: ir_module.FnInstance) -> None:
+            _ = inst.cfg
+
         for item in self._mod.items:
             if isinstance(item.value, (ir_module.Fn, ir_module.ModVar)):
                 _ = item.value.cfg
 
-        pending = newly_requested()
-        while pending:
-            instances.extend(pending)
-            for inst in pending:
-                _ = inst.cfg
-            pending = newly_requested()
-
-        return instances
+        return self._fixpoint(newly_requested, lower)
 
     def _discover_struct_instances(self) -> list[typs.StructTyp]:
         """Find every generic struct instantiation reachable from the program.
@@ -345,7 +381,6 @@ class Compiler:
 
         :return: Every instantiation discovered, in discovery order.
         """
-        instances: list[typs.StructTyp] = []
         seen: set[typs.StructTyp] = set()
 
         def newly_requested() -> list[typs.StructTyp]:
@@ -359,14 +394,10 @@ class Compiler:
                                 new.append(inst)
             return new
 
-        pending = newly_requested()
-        while pending:
-            instances.extend(pending)
-            for inst in pending:
-                _ = inst.fields
-            pending = newly_requested()
+        def resolve_fields(inst: typs.StructTyp) -> None:
+            _ = inst.fields
 
-        return instances
+        return self._fixpoint(newly_requested, resolve_fields)
 
     def _declare_struct_instance(self, inst: typs.StructTyp) -> None:
         ll_typ = self.ll_mod.context.get_identified_type(inst.qualified_name)

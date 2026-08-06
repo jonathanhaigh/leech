@@ -980,7 +980,7 @@ class StructTyp(Typ):
         self._add_member(fn)
         self.env.add_var(fn.name, fn)
 
-    def get_assoc_fn(self, name: str) -> Optional[ir_module.Fn]:
+    def get_assoc_fn(self, name: str) -> Optional[ir_module.Fn | ir_module.FnInstance]:
         """Find this struct's associated function called ``name``.
 
         A field of that name is deliberately *not* a match: fields are
@@ -992,7 +992,47 @@ class StructTyp(Typ):
             no member of that name, or its member of that name is a field.
         """
         member = self._members.get(name)
-        return member if isinstance(member, ir_module.Fn) else None
+        if isinstance(member, ir_module.Fn):
+            return member
+        if not self._typ_args:
+            return None
+        generic = self._find_generic_assoc_fn(name)
+        return None if generic is None else generic.impl_instance(self)
+
+    @functools.cached_property
+    def _generic_assoc_fn_cache(self) -> dict[str, Optional[ir_module.Fn]]:
+        return {}
+
+    def _find_generic_assoc_fn(self, name: str) -> Optional[ir_module.Fn]:
+        if name not in self._generic_assoc_fn_cache:
+            self._generic_assoc_fn_cache[name] = self._scan_generic_assoc_fn(name)
+        return self._generic_assoc_fn_cache[name]
+
+    def _scan_generic_assoc_fn(self, name: str) -> Optional[ir_module.Fn]:
+        # A generic inherent `impl` block's methods are registered onto
+        # the (non-concrete) instantiation its own type parameters
+        # produced, not this one - scan the template's other
+        # instantiations for one whose members include `name` and whose
+        # receiver type structurally matches `self`.
+        template = StructTyp.get(self.ast, self._decl_env)
+        found: Optional[ir_module.Fn] = None
+        for candidate in template.instances:
+            if candidate.is_concrete():
+                continue
+            member = candidate._members.get(name)
+            if not isinstance(member, ir_module.Fn):
+                continue
+            bindings: dict[TypParamTyp, Typ] = {}
+            candidate.infer_typ_args(self, bindings)
+            if candidate.substitute_typ_params(bindings) is not self:
+                continue
+            # Two conflicting generic `impl` blocks aren't rejected
+            # elsewhere - fail loudly rather than pick one arbitrarily.
+            assert found is None, (
+                f"more than one applicable generic impl provides {self.name}::{name}"
+            )
+            found = member
+        return found
 
     @functools.cached_property
     def fields(self) -> types.MappingProxyType[str, StructField]:
@@ -1016,6 +1056,12 @@ class StructTyp(Typ):
             if isinstance(member, StructField)
         }
         return fields.items().mapping
+
+    @property
+    def assoc_fns(self) -> Collection[ir_module.Fn]:
+        """This struct's own associated functions, i.e. the ``Fn``-typed
+        members among :attr:`_members`."""
+        return tuple(m for m in self._members.values() if isinstance(m, ir_module.Fn))
 
     def _check_finite_size(
         self,
