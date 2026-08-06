@@ -422,6 +422,7 @@ class TypCheck:
             method = ir_traits.lookup_member(
                 pointee_typ, callee_ast.field.name, e.impl_registry, callee_ast.field.span
             )
+            self.results.resolutions.set_callee(call_ast, method)
             if method is not None:
                 if not method.is_accessible_from(callee_ast.span.file):
                     raise errors.PrivateItemAccessError(

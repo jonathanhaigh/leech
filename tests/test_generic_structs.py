@@ -373,6 +373,28 @@ def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
+def test_generic_impl_block_sibling_method_calls_by_dot_call(tmp_path):
+    # A generic-impl method's body can call a sibling method through
+    # `self.*.method()` too (leech has no automatic dereferencing, so the
+    # explicit deref is required, same as `self.*.val` for a field) -
+    # resolved through lookup_member against the impl block's own abstract
+    # receiver type, the same underlying Fn a bare reference finds (see
+    # StructTyp.get_assoc_fn), so it needs the same per-instantiation
+    # substitution.
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn helper(*self) T { self.*.val }
+        fn get(*self) T { self.*.helper() }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 42 };
+        return b.get();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
 def test_generic_impl_block_sibling_method_calls_across_instantiations(tmp_path):
     # Each concrete instantiation must get its own sibling-resolution
     # mapping - a leak would make one instantiation's bare `helper` call

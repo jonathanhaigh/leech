@@ -389,12 +389,25 @@ class CfgBuilder:
             callee: ir_values.Value = self._resolve_fn_instance(*generic_call)
         elif isinstance(callee_ast, ast.FieldAccessExpr):
             recv_place = self._build_place(callee_ast.value, e)
-            method = ir_traits.lookup_member(
-                recv_place.typ.pointee_typ,
-                callee_ast.field.name,
-                e.impl_registry,
-                callee_ast.field.span,
-            )
+            cached = self._typ_check_results.resolutions.callee(call_ast)
+            if cached is resolve.CalleeResolution.UNRESOLVED:
+                # TypCheck never resolved this against a concrete receiver
+                # (trait-bound dispatch, still generic there) - do it now,
+                # against this build's own concrete receiver type.
+                method = ir_traits.lookup_member(
+                    recv_place.typ.pointee_typ,
+                    callee_ast.field.name,
+                    e.impl_registry,
+                    callee_ast.field.span,
+                )
+            elif cached is resolve.CalleeResolution.FIELD_ACCESS:
+                method = None
+            elif isinstance(cached, ir_module.Fn):
+                # TypCheck resolved this against the impl block's own
+                # abstract receiver - map it to this build's instance.
+                method = self._resolve_sibling(cached)
+            else:
+                method = cached
 
             if method is not None:
                 recv_arg = recv_place
