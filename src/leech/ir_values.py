@@ -15,27 +15,12 @@ import networkx as nx
 from leech import asserts, ast, errors, opt_util, src, typs
 
 if TYPE_CHECKING:
-    # `ir_module.FnSpec` (used only in a type annotation below, in `Param`) would
-    # otherwise be a real circular import: `ir_module.FnSpec` is defined as a
-    # subclass of `ComptimePtr` from this module, so `ir_module` needs this
-    # module to have fully executed before it can even be defined. Since the
-    # reverse reference here is annotation-only, guarding it behind
-    # TYPE_CHECKING avoids the runtime import entirely while keeping the
-    # annotation available to the type checker.
+    # Importing ir_module at runtime would cycle through its ComptimePtr base.
     from leech import ir_module
 
 
 def _gep_typ(base_typ: typs.PtrTyp, index: Value) -> typs.PtrTyp:
-    """Compute the pointer type produced by indexing into ``base_typ``.
-
-    :param base_typ: The pointer type being indexed into (pointing to an
-        array or struct type).
-    :param index: The index value; must be a :class:`ComptimeInt` if
-        ``base_typ`` points to a struct.
-    :return: A pointer to the indexed array element type or struct field
-        type, with the pointer's mutability tightened to const if the
-        indexed struct field is const.
-    """
+    """Return an indexed element pointer, tightening const field mutability."""
     mut = base_typ.mut
     typ = base_typ.pointee_typ
     match typ:
@@ -58,12 +43,7 @@ def _gep_typ(base_typ: typs.PtrTyp, index: Value) -> typs.PtrTyp:
 
 
 class Value[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](abc.ABC):
-    """Base class for anything that has a type and a source location: IR
-    values, instructions, and function parameters.
-
-    :param ast_node: The AST node this value was built from, if any (builtin
-        values may have none).
-    """
+    """Base class for typed IR values with an optional source node."""
 
     ast: Final[Optional[AstT_co]]
 
@@ -72,17 +52,17 @@ class Value[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](abc.ABC):
 
     @functools.cached_property
     def typ(self) -> TypT_co:
-        """This value's type, computed once (via :meth:`calculate_typ`) and cached."""
+        """This value's lazily computed type."""
         return self.calculate_typ()
 
     @property
     def span(self) -> Optional[src.SrcSpan]:
-        """The source location of :attr:`ast`, if it has one."""
+        """The source location of this value's AST node, if present."""
         return opt_util.opt_map(self.ast, lambda x: x.span)
 
     @abc.abstractmethod
     def calculate_typ(self) -> TypT_co:
-        """Compute this value's type; backs the cached :attr:`typ` property."""
+        """Compute this value's type."""
 
 
 class ComptimeValue[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](
@@ -91,34 +71,13 @@ class ComptimeValue[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](
     """Base class for values whose contents are known at compile time."""
 
     def copy(self) -> Self:
-        """Return an independent copy of this value.
-
-        Only meaningfully overridden by mutable aggregates
-        (:class:`ComptimeArray`, :class:`ComptimeStruct`); other
-        subclasses are immutable and return ``self`` unchanged.
-        """
+        """Return an independent copy, or ``self`` for immutable values."""
         # Most ComptimeValues are immutable so real copying is not required
         return self
 
 
 class ComptimeInt(ComptimeValue[typs.IntTyp]):
-    """A compile-time-known integer value.
-
-    Callers that construct a ``ComptimeInt`` from a value that isn't
-    already known to fit ``typ`` are responsible for making it fit first:
-    a source-level integer literal is validated and rejected outright
-    (:class:`~leech.errors.IntLitOverflowError`,
-    :meth:`~leech.typs.IntTyp.fits` doing the check), while the result of
-    a compile-time arithmetic operation is wrapped into range instead (see
-    :func:`~leech.comptime._wrap`) - overflow there isn't an error in its
-    own right, only ever reported (uniformly with every other
-    compiler-synthesized runtime check) via whichever ``panic`` call, if
-    any, follows in the same CFG. This constructor only asserts that
-    ``value`` fits, as a last-resort invariant check.
-
-    :param typ: The integer type.
-    :param value: The integer value.
-    :param ast_node: The AST node this value was built from, if any.
+    """A compile-time-known integer already canonicalized into its type's range.
 
     :pre: typ.fits(value) [assert]
     """
@@ -161,11 +120,7 @@ class ComptimeEnum(ComptimeValue[typs.EnumTyp]):
 
 
 class ComptimeBool(ComptimeValue[typs.BoolTyp]):
-    """A compile-time-known boolean value.
-
-    :param value: The boolean value.
-    :param ast_node: The AST node this value was built from, if any.
-    """
+    """A compile-time-known boolean value."""
 
     value: Final[bool]
 
@@ -179,11 +134,7 @@ class ComptimeBool(ComptimeValue[typs.BoolTyp]):
 
 
 class ComptimeCStr(ComptimeValue[typs.PtrTyp]):
-    """A compile-time-known, nul-terminated C string constant.
-
-    :param value: The string's contents (excluding the nul terminator).
-    :param ast_node: The AST node this value was built from, if any.
-    """
+    """A compile-time-known, nul-terminated C string constant."""
 
     value: Final[bytearray]
     initializer_typ: Final[typs.ArrayTyp]
@@ -209,30 +160,18 @@ class ComptimeAggregate[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast
 
     @abc.abstractmethod
     def get_element(self, index: int) -> ComptimeValue:
-        """Get the element at ``index`` (an array index or struct field index).
-
-        :param index: The zero-based element index.
-        :return: The element's value.
-        """
+        """Return the element at an array or struct index."""
 
     @abc.abstractmethod
     def set_element(self, value: ComptimeValue, index: int) -> None:
-        """Set the element at ``index`` (an array index or struct field index).
-
-        :param value: The value to set the element to.
-        :param index: The zero-based element index.
-        """
+        """Set the element at an array or struct index."""
 
     def values(self) -> Sequence[ComptimeValue]:
         """All of this aggregate's elements, in index order."""
         return [self.get_element(i) for i in range(len(self))]
 
     def _check_index(self, index: int) -> None:
-        """Assert that ``index`` is in bounds for this aggregate.
-
-        :param index: The zero-based element index to check.
-        :raises AssertionError: If ``index`` is out of bounds.
-        """
+        """Assert that ``index`` is in bounds."""
         asserts.assert_ge(index, 0)
         asserts.assert_lt(index, len(self))
 
@@ -1212,101 +1151,79 @@ class BasicBlock:
         return instr
 
     def add(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> AddInstr:
-        """Append an :class:`AddInstr` to this block."""
         return self._add_instr(AddInstr(self, lhs, rhs, ast_node))
 
     def sub(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> SubInstr:
-        """Append a :class:`SubInstr` to this block."""
         return self._add_instr(SubInstr(self, lhs, rhs, ast_node))
 
     def mul(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> MulInstr:
-        """Append a :class:`MulInstr` to this block."""
         return self._add_instr(MulInstr(self, lhs, rhs, ast_node))
 
     def checked_add(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> CheckedAddInstr:
-        """Append a :class:`CheckedAddInstr` to this block."""
         return self._add_instr(CheckedAddInstr(self, lhs, rhs, ast_node))
 
     def checked_sub(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> CheckedSubInstr:
-        """Append a :class:`CheckedSubInstr` to this block."""
         return self._add_instr(CheckedSubInstr(self, lhs, rhs, ast_node))
 
     def checked_mul(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> CheckedMulInstr:
-        """Append a :class:`CheckedMulInstr` to this block."""
         return self._add_instr(CheckedMulInstr(self, lhs, rhs, ast_node))
 
     def sdiv(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> SdivInstr:
-        """Append a :class:`SdivInstr` to this block."""
         return self._add_instr(SdivInstr(self, lhs, rhs, ast_node))
 
     def udiv(self, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]) -> UdivInstr:
-        """Append a :class:`UdivInstr` to this block."""
         return self._add_instr(UdivInstr(self, lhs, rhs, ast_node))
 
     def neg(self, operand: Value, ast_node: Optional[ast.Ast]) -> NegInstr:
-        """Append a :class:`NegInstr` to this block."""
         return self._add_instr(NegInstr(self, operand, ast_node))
 
     def not_(self, operand: Value, ast_node: Optional[ast.Ast]) -> NotInstr:
-        """Append a :class:`NotInstr` to this block."""
         return self._add_instr(NotInstr(self, operand, ast_node))
 
     def icmp_signed(
         self, op: str, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
     ) -> IcmpSignedInstr:
-        """Append an :class:`IcmpSignedInstr` to this block."""
         return self._add_instr(IcmpSignedInstr(self, op, lhs, rhs, ast_node))
 
     def icmp_unsigned(
         self, op: str, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
     ) -> IcmpUnsignedInstr:
-        """Append an :class:`IcmpUnsignedInstr` to this block."""
         return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast_node))
 
     def overflow_flag(
         self, checked_op: CheckedBinOpInstr, ast_node: Optional[ast.Ast]
     ) -> OverflowFlagInstr:
-        """Append an :class:`OverflowFlagInstr` to this block."""
         return self._add_instr(OverflowFlagInstr(self, checked_op, ast_node))
 
     def phi(self, incoming: dict[BasicBlock, Value], ast_node: Optional[ast.Ast]) -> PhiInstr:
-        """Append a :class:`PhiInstr` to this block."""
         return self._add_instr(PhiInstr(self, incoming, ast_node))
 
     def load(self, src_ptr: Value, ast_node: Optional[ast.Ast]) -> LoadInstr:
-        """Append a :class:`LoadInstr` to this block."""
         return self._add_instr(LoadInstr(self, src_ptr, ast_node))
 
     def int_ext(self, value: Value, typ: typs.IntTyp, ast_node: Optional[ast.Ast]) -> IntExtInstr:
-        """Append an :class:`IntExtInstr` to this block."""
         return self._add_instr(IntExtInstr(self, value, typ, ast_node))
 
     def alloca(
         self, typ: typs.Typ, mut: typs.Mutability, count: int, ast_node: Optional[ast.Ast]
     ) -> AllocaInstr:
-        """Append an :class:`AllocaInstr` to this block."""
         return self._add_instr(AllocaInstr(self, typ, mut, count, ast_node))
 
     def store(self, value: Value, dest: Value, ast_node: Optional[ast.Ast]) -> StoreInstr:
-        """Append a :class:`StoreInstr` to this block."""
         return self._add_instr(StoreInstr(self, value, dest, ast_node))
 
     def gep(self, base: Value, index: Value, ast_node: Optional[ast.Ast]) -> GepInstr:
-        """Append a :class:`GepInstr` to this block."""
         return self._add_instr(GepInstr(self, base, index, ast_node))
 
     def size_of(self, sized_typ: typs.Typ, ast_node: Optional[ast.Ast]) -> SizeOfInstr:
-        """Append a :class:`SizeOfInstr` to this block."""
         return self._add_instr(SizeOfInstr(self, sized_typ, ast_node))
 
     def ptr_cast(
         self, operand: Value, target_typ: typs.PtrTyp, ast_node: Optional[ast.Ast]
     ) -> PtrCastInstr:
-        """Append a :class:`PtrCastInstr` to this block."""
         return self._add_instr(PtrCastInstr(self, operand, target_typ, ast_node))
 
     def is_null(self, operand: Value, ast_node: Optional[ast.Ast]) -> IsNullInstr:
-        """Append an :class:`IsNullInstr` to this block."""
         return self._add_instr(IsNullInstr(self, operand, ast_node))
 
     def enum_to_int(self, operand: Value, ast_node: Optional[ast.Ast]) -> EnumToIntInstr:
@@ -1320,17 +1237,14 @@ class BasicBlock:
         indeces: tuple[ComptimeInt, ...],
         ast_node: Optional[ast.Ast],
     ) -> InsertValueInstr:
-        """Append an :class:`InsertValueInstr` to this block."""
         return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast_node))
 
     def call(
         self, callee: Value, args: tuple[Value, ...], ast_node: Optional[ast.CallExpr]
     ) -> CallInstr:
-        """Append a :class:`CallInstr` to this block."""
         return self._add_instr(CallInstr(self, callee, args, ast_node))
 
     def branch(self, target: BasicBlock, ast_node: Optional[ast.Ast]) -> BranchInstr:
-        """Append a terminating :class:`BranchInstr` to this block."""
         return self._add_instr(BranchInstr(self, target, ast_node), terminate=True)
 
     def cbranch(
@@ -1340,18 +1254,15 @@ class BasicBlock:
         false_target: BasicBlock,
         ast_node: Optional[ast.Ast],
     ) -> CbranchInstr:
-        """Append a terminating :class:`CbranchInstr` to this block."""
         return self._add_instr(
             CbranchInstr(self, condition, true_target, false_target, ast_node),
             terminate=True,
         )
 
     def ret(self, value: Value, ast_node: Optional[ast.Ast]) -> RetInstr:
-        """Append a terminating :class:`RetInstr` to this block."""
         return self._add_instr(RetInstr(self, value, ast_node), terminate=True)
 
     def unreachable(self, ast_node: Optional[ast.Ast]) -> UnreachableInstr:
-        """Append a terminating :class:`UnreachableInstr` to this block."""
         return self._add_instr(UnreachableInstr(self, ast_node), terminate=True)
 
 

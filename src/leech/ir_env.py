@@ -21,51 +21,19 @@ from leech import (
 )
 
 type Container = typs.Typ | ir_module.Mod | ir_traits.Trait
-"""Anything bindable in the :attr:`Env.Namespace.CONTAINERS` namespace.
-
-A type, an imported module, or a trait. None of the three can share a
-name with another: a module isn't a type but shares this namespace with
-one so a module and a type can't collide, and a trait shares it too (see
-:meth:`Env.resolve_typ`) so that ``dyn Trait`` remains addable later
-without a namespace change. All three can hold associated items, which is
-what the namespace's name refers to.
-"""
+"""A type, module, or trait bound in the shared container namespace."""
 
 type Var = ir_values.Value[typs.PtrTyp] | ir_module.GenericFn
-"""Anything bindable in the :attr:`Env.Namespace.VARS` namespace.
-
-A value, or a :class:`~leech.ir_module.GenericFn` standing in for one
-until it's applied to type arguments (see that class's docstring).
+"""A value or unapplied generic function bound in the variable namespace.
 
 :invariant: every bound Value is PtrTyp-typed [unchecked: hot path]
 """
 
 
 class Env:
-    """A lexical scope mapping names to variables, types and modules.
+    """A chained lexical scope with separate variable and container namespaces.
 
-    Scopes are chained: a child scope (see :meth:`new_child`) sees its own
-    bindings plus everything visible in its ancestors, and shadows
-    ancestor bindings of the same name. Names are looked up in separate
-    namespaces (see :class:`Namespace`), so a variable and a type may
-    share a name without conflict - but a type and a module may not,
-    since those share one namespace.
-
-    :param parent: The enclosing scope, or ``None`` to create a fresh,
-        top-level scope.
-    :param impl_registry: The program-wide trait impl registry (see
-        :class:`~leech.ir_traits.ImplRegistry`) to expose as
-        :attr:`impl_registry`. Only meaningful (and only ever passed) at a
-        top-level scope - a child inherits its parent's, always. Defaults
-        to a fresh, empty registry so tests and other isolated callers
-        that construct a bare top-level ``Env`` don't have to know traits
-        exist; real compilation always passes the loader's own (see
-        :meth:`~leech.ir_module.Mod.__init__`).
-    :param panic_fn: The program's real ``panic`` function (the bundled
-        prelude's own, never whatever a module's own same-named
-        definition shadows it with locally) to expose as
-        :attr:`panic_fn`. Only meaningful (and only ever passed) at a
-        top-level scope, same as ``impl_registry``.
+    Child scopes inherit the program-wide impl registry and intrinsic panic function.
     """
 
     class Namespace(enum.Enum):
@@ -83,28 +51,11 @@ class Env:
                     return "type or module"
 
     items: Final[collections.ChainMap[tuple[Env.Namespace, str], Container | Var]]
-    #: Where a name was bound, for bindings whose item can't point at its
-    #: own definition site (see :meth:`add`'s ``span`` parameter). Scoped
-    #: to this Env alone, mirroring ``items.maps[0]``.
+    #: Explicit binding spans in this scope, parallel to ``items.maps[0]``.
     _spans: Final[dict[tuple[Env.Namespace, str], src.SrcSpan]]
-    #: The program-wide trait impl registry - reachable from any scope, so
-    #: that type and method resolution (which thread an ``Env`` through
-    #: pervasively already) don't need it passed as a second, parallel
-    #: parameter everywhere. See :class:`~leech.ir_traits.ImplRegistry`.
+    #: Program-wide trait implementations shared by every scope.
     impl_registry: Final[ir_traits.ImplRegistry]
-    #: The program's real ``panic`` function, reachable from any scope for
-    #: the same reason ``impl_registry`` is - used to build compiler-
-    #: synthesized runtime checks (array bounds, integer overflow,
-    #: division by zero; see
-    #: :meth:`~leech.ir_builder.CfgBuilder._panic_if`) and to recognize
-    #: them again during compile-time evaluation (see
-    #: :class:`~leech.comptime.Interpreter`). Always the bundled prelude's
-    #: own ``panic`` - deliberately *not* looked up by name through the
-    #: ordinary scope chain, so a module defining its own same-named
-    #: ``panic`` can't suppress or redirect these checks. ``None`` only
-    #: while the prelude module itself is being built (see
-    #: :attr:`~leech.ir_loader.ModLoader.prelude`) - nothing needs it
-    #: before then.
+    #: The prelude's unshadowable panic function; absent only while building the prelude.
     panic_fn: Final[Optional[ir_module.FnSpec]]
 
     def __init__(
@@ -124,22 +75,11 @@ class Env:
         self._spans = {}
 
     def new_child(self) -> Env:
-        """Create a new scope nested inside this one.
-
-        :return: A fresh scope that inherits this scope's bindings.
-        """
+        """Create a child scope inheriting this scope's bindings."""
         return Env(self)
 
     def get(self, ns: Env.Namespace, name: str) -> Any:
-        """Look up ``name`` in ``ns``, searching outward through parent scopes.
-
-        Integer type names (e.g. ``i32``, ``u8``) are recognized and
-        created on demand when looked up in the container namespace.
-
-        :param ns: The namespace to search in.
-        :param name: The name to look up.
-        :return: The bound item, or ``None`` if ``name`` is not bound.
-        """
+        """Look up ``name`` outward through ``ns``, creating integer types on demand."""
         key = (ns, name)
         try:
             return self.items[key]
@@ -161,20 +101,7 @@ class Env:
         item: Any,
         span: Optional[src.SrcSpan] = None,
     ) -> None:
-        """Bind ``name`` to ``item`` in ``ns``, in this scope only.
-
-        :param ns: The namespace to bind in.
-        :param name: The name to bind.
-        :param item: The item to bind ``name`` to.
-        :param span: Where the binding is written, for the duplicate
-            diagnostic. Defaults to the span of ``item``'s own AST node,
-            which is the right answer for everything except an ``import``
-            (whose item is a whole :class:`~leech.ir_module.Mod`, whose AST
-            node covers the entire imported file rather than the
-            ``import`` statement).
-        :raises DuplicateItemDefnError: If ``name`` is already bound in
-            ``ns`` in this scope.
-        """
+        """Bind ``name`` in this scope, using ``span`` for duplicate diagnostics."""
         key = (ns, name)
         if key in self.items.maps[0]:
             existing = self.items[key]
@@ -192,41 +119,18 @@ class Env:
         var: Var,
         span: Optional[src.SrcSpan] = None,
     ) -> None:
-        """Bind a variable name in this scope.
-
-        :param name: The name to bind.
-        :param var: The variable to bind ``name`` to.
-        :param span: Where the binding is written; see :meth:`add`.
-        :raises DuplicateItemDefnError: If ``name`` is already bound to a
-            variable in this scope.
-        """
+        """Bind a variable in this scope."""
         return self.add(Env.Namespace.VARS, name, var, span)
 
     def add_container(self, name: str, item: Container, span: Optional[src.SrcSpan] = None) -> None:
-        """Bind a type or module name in this scope.
-
-        :param name: The name to bind.
-        :param item: The type or module to bind ``name`` to.
-        :param span: Where the binding is written; see :meth:`add`.
-        :raises DuplicateItemDefnError: If ``name`` is already bound to a
-            type or module in this scope.
-        """
+        """Bind a type, module, or trait in this scope."""
         return self.add(Env.Namespace.CONTAINERS, name, item, span)
 
     @staticmethod
     def _private_item_diag_info(
         value: Container | Var,
     ) -> Optional[tuple[str, Optional[src.SrcSpan]]]:
-        """A human-readable kind and definition span for a private-item
-        diagnostic, if one applies.
-
-        :param value: The module item being accessed.
-        :return: A ``(kind, defn_span)`` pair, where ``kind`` is
-            ``"function"``, ``"variable"``, or ``"type"``; or ``None`` if
-            ``value`` has no user-facing privacy concept to report (e.g. an
-            imported module, which can't be marked ``pub`` at all) - in
-            that case callers should fall back to treating it as not found.
-        """
+        """Return a private item's diagnostic kind and definition span, if applicable."""
         if isinstance(value, ir_module.FnSpec):
             return "function", value.span
         if isinstance(value, ir_module.GenericFn):
@@ -296,25 +200,7 @@ class Env:
         return res
 
     def resolve_typ(self, path: ast.Path) -> typs.Typ:
-        """Resolve a (possibly qualified) path to a type.
-
-        Only the path's *final* segment has to name a type: earlier
-        segments are resolved by :meth:`resolve_path`, which is what lets
-        a module qualify a path (``some_mod::SomeStruct``) even though a
-        module isn't a type.
-
-        :param path: The path to resolve, e.g. ``some_mod::SomeStruct``.
-        :return: The type the path refers to.
-        :raises ItemNotFoundError: If any segment of the path cannot be
-            resolved.
-        :raises PrivateItemAccessError: If the path resolves to a private
-            type, accessed from outside the module it's defined in.
-        :raises ModUsedAsTypError: If the path resolves to a module, which
-            shares a namespace with types but isn't one.
-        :raises TraitUsedAsTypError: If the path resolves to a trait,
-            which shares a namespace with types but isn't one - only a
-            bound on one, or an ``impl ... for ...`` target.
-        """
+        """Resolve a qualified path whose final segment must be a type."""
         item = self.resolve_path(Env.Namespace.CONTAINERS, path)
         if isinstance(item, ir_module.Mod):
             raise errors.ModUsedAsTypError(item.name, path.idents[-1].span)
@@ -323,22 +209,7 @@ class Env:
         return asserts.checked_cast(item, typs.Typ)
 
     def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:
-        """Resolve a (possibly qualified) path to an item in ``ns``.
-
-        All but the last segment of ``path`` are resolved in the container
-        namespace (module or struct names), giving the scope the final
-        segment is looked up in.
-
-        :param ns: The namespace the final path segment is looked up in.
-        :param path: The path to resolve.
-        :return: The item the path refers to.
-        :raises ItemNotFoundError: If any segment of the path cannot be
-            resolved.
-        :raises PrivateItemAccessError: If any segment of the path resolves
-            to a private function, variable, or type, accessed from outside
-            the module it (or, for an associated function, its struct) is
-            defined in.
-        """
+        """Resolve container path segments, then look up the final segment in ``ns``."""
         asserts.assert_ge(len(path.idents), 1)
 
         scope = self

@@ -24,13 +24,7 @@ class Mutability(enum.Enum):
 
     @staticmethod
     def from_ast(mut_ast: Optional[ast.Mutability]) -> Mutability:
-        """Determine mutability from an optional ``mut`` keyword in the AST.
-
-        :param mut_ast: The parsed ``mut`` keyword node, or ``None`` if
-            absent.
-        :return: :data:`MUT` if ``mut_ast`` is present, otherwise
-            :data:`CONST`.
-        """
+        """Return mutable for a parsed ``mut`` keyword and const otherwise."""
         if mut_ast is None:
             return CONST
         asserts.assert_eq(mut_ast.value, "mut")
@@ -47,29 +41,8 @@ def check_typ_arg_bounds(
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
 ) -> None:
-    """Raise if any of ``typ_args`` doesn't implement a bound its parameter declares.
-
-    Shared by every generic instantiation site - a struct's and a generic
-    function call's - so a bound means the same thing, and is enforced
-    the same way, everywhere one can be declared.
-
-    :param typ_params: The generic item's own declared type parameters, in
-        declaration order.
-    :param typ_args: The concrete type given for each of ``typ_params``, in
-        the same order.
-    :param e: The scope to resolve each bound name in.
-    :param span: Where to point a diagnostic at.
-    :raises BoundNotATraitError: If one of a parameter's declared bounds
-        doesn't name a trait.
-    :raises UnsatisfiedBoundError: If a type argument doesn't implement
-        one of its parameter's declared bounds.
-    """
-    # Real circular import: `ir_traits` imports this module at its own
-    # top level, so importing it back at this module's top level would
-    # try to bind the name before `ir_traits` - still mid-initialization
-    # at that point - exists to bind. A local import here, only ever run
-    # once every module has finished loading (this runs during
-    # typechecking, not import), sidesteps that entirely.
+    """Raise if a type argument violates its corresponding parameter's bounds."""
+    # This must be local because ir_traits imports this module.
     from leech import ir_traits  # noqa: PLC0415
 
     for typ_param, typ_arg in zip(typ_params, typ_args, strict=True):
@@ -82,13 +55,7 @@ def check_typ_arg_bounds(
 
 
 class Typ(abc.ABC):
-    """Base class for all Leech types.
-
-    Structural types (e.g. :class:`PtrTyp`, :class:`ArrayTyp`) are
-    interned: two calls to :meth:`get_or_create` with equal arguments
-    return the *same* object, so types can be compared and hashed by
-    identity. The cache holds only weak references, so a type is
-    collected once nothing else references it.
+    """Base class for weakly interned Leech types, which compare by identity.
 
     :invariant: get_or_create(*a) is get_or_create(*a) [assert_not_in @ create]
     """
@@ -97,15 +64,7 @@ class Typ(abc.ABC):
 
     @classmethod
     def create(cls, *args: Hashable) -> Self:
-        """Construct and cache a new instance, keyed by ``args``.
-
-        :param args: The arguments to construct the instance with; also
-            used, together with ``cls``, as the cache key (see
-            :meth:`cache_key`).
-        :return: The newly-created instance.
-        :raises AssertionError: If an instance with this cache key already
-            exists.
-        """
+        """Construct and cache a new instance, asserting that its key is unused."""
         key = cls.cache_key(*args)
         asserts.assert_not_in(key, Typ._cache)
         obj = cls(*args)
@@ -114,25 +73,12 @@ class Typ(abc.ABC):
 
     @classmethod
     def get(cls, *args: Hashable) -> Self:
-        """Look up a previously-cached instance, keyed by ``args``.
-
-        :param args: The arguments the instance was created with; also
-            used, together with ``cls``, as the cache key (see
-            :meth:`cache_key`).
-        :return: The cached instance.
-        :raises KeyError: If no matching instance has been cached.
-        """
+        """Return the instance cached under ``args``."""
         return asserts.checked_cast(Typ._cache[cls.cache_key(*args)], cls)
 
     @classmethod
     def get_or_create(cls, *args: Hashable) -> Self:
-        """Look up a cached instance keyed by ``args``, creating it if absent.
-
-        :param args: The arguments to construct the instance with if it
-            doesn't already exist; also used, together with ``cls``, as
-            the cache key (see :meth:`cache_key`).
-        :return: The cached or newly-created instance.
-        """
+        """Return the instance cached under ``args``, creating it when absent."""
         key = cls.cache_key(*args)
         obj = Typ._cache.get(key)
         if obj is None:
@@ -142,104 +88,36 @@ class Typ(abc.ABC):
 
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
-        """Compute the cache key for an instance constructed with ``args``.
-
-        Subclasses with constructor arguments that don't uniquely and
-        hashably identify the instance (e.g. :class:`StructTyp`) override
-        this.
-
-        :param args: The arguments the instance was, or would be,
-            constructed with.
-        :return: The cache key.
-        """
+        """Return the cache key for an instance constructed with ``args``."""
         return (cls, *args)
 
     def coerces_to(self, target_typ: Typ) -> bool:
-        """Whether a value of this type may be implicitly converted to ``target_typ``.
+        """Return whether this type implicitly converts to ``target_typ``.
 
-        Coercion is only ever applied where the target type is
-        unambiguous - a call argument, an assignment, a ``return``, a
-        struct literal field - never to unify the operands of an
-        operator.
-
-        This base implementation allows only the identity coercion;
-        subclasses widen it.
-
-        :param target_typ: The type being coerced to.
-        :return: Whether the coercion is allowed.
+        The base implementation permits only identity; subclasses may widen it.
         """
         return self == target_typ
 
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
-        """Replace every type parameter within this type with its mapped type.
+        """Replace mapped type parameters while preserving canonical interning.
 
-        Rebuilds through the same interning constructors (``get_or_create``)
-        that ordinary type construction uses, so the result is always the
-        canonical interned instance for its shape - never a fresh,
-        non-interned lookalike.
-
-        This base implementation has no type parameter to replace and
-        nothing to recurse into, so it returns ``self`` unchanged - the
-        right answer for every type that can't be built from a type
-        parameter (including a struct type - structs aren't generic yet).
-        :class:`TypParamTyp` itself, and the types that wrap another type
-        (:class:`PtrTyp`, :class:`ArrayTyp`, :class:`FnTyp`), override it.
-
-        :param mapping: The concrete type to substitute for each type
-            parameter that may appear in this type.
-        :return: This type with every type parameter present in
-            ``mapping`` replaced by its mapped type.
+        The base implementation returns ``self`` because it contains no parameters.
         """
         return self
 
     def infer_typ_args(  # noqa: B027 - intentionally empty default, not abstract
         self, actual: Typ, bindings: dict[TypParamTyp, Typ]
     ) -> None:
-        """Bind each type parameter within this type from its counterpart in ``actual``.
+        """Infer parameter bindings structurally from ``actual``.
 
-        The structural counterpart of :meth:`substitute_typ_params`: walks
-        this (declared) type and ``actual`` (an argument's already-checked
-        type) in parallel, recording the concrete type standing opposite
-        each type parameter found. Purely structural, with no unification
-        - a shape mismatch (``actual`` isn't the matching composite shape)
-        is silently skipped rather than raising, and the first binding for
-        a given type parameter wins over a later, conflicting one. Neither
-        omission is a problem: ordinary argument type-checking, against
-        the signature these bindings are used to substitute, is what
-        actually has to accept or reject the call - this only has to
-        gather enough bindings to build that signature in the first
-        place.
-
-        This base implementation has no type parameter and nothing to
-        recurse into, so it's a no-op - the right answer for every type
-        that can't be built from one. :class:`TypParamTyp` itself, and the
-        types that wrap another type (:class:`PtrTyp`, :class:`ArrayTyp`,
-        :class:`FnTyp`), override it.
-
-        :param actual: The already-checked type occupying this type's
-            position.
-        :param bindings: The accumulated type-parameter-to-concrete-type
-            map to add to.
+        Shape mismatches are ignored and the first binding wins. The base implementation
+        is a no-op because it contains no parameters.
         """
 
     def is_concrete(self) -> bool:
-        """Whether this type names no type parameter, anywhere within it.
+        """Return whether this type contains no type parameters.
 
-        A generic struct's own fields, and a generic function's own
-        signature, are checked once against their type parameters left
-        opaque - so a type built while checking either of those can still
-        contain a :class:`TypParamTyp`, and isn't a real, lowerable type
-        until :meth:`substitute_typ_params` replaces every one. This is
-        how codegen tells such a type apart from one that already has
-        been.
-
-        This base implementation has no type parameter to contain, so it's
-        unconditionally ``True`` - the right answer for every type that
-        can't be built from one. :class:`TypParamTyp` itself, and the
-        types that wrap another type (:class:`PtrTyp`, :class:`ArrayTyp`,
-        :class:`FnTyp`, :class:`StructTyp`), override it.
-
-        :return: Whether this type is fully concrete.
+        The base implementation is unconditionally true.
         """
         return True
 
@@ -250,20 +128,7 @@ class Typ(abc.ABC):
 
     @staticmethod
     def from_ast(typ_ast: ast.Typ, e: ir_env.Env) -> Typ:
-        """Resolve a parsed type expression to a :class:`Typ`.
-
-        :param typ_ast: The parsed type expression.
-        :param e: The scope to resolve named types in.
-        :return: The resolved type.
-        :raises ItemNotFoundError: If ``typ_ast`` names a type that cannot
-            be resolved in ``e``.
-        :raises MissingTypArgsError: If ``typ_ast`` bare-names a generic
-            struct.
-        :raises WrongNumberOfTypArgsError: If ``typ_ast`` applies a generic
-            struct to the wrong number of type arguments.
-        :raises TypArgsOnNonGenericItemError: If ``typ_ast`` applies type
-            arguments to a type that isn't generic.
-        """
+        """Resolve a parsed type expression in ``e``."""
         match typ_ast:
             case ast.BasicTyp():
                 return Typ._basic_typ_from_ast(typ_ast, e)
@@ -281,26 +146,7 @@ class Typ(abc.ABC):
 
     @staticmethod
     def _basic_typ_from_ast(typ_ast: ast.BasicTyp, e: ir_env.Env) -> Typ:
-        """Resolve a (possibly generic) named type, applying its type arguments if any.
-
-        A plain named type (``i32``, ``T``, a non-generic struct) resolves
-        the same way whether or not this ever runs into a generic struct;
-        the interesting case is a generic struct's declaration name, which
-        :meth:`~ir_env.Env.resolve_typ` alone can only resolve to the
-        struct's *template* :class:`StructTyp` (see its class docstring) -
-        that has to be applied to ``typ_ast``'s type arguments to become a
-        real, usable type. That's distinct from ``typ_ast`` instead naming
-        an already-applied instantiation indirectly - e.g. a type
-        parameter ``T`` currently bound to ``Box[i32]`` - which resolves
-        straight through unchanged, the same as any other plain named
-        type: only the bare template itself, reached by name, still needs
-        type arguments applied.
-
-        :param typ_ast: The parsed named-type expression.
-        :param e: The scope to resolve ``typ_ast``'s path, and its type
-            arguments, in.
-        :return: The resolved type.
-        """
+        """Resolve a named type, applying arguments only to a bare generic template."""
         item = e.resolve_typ(typ_ast.path)
         if not isinstance(item, StructTyp) or not item.ast.generic_params or item._typ_args:
             if typ_ast.generic_args:
@@ -493,21 +339,12 @@ class PtrTyp(Typ):
         return self.pointee_typ.is_concrete()
 
     def _new_with_mut(self, mut: Mutability) -> PtrTyp:
-        """Return the pointer type with the same pointee but different mutability.
-
-        :param mut: The mutability of the returned pointer type.
-        :return: A (possibly cached, possibly newly-created) pointer type
-            with this type's :attr:`pointee_typ` and the given ``mut``.
-        """
+        """Return the interned pointer with this pointee and ``mut``."""
         return PtrTyp.get_or_create(self.pointee_typ, mut)
 
 
 class ArrayTyp(Typ):
-    """A fixed-length array type, e.g. ``[i32; 4]``.
-
-    :param element_typ: The type of each element.
-    :param length: The number of elements.
-    """
+    """A fixed-length array type, e.g. ``[i32; 4]``."""
 
     element_typ: Final[Typ]
     length: Final[int]
@@ -536,38 +373,9 @@ class ArrayTyp(Typ):
 
 
 class TypParamTyp(Typ):
-    """A generic item's type parameter, e.g. the ``T`` in ``fn id[T](x: T) T``.
+    """An opaque generic type parameter interned by its owner and position.
 
-    Interned by the declaring item together with the parameter's position
-    in its parameter list (:meth:`cache_key`), not by name: two parameters
-    called ``T`` on two different generic items - or two parameters of the
-    same item - are never the same type, preserving the identity-equality
-    invariant every other :class:`Typ` relies on.
-
-    Stands for an as-yet-unknown type: it has no LLVM representation of
-    its own, since a generic body is never lowered directly (see
-    :meth:`substitute_typ_params` and :meth:`~leech.ir_module.Fn.instance`)
-    - codegen asserts it never has to translate one.
-
-    Deliberately holds no reference to a parsed ``ast.GenericParam`` (or
-    any other AST node): the only two things a type parameter needs -
-    given its identity is already fully determined by ``owner``/``index``
-    (see :meth:`cache_key`) - are its display name and its declared trait
-    bounds, both plain data. A compiler-intrinsic builtin's own type
-    parameter (see :class:`~leech.ir_module.GenericBuiltinFn`) has no
-    parsed declaration to point at, so passing a name string directly
-    (rather than synthesizing a fake parse-tree node just to read the same
-    string back out of it) is both simpler and the only case that needs
-    handling specially.
-
-    :param owner: Any hashable value identifying the declaring generic
-        item - together with ``index``, this is the type's whole identity
-        (:meth:`cache_key`); never read for any other purpose.
-    :param index: The parameter's position in the declaring item's type
-        parameter list.
-    :param name: The type parameter's name, e.g. ``"T"``.
-    :param bounds: The trait bounds this parameter declares, if any -
-        empty for an unbounded parameter (always empty for a builtin's).
+    It has no LLVM representation and stores only its display name and trait bounds.
     """
 
     _owner: Final[Hashable]
@@ -586,12 +394,7 @@ class TypParamTyp(Typ):
     @override
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key type parameters by their declaring item and position alone.
-
-        :param args: The arguments passed to :meth:`~Typ.create` or
-            :meth:`~Typ.get_or_create`; ``args[0]`` must be the owning
-            item and ``args[1]`` the parameter's index.
-        :return: The cache key.
+        """Key type parameters by their declaring item and position.
 
         :pre: len(args) > 1 [assert_gt]
         """
@@ -619,15 +422,7 @@ class TypParamTyp(Typ):
 def typ_params_from_ast(
     owner: Hashable, generic_params: Sequence[ast.GenericParam]
 ) -> tuple[TypParamTyp, ...]:
-    """Turn a generic item's parsed type parameters into interned :class:`TypParamTyp`\\ s.
-
-    :param owner: The declaring item, identifying these type parameters'
-        cache key (see :meth:`TypParamTyp.cache_key`).
-    :param generic_params: The parsed type parameter declarations, in
-        declaration order.
-    :return: One interned :class:`TypParamTyp` per element of
-        ``generic_params``, in the same order.
-    """
+    """Intern parsed type parameters under ``owner``, preserving declaration order."""
     return tuple(
         TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds)
         for index, param_ast in enumerate(generic_params)
@@ -635,12 +430,7 @@ def typ_params_from_ast(
 
 
 class StructField:
-    """A single field of a :class:`StructTyp`.
-
-    :param index: The field's position among its struct's fields.
-    :param field_ast: The parsed field declaration.
-    :param e: The struct's scope, used to resolve the field's type.
-    """
+    """A struct field with its declaration index and type-resolution scope."""
 
     index: Final[int]
     ast: Final[ast.StructFieldDefn]
@@ -676,79 +466,20 @@ class StructField:
         return Mutability.from_ast(self.ast.mut)
 
     def is_accessible_from(self, file: src.SrcFile) -> bool:
-        """Whether this field can be read, written, or initialized from
-        code in ``file``.
-
-        Public fields are accessible from any module; private fields are
-        only accessible from the module the struct is defined in.
-
-        :param file: The source file to check accessibility from.
-        :return: Whether the field is accessible from ``file``.
-        """
+        """Return whether this field is accessible from ``file``."""
         return self.access == ir_module.PUBLIC or self.ast.span.file.path == file.path
 
 
-#: The deepest a chain of nested generic struct instantiations reached
-#: while resolving a struct's fields (see
-#: :meth:`StructTyp._check_finite_size`) may go before it's treated as a
-#: runaway expansion rather than a legitimately deep type.
+#: Maximum nesting allowed while resolving generic struct fields.
 _MAX_STRUCT_INSTANTIATION_DEPTH = 64
 
 
 class StructTyp(Typ):
-    """A struct type, identified by its declaration and, for a generic
-    struct, its type arguments.
+    """A nominal struct type identified by its declaration and type arguments.
 
-    Unlike other :class:`Typ` subclasses, two ``StructTyp`` instances are
-    never equal even if structurally identical: each ``struct`` definition
-    in the source introduces its own distinct type, or - for a generic
-    struct - family of types, one per distinct sequence of type arguments
-    (see :meth:`cache_key`). A non-generic struct's declaration has
-    exactly one ``StructTyp``, with no type arguments; a generic struct's
-    declaration is itself represented by the "template" ``StructTyp``
-    that has no type arguments either - it's what a bare use of the
-    struct's name resolves to before type arguments are applied, and its
-    fields, resolved through
-    :attr:`env`, name each of its own type parameters opaquely, the same
-    way a generic function's own :attr:`~leech.ir_values.Value.typ` does
-    (see :class:`~leech.ir_module.GenericFn`) - it's never itself a usable
-    type. Applying type arguments looks up or creates the instantiated
-    ``StructTyp`` for those arguments instead.
-
-    A struct's *members* - its fields and its associated functions - share
-    a single namespace, so a field and an associated function can't have
-    the same name. They're registered in two phases: fields by
-    ``__init__``, then associated functions by :meth:`add_assoc_fn` as the
-    enclosing module builds its ``impl`` blocks (see
-    :meth:`~leech.ir_module.Mod.build`, which defers those until after every
-    struct is declared). Only the template struct's members - never an
-    instantiation's - are populated this way; see :meth:`add_assoc_fn`.
-
-    This makes a struct a named-item container much like a
-    :class:`~leech.ir_module.Mod`, and the member API here deliberately
-    mirrors ``Mod``'s item API (:meth:`~leech.ir_module.Mod.get_item` and
-    friends) so the two can be unified if that becomes worthwhile. It
-    isn't yet: ``Mod`` keys its items on *namespace and* name, since a
-    module-level variable and type may share a name, whereas a struct
-    keys on name alone. If structs or traits gain associated items that
-    aren't functions - associated types or consts - that difference will
-    need revisiting, and a shared abstraction will have more to share.
-
-    :param struct_ast: The parsed struct declaration.
-    :param e: The enclosing scope, used to resolve field types and (for a
-        generic struct) type parameters. Recorded for later reuse, so
-        a later instantiation can be built against the same scope without
-        needing a use site's own (irrelevant) scope.
-    :param typ_args: The concrete type to substitute for each of this
-        struct's own type parameters, in declaration order - empty for a
-        non-generic struct, and for the template of a generic one.
-    :param mod_name: The name of the module this struct is declared in,
-        used to qualify a generic instantiation's mangled symbol name
-        (see :attr:`qualified_name`) - a non-generic struct is qualified
-        by its own :class:`~leech.ir_module.ModItem` instead, same as any
-        other module item.
-    :raises DuplicateFieldInStructDefnError: If the declaration contains
-        two fields with the same name.
+    A generic declaration owns an unusable template with opaque parameters and caches one
+    identity-distinct instance per argument tuple. Fields and associated functions share a
+    namespace on the template.
     """
 
     ast: Final[ast.StructDefn]
@@ -756,11 +487,7 @@ class StructTyp(Typ):
     _typ_args: Final[tuple[Typ, ...]]
     mod_name: Final[str]
     env: Final[ir_env.Env]
-    #: This struct's members - its fields and its associated functions -
-    #: keyed by name, in registration order: fields first, in declaration
-    #: order, then associated functions in ``impl``-block order. Fields
-    #: and associated functions deliberately share one namespace; see the
-    #: class docstring.
+    #: Fields then associated functions, keyed by their shared name namespace.
     _members: Final[dict[str, StructField | ir_module.Fn]]
 
     def __init__(
@@ -775,12 +502,7 @@ class StructTyp(Typ):
         self._typ_args = typ_args
         self.mod_name = mod_name
         self.env = e.new_child()
-        # Bound here rather than looked up on demand, so a type parameter
-        # resolves like any other named type wherever a field type names
-        # it - mirrors NonBuiltinFnSpec.__init__. Concrete arguments for a
-        # real instantiation; opaque TypParamTyps for the template, whose
-        # fields are only ever checked against the parameters themselves,
-        # never lowered.
+        # Binding parameters here lets field types resolve them like named types.
         if typ_args:
             for param_ast, typ_arg in zip(struct_ast.generic_params, typ_args, strict=True):
                 self.env.add_container(param_ast.ident.name, typ_arg)
@@ -788,20 +510,13 @@ class StructTyp(Typ):
             for typ_param in self.typ_params:
                 self.env.add_container(typ_param.name, typ_param)
         self._members = {}
-        # Registering fields here - rather than lazily, along with
-        # `fields` - deliberately resolves no types: a StructField only
-        # stores its index, AST node and scope, so this is safe even
-        # though a field's type may name a struct declared later in the
-        # module.
+        # Registration does not resolve field types, which may name later declarations.
         for i, field_ast in enumerate(struct_ast.fields):
             self._add_member(StructField(i, field_ast, self.env))
 
     @functools.cached_property
     def typ_params(self) -> tuple[TypParamTyp, ...]:
-        """This struct's own declared type parameters, as interned type
-        parameter types, in declaration order. Empty for a non-generic
-        struct or for a real instantiation (``self._typ_args`` non-empty),
-        which has no type parameters of its own left to speak of."""
+        """Return this template's interned parameters, or empty for an instance."""
         if self._typ_args:
             return ()
         return typ_params_from_ast(self.ast, self.ast.generic_params)
@@ -812,32 +527,11 @@ class StructTyp(Typ):
 
     @property
     def instances(self) -> Collection[StructTyp]:
-        """Every instantiation of this generic struct requested so far.
-
-        Only meaningful on the template (see the class docstring) - an
-        instantiation's own cache is simply never added to, since nothing
-        ever calls :meth:`instance` on one. Used by codegen to discover
-        instantiations to declare and compile; codegen filters those down
-        to the :meth:`is_concrete` ones, because this struct's own
-        (im)mediate typechecking can request an instantiation that still
-        names one of *its own* type parameters (e.g. resolving a generic
-        function body's use of ``Box[T]``), and those aren't real,
-        lowerable types.
-        """
+        """Return every instantiation requested from this template."""
         return self._instance_cache.values()
 
     def instance(self, typ_args: tuple[Typ, ...]) -> StructTyp:
-        """Get this generic struct's instantiation for ``typ_args``, building it if needed.
-
-        Cached, so requesting the same ``typ_args`` twice returns the same
-        ``StructTyp`` - preserving the identity-equality invariant every
-        other :class:`Typ` relies on - and tracked in :attr:`instances` so
-        codegen can find it even though, unlike a module-declared struct,
-        it's never bound under a name in any :class:`~leech.ir_env.Env`.
-
-        :param typ_args: The concrete type to substitute for each of this
-            struct's own type parameters, in declaration order.
-        :return: The (possibly newly-built, possibly cached) instantiation.
+        """Return the cached instantiation for ``typ_args``, creating it if needed.
 
         :post: instance(a) is instance(a) for equal a [cache]
         """
@@ -849,13 +543,7 @@ class StructTyp(Typ):
 
     @property
     def qualified_name(self) -> str:
-        """This instantiation's mangled symbol name, e.g. ``mod::Pair[i32, i32]``.
-
-        Extends :attr:`~leech.ir_module.ModItem.qualified_name`'s
-        module-prefixed scheme - an instantiation is never itself a
-        ``ModItem`` (nothing declares one directly; it's built on demand
-        by :meth:`instance`), so it computes the same form independently.
-        """
+        """This instantiation's mangled symbol name, e.g. ``mod::Pair[i32, i32]``."""
         return f"{self.mod_name}::{self.name}"
 
     @override
@@ -864,13 +552,7 @@ class StructTyp(Typ):
 
     @property
     def is_generic_template(self) -> bool:
-        """Whether this is a generic struct's own, un-instantiated template.
-
-        True only for the ``StructTyp`` a generic struct's declaration
-        itself names (see the class docstring) - never for one of its
-        instantiations, which share the same declaration but have
-        concrete type arguments.
-        """
+        """Return whether this is the declaration's uninstantiated generic template."""
         return bool(self.ast.generic_params) and not self._typ_args
 
     @override
@@ -892,14 +574,7 @@ class StructTyp(Typ):
     @override
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key struct types by their declaration's identity and type arguments.
-
-        :param args: The arguments passed to :meth:`~Typ.create` or
-            :meth:`~Typ.get_or_create`; ``args[0]`` must be the struct's
-            parsed declaration, and ``args[2]``, if given, its type
-            arguments (defaulting to ``()``, matching :meth:`__init__`).
-        :return: The cache key.
-        """
+        """Key struct types by declaration identity and type arguments."""
         asserts.assert_gt(len(args), 0)
         struct_ast = asserts.checked_cast(args[0], ast.StructDefn)
         typ_args = asserts.checked_cast(args[2], tuple) if len(args) > 2 else ()
@@ -915,34 +590,14 @@ class StructTyp(Typ):
 
     @staticmethod
     def _member_ident_span(member: StructField | ir_module.Fn) -> Optional[src.SrcSpan]:
-        """The span of ``member``'s name, for duplicate-member diagnostics.
-
-        Points at the identifier rather than the whole declaration, since
-        a duplicate member is a problem with its name specifically.
-
-        :param member: The field or associated function to locate.
-        :return: The span of the member's name.
-        """
+        """Return the span of ``member``'s name for duplicate diagnostics."""
         if isinstance(member, StructField):
             return member.ast.ident.span
         assert member.ast is not None
         return member.ast.name.span
 
     def _add_member(self, member: StructField | ir_module.Fn) -> None:
-        """Register ``member`` under its own name among this struct's members.
-
-        A struct's fields and associated functions share a single
-        namespace, so this rejects an associated function whose name is
-        already taken by a field just as readily as it rejects two fields
-        or two associated functions of the same name.
-
-        :param member: The field or associated function to register.
-        :raises DuplicateFieldInStructDefnError: If ``member`` is a field
-            whose name is already taken.
-        :raises DuplicateItemDefnError: If ``member`` is an associated
-            function whose name is already taken - by a field or by
-            another associated function.
-        """
+        """Register ``member`` in the shared field and associated-function namespace."""
         existing = self._members.get(member.name)
         if existing is not None:
             span = StructTyp._member_ident_span(member)
@@ -959,38 +614,12 @@ class StructTyp(Typ):
         self._members[member.name] = member
 
     def add_assoc_fn(self, fn: ir_module.Fn) -> None:
-        """Register ``fn`` as one of this struct's associated functions.
-
-        Binds ``fn`` twice: among this struct's members, where it shares a
-        namespace with the struct's fields, and in :attr:`env`, which is
-        what lets associated functions of the same struct call each other
-        by bare, unqualified name.
-
-        Registered among the members first, so a rejected function is
-        never left bound in :attr:`env`. This is the mirror image of how
-        a module registers its own items, where the ``Env`` is the
-        duplicate-definition authority; here the member table is, since
-        fields never enter :attr:`env`.
-
-        :param fn: The associated function, already constructed with
-            :attr:`env` as its enclosing scope.
-        :raises DuplicateItemDefnError: If this struct already has a field
-            or an associated function named ``fn.name``.
-        """
+        """Register ``fn`` as both a member and a bare name in the struct's scope."""
         self._add_member(fn)
         self.env.add_var(fn.name, fn)
 
     def get_assoc_fn(self, name: str) -> Optional[ir_module.Fn | ir_module.FnInstance]:
-        """Find this struct's associated function called ``name``.
-
-        A field of that name is deliberately *not* a match: fields are
-        reached only through :attr:`fields`, never as
-        ``SomeStruct::name`` nor as the callee of a method call.
-
-        :param name: The name to look up.
-        :return: The associated function, or ``None`` if this struct has
-            no member of that name, or its member of that name is a field.
-        """
+        """Return the associated function called ``name``, ignoring fields."""
         member = self._members.get(name)
         if isinstance(member, ir_module.Fn):
             return member
@@ -1036,18 +665,7 @@ class StructTyp(Typ):
 
     @functools.cached_property
     def fields(self) -> types.MappingProxyType[str, StructField]:
-        """This struct's fields, keyed by name, in declaration order.
-
-        A view of the field members among this struct's members;
-        duplicate names were already rejected as each member was
-        registered (see :meth:`add_assoc_fn` and the class docstring).
-
-        :raises InfiniteSizeStructError: If this struct contains itself by
-            value, directly or through other structs.
-        :raises TypInstantiationDepthExceededError: If resolving this
-            struct's fields requires instantiating a generic struct
-            nested beyond a fixed depth limit.
-        """
+        """Return fields by declaration order after rejecting infinite-size layouts."""
         self._check_finite_size([], [])
 
         fields = {
@@ -1059,8 +677,7 @@ class StructTyp(Typ):
 
     @property
     def assoc_fns(self) -> Collection[ir_module.Fn]:
-        """This struct's own associated functions, i.e. the ``Fn``-typed
-        members among :attr:`_members`."""
+        """Return this struct's own associated functions."""
         return tuple(m for m in self._members.values() if isinstance(m, ir_module.Fn))
 
     def _check_finite_size(
@@ -1068,27 +685,7 @@ class StructTyp(Typ):
         visiting: list[StructTyp],
         hops: list[tuple[str, str, Optional[src.SrcSpan], str]],
     ) -> None:
-        """Raise if this struct is reachable from itself by value.
-
-        Walks field types directly from :attr:`ast` rather than through
-        :attr:`fields`, so this can run as the first step of resolving
-        :attr:`fields` itself without recursing into it.
-
-        :param visiting: The structs on the path from the struct whose
-            size is being checked down to this one, in traversal order.
-        :param hops: The ``(containing, field_name, field_span,
-            contained)`` edge for each step in ``visiting``; one shorter
-            than ``visiting``, since it records the edges *between*
-            consecutive entries.
-        :raises InfiniteSizeStructError: If this struct is already being
-            visited, i.e. reachable from itself.
-        :raises TypInstantiationDepthExceededError: If ``visiting`` is
-            already at :data:`_MAX_STRUCT_INSTANTIATION_DEPTH`. Unlike the
-            cycle above, a runaway generic instantiation (e.g.
-            ``struct L[T] { x: L[[T; 1]] }``) never repeats the same
-            ``StructTyp`` - each nesting level is a genuinely distinct
-            instantiation - so a depth cap is the only way to catch it.
-        """
+        """Reject by-value cycles and runaway generic nesting while resolving fields."""
         if self in visiting:
             cycle_start = visiting.index(self)
             raise errors.InfiniteSizeStructError(self.name, self.span, hops[cycle_start:])

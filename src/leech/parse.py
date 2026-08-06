@@ -17,15 +17,7 @@ _GRAMMAR_PATH = pathlib.Path(__file__).parent / "leech.lark"
 
 @functools.cache
 def build_parser(start_rule: str) -> lark.Lark:
-    """Build a Lark LALR parser for the Leech grammar.
-
-    Cached per start rule: rebuilding the LALR parse tables from the
-    grammar file is the same work every time for a given start rule, and
-    :func:`parse_mod_ast` calls this once per source file reached.
-
-    :param start_rule: The grammar rule to use as the parse entry point.
-    :return: A configured, ready-to-use parser.
-    """
+    """Build and cache a Lark LALR parser for ``start_rule``."""
     return lark.Lark.open(
         str(_GRAMMAR_PATH),
         start=start_rule,
@@ -36,18 +28,7 @@ def build_parser(start_rule: str) -> lark.Lark:
 
 
 def _describe_expected_tokens(parser: lark.Lark, names: Iterable[str]) -> list[str]:
-    """Describe a set of Lark terminal names for a diagnostic message.
-
-    Literal-string terminals (punctuation and keywords) are shown as
-    their literal text, e.g. ``'";"'``; other terminals (identifiers,
-    literals) are shown by name, e.g. ``'IDENT'``. Lark's end-of-input
-    marker is described in words.
-
-    :param parser: The parser ``names`` came from, used to look up each
-        terminal's definition.
-    :param names: The Lark terminal names to describe.
-    :return: The descriptions, sorted and de-duplicated.
-    """
+    """Return sorted, unique, human-readable descriptions of Lark terminals."""
     terminals_by_name = {t.name: t for t in parser.terminals}
     descriptions = set[str]()
     for name in names:
@@ -63,15 +44,7 @@ def _describe_expected_tokens(parser: lark.Lark, names: Iterable[str]) -> list[s
 
 
 def parse_mod_ast(file: src.SrcFile) -> ast.Mod:
-    """Parse a source file into a module AST.
-
-    :param file: The source file to parse.
-    :return: The parsed module.
-    :raises UnexpectedCharacterError: If a character in ``file`` can't
-        start any valid token.
-    :raises UnexpectedTokenError: If a token in ``file`` doesn't fit the
-        grammar at that point (including the input ending too soon).
-    """
+    """Parse a source file into a module AST with user-facing syntax errors."""
     parser = build_parser("mod")
     try:
         tree = parser.parse(file.src)

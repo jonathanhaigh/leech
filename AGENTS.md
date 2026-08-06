@@ -32,13 +32,15 @@ Use four-space indentation and Ruff's 100-column limit. Follow standard Python n
 `snake_case` for functions and modules, `PascalCase` for classes, and `UPPER_CASE` for
 constants. Prefer `Optional[T]` for nullable annotations. Keep imports module-qualified
 (for example, `from leech import typs`, then `typs.Typ`) rather than importing individual
-symbols. Use Sphinx-style docstrings and record non-obvious contracts with final
-`:pre:`, `:post:`, or `:invariant:` fields. Include only what is needed to use an item
-effectively. Avoid excessive cross-references, caller lists, and details coupled to other
-code. Non-public items need docstrings
-only when their behavior is surprising. Use comments sparingly and keep them concise.
-Use assertions liberally—prefer helpers from the `asserts` module—and use `opt_util.py`
-helpers where applicable.
+symbols. Use Sphinx-style docstrings. Document an item's purpose, interface, surprising
+behavior, and non-obvious contracts; omit details apparent from its name, signature,
+annotations, or adjacent code. Do not describe callers, usage sites, history, or neighboring
+components unless essential to using the item. Prefer direct wording to unnecessary
+cross-references. Public items generally have concise docstrings; non-public items need them
+only for surprising behavior or non-obvious contracts. Put `:pre:`, `:post:`, and
+`:invariant:` fields last. Use comments sparingly to explain non-obvious reasons and
+constraints, not visible code. Use assertions liberally—prefer helpers from the `asserts`
+module—and use `opt_util.py` helpers where applicable.
 
 ## Testing Guidelines
 
@@ -47,6 +49,12 @@ tests `test_<behavior>`. Add focused unit tests beside the closest feature cover
 use `tests/util.py` for compile/run assertions. Run the full suite, lint, and type checks
 before submitting. No numeric coverage threshold is configured; new behavior and
 regressions should be covered explicitly.
+
+## Review Guidelines
+
+When reviewing changes, inspect every added or changed docstring and comment against the
+guidance above. Flag unnecessary non-public docstrings, repetition, caller lists, excessive
+cross-references, narration of visible code, and details coupled to other items.
 
 ## Commit & Pull Request Guidelines
 

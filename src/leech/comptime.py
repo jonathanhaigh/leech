@@ -2,12 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""A tree-walking interpreter for evaluating IR at compile time.
-
-Used to evaluate module-level ``let`` initializers (see
-:class:`leech.ir_module.ModVar`), which must be computable without running
-generated code.
-"""
+"""A tree-walking IR interpreter for compile-time evaluation."""
 
 from typing import Final, Optional
 
@@ -19,65 +14,23 @@ def _is_power_of_two(n: int) -> bool:
 
 
 def _panic_message(args: tuple[ir_values.ComptimeValue, ...]) -> Optional[str]:
-    """Extract ``panic``'s message argument as plain text, if possible.
-
-    :param args: ``panic``'s (already-evaluated) call arguments.
-    :return: The message, or ``None`` if it isn't a compile-time-known
-        string literal (e.g. a pointer computed some other way).
-    """
+    """Return ``panic``'s message when it is a compile-time-known string."""
     if len(args) != 1 or not isinstance(args[0], ir_values.ComptimeCStr):
         return None
     return args[0].value.rstrip(b"\0").decode()
 
 
 def _wrap(value: int, typ: typs.IntTyp) -> int:
-    """Reduce ``value`` to the value a real, ``typ``-width two's-complement
-    ``add``/``sub``/``mul``/``neg`` would actually produce.
-
-    Mirrors LLVM's wrapping arithmetic (and codegen's real,
-    ``llvm.*.with.overflow``-based instructions - see
-    :class:`~leech.ir_values.CheckedAddInstr`): this is the interpreter's
-    equivalent computation, used unconditionally rather than only on
-    overflow, so a wrapped result and an in-range one are computed (and
-    look) exactly the same way. Overflow itself is reported separately,
-    by whatever compiler-synthesized check (see
-    :meth:`~leech.ir_builder.CfgBuilder._panic_if`) follows the operation
-    in the same CFG - this never raises.
-
-    :param value: The exact, unbounded mathematical result.
-    :param typ: The type to wrap it into.
-    :return: The wrapped value, canonicalized the same way
-        :class:`~leech.ir_values.ComptimeInt` always is (negative for a
-        signed type, never negative for an unsigned one).
-    """
+    """Wrap ``value`` to ``typ``'s canonical two's-complement value without raising."""
     span = typ.max_value - typ.min_value + 1
     return (value - typ.min_value) % span + typ.min_value
 
 
 class Interpreter:
-    """Executes the instructions of a :class:`~leech.ir_values.Cfg` at compile time.
+    """Execute a control-flow graph with compile-time-known arguments.
 
-    Walks the control-flow graph from its entry block, evaluating each
-    instruction in turn and recording its result, until a ``ret``
-    instruction is reached.
-
-    :param cfg: The control-flow graph to execute.
-    :param params: The callee's formal parameters, used to bind ``args``.
-    :param args: The compile-time-known argument values, positionally
-        matched to ``params``.
-    :param panic_fn: The program's real ``panic`` function (see
-        :attr:`~leech.ir_env.Env.panic_fn`), if known yet - a call to
-        exactly this function is recognized and reported as
-        :class:`~leech.errors.PanicAtComptimeError` instead of being
-        recursed into (where it would otherwise fail with a confusing
-        :class:`~leech.errors.CallExternFnAtComptimeError`, from the
-        ``write``/``abort`` extern calls inside ``panic``'s own body).
-        This is how every compiler-synthesized runtime check (array
-        bounds, integer overflow, division by zero) is caught at compile
-        time too - there's no separate compile-time-only detection of any
-        of those; they're all just ``panic`` calls, like any the source
-        itself might write. Propagated unchanged into every nested call's
-        own ``Interpreter``.
+    Calls to ``panic_fn`` become compile-time panic diagnostics, including calls emitted by
+    runtime checks. The same function identity propagates into nested interpreters.
     """
 
     _registers: Final[dict[ir_values.Value, ir_values.ComptimeValue]]
@@ -87,11 +40,7 @@ class Interpreter:
     _curr_instr_index: int
     _ret_value: Optional[ir_values.ComptimeValue]
     _panic_fn: Final[Optional[ir_module.FnSpec]]
-    #: Whether a CheckedAddInstr/CheckedSubInstr/CheckedMulInstr's own
-    #: result overflowed, keyed by the instruction itself - consulted by
-    #: its paired OverflowFlagInstr. Mirrors codegen's own
-    #: Compiler._FnBuilderContext.overflow_calls, which the same pairing
-    #: relies on at runtime.
+    #: Overflow results consumed by the checked operation's paired flag instruction.
     _overflow_flags: Final[dict[ir_values.Instr, bool]]
 
     def __init__(
@@ -111,26 +60,7 @@ class Interpreter:
         self._overflow_flags = {}
 
     def eval(self) -> ir_values.ComptimeValue:
-        """Run the interpreter to completion and return the result.
-
-        :return: The value passed to the ``ret`` instruction that ended
-            execution.
-        :raises CannotTakeAddressOfComptimeValueError: If the returned
-            value, or a value returned by a nested call evaluated along
-            the way, is or contains a pointer to a compile-time-only
-            temporary that has no address at runtime.
-        :raises SetNonLocalVarAtComptimeError: If a ``store`` instruction
-            (directly, or in a nested call) writes through a pointer to a
-            non-temporary (i.e. a variable outside the expression being
-            evaluated).
-        :raises CallExternFnAtComptimeError: If a ``call`` instruction
-            (directly, or in a nested call) calls a function with no body.
-        :raises PanicAtComptimeError: If a ``call`` instruction (directly,
-            or in a nested call) calls ``panic_fn`` - including a call a
-            compiler-synthesized runtime check made, so this is also how
-            array-bounds, integer-overflow, and division-by-zero failures
-            are reported at compile time.
-        """
+        """Run to ``ret`` and reject results or effects unavailable at runtime."""
         while True:
             if self._ret_value is not None:
                 self._check_not_temporary(self._ret_value)
@@ -173,13 +103,7 @@ class Interpreter:
                         ret = lhs.value * rhs.value
                         self._overflow_flags[instr] = not lhs.typ.fits(ret)
                     case ir_values.SdivInstr():
-                        # CfgBuilder._build_checked_div always builds a
-                        # runtime check ahead of the actual sdiv that
-                        # panics on a zero divisor (an unchecked divide by
-                        # zero is a trap, not a wrapping result, unlike
-                        # add/sub/mul/neg - see that method's docstring) -
-                        # so reaching an sdiv at all already proves rhs
-                        # isn't zero.
+                        # A preceding checked-div guard ensures rhs is nonzero.
                         assert rhs.value != 0
                         # LLVM's sdiv truncates toward zero (like C's `/`),
                         # unlike Python's `//`, which floors toward negative
@@ -242,11 +166,7 @@ class Interpreter:
                 self._registers[instr] = ir_values.ComptimeBool(ret, instr.ast)
 
             case ir_values.OverflowFlagInstr():
-                # instr.checked_op - a CheckedAddInstr/CheckedSubInstr/
-                # CheckedMulInstr - already ran (registers are only ever
-                # read after being written) and recorded whether it
-                # overflowed in _overflow_flags, in the BinOpInstr case
-                # above.
+                # Registers are read only after the checked operation recorded its flag.
                 self._registers[instr] = ir_values.ComptimeBool(
                     self._overflow_flags[instr.checked_op], instr.ast
                 )

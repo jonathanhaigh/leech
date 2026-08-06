@@ -2,17 +2,9 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Compiler-intrinsic builtins, and the other names ambiently available in
-every module without needing an import (see :func:`register`).
+"""Compiler intrinsics and names ambiently available in every module.
 
-Imported lazily, from inside :meth:`~leech.ir_module.Mod.__init__` and
-:meth:`~leech.ir_loader.ModLoader.__init__`, rather than at module level by
-either of those modules: every class here subclasses
-:class:`~leech.ir_module.GenericBuiltinFn`, so importing this module
-requires ``ir_module`` to already be fully loaded - true once the program
-is running, but not yet true while ``ir_module``/``ir_loader`` are still
-in the middle of importing each other (a base class, unlike a plain type
-annotation, is evaluated immediately, not deferred).
+Import this module lazily because its builtin classes require ``ir_module`` to be loaded.
 """
 
 from typing import override
@@ -110,15 +102,7 @@ class EnumToIntBuiltinFn(ir_module.GenericBuiltinFn):
 
 
 def register(builtin_env: ir_env.Env, loader: ir_loader.ModLoader) -> None:
-    """Bind every ambient name - the built-in types and the compiler-
-    intrinsic builtins - into ``builtin_env``.
-
-    Called once per module, from :meth:`~leech.ir_module.Mod.__init__`.
-
-    :param builtin_env: The module's own top-level scope to bind into.
-    :param loader: The loader owning this program's shared builtin
-        instances (see :attr:`~leech.ir_loader.ModLoader.builtins`).
-    """
+    """Bind built-in types and this program's shared intrinsic functions."""
     builtin_env.add_container("usize", typs.USIZE)
     builtin_env.add_container("isize", typs.ISIZE)
     builtin_env.add_container("bool", typs.BOOL)

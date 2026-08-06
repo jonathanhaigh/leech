@@ -9,24 +9,11 @@ from typing import Final, Optional
 
 from leech import ast, errors, ir_env, ir_module, src, typs
 
-# `typs` is imported as a module, not `from leech.typs import ...`, even
-# though every other user of these names does the latter: ir_env imports
-# this module, and typs imports ir_env, so by the time this module is
-# first reached, typs may still be mid-initialization - a deep import of
-# one of its names (rather than the module object itself) would try to
-# bind a name that doesn't exist yet.
+# Keep this import module-qualified because typs may still be initializing.
 
 
 class TraitMethod:
-    """One method prototype declared inside a :class:`Trait`.
-
-    :param fn_ast: The parsed method prototype.
-    :param trait: The declaring trait, used to resolve the prototype's
-        parameter and return types (which may name the trait's own type
-        parameters).
-    :raises TraitMethodMissingReceiverError: If ``fn_ast`` has no ``self``
-        receiver.
-    """
+    """A trait method prototype and its type-resolution context."""
 
     ast: Final[ast.TraitFn]
     _trait: Final[Trait]
@@ -48,19 +35,7 @@ class TraitMethod:
         return self.ast.span
 
     def fn_typ_for_self(self, self_typ: typs.Typ) -> typs.FnTyp:
-        """This method's signature with ``self_typ`` substituted for the receiver.
-
-        The receiver's type isn't written in source - a trait method's
-        prototype only says whether it takes ``self`` or ``mut self`` -
-        so it's synthesized here the same way
-        :meth:`~leech.ir_module.NonBuiltinFnSpec.calculate_typ` synthesizes
-        an inherent method's, from whatever type is implementing the
-        trait.
-
-        :param self_typ: The type standing in for ``Self`` - the type a
-            trait impl implements the trait for.
-        :return: The method's signature, receiver included.
-        """
+        """Return this method's signature with ``self_typ`` as its receiver pointee."""
         assert self.ast.receiver is not None
         recv_typ = typs.PtrTyp.get_or_create(
             self_typ, typs.Mutability.from_ast(self.ast.receiver.mut)
@@ -77,21 +52,7 @@ class TraitMethod:
 
 
 class Trait:
-    """A trait definition: a named set of method prototypes an ``impl
-    Trait for SomeTyp { ... }`` block promises to provide.
-
-    Lives in :attr:`~leech.ir_env.Env.Namespace.CONTAINERS`, alongside types
-    and modules, so a trait can't share a name with either - but isn't
-    itself a type: naming one where a type is expected is
-    :class:`~leech.errors.TraitUsedAsTypError`.
-
-    :param trait_ast: The parsed trait declaration.
-    :param e: The enclosing scope, used to resolve method signatures.
-    :param mod_name: The name of the module this trait is declared in,
-        used by the orphan rule (see :meth:`Impl.check_orphan_rule`).
-    :raises DuplicateItemDefnError: If two of the trait's methods share a
-        name.
-    """
+    """A named collection of method prototypes and their resolution scope."""
 
     ast: Final[ast.TraitDefn]
     _env: Final[ir_env.Env]
@@ -125,12 +86,7 @@ class Trait:
         return self.ast.span
 
     def get_method(self, name: str) -> Optional[TraitMethod]:
-        """Find this trait's method prototype called ``name``.
-
-        :param name: The name to look up.
-        :return: The method, or ``None`` if this trait declares no method
-            of that name.
-        """
+        """Return the method prototype called ``name``, if present."""
         return self._methods.get(name)
 
     @property
@@ -140,47 +96,14 @@ class Trait:
 
 
 def _is_local(item: Trait | typs.Typ, mod_name: str) -> bool:
-    """Whether a trait or type is defined in the module named ``mod_name``.
-
-    Used by the orphan rule (see :meth:`Impl.check_orphan_rule`): a struct
-    knows the module that declared it (see
-    :attr:`~leech.typs.StructTyp.mod_name`, threaded through even a generic
-    instantiation's own type arguments), and a trait does too (see
-    :attr:`Trait.mod_name`); every other type - ``i32``, ``bool``, a
-    pointer, an array - belongs to no module and so is never local.
-
-    :param item: The trait or type to check.
-    :param mod_name: The module to check locality against.
-    :return: Whether ``item`` is defined in that module.
-    """
+    """Return whether a nominal trait or struct belongs to ``mod_name``."""
     if isinstance(item, (Trait, typs.StructTyp)):
         return item.mod_name == mod_name
     return False
 
 
 class Impl:
-    """One ``impl Trait for SelfTyp { ... }`` block.
-
-    Unlike an inherent ``impl`` block's associated functions - registered
-    directly among their struct's own members (see
-    :meth:`~leech.typs.StructTyp.add_assoc_fn`) - a trait impl's methods live
-    only here: its self type may not even be a struct, and, for a
-    generic impl, may not be a real, lowerable type at all (its type
-    parameters are left opaque - the same way a generic struct's own
-    fields are, see :meth:`~leech.typs.StructTyp.is_concrete`). Finding one
-    from a receiver's type goes through :class:`ImplRegistry` instead.
-
-    :param impl_ast: The parsed ``impl`` block.
-    :param trait: The trait this implements.
-    :param self_typ: The type this implements ``trait`` for - the impl's
-        own type parameters, if any, appear within it as opaque
-        :class:`~leech.typs.TypParamTyp`\\ s (e.g. ``Pair[A, A]`` for
-        ``impl[A: Show] Show for Pair[A, A]``).
-    :param e: The enclosing scope, used to resolve method signatures and
-        bodies. Recorded (extended with ``Self`` bound to ``self_typ``) as
-        :attr:`env`.
-    :param mod_name: The name of the module this impl is declared in.
-    """
+    """A trait implementation with methods resolved under its ``Self`` binding."""
 
     ast: Final[ast.ImplDefn]
     _trait: Final[Trait]
@@ -280,14 +203,8 @@ class Impl:
 def _head_shape(typ: typs.Typ) -> Hashable:
     """A hashable key for ``typ``'s outer shape, ignoring its own parameters.
 
-    Used to index :class:`ImplRegistry` by something cheaper than a full
-    structural match: every struct declaration has its own shape,
-    regardless of type arguments (``Pair[i32, i32]`` and ``Pair[i32,
-    bool]`` share one), and every other type is grouped by its Python
-    class (every pointer type shares one, regardless of pointee or
-    mutability). The registry still verifies a real structural match (see
-    :meth:`ImplRegistry.find_impl`) before treating a same-shape impl as
-    applicable - this is a fast pre-filter, not the source of truth.
+    Struct instances share their declaration's shape; other types use
+    their Python class. This is only a pre-filter for structural matching.
 
     :param typ: The type to compute a head shape for.
     :return: The head shape.
@@ -323,11 +240,7 @@ def _typs_overlap(a: typs.Typ, b: typs.Typ) -> bool:
 
 
 class ImplRegistry:
-    """Every trait impl in the program, keyed for lookup by receiver type.
-
-    Owned by :class:`~leech.ir_loader.ModLoader` - the only object that
-    sees every module in a compilation - so a trait impl in one module is
-    visible while checking another's, regardless of import direction.
+    """Program-wide trait implementations keyed by receiver type.
 
     :invariant: for every t in _traits_by_shape[s], (t, s) in _impls [ctor]
     """
@@ -382,10 +295,7 @@ class ImplRegistry:
         return None
 
     def _find_impls_for_typ(self, typ: typs.Typ) -> list[Impl]:
-        """Find every trait impl (for any trait) that applies to ``typ``.
-
-        Used to detect an ambiguous method call - the same method name
-        provided by more than one applicable trait.
+        """Find every trait impl that applies to ``typ``.
 
         :param typ: The (concrete) type to find implementations for.
         :return: The applicable impls, one per trait at most.
@@ -402,13 +312,7 @@ class ImplRegistry:
 def disambiguate[T](
     matches: list[T], name: str, typ_name: str, span: Optional[src.SrcSpan]
 ) -> Optional[T]:
-    """Resolve a list of same-named candidate methods to the one to use.
-
-    Shared by every method-lookup site with more than one place a name
-    could come from - :func:`lookup_member` (a concrete type's inherent
-    member vs. its applicable trait impls) and resolving a method on an
-    unsubstituted type parameter's declared bounds - so "more than one
-    candidate provides this name" is reported the same way everywhere.
+    """Return the sole candidate, rejecting ambiguous matches.
 
     :param matches: Every candidate found, however that search was done.
     :param name: The member name being looked up.
@@ -431,16 +335,6 @@ def lookup_member(
     span: Optional[src.SrcSpan],
 ) -> Optional[ir_module.Fn | ir_module.FnInstance]:
     """Find ``typ``'s member (inherent or via a trait impl) called ``name``.
-
-    The generalisation :attr:`~leech.typs.StructTyp.get_assoc_fn` used to be
-    the only way to look up a callable member - now every type can have
-    one, through a trait impl, not just a struct through its own
-    inherent members. A free function rather than a method on
-    :class:`~leech.typs.Typ` (as the type system's own docstrings once
-    anticipated) specifically to avoid ``typs.py`` needing to import this
-    module: it's deep in the dependency graph, and every caller here
-    already has both a type and a registry (see
-    :attr:`~leech.ir_env.Env.impl_registry`) close at hand.
 
     Only ever meaningful for a *concrete* type - a call through an
     unsubstituted type parameter resolves differently, against the

@@ -17,30 +17,15 @@ from leech import asserts, opt_util, signage, src, target
 
 
 def _as_token(branch: lark.tree.Branch[lark.Token]) -> lark.Token:
-    """Assert that a Lark tree child is a leaf token, and return it as such.
-
-    :param branch: The parse-tree child to check.
-    :return: ``branch``, statically typed as :class:`~lark.Token`.
-    :raises AssertionError: If ``branch`` is not a :class:`~lark.Token`.
-    """
     return asserts.checked_cast(branch, lark.Token)
 
 
 def _as_tree(branch: lark.tree.Branch[lark.Token]) -> lark.tree.Tree[lark.Token]:
-    """Assert that a Lark tree child is itself a subtree, and return it as such.
-
-    :param branch: The parse-tree child to check.
-    :return: ``branch``, statically typed as :class:`~lark.Tree`.
-    :raises AssertionError: If ``branch`` is not a :class:`~lark.Tree`.
-    """
     return asserts.checked_cast(branch, lark.tree.Tree)
 
 
 class Ast(abc.ABC):
-    """Base class for every AST node.
-
-    :param span: The node's source location.
-    """
+    """Base class for every AST node."""
 
     span: Final[src.SrcSpan]
 
@@ -62,12 +47,7 @@ class Ast(abc.ABC):
                 return f"{indent * level}{child_val!r}"
 
     def pretty(self, indent: str = "  ", level: int = 0) -> str:
-        """Render this node and its children as an indented tree, for debugging.
-
-        :param indent: The string used for one level of indentation.
-        :param level: The starting indentation depth.
-        :return: The formatted tree.
-        """
+        """Render this node and its children as an indented debugging tree."""
         cls_name = type(self).__name__
         child_attrs = ((k, v) for k, v in vars(self).items() if k != "span")
         child_strs = "\n".join(Ast._pretty_child(k, v, indent, level + 1) for k, v in child_attrs)
@@ -75,10 +55,7 @@ class Ast(abc.ABC):
 
     @abc.abstractmethod
     def diag_str(self) -> str:
-        """A short, human-readable description of this node, for use in diagnostics.
-
-        E.g. ``'variable "x"'`` or ``"if expression"``.
-        """
+        """Return a short description of this node for diagnostics."""
 
 
 class Ident(Ast):
@@ -92,28 +69,14 @@ class Ident(Ast):
 
     @classmethod
     def from_tree(cls, file: src.SrcFile, tree: lark.tree.ParseTree) -> Ident:
-        """Build an :class:`Ident` from a parse tree.
-
-        :param file: The source file ``tree`` was parsed from.
-        :param tree: The parse tree to build from.
-        :return: The constructed identifier.
-        """
+        """Build an identifier from a parse tree."""
         asserts.assert_eq(tree.data, "ident")
         span = src.SrcSpan.from_lark_meta(file, tree.meta)
         return cls(span, _as_token(tree.children[0]))
 
     @staticmethod
     def _synthetic(name: str, span: src.SrcSpan) -> Ident:
-        """Construct an :class:`Ident` not backed by a parse tree.
-
-        Used for the implicit ``self`` binding a method's receiver
-        introduces (see :class:`Receiver`), which has no ``ident``
-        subtree of its own to build one from.
-
-        :param name: The identifier text.
-        :param span: The source location to attribute the identifier to.
-        :return: The synthesized identifier.
-        """
+        """Construct an identifier not backed by a parse tree."""
         return Ident(span, name)
 
     @override
@@ -171,22 +134,12 @@ class Expr(Ast):
 
     @staticmethod
     def _is_expr_tree(tree: lark.tree.ParseTree) -> bool:
-        """Whether ``tree``'s grammar rule is one that produces an :class:`Expr`.
-
-        :param tree: The parse tree to check.
-        :return: Whether ``tree`` can be passed to :meth:`from_tree`.
-        """
+        """Return whether ``tree``'s grammar rule produces an expression."""
         return tree.data in Expr._child_ctors()
 
     @staticmethod
     def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Expr:
-        """Build the appropriate :class:`Expr` subclass instance from a parse tree.
-
-        :param file: The source file ``tree`` was parsed from.
-        :param tree: The parse tree, whose grammar rule determines which
-            :class:`Expr` subclass is constructed.
-        :return: The constructed expression node.
-        """
+        """Build the expression selected by a parse tree's grammar rule."""
         return Expr._child_ctors()[tree.data](file, tree)
 
 
@@ -195,15 +148,7 @@ class PlaceExpr(Expr):
 
     @staticmethod
     def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> PlaceExpr:
-        """Build the appropriate :class:`PlaceExpr` subclass instance from a parse tree.
-
-        :param file: The source file ``tree`` was parsed from.
-        :param tree: The parse tree, whose grammar rule determines which
-            :class:`PlaceExpr` subclass is constructed.
-        :return: The constructed expression node.
-        :raises AssertionError: If ``tree``'s grammar rule doesn't produce
-            a :class:`PlaceExpr`.
-        """
+        """Build a place expression, asserting that the parsed expression is assignable."""
         return asserts.checked_cast(Expr.from_tree(file, tree), PlaceExpr)
 
 
@@ -301,14 +246,7 @@ class StrLit(Expr):
 
 
 class IntLit(Expr):
-    """An integer literal, e.g. ``42``, ``5i8``, or ``3usize``.
-
-    A type suffix, if written, fixes the literal's width and signedness
-    (:attr:`explicit_width`, :attr:`explicit_signage`). Without one, the
-    type is left open here and chosen during type checking, from the type
-    the surrounding context expects, where the two are turned into a
-    :class:`~leech.typs.IntTyp`.
-    """
+    """An integer literal with optional explicit width and signedness."""
 
     token: Final[lark.Token]
     value: Final[int]
@@ -457,7 +395,7 @@ class StructExpr(Expr):
 
 
 class StructFieldExpr(Expr):
-    """A single ``field: value`` entry within a :class:`StructExpr`."""
+    """A single ``field: value`` entry in a struct literal."""
 
     ident: Final[Ident]
     value: Final[Expr]
@@ -590,13 +528,7 @@ class Stmt(Ast):
 
     @staticmethod
     def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Stmt:
-        """Build the appropriate :class:`Stmt` subclass instance from a parse tree.
-
-        :param file: The source file ``tree`` was parsed from.
-        :param tree: The parse tree, whose grammar rule determines which
-            :class:`Stmt` subclass is constructed.
-        :return: The constructed statement node.
-        """
+        """Build the statement selected by a parse tree's grammar rule."""
         asserts.assert_eq(tree.data, "stmt")
         (child,) = map(_as_tree, tree.children)
         child_classes = {
@@ -715,22 +647,11 @@ class AssignmentStmt(Stmt):
 
 
 class Typ(Ast):
-    """Base class for every parsed type-expression node.
-
-    Not to be confused with :class:`leech.typs.Typ`, the *resolved* type
-    representation this is later converted to (see
-    :meth:`leech.typs.Typ.from_ast`).
-    """
+    """Base class for parsed, unresolved type expressions."""
 
     @staticmethod
     def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Typ:
-        """Build the appropriate :class:`Typ` subclass instance from a parse tree.
-
-        :param file: The source file ``tree`` was parsed from.
-        :param tree: The parse tree, whose grammar rule determines which
-            :class:`Typ` subclass is constructed.
-        :return: The constructed type-expression node.
-        """
+        """Build the type expression selected by a parse tree's grammar rule."""
         child_classes = {
             "basic_typ": BasicTyp,
             "ptr_typ": PtrTyp,
@@ -820,13 +741,7 @@ class Param(Ast):
 
 
 class Receiver(Ast):
-    """A method's ``self`` receiver: ``*self`` or ``*mut self``.
-
-    Unlike :class:`Param`, its type isn't written in source - it's always
-    a pointer to the enclosing ``impl`` block's struct (see
-    :class:`~leech.ir_module.NonBuiltinFnSpec`), so there is no ``typ`` field
-    here, only the pointer's mutability.
-    """
+    """A ``*self`` or ``*mut self`` receiver whose pointee is supplied by its impl."""
 
     name: Final[Ident]
     mut: Final[Optional[Mutability]]
@@ -844,13 +759,7 @@ class Receiver(Ast):
 
 
 class GenericParam(Ast):
-    """A single type parameter in a generic item's parameter list, e.g. the
-    ``T`` in ``fn id[T](x: T) T``, or the ``T: Show`` in
-    ``fn show_it[T: Show](x: T)``.
-
-    ``bounds`` parses now but means nothing until traits exist to check it
-    against.
-    """
+    """A generic type parameter and its trait bounds."""
 
     ident: Final[Ident]
     bounds: Final[tuple[Path, ...]]
@@ -876,13 +785,7 @@ class Defn(Ast):
 
     @staticmethod
     def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Defn:
-        """Build the appropriate :class:`Defn` subclass instance from a parse tree.
-
-        :param file: The source file ``tree`` was parsed from.
-        :param tree: The parse tree, whose grammar rule determines which
-            :class:`Defn` subclass is constructed.
-        :return: The constructed definition node.
-        """
+        """Build the definition selected by a parse tree's grammar rule."""
         asserts.assert_eq(tree.data, "defn")
         (child,) = map(_as_tree, tree.children)
         child_classes = {
@@ -899,20 +802,7 @@ class Defn(Ast):
 
 
 class FnSpec(Defn):
-    """Base class shared by function declarations and function definitions.
-
-    :param file: The source file ``tree`` was parsed from.
-    :param tree: The declaration's or definition's own parse tree, used
-        only for its source span.
-    :param ident: The parse tree for the function's name.
-    :param generic_params: The parse tree for the function's ``[...]``
-        type parameter list, or ``None`` if it has none - always ``None``
-        for a :class:`FnDecl`, since an ``extern`` function can't be
-        generic.
-    :param param_list: The parse tree for the function's parameter list.
-    :param ret_typ: The parse tree for the function's return type, or
-        ``None`` if unspecified (i.e. ``void``).
-    """
+    """Shared syntax for function declarations, definitions, and trait methods."""
 
     name: Final[Ident]
     #: Empty for a non-generic function.
@@ -974,14 +864,7 @@ class FnDecl(FnSpec):
 
 
 class TraitFn(FnSpec):
-    """A method prototype declared inside a :class:`TraitDefn`.
-
-    Never generic itself - same restriction as an associated function,
-    which this shares the shape of: generic associated functions aren't
-    supported yet. Has no body: a trait method is a promise every
-    implementing type keeps, not itself an implementation - default bodies
-    are deferred.
-    """
+    """A non-generic trait method prototype without a default body."""
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "trait_fn")
@@ -1077,7 +960,7 @@ class StructDefn(Defn):
 
 
 class StructFieldDefn(Ast):
-    """A single field declaration within a :class:`StructDefn`."""
+    """A single struct field declaration."""
 
     access: Final[Optional[Access]]
     mut: Final[Optional[Mutability]]
@@ -1184,13 +1067,7 @@ class TraitDefn(Defn):
 
 
 class ImplDefn(Defn):
-    """An ``impl SomeStruct { ... }`` block of associated functions, or,
-    if ``for_typ`` is present, an ``impl Trait for SomeTyp { ... }``
-    trait implementation.
-
-    :param for_typ: The parsed ``for`` clause's type, or ``None`` for an
-        inherent impl.
-    """
+    """An inherent impl or trait impl, distinguished by ``for_typ``."""
 
     #: Empty for a non-generic impl block.
     generic_params: Final[tuple[GenericParam, ...]]
@@ -1247,14 +1124,7 @@ class Access(Ast):
 
     @staticmethod
     def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Optional[Access]:
-        """Build an :class:`Access` from a parse tree, if it has one present.
-
-        :param file: The source file ``tree`` was parsed from.
-        :param tree: The parse tree for the (possibly absent) access
-            specifier.
-        :return: The constructed node, or ``None`` if no ``pub`` keyword
-            is present.
-        """
+        """Build an access node, or return ``None`` when ``pub`` is absent."""
         (child,) = tree.children
         if child is not None:
             return Access(file, tree)
@@ -1278,14 +1148,7 @@ class Mutability(Ast):
 
     @staticmethod
     def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Optional[Mutability]:
-        """Build a :class:`Mutability` from a parse tree, if it has one present.
-
-        :param file: The source file ``tree`` was parsed from.
-        :param tree: The parse tree for the (possibly absent) mutability
-            specifier.
-        :return: The constructed node, or ``None`` if no ``mut`` keyword
-            is present.
-        """
+        """Build a mutability node, or return ``None`` when ``mut`` is absent."""
         (child,) = tree.children
         if child is not None:
             return Mutability(file, tree)
@@ -1312,12 +1175,6 @@ class Mod(Ast):
 
 
 def _opt_ast(obj: Any) -> Optional[Ast]:
-    """Get ``obj``'s ``ast`` attribute, if it has one and it's an :class:`Ast`.
-
-    :param obj: The object to inspect (typically an
-        :class:`~leech.ir_values.Value`).
-    :return: ``obj.ast``, or ``None`` if absent or not an :class:`Ast`.
-    """
     attr = getattr(obj, "ast", None)
     if isinstance(attr, Ast):
         return attr
@@ -1325,10 +1182,5 @@ def _opt_ast(obj: Any) -> Optional[Ast]:
 
 
 def opt_span(obj: Any) -> Optional[src.SrcSpan]:
-    """Get the source span of ``obj``'s ``ast`` attribute, if it has one.
-
-    :param obj: The object to inspect (typically an
-        :class:`~leech.ir_values.Value`).
-    :return: The span of ``obj.ast``, or ``None`` if unavailable.
-    """
+    """Return the span of ``obj.ast``, or ``None`` when unavailable."""
     return opt_util.opt_map(_opt_ast(obj), lambda x: x.span)

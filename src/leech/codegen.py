@@ -38,12 +38,7 @@ _OVERFLOW_INTRINSIC_PREFIXES: Final[dict[tuple[type[ir_values.Instr], signage.Si
 
 
 def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access) -> None:
-    """Set an LLVM global's linkage to match a Leech item's access.
-
-    :param ll_global: The LLVM global variable or function to set linkage
-        on.
-    :param access: The Leech item's access.
-    """
+    """Set an LLVM global's linkage from a Leech access level."""
     if access == ir_module.PRIVATE:
         ll_global.linkage = "private"
     else:
@@ -51,10 +46,7 @@ def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.A
 
 
 class Compiler:
-    """Lowers a single :class:`~leech.ir_module.Mod` to an LLVM module.
-
-    :param mod: The IR module to compile.
-    """
+    """Lower one Leech IR module to LLVM IR."""
 
     _mod: Final[ir_module.Mod]
     ll_mod: Final[ll.Module]
@@ -63,19 +55,7 @@ class Compiler:
     _overflow_intrinsics: Final[dict[str, ll.Function]]
 
     class _LLItems:
-        """A cache mapping Leech IR values and types to their LLVM counterparts.
-
-        Looking up an item that hasn't been compiled yet compiles and
-        caches it on demand. Like :class:`~leech.ir_env.Env`, instances form
-        a parent/child chain (see :meth:`new_child`), used to give each
-        function body its own scope for its instructions' LLVM values
-        while still sharing the enclosing module-level cache.
-
-        :param compiler: The compiler to dispatch on-demand compilation
-            to.
-        :param values: The initial mapping to wrap, or ``None`` to start
-            empty.
-        """
+        """A nested, lazily compiled mapping from Leech IR items to LLVM items."""
 
         _compiler: Final[Compiler]
         _items: Final[collections.ChainMap[ir_values.Value | typs.Typ, ll.Value | ll.Type]]
@@ -95,21 +75,14 @@ class Compiler:
                 self._items = collections.ChainMap()
 
         def new_child(self) -> Compiler._LLItems:
-            """Create a new cache nested inside this one.
-
-            :return: A fresh cache that inherits this cache's entries.
-            """
+            """Create a child cache that inherits this cache's entries."""
             return Compiler._LLItems(self._compiler, self._items.new_child())
 
         def __contains__(self, item: ir_values.Value | typs.Typ) -> bool:
             return item in self._items
 
         def get(self, item: ir_values.Value | typs.Typ) -> ll.Value | ll.Type:
-            """Get the LLVM value or type for ``item``, compiling it if needed.
-
-            :param item: The Leech IR value or type to look up.
-            :return: The corresponding LLVM value or type.
-            """
+            """Return ``item``'s LLVM counterpart, compiling it when needed."""
             try:
                 return self._items[item]
             except KeyError:
@@ -123,12 +96,7 @@ class Compiler:
                 return compiled
 
         def set(self, item: ir_values.Value | typs.Typ, ll_item: ll.Value | ll.Type) -> None:
-            """Record the LLVM value or type to use for ``item``.
-
-            :param item: The Leech IR value or type.
-            :param ll_item: The LLVM value or type to associate with
-                ``item``.
-            """
+            """Associate ``item`` with its LLVM counterpart."""
             self._items[item] = ll_item
 
     @dataclasses.dataclass(frozen=True)
@@ -136,13 +104,7 @@ class Compiler:
         ll_builder: ll.IRBuilder
         ll_values: Compiler._LLItems
         ll_bbs: collections.ChainMap[ir_values.BasicBlock, ll.Block]
-        #: A CheckedAddInstr/CheckedSubInstr/CheckedMulInstr's own raw
-        #: ``{typ, i1}`` `llvm.*.with.overflow` call result, keyed by the
-        #: instruction itself - consulted by its paired OverflowFlagInstr,
-        #: which needs the overflow flag out of the very same call rather
-        #: than issuing one of its own. Function-body-local, like ll_bbs
-        #: and (the outermost of) ll_values - a checked instruction and
-        #: its paired flag instruction never span two function bodies.
+        #: Raw overflow-intrinsic results shared with their paired flag instructions.
         overflow_calls: dict[ir_values.CheckedBinOpInstr, ll.Value]
 
     def __init__(self, mod: ir_module.Mod) -> None:
@@ -153,49 +115,10 @@ class Compiler:
         self._overflow_intrinsics = {}
 
     def compile(self) -> None:
-        """Compile the module passed to the constructor into :attr:`ll_mod`.
+        """Compile declarations before bodies and discover generic instances to a fixpoint.
 
-        Runs in phases over every module in the program - not just the
-        one being compiled - taken from the loader, which has already
-        deduplicated modules reached by more than one import path.
-        Declaring everything up front means forward references between
-        items resolve regardless of declaration order, and driving the
-        declare phases off the loader rather than recursing through
-        imports means they don't depend on *import* order either.
-
-        Types are declared before functions and variables because a
-        signature can name a struct from a module loaded later than the
-        one declaring the signature.
-
-        Only the compiled module's own function bodies and variable
-        initializers are compiled; items belonging to imported modules
-        are left as declarations, to be resolved against those modules'
-        own separately-compiled output at link time. Struct *bodies* are
-        the exception - the compiled module needs imported structs'
-        layouts to index into them.
-
-        A generic function instance is different again: it has no
-        ``ModItem`` of its own anywhere (see
-        :class:`~leech.ir_module.GenericFn`) - a call to one only creates
-        it, on demand, while the compiled module's own bodies are being
-        lowered. So every instance any of those calls could possibly
-        request is discovered first, by lowering those bodies ahead of
-        the compiled-into-LLVM-IR pass below, purely to find them, and
-        declared, alongside everything else, before any body - an
-        ordinary function's or an instance's own - is compiled into
-        LLVM IR and might need to call it.
-
-        A generic struct's own declaration - a ``StructTyp`` with type
-        parameters instead of real field types - is never declared or
-        compiled at all; only its instantiations are, found and lowered
-        the same on-demand way as a generic function instance, and for
-        the same reason: nothing else names them until something asks
-        for one.
-
-        A method declared inside a generic inherent ``impl`` block is
-        discovered and declared the same on-demand way too (see
-        :meth:`_discover_fn_instances`), just keyed by concrete receiver
-        type rather than by explicit type arguments.
+        Imported bodies remain external, but imported struct layouts are defined locally.
+        Generic templates have no LLVM representation; only their reachable instances do.
         """
         self.ll_mod.triple = "x86_64-linux-gnu"
 
@@ -248,21 +171,7 @@ class Compiler:
             self._compile_fn_instance(inst)
 
     def _program_items(self) -> Iterator[ir_module.ModItem]:
-        """Every item of every module in the program that needs an LLVM symbol.
-
-        Imported modules contribute only their public items, since
-        nothing outside them can refer to the rest. Items that are
-        themselves imported modules are skipped: this walk already covers
-        every module, so recursing into them would be redundant. Item
-        kinds with nothing to declare or compile - a generic function
-        (only its instances have an LLVM symbol, see
-        :meth:`_discover_fn_instances`) or a trait (a declaration, not a
-        value or type with anything to lower) - aren't filtered out here;
-        :meth:`_declare_mod_item` and :meth:`_compile_mod_item` are the
-        single place that decides what each item kind needs.
-
-        :return: The items, grouped by module in load order.
-        """
+        """Yield local items and public imported items in module load order."""
         for mod in self._mod.loader.mods:
             for item in mod.items:
                 if isinstance(item.value, ir_module.Mod):
@@ -273,16 +182,7 @@ class Compiler:
     def _fixpoint[T](
         self, newly_requested: Callable[[], list[T]], resolve: Callable[[T], None]
     ) -> list[T]:
-        """Repeatedly call ``newly_requested``, resolving each result, until
-        a sweep turns up nothing new.
-
-        :param newly_requested: Returns every not-yet-seen item found
-            since the last call, or ``[]`` once a sweep turns up nothing
-            new.
-        :param resolve: Called once per newly found item, to force
-            whatever laziness of its own might request further items.
-        :return: Every item discovered, in discovery order.
-        """
+        """Resolve newly requested items to a fixpoint and return them in discovery order."""
         instances: list[T] = []
         pending = newly_requested()
         while pending:
@@ -293,9 +193,7 @@ class Compiler:
         return instances
 
     def _fn_templates(self) -> Iterator[ir_module.FnTemplate]:
-        """Every generic function or compiler-intrinsic builtin in the
-        program, whose :attr:`~leech.ir_module.FnTemplate.instances` might
-        need discovering (see :meth:`_discover_fn_instances`)."""
+        """Yield every generic function and compiler-intrinsic builtin."""
         for mod in self._mod.loader.mods:
             for item in mod.items:
                 if isinstance(item.value, ir_module.GenericFn):
@@ -303,45 +201,17 @@ class Compiler:
         yield from self._mod.loader.builtins
 
     def _generic_impl_method_fns(self) -> Iterator[ir_module.Fn]:
-        """Every method declared inside a generic inherent ``impl`` block in
-        the program, whose instances might need discovering (see
-        :meth:`_discover_fn_instances`). Never a :class:`~leech.ir_module.ModItem`,
-        so found via :attr:`~leech.ir_module.Mod.generic_fns` instead of
-        :meth:`_fn_templates`."""
+        """Yield methods declared by generic inherent impls."""
         for mod in self._mod.loader.mods:
             for fn in mod.generic_fns:
                 if fn.recv_typ is not None:
                     yield fn
 
     def _discover_fn_instances(self) -> list[ir_module.FnInstance]:
-        """Find every generic function or generic-impl method instance a
-        call anywhere in the program could request.
+        """Discover generic function and impl-method instances to a fixpoint.
 
-        An instance is created only as a side effect of lowering (see
-        :attr:`~leech.ir_module.Fn.cfg`) a body that calls one - and
-        lowering one instance's own body can request further instances,
-        of either kind (a free generic function's body can call a
-        generic-impl method, and vice versa). So this forces every one of
-        :attr:`_mod`'s own functions to be lowered first, seeding the
-        search, then keeps lowering whatever instances that turns up -
-        from both :meth:`_fn_templates` and :meth:`_generic_impl_method_fns`
-        together, in one shared fixpoint - until a full sweep turns up
-        nothing new. Discovering the two kinds in separate fixpoints would
-        miss whatever the second one's own lowering requests of the
-        first's kind, once the first has already finished.
-
-        This is pure IR-building, with no LLVM involved: an instance's
-        own :attr:`~leech.ir_module.Fn.cfg` is looked up (and, on first
-        use, built) here purely to complete the search, well before
-        :meth:`_compile_fn_instance` compiles it into LLVM IR.
-
-        A compiler-intrinsic builtin (see
-        :class:`~leech.ir_module.GenericBuiltinFn`) is never a
-        :class:`~leech.ir_module.ModItem` - it's bound directly into every
-        module's ``builtin_env``, not through the ordinary
-        ``ast.defns``-driven path - so :meth:`_fn_templates` yields it
-        alongside every real generic function, and the sweep below doesn't
-        need to tell the two apart.
+        Lowering an instance can request more instances, so both kinds
+        must participate in the same fixpoint.
 
         :return: Every instance discovered, in discovery order.
         """
@@ -368,26 +238,8 @@ class Compiler:
     def _discover_struct_instances(self) -> list[typs.StructTyp]:
         """Find every generic struct instantiation reachable from the program.
 
-        Mirrors :meth:`_discover_fn_instances`: an instantiation is
-        created on demand wherever its type is named - a struct literal,
-        a ``let``'s declared type, a function signature, another struct's
-        own field, ... - and one instantiation's own fields can themselves
-        name further instantiations, of the same or another generic
-        struct, so this iterates to a fixpoint the same way.
-
-        Run *after* :meth:`_discover_fn_instances`, which has already
-        forced every reachable function body to lower - and so already
-        requested (see :meth:`~leech.typs.StructTyp.instance`) every
-        instantiation any of them directly names. This only has to chase
-        the ones reachable purely through struct fields from there, which
-        involves no lowering, just resolving :attr:`~leech.typs.StructTyp.fields`.
-
-        Filters to :meth:`~leech.typs.StructTyp.is_concrete` instantiations:
-        type-checking a generic function or ``impl`` block resolves its own
-        type parameters opaquely, which also produces an entry in
-        :attr:`~leech.typs.StructTyp.instances` - one that names no real,
-        lowerable type, and is never reachable through anything that
-        actually gets lowered.
+        Resolving fields can request further instances. Non-concrete
+        instances created while checking generic definitions are ignored.
 
         :return: Every instantiation discovered, in discovery order.
         """

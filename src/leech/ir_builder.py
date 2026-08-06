@@ -2,18 +2,9 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""AST-to-IR lowering, assuming an already type-checked program.
+"""AST-to-IR lowering for already type-checked programs.
 
-Type checking happens beforehand, as its own pass (see
-:mod:`~leech.typcheck`), forced by :attr:`~leech.ir_module.Fn.cfg` and
-:attr:`~leech.ir_module.ModVar.cfg` before either ever constructs a
-:class:`CfgBuilder`. Everything below trusts the result: it doesn't
-validate that a program is well-typed, only emits IR under the
-assumption that it is - reading back decisions
-(:class:`~leech.typcheck.TypCheckResults`) that ``TypCheck`` already
-made (an integer literal's type, whether and how a value coerces,
-which of two call/field-access candidates applies, and so on) rather
-than re-deriving them.
+Lowering trusts and reuses the decisions recorded in ``TypCheckResults``.
 """
 
 import dataclasses
@@ -37,48 +28,17 @@ from leech import (
 
 
 class _ExprContext(enum.Enum):
-    """Whether an expression is being lowered for its value or its address.
-
-    An expression built in :attr:`PLACE` context yields a pointer to
-    where the value lives (e.g. the target of an assignment or the
-    operand of ``&``), rather than the value itself.
-    """
+    """Whether an expression is lowered to its value or its address."""
 
     PLACE = 0
     VALUE = 1
 
 
 class CfgBuilder:
-    """Lowers a single function body or module-variable initializer to a
-    :class:`~leech.ir_values.Cfg`.
+    """Lower one function body or module initializer to a control-flow graph.
 
-    Each ``build_*`` method lowers one AST node kind, emitting
-    instructions into the current basic block as it goes. The program is
-    already known to be well-typed by this point (see the module
-    docstring), so these methods don't validate it - where a decision was
-    made while type checking, they read it back from the already-computed
-    type-checking facts rather than re-deriving it.
-
-    :param typ_check_results: The already-computed type-checking facts for
-        the body being lowered (see :mod:`~leech.typcheck`). For a
-        generic function instance, these are its generic declaration's
-        own results, unsubstituted - see ``typ_arg_mapping``.
-    :param fn: The function whose body is being lowered, or ``None`` when
-        lowering a module-variable initializer (which isn't part of any
-        function).
-    :param typ_arg_mapping: The concrete type to substitute for each of
-        the lowered function's own type parameters, if it's one instance
-        of a generic function - empty otherwise. Almost everything typed
-        during lowering already resolves concretely on its own (params
-        and locals ultimately trace back to the function's own already-
-        substituted signature, or to a type resolved fresh from source
-        against an environment where each type parameter is already
-        shadowed by its concrete argument - see
-        :attr:`~leech.ir_module.FnInstance.env`); the one fact the
-        type-checking results can hand back containing a raw type
-        parameter is a :class:`~leech.typcheck.NeverDiverge` coercion's
-        target, which is why this is consulted in exactly one place
-        during lowering.
+    Generic instances substitute ``typ_arg_mapping`` into recorded facts that still contain
+    declaration parameters.
     """
 
     @dataclasses.dataclass(frozen=True)
@@ -118,11 +78,7 @@ class CfgBuilder:
         self._loop_stack = []
 
     def build_var_initializer(self, defn_ast: ast.VarDefn, e: ir_env.Env) -> None:
-        """Lower a module-level ``let`` initializer expression into :attr:`cfg`.
-
-        :param defn_ast: The parsed variable declaration.
-        :param e: The scope to resolve names in.
-        """
+        """Lower a module-level initializer into ``cfg``."""
         assert self._fn is None
         e = e.new_child()
         let_ast = defn_ast.let_stmt
@@ -130,11 +86,7 @@ class CfgBuilder:
         self._ret(initializer, let_ast.expr)
 
     def build_fn(self, fn_ast: ast.FnDefn, e: ir_env.Env) -> None:
-        """Lower a function body into :attr:`cfg`.
-
-        :param fn_ast: The parsed function definition.
-        :param e: The scope to resolve names in.
-        """
+        """Lower a function body into ``cfg``."""
         assert self._fn is not None
         e = e.new_child()
 
@@ -163,18 +115,7 @@ class CfgBuilder:
     def _finish_ret(
         self, value: ir_values.Value, attribute_ast: ast.Ast, coerce_ast: ast.Ast
     ) -> None:
-        """Emit what a function or ``return`` statement's non-void value implies.
-
-        ``never``-typed (e.g. the value came from a call that never
-        returns) becomes ``unreachable`` instead of ``ret``, unless the
-        current block is already terminated; otherwise the value is
-        coerced to the function's return type and returned.
-
-        :param value: The lowered value to return.
-        :param attribute_ast: The AST node to attribute the emitted
-            ``unreachable``/``ret`` instruction to.
-        :param coerce_ast: The AST node ``value`` was checked against its
-            expected type with; see :meth:`_coerce`.
+        """Emit ``unreachable`` for ``never`` or coerce and return ``value``.
 
         :pre: value coerces to the enclosing function's return type [opt_unwrap]
         """
@@ -192,25 +133,7 @@ class CfgBuilder:
         ctx: _ExprContext,
         expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
-        """Lower any expression, dispatching to the ``build_*_expr`` method
-        matching its AST node kind.
-
-        :param expr_ast: The parsed expression.
-        :param e: The scope to resolve names in.
-        :param ctx: Whether to lower for the expression's value or its
-            address.
-        :param expected_typ: The type ``expr_ast`` is expected to have, if
-            known from the surrounding context (e.g. a call argument's
-            declared parameter type). Consulted by expressions that can't
-            otherwise infer their own type - an empty array literal, and
-            an integer literal written without a type suffix (see
-            :meth:`~leech.typcheck.TypCheck._infer_int_lit_typ`) - and passed
-            on by the constructs that
-            merely pass a value through, such as a block's tail expression
-            or an ``if``'s branches. Operator operands deliberately don't
-            receive it; ignored everywhere else.
-        :return: The lowered expression's value.
-        """
+        """Lower an expression in value or address context, using an optional type hint."""
         match expr_ast:
             case ast.BlockExpr():
                 return self._build_block_expr(expr_ast, e, ctx, expected_typ)
@@ -441,30 +364,7 @@ class CfgBuilder:
     def _build_call_expr(
         self, call_ast: ast.CallExpr, e: ir_env.Env, ctx: _ExprContext
     ) -> ir_values.Value:
-        """Lower a function call expression.
-
-        If the callee names a generic function, the call is against one
-        instance of it (see :meth:`~leech.ir_module.Fn.instance`) -
-        TypCheck already resolved which one, so this only has to fetch
-        (and, on the first call site to need it, build) it.
-
-        Otherwise, if the callee is written as ``x.name``, ``name`` is looked up as a
-        method (an associated function with a ``self`` receiver) of
-        ``x``'s struct type first; if found, ``x`` (its place - a method
-        receiver is always by-pointer) becomes an implicit leading
-        argument. Otherwise this falls back to ordinary field access,
-        exactly as if the call weren't there (e.g. calling through a
-        struct field that happens to hold a function pointer). Since a
-        struct's fields and associated functions share one namespace, a
-        name can't be both, so the fallback applies exactly when ``name``
-        is a field, isn't a member of the struct at all, or ``x`` isn't
-        struct-typed.
-
-        TypCheck has already confirmed the callee resolves to a method or
-        a callable field, that a resolved method is accessible and has a
-        receiver, and that argument count and types are valid; this only
-        has to make the same method-or-field-fallback decision (to know
-        how to lower the callee) and emit.
+        """Lower a call, including method receivers and generic instances.
 
         :param call_ast: The parsed call expression.
         :param e: The scope to resolve names in.
@@ -480,10 +380,7 @@ class CfgBuilder:
 
         generic_call = self._typ_check_results.generic_call(call_ast)
         if generic_call is not None:
-            # TypCheck already resolved which generic function this calls
-            # and its type arguments (inferred or explicit); this just
-            # has to get (building, if this is the first call site to
-            # need it) the one instance that pairs them.
+            # TypCheck recorded the resolved function and type arguments.
             callee: ir_values.Value = self._resolve_fn_instance(*generic_call)
         elif isinstance(callee_ast, ast.FieldAccessExpr):
             recv_place = self._build_place(callee_ast.value, e)
@@ -842,12 +739,7 @@ class CfgBuilder:
     def _resolve_fn_instance(
         self, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
     ) -> ir_module.FnInstance:
-        """Get the concrete instance a generic call or reference resolves to.
-
-        Shared by :meth:`_build_call_expr` and :meth:`_build_var_expr`:
-        TypCheck records ``(fn, typ_args)`` the same way for a call and a
-        bare (explicitly-applied) reference alike, so lowering either
-        only has to turn that pair into the one instance it names.
+        """Get the concrete instance identified by ``fn`` and ``typ_args``.
 
         :param fn: The generic function TypCheck resolved.
         :param typ_args: Its type arguments as TypCheck recorded them -
@@ -868,15 +760,7 @@ class CfgBuilder:
     def _build_var_expr(
         self, var_ast: ast.VarExpr, e: ir_env.Env, ctx: _ExprContext
     ) -> ir_values.Value:
-        """Lower a (possibly qualified) variable or function reference.
-
-        If ``var_ast`` names a generic function applied to explicit type
-        arguments (e.g. the ``id[i32]`` in ``let f = id[i32];``), the
-        result is that instance itself, usable as an ordinary function
-        pointer from here on - TypCheck already resolved which one (see
-        :meth:`~leech.typcheck.TypCheck._check_var_expr`), so this only has
-        to fetch (or build) it, the same way :meth:`_build_call_expr` does
-        for a generic call.
+        """Lower a possibly qualified variable or function reference.
 
         :param var_ast: The parsed variable expression.
         :param e: The scope to resolve the path in.
@@ -1264,10 +1148,6 @@ class CfgBuilder:
     def _build_int_lit(self, lit_ast: ast.IntLit, negated: bool) -> ir_values.Value:
         """Lower an integer literal to a compile-time-known value.
 
-        Its type was already chosen and overflow-checked while type
-        checking (see :meth:`~leech.typcheck.TypCheck._infer_int_lit_typ`);
-        this only has to read that decision back and build the value.
-
         :param lit_ast: The parsed integer literal.
         :param negated: Whether the literal is the operand of a unary
             minus, and so denotes the negation of its written value.
@@ -1279,18 +1159,6 @@ class CfgBuilder:
 
     def _coerce(self, value: ir_values.Value, node: ast.Ast) -> Optional[ir_values.Value]:
         """Convert ``value`` to the type its context expects, if allowed.
-
-        The decision - whether a coercion applies, and which kind - was
-        already made while type checking (see
-        :meth:`~leech.typcheck.TypCheck._record_coercion`); this only has
-        to emit it. Callers are the handful of sites with an unambiguous
-        target type - call arguments, assignment, ``return`` and a
-        function's tail expression, struct literal fields, an array
-        access index, and array literal elements whose type comes from
-        context. Operator operands deliberately don't coerce.
-
-        Returning ``None`` rather than raising lets each caller report the
-        failure with the error class that fits its context.
 
         :param value: The value to convert.
         :param node: The AST node ``value`` was checked against its
@@ -1333,18 +1201,11 @@ class CfgBuilder:
     ) -> Optional[ir_values.Value]:
         """If ``value`` is ``never``-typed, terminate the current block.
 
-        For operators, which don't coerce toward a target type (see
-        :meth:`_coerce`): a diverging operand makes the whole operator
-        expression diverge too, the same way :meth:`_build_if_expr`
-        already treats a branch that never reaches its end.
-
         :param value: The already-built operand to check.
         :param ast_node: The AST node to attribute a new terminator to.
         :param ctx: Whether to lower the result for its value or its
             address.
-        :return: A ``never``-typed result, or ``None`` if ``value`` isn't
-            ``never``-typed, so the caller should proceed with ``value``
-            normally.
+        :return: A ``never``-typed result, or ``None`` otherwise.
         """
         if value.typ != typs.NEVER:
             return None
@@ -1354,11 +1215,6 @@ class CfgBuilder:
 
     def _build_place(self, expr_ast: ast.Expr, e: ir_env.Env) -> ir_values.Value[typs.PtrTyp]:
         """Lower ``expr_ast`` for its address rather than its value.
-
-        The narrow counterpart of :meth:`_build_expr` for callers that
-        always need a place (a method call's receiver, ``&``'s operand, an
-        array or field access's base, an assignment's target) - see
-        :class:`_ExprContext`.
 
         :param expr_ast: The parsed expression to lower as a place.
         :param e: The scope to resolve names in.
@@ -1412,13 +1268,7 @@ class CfgBuilder:
     def _branch(self, target: ir_values.BasicBlock, ast_node: ast.Ast) -> None:
         """Terminate :attr:`_curr_bb` with an unconditional branch.
 
-        Does not change :attr:`_curr_bb`, the same as :meth:`_cbranch` and
-        :meth:`_ret`; call :meth:`_set_position` next if what follows
-        should build into ``target`` (not every caller wants that - e.g.
-        ``break``/``continue`` deliberately leave :attr:`_curr_bb` as the
-        block they terminated, so any source code still to come after
-        them in the same block is correctly dropped as unreachable
-        rather than appended into ``target``).
+        Leaves :attr:`_curr_bb` unchanged.
 
         :param target: The basic block to branch to; must already be in
             :attr:`cfg`.
@@ -1437,8 +1287,7 @@ class CfgBuilder:
     ) -> None:
         """Terminate :attr:`_curr_bb` with a conditional branch.
 
-        Does not change :attr:`_curr_bb`; the caller is expected to call
-        :meth:`_set_position` next.
+        Leaves :attr:`_curr_bb` unchanged.
 
         :param condition: The boolean value to branch on.
         :param true_target: The block to branch to if ``condition`` is
@@ -1502,9 +1351,8 @@ class CfgBuilder:
             :attr:`~leech.ir_env.Env.panic_fn`, which every scope shares.
         :param ast_node: The AST node the emitted instructions are
             attributed to.
-        :param ok_bb: The block to continue into when ``cond`` is false,
-            if the caller already has one to merge into (e.g. a nested
-            check's own continuation) - built fresh otherwise.
+        :param ok_bb: An existing continuation block, or ``None`` to
+            create one.
 
         :post: _curr_bb.terminated or (_curr_bb is ok_bb, reached only when cond was false) [ctor]
         """

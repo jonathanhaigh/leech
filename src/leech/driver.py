@@ -13,23 +13,9 @@ from leech import codegen, errors, ir_loader, ir_module, opt_util, src
 
 
 def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir_module.Mod:
-    """Parse and lower a source file, and everything it imports, into IR.
+    """Parse and lower a source file and its imports into IR.
 
-    :param file: The source file to compile.
-    :param qualified_name: The name to give ``file``'s own module - used to
-        qualify its items' mangled symbol names (see
-        :attr:`~leech.ir_module.ModItem.qualified_name`). Defaults to
-        ``file``'s bare filename stem, the normal behavior for a real
-        top-level compilation; only overridden by tests that need to
-        compile a non-root module standalone under the same qualified name
-        it would get if reached via ``import``.
-    :return: The resulting IR module, whose
-        :attr:`~leech.ir_module.Mod.loader` holds every module reached from
-        it.
-    :raises UnexpectedCharacterError: If a character in ``file`` can't
-        start any valid token.
-    :raises UnexpectedTokenError: If a token in ``file`` doesn't fit the
-        grammar at that point (including the input ending too soon).
+    ``qualified_name`` defaults to the file's stem and qualifies its items' symbols.
     """
     qualified_name = opt_util.opt_or_default(qualified_name, file.path.stem)
     # TODO: thread a --search-path/env-var CLI option through to
@@ -38,12 +24,7 @@ def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir
 
 
 def compile_to_llvm_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> str:
-    """Compile a source file all the way down to textual LLVM IR.
-
-    :param file: The source file to compile.
-    :param qualified_name: Forwarded to :func:`compile_to_ir`.
-    :return: The generated LLVM IR, as text.
-    """
+    """Compile a source file and its imports to textual LLVM IR."""
     mod = compile_to_ir(file, qualified_name)
     compiler = codegen.Compiler(mod)
     compiler.compile()
@@ -51,14 +32,7 @@ def compile_to_llvm_ir(file: src.SrcFile, qualified_name: Optional[str] = None) 
 
 
 def _parse_args() -> argparse.Namespace:
-    """Parse the ``leechc`` command-line arguments.
-
-    Defaults the output path (``-o``) to the input filename with its
-    suffix replaced by ``.ll``, unless the input filename already ends in
-    ``.ll``, in which case ``-o`` must be given explicitly.
-
-    :return: The parsed arguments, with ``filename`` and ``o`` populated.
-    """
+    """Parse arguments, defaulting the output to the input path with an ``.ll`` suffix."""
     parser = argparse.ArgumentParser(prog="leechc", description="Leech compiler")
     parser.add_argument("filename", help="source file", type=pathlib.Path)
     parser.add_argument("-o", help="output file", metavar="FILENAME", type=pathlib.Path)
@@ -77,13 +51,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def run() -> None:
-    """Run the ``leechc`` CLI: parse arguments, compile, and report or write output.
-
-    On a user-facing compile error, the error is registered and rendered
-    to stderr instead of raising; the process then exits with the
-    resulting error level (see :mod:`leech.errors`), writing the compiled
-    output to the ``-o`` path only if no error occurred.
-    """
+    """Compile CLI input, render diagnostics, and exit with their severity."""
     args = _parse_args()
     file = src.SrcFile(args.filename)
 

@@ -36,17 +36,7 @@ class Message:
 
 
 class UserError(Exception):
-    """Base class for diagnosable compile errors and warnings.
-
-    Carries a primary :class:`Message` plus any number of extra messages
-    (e.g. "previous definition here" notes) that get rendered alongside
-    it.
-
-    :param level: The severity of the primary message.
-    :param message: The primary message text.
-    :param span: The source location the primary message refers to, if
-        any.
-    """
+    """A diagnostic with a primary message and optional accompanying messages."""
 
     message: Final[Message]
     extra: Final[list[Message]]
@@ -57,13 +47,6 @@ class UserError(Exception):
         self.extra = []
 
     def _add_extra(self, level: Level, message: str, span: Optional[src.SrcSpan]) -> None:
-        """Attach an extra message to be rendered alongside the primary one.
-
-        :param level: The severity of the extra message.
-        :param message: The extra message text.
-        :param span: The source location the extra message refers to, if
-            any.
-        """
         self.extra.append(Message(level, message, span))
 
     @property
@@ -81,21 +64,7 @@ class UnexpectedCharacterError(UserError):
 
 
 class UnexpectedTokenError(UserError):
-    """Raised when the parser encounters a token that doesn't fit anywhere
-    in the grammar at that point - a syntax error. Also raised when the
-    input ends before a complete module has been parsed, since Leech's LALR
-    parser reports that the same way, as an unexpected end-of-input
-    "token".
-
-    :param found: A short description of what was found instead of
-        something valid, e.g. ``'token ";"'`` or ``'end of input'``.
-    :param span: Where ``found`` occurs (or, for end-of-input, the
-        position immediately after the last real token).
-    :param expected: Human-readable descriptions of what would have been
-        valid instead (e.g. ``'";"'``, ``'IDENT'``), used to add an
-        explanatory note. May be empty if nothing more specific than
-        ``found`` is known.
-    """
+    """Raised for an unexpected token or premature end of input."""
 
     def __init__(self, found: str, span: src.SrcSpan, expected: Collection[str]) -> None:
         super().__init__(ERROR, f"Unexpected {found}", span)
@@ -111,16 +80,7 @@ class ItemNotFoundError(UserError):
 
 
 class MissingTypArgsError(UserError):
-    """Raised when a generic item is named without the type arguments
-    needed to use it as a value.
-
-    A generic function isn't a value until applied to concrete type
-    arguments - naming it bare, the way an ordinary value is named, has
-    nothing to give it a type. A call is exempt: its type arguments can
-    come from its own arguments' types instead (or be given explicitly),
-    so it's checked separately - see
-    :class:`CannotInferTypArgError`.
-    """
+    """Raised when a generic item is used as a value without type arguments."""
 
     def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -994,14 +954,6 @@ class InfiniteSizeStructError(UserError):
         struct_span: Optional[src.SrcSpan],
         cycle: Sequence[tuple[str, str, Optional[src.SrcSpan], str]],
     ) -> None:
-        """
-        :param struct_name: The name of the struct whose size is
-            unbounded (also the first and last struct in ``cycle``).
-        :param struct_span: The span of that struct's definition.
-        :param cycle: The chain of fields that closes the cycle, as
-            ``(containing_struct, field_name, field_span, contained_struct)``
-            tuples, in containment order, ending back at ``struct_name``.
-        """
         super().__init__(ERROR, f'Struct "{struct_name}" has infinite size', struct_span)
         for containing, field_name, field_span, contained in cycle:
             self._add_extra(
@@ -1012,14 +964,7 @@ class InfiniteSizeStructError(UserError):
 
 
 class TypInstantiationDepthExceededError(UserError):
-    """Raised when resolving a generic struct's fields would require
-    instantiating it, or another generic struct reached from it, to an
-    unbounded nesting depth - e.g. ``struct L[T] { x: L[[T; 1]] }``, where
-    each field access wraps another array layer around ``T``. Unlike
-    :class:`InfiniteSizeStructError`, no single struct type repeats here:
-    each nesting level is a genuinely distinct instantiation, so the only
-    way to catch the runaway recursion is a depth cap.
-    """
+    """Raised when generic struct fields require unboundedly nested instantiations."""
 
     def __init__(self, struct_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -1149,14 +1094,6 @@ class CircularVarInitializerError(UserError):
         var_span: Optional[src.SrcSpan],
         cycle: Sequence[tuple[str, Optional[src.SrcSpan]]],
     ) -> None:
-        """
-        :param var_name: The name of the variable whose initializer is
-            circular (also the first and last variable in ``cycle``).
-        :param var_span: The span of that variable's ``let`` statement.
-        :param cycle: Every variable on the cycle, as ``(name, span)``
-            pairs, in dependency order, starting and ending at
-            ``var_name``.
-        """
         super().__init__(ERROR, f'Initializer of variable "{var_name}" depends on itself', var_span)
         for name, span in cycle:
             self._add_extra(NOTE, f'Variable "{name}" defined here', span)
@@ -1229,29 +1166,16 @@ class TextErrorRenderer:
     """Renders diagnostics as plain text, with a source excerpt, to stderr."""
 
     def display_errors(self, errs: list[UserError]) -> None:
-        """Render each error in ``errs``, in order.
-
-        :param errs: The errors to render.
-        """
+        """Render each error in order."""
         for err in errs:
             self._display_error(err)
 
     def _display_error(self, err: UserError) -> None:
-        """Render an error's primary message followed by its extra messages.
-
-        :param err: The error to render.
-        """
-
         self._display_message(err.message)
         for message in err.extra:
             self._display_message(message)
 
     def _display_message(self, message: Message) -> None:
-        """Render a single message, with a source excerpt if it has a span.
-
-        :param message: The message to render.
-        """
-
         print(f"{message.level.name}: {message.message}", file=sys.stderr)
         if message.span is not None:
             line_num_width = len(str(len(message.span.file.lines)))
@@ -1273,10 +1197,7 @@ _error_level: Level = NOTE
 
 
 def register_error(err: UserError) -> None:
-    """Record a diagnostic and raise the process's overall error level if needed.
-
-    :param err: The diagnostic to record.
-    """
+    """Record a diagnostic and update the overall error level."""
     global _error_level  # noqa: PLW0603 - single module-level counter, not worth a class
     if err.level > _error_level:
         _error_level = err.level
