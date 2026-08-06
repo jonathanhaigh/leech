@@ -221,7 +221,7 @@ class Compiler:
             new = []
             for template in (*self._fn_templates(), *self._generic_impl_method_fns()):
                 for inst in template.instances:
-                    if inst not in seen:
+                    if inst.is_concrete() and inst not in seen:
                         seen.add(inst)
                         new.append(inst)
             return new

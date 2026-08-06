@@ -352,6 +352,31 @@ def test_generic_impl_block_method_calls_free_generic_function(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
+def test_free_generic_fn_dot_calls_generic_impl_method_through_typ_param(tmp_path):
+    # A free generic function's own type parameter can flow into a struct
+    # type it dot-calls a method on (`b: *Box[T]`). TypCheck resolves that
+    # dot-call against Box[T] parameterized by use_box's own T - a distinct
+    # instantiation from the impl block's own Box[T] - so the FnInstance it
+    # finds and caches is itself still abstract. Lowering each of use_box's
+    # own concrete instantiations must re-derive the right concrete
+    # instance from that cached one, not reuse it as-is.
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn get(*self) T { self.*.val }
+    }
+    fn use_box[T](b: *Box[T]) T { b.*.get() }
+    pub fn main() i32 {
+        let a = Box[i32] { val: 42 };
+        let c = Box[bool] { val: true };
+        let x = use_box(&a);
+        if (use_box(&c)) { return x - 42; };
+        return 99;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
     # A generic-impl method's body can call a sibling method from the same
     # impl block by bare name, not just via `self.method()` - the sibling

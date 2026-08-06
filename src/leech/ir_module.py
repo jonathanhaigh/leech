@@ -433,16 +433,26 @@ class FnInstance(FnSpec[ast.FnDefn]):
                 e.add_var(sibling.name, sibling.impl_instance(self._self_typ))
         return e
 
+    def is_concrete(self) -> bool:
+        """Return whether every type this instance's signature mentions is concrete."""
+        return self.fn_typ.is_concrete()
+
+    def substitute_typ_params(self, mapping: Mapping[typs.TypParamTyp, typs.Typ]) -> FnInstance:
+        """Return this instance re-derived against ``mapping``, substituting
+        into its own type arguments and (for a method) its receiver type.
+        A no-op when already concrete.
+        """
+        new_typ_args = tuple(arg.substitute_typ_params(mapping) for arg in self._typ_args)
+        if self._self_typ is None:
+            return asserts.checked_cast(self._fn, Fn).instance(new_typ_args)
+        new_self_typ = self._self_typ.substitute_typ_params(mapping)
+        assert isinstance(new_self_typ, typs.StructTyp)
+        return asserts.checked_cast(self._fn, Fn).impl_instance(new_self_typ, new_typ_args)
+
     @functools.cached_property
     def sibling_instances(self) -> Mapping[Fn, FnInstance]:
         """Each impl-block sibling, mapped to its own instance for
-        :attr:`_self_typ`.
-
-        A bare-name or dot-call reference to a sibling (see
-        :meth:`~leech.typs.StructTyp.add_assoc_fn`) resolves, via TypCheck,
-        to the raw, unsubstituted ``Fn`` - :class:`~leech.ir_builder.CfgBuilder`
-        maps it through this to the correct monomorphized callee instead.
-        Empty unless this is a method instance.
+        :attr:`_self_typ`. Empty unless this is a method instance.
         """
         if self._self_typ is None:
             return {}
