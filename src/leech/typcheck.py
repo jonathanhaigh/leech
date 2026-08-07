@@ -164,8 +164,8 @@ class TypCheck:
     _ret_typ: Optional[typs.Typ]
     _ret_typ_span: Optional[src.SrcSpan]
     _fn_name: Optional[str]
-    #: Enclosing ``while`` labels, innermost last.
-    _loop_labels: Final[list[Optional[str]]]
+    #: Enclosing while loops' labels and own AST nodes, innermost last.
+    _loop_labels: Final[list[tuple[Optional[str], ast.WhileExpr]]]
     #: Local bindings' pointer types, keyed by their declaration-site AST node.
     _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
 
@@ -338,7 +338,7 @@ class TypCheck:
                 while_ast.condition.span,
             )
 
-        self._loop_labels.append(opt_util.opt_map(while_ast.label, lambda x: x.name))
+        self._loop_labels.append((opt_util.opt_map(while_ast.label, lambda x: x.name), while_ast))
         try:
             block_typ = self._check_expr(while_ast.block, e, None)
         finally:
@@ -983,20 +983,24 @@ class TypCheck:
     def _check_break_stmt(self, break_ast: ast.BreakStmt) -> None:
         if not self._loop_labels:
             raise errors.BreakNotInLoopError(break_ast.span)
-        self._resolve_loop_label(break_ast.label)
+        target = self._resolve_loop_label(break_ast.label)
+        self.results.resolutions.set_loop_target(break_ast, target)
 
     def _check_continue_stmt(self, continue_ast: ast.ContinueStmt) -> None:
         if not self._loop_labels:
             raise errors.ContinueNotInLoopError(continue_ast.span)
-        self._resolve_loop_label(continue_ast.label)
+        target = self._resolve_loop_label(continue_ast.label)
+        self.results.resolutions.set_loop_target(continue_ast, target)
 
-    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> None:
-        """Confirm that a ``break`` or ``continue`` label names an enclosing loop."""
+    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> ast.WhileExpr:
+        """Return the while loop a ``break``/``continue`` label names, or the
+        innermost enclosing one if ``label`` is ``None``.
+        """
         if label is None:
-            return
-        for loop_label in reversed(self._loop_labels):
+            return self._loop_labels[-1][1]
+        for loop_label, while_ast in reversed(self._loop_labels):
             if loop_label == label.name:
-                return
+                return while_ast
         raise errors.LoopLabelNotFoundError(label.name, label.span)
 
     def _check_let_stmt(self, let_ast: ast.LetStmt, e: ir_env.Env) -> bool:

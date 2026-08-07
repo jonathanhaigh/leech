@@ -46,7 +46,6 @@ class CfgBuilder:
     class _LoopCtx:
         """The ``break``/``continue`` targets for one enclosing ``while`` loop."""
 
-        label: Optional[str]
         cond_bb: ir_values.BasicBlock
         end_bb: ir_values.BasicBlock
 
@@ -56,9 +55,9 @@ class CfgBuilder:
     cfg: Final[ir_values.Cfg]
     _curr_bb: ir_values.BasicBlock
     _generate_bb_name: Final[naming.VarNamer]
-    #: The ``while`` loops currently being lowered, innermost last - used
-    #: to resolve unlabeled and labeled ``break``/``continue`` targets.
-    _loop_stack: Final[list[CfgBuilder._LoopCtx]]
+    #: Every while loop lowered so far, keyed by its own AST node - the
+    #: same identity TypCheck resolved a break/continue target to.
+    _loop_ctxs: Final[dict[ast.WhileExpr, CfgBuilder._LoopCtx]]
     #: Each local binding's lowered storage, keyed by its declaration-site
     #: AST node - the same identity TypCheck resolved a VarExpr to.
     _local_values: Final[dict[resolve.LocalDecl, ir_values.Value]]
@@ -79,7 +78,7 @@ class CfgBuilder:
         self._generate_bb_name("entry")
         self._generate_bb_name("exit")
         self._curr_bb = self.cfg.entry
-        self._loop_stack = []
+        self._loop_ctxs = {}
         self._local_values = {}
 
     def build_var_initializer(self, defn_ast: ast.VarDefn, e: ir_env.Env) -> None:
@@ -348,17 +347,8 @@ class CfgBuilder:
 
         self._cbranch(cond, loop_bb, end_bb, while_ast)
         self._set_position(loop_bb)
-        self._loop_stack.append(
-            CfgBuilder._LoopCtx(
-                label=opt_util.opt_map(while_ast.label, lambda x: x.name),
-                cond_bb=cond_bb,
-                end_bb=end_bb,
-            )
-        )
-        try:
-            self._build_expr(while_ast.block, e, _ExprContext.VALUE)
-        finally:
-            self._loop_stack.pop()
+        self._loop_ctxs[while_ast] = CfgBuilder._LoopCtx(cond_bb=cond_bb, end_bb=end_bb)
+        self._build_expr(while_ast.block, e, _ExprContext.VALUE)
 
         if not self._curr_bb.terminated:
             self._branch(cond_bb, while_ast.block)
@@ -1087,7 +1077,7 @@ class CfgBuilder:
 
         :param break_ast: The parsed break statement.
         """
-        target = self._resolve_loop_label(break_ast.label)
+        target = self._loop_ctxs[self._typ_check_results.resolutions.loop_target(break_ast)]
         self._branch(target.end_bb, break_ast)
 
     def _build_continue_stmt(self, continue_ast: ast.ContinueStmt) -> None:
@@ -1095,27 +1085,8 @@ class CfgBuilder:
 
         :param continue_ast: The parsed continue statement.
         """
-        target = self._resolve_loop_label(continue_ast.label)
+        target = self._loop_ctxs[self._typ_check_results.resolutions.loop_target(continue_ast)]
         self._branch(target.cond_bb, continue_ast)
-
-    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> CfgBuilder._LoopCtx:
-        """Find the loop a ``break``/``continue`` targets.
-
-        :param label: The target label, or ``None`` for the innermost
-            enclosing loop.
-        :return: The named loop, or the innermost one if ``label`` is
-            ``None``.
-
-        :pre: label is None implies len(_loop_stack) > 0 [assert_gt]
-        :pre: label is not None implies some ctx in _loop_stack has ctx.label == label.name [assert]
-        """
-        if label is None:
-            asserts.assert_gt(len(self._loop_stack), 0)
-            return self._loop_stack[-1]
-        for ctx in reversed(self._loop_stack):
-            if ctx.label == label.name:
-                return ctx
-        raise AssertionError(f"unresolved loop label {label.name!r}")
 
     def _build_let_stmt(self, let_ast: ast.LetStmt, e: ir_env.Env) -> None:
         """Lower a local ``let`` statement.
