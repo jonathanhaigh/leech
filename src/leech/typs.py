@@ -675,6 +675,10 @@ class StructTyp(Typ):
         }
         return fields.items().mapping
 
+    def field_at(self, index: int) -> StructField:
+        """Return the field at declaration-order ``index``."""
+        return tuple(self.fields.values())[index]
+
     @property
     def assoc_fns(self) -> Collection[ir_module.Fn]:
         """Return this struct's own associated functions."""

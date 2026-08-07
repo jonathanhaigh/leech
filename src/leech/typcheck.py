@@ -95,6 +95,7 @@ class TypCheckResults:
     _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]]
     _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]]
     _struct_expr_typs: Final[dict[ast.StructExpr, typs.StructTyp]]
+    _struct_field_indices: Final[dict[ast.FieldAccessExpr | ast.StructFieldExpr, int]]
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
 
     def __init__(self) -> None:
@@ -104,6 +105,7 @@ class TypCheckResults:
         self._generic_calls = {}
         self._generic_var_refs = {}
         self._struct_expr_typs = {}
+        self._struct_field_indices = {}
         self._let_declared_typs = {}
 
     def int_lit_typ(self, node: ast.IntLit) -> typs.IntTyp:
@@ -148,6 +150,15 @@ class TypCheckResults:
 
     def _set_struct_expr_typ(self, node: ast.StructExpr, typ: typs.StructTyp) -> None:
         self._struct_expr_typs[node] = typ
+
+    def struct_field_index(self, node: ast.FieldAccessExpr | ast.StructFieldExpr) -> int:
+        """Return the declaration-order index resolved for a struct field expression."""
+        return self._struct_field_indices[node]
+
+    def _set_struct_field_index(
+        self, node: ast.FieldAccessExpr | ast.StructFieldExpr, index: int
+    ) -> None:
+        self._struct_field_indices[node] = index
 
     def let_declared_typ(self, node: ast.LetStmt) -> Optional[typs.Typ]:
         """Return ``node``'s declared type, if any."""
@@ -804,6 +815,7 @@ class TypCheck:
                 raise errors.InvalidStructFieldError(
                     name, field_expr.ident.span, struct_typ.name, struct_typ.span
                 )
+            self.results._set_struct_field_index(field_expr, field.index)
             if not field.is_accessible_from(struct_expr.span.file):
                 raise errors.PrivateStructFieldAccessError(
                     field.name, field_expr.ident.span, struct_typ.name, field.ast.span
@@ -846,6 +858,7 @@ class TypCheck:
             raise errors.InvalidStructFieldError(
                 field_name, fa_expr.field.span, struct_typ.name, struct_typ.span
             )
+        self.results._set_struct_field_index(fa_expr, field.index)
         if not field.is_accessible_from(fa_expr.span.file):
             raise errors.PrivateStructFieldAccessError(
                 field_name, fa_expr.field.span, struct_typ.name, field.ast.span

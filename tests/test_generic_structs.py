@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import asserts, errors, ir_env, typs
+from leech import asserts, ast, errors, ir_env, ir_module, typs
 
 
 def _get_struct_typ(mod, name: str) -> typs.StructTyp:
@@ -35,6 +35,49 @@ def test_generic_struct_multiple_typ_params(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_struct_field_indices_work_for_multiple_instances(tmp_path):
+    src = """
+    struct Pair[A, B] { first: A, second: B }
+    pub fn main() i32 {
+        let ints = Pair[i32, i32] { second: 40, first: 2 };
+        let flags = Pair[bool, i32] { second: 0, first: true };
+        if (flags.first) { return ints.second + ints.first; };
+        return 99;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
+def test_struct_lowering_uses_typechecked_field_indices(tmp_path):
+    src = """
+    struct Pair[A, B] { first: A, second: B }
+    pub fn main() i32 {
+        let pair = Pair[i32, i32] { second: 40, first: 2 };
+        pair.second + pair.first
+    }
+    """
+    mod = util.build_ir_mod(tmp_path, src)
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "main")
+    assert item is not None
+    fn = asserts.checked_cast(item.value, ir_module.Fn)
+    fn_ast = asserts.checked_cast(fn.ast, ast.FnDefn)
+    let_stmt = asserts.checked_cast(fn_ast.block.stmts[0], ast.LetStmt)
+    struct_expr = asserts.checked_cast(let_stmt.expr, ast.StructExpr)
+    result_expr = asserts.checked_cast(fn_ast.block.expr, ast.BinOpExpr)
+    field_accesses = (
+        asserts.checked_cast(result_expr.lhs, ast.FieldAccessExpr),
+        asserts.checked_cast(result_expr.rhs, ast.FieldAccessExpr),
+    )
+
+    _ = fn.typ_check_results
+    for field_expr in struct_expr.fields:
+        object.__setattr__(field_expr.ident, "name", "changed_after_type_check")
+    for field_access in field_accesses:
+        object.__setattr__(field_access.field, "name", "changed_after_type_check")
+
+    _ = fn.cfg
 
 
 def test_generic_struct_distinct_typ_args_produce_distinct_fields(tmp_path):

@@ -900,9 +900,9 @@ class CfgBuilder:
         :return: The constructed struct value.
         :raises ItemNotFoundError: If the named type cannot be resolved.
 
-        :pre: every struct_expr.fields[i].ident.name in struct_typ.fields [assert_in]
-        :pre: every struct_typ.fields name in field_values [assert_in]
-        :pre: each field name given exactly once, accessible, value coerces [TypCheck]
+        :pre: each field expression has a resolved field index [TypCheckResults]
+        :pre: each struct field has an expression exactly once [TypCheck]
+        :pre: each field expression is accessible and its value coerces [TypCheck]
         """
         cached_typ = self._typ_check_results.struct_expr_typ(struct_expr)
         struct_typ = asserts.checked_cast(
@@ -915,22 +915,23 @@ class CfgBuilder:
             struct_expr,
         )
 
-        field_values: dict[str, ir_values.Value] = {}
-        field_value_asts: dict[str, ast.Expr] = {}
+        field_values: dict[int, ir_values.Value] = {}
+        field_value_asts: dict[int, ast.Expr] = {}
         for field_expr in struct_expr.fields:
-            asserts.assert_in(field_expr.ident.name, struct_typ.fields)
-            field = struct_typ.fields[field_expr.ident.name]
-            field_values[field_expr.ident.name] = self._build_expr(
+            field_index = self._typ_check_results.struct_field_index(field_expr)
+            field = struct_typ.field_at(field_index)
+            field_values[field_index] = self._build_expr(
                 field_expr.value, _ExprContext.VALUE, field.typ
             )
-            field_value_asts[field_expr.ident.name] = field_expr.value
+            field_value_asts[field_index] = field_expr.value
 
-        for i, field in enumerate(struct_typ.fields.values()):
-            asserts.assert_in(field.name, field_values)
-            field_value = field_values[field.name]
-            coerced = opt_util.opt_unwrap(self._coerce(field_value, field_value_asts[field.name]))
-            field_index = ir_values.ComptimeInt(typs.I32, i, field_value.ast)
-            struct = self._curr_bb.insert_value(struct, coerced, field_index, field_value.ast)
+        for field in struct_typ.fields.values():
+            field_index = field.index
+            asserts.assert_in(field_index, field_values)
+            field_value = field_values[field_index]
+            coerced = opt_util.opt_unwrap(self._coerce(field_value, field_value_asts[field_index]))
+            field_index_value = ir_values.ComptimeInt(typs.I32, field_index, field_value.ast)
+            struct = self._curr_bb.insert_value(struct, coerced, field_index_value, field_value.ast)
 
         return self._in_context(struct, ctx)
 
@@ -970,11 +971,11 @@ class CfgBuilder:
             :attr:`~_ExprContext.PLACE`.
 
         :pre: struct_ptr.typ.pointee_typ is a StructTyp [checked_cast]
-        :pre: fa_expr.field.name in struct_typ.fields [assert_in]
+        :pre: fa_expr has a resolved field index [TypCheckResults]
         """
         struct_typ = asserts.checked_cast(struct_ptr.typ.pointee_typ, typs.StructTyp)
-        asserts.assert_in(fa_expr.field.name, struct_typ.fields)
-        field = struct_typ.fields[fa_expr.field.name]
+        field_index = self._typ_check_results.struct_field_index(fa_expr)
+        field = struct_typ.field_at(field_index)
 
         index = ir_values.ComptimeInt(typs.I32, field.index, fa_expr)
         field_ptr = self._curr_bb.gep(struct_ptr, index, fa_expr)
