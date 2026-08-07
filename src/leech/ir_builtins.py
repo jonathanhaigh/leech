@@ -23,10 +23,7 @@ class SizeOfBuiltinFn(ir_module.GenericBuiltinFn):
         return typs.FnTyp.get_or_create(typs.USIZE, ())
 
     @override
-    def _build_body(
-        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
-    ) -> None:
-        del e
+    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
         size = builder._curr_bb.size_of(typ_args[0], None)
         builder._curr_bb.ret(size, None)
 
@@ -46,10 +43,7 @@ class PtrCastMutBuiltinFn(ir_module.GenericBuiltinFn):
         )
 
     @override
-    def _build_body(
-        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
-    ) -> None:
-        del e
+    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
         assert builder._fn is not None
         param = builder._fn.params[0]
         target_typ = typs.PtrTyp.get_or_create(typ_args[1], typs.MUT)
@@ -69,10 +63,8 @@ class IsNullBuiltinFn(ir_module.GenericBuiltinFn):
         return typs.FnTyp.get_or_create(typs.BOOL, (typs.PtrTyp.get_or_create(t, typs.MUT),))
 
     @override
-    def _build_body(
-        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
-    ) -> None:
-        del e, typ_args
+    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
+        del typ_args
         assert builder._fn is not None
         param = builder._fn.params[0]
         result = builder._curr_bb.is_null(param, None)
@@ -91,10 +83,8 @@ class EnumToIntBuiltinFn(ir_module.GenericBuiltinFn):
         return typs.FnTyp.get_or_create(typs.EnumBackingTyp.get_or_create(e_typ), (e_typ,))
 
     @override
-    def _build_body(
-        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
-    ) -> None:
-        del e, typ_args
+    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
+        del typ_args
         assert builder._fn is not None
         param = builder._fn.params[0]
         result = builder._curr_bb.enum_to_int(param, None)

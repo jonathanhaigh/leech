@@ -242,9 +242,7 @@ class FnTemplate(Protocol):
         """
         ...
 
-    def _build_body(
-        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
-    ) -> None:
+    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
         """Lower one instance's body into ``builder.cfg``."""
         ...
 
@@ -311,17 +309,17 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
     def _qualified_name_prefix(self) -> str:
         return self._mod_name
 
-    def _build_body(
-        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
-    ) -> None:
+    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
         del typ_args
-        builder.build_fn(opt_util.opt_unwrap(self.ast), e)
+        builder.build_fn(opt_util.opt_unwrap(self.ast))
 
     @functools.cached_property
     def cfg(self) -> ir_values.Cfg:
         """Lazily lower this function's body to a control-flow graph."""
-        builder = ir_builder.CfgBuilder(self.typ_check_results, self)
-        self._build_body(builder, self.env, ())
+        builder = ir_builder.CfgBuilder(
+            self.typ_check_results, self.env.impl_registry, self.env.panic_fn, self
+        )
+        self._build_body(builder, ())
         return builder.cfg
 
     @override
@@ -411,28 +409,6 @@ class FnInstance(FnSpec[ast.FnDefn]):
     def is_accessible_from(self, file: src.SrcFile) -> bool:
         return asserts.checked_cast(self._fn, Fn).is_accessible_from(file)
 
-    @functools.cached_property
-    def env(self) -> ir_env.Env:
-        """The scope to lower this instance's body in, with each type
-        parameter shadowed by its concrete substitution.
-
-        For a method instance, also shadows each of its impl block's
-        sibling associated functions with their own instance for
-        :attr:`_self_typ`, so a bare-name call from one to another (see
-        :meth:`~leech.typs.StructTyp.add_assoc_fn`) resolves to a
-        monomorphized, compilable callee instead of the still-generic
-        original.
-        """
-        e = self._fn.env.new_child()
-        for typ_param, typ_arg in self._mapping.items():
-            e.add_container(typ_param.name, typ_arg)
-        if self._self_typ is not None:
-            recv_typ = asserts.checked_cast(self._fn, Fn).recv_typ
-            assert isinstance(recv_typ, typs.StructTyp)
-            for sibling in recv_typ.assoc_fns:
-                e.add_var(sibling.name, sibling.impl_instance(self._self_typ))
-        return e
-
     def is_concrete(self) -> bool:
         """Return whether every type this instance's signature mentions is concrete."""
         return self.fn_typ.is_concrete()
@@ -464,8 +440,14 @@ class FnInstance(FnSpec[ast.FnDefn]):
     def cfg(self) -> ir_values.Cfg:
         """This instance's body, lowered to a control-flow graph. Built
         lazily, on first access."""
-        builder = ir_builder.CfgBuilder(self._fn.typ_check_results, self, self._mapping)
-        self._fn._build_body(builder, self.env, self._typ_args)
+        builder = ir_builder.CfgBuilder(
+            self._fn.typ_check_results,
+            self._fn.env.impl_registry,
+            self._fn.env.panic_fn,
+            self,
+            self._mapping,
+        )
+        self._fn._build_body(builder, self._typ_args)
         return builder.cfg
 
     @override
@@ -541,9 +523,7 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn]):
         return ""
 
     @abc.abstractmethod
-    def _build_body(
-        self, builder: ir_builder.CfgBuilder, e: ir_env.Env, typ_args: tuple[typs.Typ, ...]
-    ) -> None:
+    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
         """Emit this builtin's body directly into ``builder`` (ending in a
         ``ret``), given this instantiation's concrete type arguments."""
 
@@ -643,8 +623,10 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
 
         Built lazily, on first access.
         """
-        builder = ir_builder.CfgBuilder(self.typ_check_results)
-        builder.build_var_initializer(opt_util.opt_unwrap(self.ast), self.env)
+        builder = ir_builder.CfgBuilder(
+            self.typ_check_results, self.env.impl_registry, self.env.panic_fn
+        )
+        builder.build_var_initializer(opt_util.opt_unwrap(self.ast))
         return builder.cfg
 
     @override
