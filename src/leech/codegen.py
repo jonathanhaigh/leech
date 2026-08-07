@@ -6,13 +6,13 @@
 
 import collections
 import dataclasses
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from typing import Final, Optional
 
 import networkx as nx
 from llvmlite import ir as ll
 
-from leech import asserts, ir_module, ir_traits, ir_values, naming, signage, typs
+from leech import asserts, ir_module, ir_traits, ir_values, mono, naming, signage, typs
 
 _BIN_OP_LL_METHODS: Final[dict[type[ir_values.BinOpInstr], str]] = {
     ir_values.AddInstr: "add",
@@ -154,20 +154,19 @@ class Compiler:
             elif isinstance(item.value, typs.EnumTyp):
                 _ = item.value.backing_typ
 
-        instances = self._discover_fn_instances()
-        struct_instances = self._discover_struct_instances()
-        for struct_inst in struct_instances:
+        result = mono.discover(self._mod)
+        for struct_inst in result.struct_instances:
             self._declare_struct_instance(struct_inst)
-        for struct_inst in struct_instances:
+        for struct_inst in result.struct_instances:
             self._compile_struct_instance(struct_inst)
 
-        for inst in instances:
+        for inst in result.fn_instances:
             self._declare_fn_instance(inst)
 
         for item in self._mod.items:
             self._compile_mod_item(item)
 
-        for inst in instances:
+        for inst in result.fn_instances:
             self._compile_fn_instance(inst)
 
     def _program_items(self) -> Iterator[ir_module.ModItem]:
@@ -178,88 +177,6 @@ class Compiler:
                     continue
                 if mod is self._mod or item.access == ir_module.PUBLIC:
                     yield item
-
-    def _fixpoint[T](
-        self, newly_requested: Callable[[], list[T]], resolve: Callable[[T], None]
-    ) -> list[T]:
-        """Resolve newly requested items to a fixpoint and return them in discovery order."""
-        instances: list[T] = []
-        pending = newly_requested()
-        while pending:
-            instances.extend(pending)
-            for inst in pending:
-                resolve(inst)
-            pending = newly_requested()
-        return instances
-
-    def _fn_templates(self) -> Iterator[ir_module.FnTemplate]:
-        """Yield every generic function and compiler-intrinsic builtin."""
-        for mod in self._mod.loader.mods:
-            for item in mod.items:
-                if isinstance(item.value, ir_module.GenericFn):
-                    yield item.value.fn
-        yield from self._mod.loader.builtins
-
-    def _generic_impl_method_fns(self) -> Iterator[ir_module.Fn]:
-        """Yield methods declared by generic inherent impls."""
-        for mod in self._mod.loader.mods:
-            for fn in mod.generic_fns:
-                if fn.recv_typ is not None:
-                    yield fn
-
-    def _discover_fn_instances(self) -> list[ir_module.FnInstance]:
-        """Discover generic function and impl-method instances to a fixpoint.
-
-        Lowering an instance can request more instances, so both kinds
-        must participate in the same fixpoint.
-
-        :return: Every instance discovered, in discovery order.
-        """
-        seen: set[ir_module.FnInstance] = set()
-
-        def newly_requested() -> list[ir_module.FnInstance]:
-            new = []
-            for template in (*self._fn_templates(), *self._generic_impl_method_fns()):
-                for inst in template.instances:
-                    if inst.is_concrete() and inst not in seen:
-                        seen.add(inst)
-                        new.append(inst)
-            return new
-
-        def lower(inst: ir_module.FnInstance) -> None:
-            _ = inst.cfg
-
-        for item in self._mod.items:
-            if isinstance(item.value, (ir_module.Fn, ir_module.ModVar)):
-                _ = item.value.cfg
-
-        return self._fixpoint(newly_requested, lower)
-
-    def _discover_struct_instances(self) -> list[typs.StructTyp]:
-        """Find every generic struct instantiation reachable from the program.
-
-        Resolving fields can request further instances. Non-concrete
-        instances created while checking generic definitions are ignored.
-
-        :return: Every instantiation discovered, in discovery order.
-        """
-        seen: set[typs.StructTyp] = set()
-
-        def newly_requested() -> list[typs.StructTyp]:
-            new = []
-            for mod in self._mod.loader.mods:
-                for item in mod.items:
-                    if isinstance(item.value, typs.StructTyp) and item.value.is_generic_template:
-                        for inst in item.value.instances:
-                            if inst.is_concrete() and inst not in seen:
-                                seen.add(inst)
-                                new.append(inst)
-            return new
-
-        def resolve_fields(inst: typs.StructTyp) -> None:
-            _ = inst.fields
-
-        return self._fixpoint(newly_requested, resolve_fields)
 
     def _declare_struct_instance(self, inst: typs.StructTyp) -> None:
         ll_typ = self.ll_mod.context.get_identified_type(inst.qualified_name)
@@ -332,7 +249,7 @@ class Compiler:
                 pass
             case ir_module.GenericFn():
                 # No LLVM symbol of its own - only its instances do (see
-                # _discover_fn_instances), declared separately.
+                # mono.discover), declared separately.
                 pass
             case ir_traits.Trait():
                 # A declaration, not a value or type with anything of its
