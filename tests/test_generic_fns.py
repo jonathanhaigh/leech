@@ -70,6 +70,38 @@ def test_generic_fn_with_multiple_typ_params_typechecks(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_generic_fn_let_stmt_declared_typ_param_is_substituted_when_invoked(tmp_path):
+    # The declared type `T` TypCheck resolved (still abstract) must be
+    # substituted to the concrete instantiation's own type.
+    src = """
+    fn first[T](x: T, y: T) T {
+        let a: T = x;
+        return a;
+    }
+    pub fn main() i32 {
+        return first(42i32, 0) - 42;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_fn_let_stmt_declared_generic_struct_typ_is_substituted(tmp_path):
+    # The declared type can itself be a generic struct instantiation that
+    # depends on the enclosing function's own type parameter, not just a
+    # bare type parameter.
+    src = """
+    struct Box[T] { mut val: T }
+    fn wrap[T](x: T) T {
+        let b: Box[T] = Box[T] { val: x };
+        return b.val;
+    }
+    pub fn main() i32 {
+        return wrap(5i32) - 5;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_generic_fn_body_rejects_arithmetic_on_typ_param(tmp_path):
     src = """
     fn f[T](x: T) T {

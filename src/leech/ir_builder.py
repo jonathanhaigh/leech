@@ -948,8 +948,10 @@ class CfgBuilder:
         :pre: every struct_typ.fields name in field_values [assert_in]
         :pre: each field name given exactly once, accessible, value coerces [TypCheck]
         """
-        resolved_typ = typs.Typ.from_ast(struct_expr.typ, e)
-        struct_typ = asserts.checked_cast(resolved_typ, typs.StructTyp)
+        cached_typ = self._typ_check_results.struct_expr_typ(struct_expr)
+        struct_typ = asserts.checked_cast(
+            cached_typ.substitute_typ_params(self._typ_arg_mapping), typs.StructTyp
+        )
 
         struct = ir_values.ComptimeStruct(
             struct_typ,
@@ -1174,10 +1176,12 @@ class CfgBuilder:
 
         :pre: let_ast.typ is not None implies let_ast.expr coerces to it [opt_unwrap]
         """
-        declared_typ_ast = let_ast.typ
-        expected_typ = opt_util.opt_map(declared_typ_ast, lambda t: typs.Typ.from_ast(t, e))
+        cached_typ = self._typ_check_results.let_declared_typ(let_ast)
+        expected_typ = opt_util.opt_map(
+            cached_typ, lambda t: t.substitute_typ_params(self._typ_arg_mapping)
+        )
         expr = self._build_expr(let_ast.expr, e, ctx, expected_typ)
-        if declared_typ_ast is None:
+        if cached_typ is None:
             return expr
         return opt_util.opt_unwrap(self._coerce(expr, let_ast.expr))
 

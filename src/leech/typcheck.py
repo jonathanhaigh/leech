@@ -94,6 +94,8 @@ class TypCheckResults:
     _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
     _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]]
     _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]]
+    _struct_expr_typs: Final[dict[ast.StructExpr, typs.StructTyp]]
+    _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
 
     def __init__(self) -> None:
         self.resolutions = resolve.Resolutions()
@@ -101,6 +103,8 @@ class TypCheckResults:
         self._coercions = {}
         self._generic_calls = {}
         self._generic_var_refs = {}
+        self._struct_expr_typs = {}
+        self._let_declared_typs = {}
 
     def int_lit_typ(self, node: ast.IntLit) -> typs.IntTyp:
         """Return the type chosen and overflow-checked for an integer literal."""
@@ -137,6 +141,20 @@ class TypCheckResults:
         self, node: ast.VarExpr, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
     ) -> None:
         self._generic_var_refs[node] = (fn, typ_args)
+
+    def struct_expr_typ(self, node: ast.StructExpr) -> typs.StructTyp:
+        """Return ``node``'s resolved (possibly still abstract) type."""
+        return self._struct_expr_typs[node]
+
+    def _set_struct_expr_typ(self, node: ast.StructExpr, typ: typs.StructTyp) -> None:
+        self._struct_expr_typs[node] = typ
+
+    def let_declared_typ(self, node: ast.LetStmt) -> Optional[typs.Typ]:
+        """Return ``node``'s declared type, if any."""
+        return self._let_declared_typs.get(node)
+
+    def _set_let_declared_typ(self, node: ast.LetStmt, typ: typs.Typ) -> None:
+        self._let_declared_typs[node] = typ
 
 
 class TypCheck:
@@ -775,6 +793,7 @@ class TypCheck:
         struct_typ = typs.Typ.from_ast(struct_expr.typ, e)
         if not isinstance(struct_typ, typs.StructTyp):
             raise errors.TypeOfStructExprNotStructError(struct_typ.name, struct_expr.typ.span)
+        self.results._set_struct_expr_typ(struct_expr, struct_typ)
 
         field_value_asts: dict[str, ast.Expr] = {}
         field_value_typs: dict[str, typs.Typ] = {}
@@ -1002,6 +1021,7 @@ class TypCheck:
             return expr_typ, None
 
         assert declared_typ is not None
+        self.results._set_let_declared_typ(let_ast, declared_typ)
         coercion = self._record_coercion(let_ast.expr, expr_typ, declared_typ)
         if isinstance(coercion, Invalid):
             raise errors.IncompatibleLetTypError(
