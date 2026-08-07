@@ -47,11 +47,11 @@ def _callable_typ(typ: typs.Typ) -> Optional[typs.CallableTyp]:
     return None
 
 
-def _struct_field_typ(typ: typs.Typ, name: str) -> Optional[typs.Typ]:
-    """Return the named struct field's type, if present."""
+def _struct_field(typ: typs.Typ, name: str) -> Optional[typs.StructField]:
+    """Return the named struct field, if present."""
     if not isinstance(typ, typs.StructTyp):
         return None
-    return opt_util.opt_map(typ.fields.get(name), lambda f: f.typ)
+    return typ.fields.get(name)
 
 
 class Coercion:
@@ -471,8 +471,10 @@ class TypCheck:
                     )
                 return method.fn_typ, callee_ast.value, recv_typ
 
-        field_typ = _struct_field_typ(pointee_typ, callee_ast.field.name)
-        callee_typ = opt_util.opt_or_default(field_typ, typs.VOID)
+        field = _struct_field(pointee_typ, callee_ast.field.name)
+        if field is not None:
+            self.results._set_struct_field_index(callee_ast, field.index)
+        callee_typ = opt_util.opt_or_default(opt_util.opt_map(field, lambda f: f.typ), typs.VOID)
         fn_typ = _callable_typ(callee_typ)
         if fn_typ is None:
             raise errors.NotCallableError(callee_ast.diag_str(), callee_typ.name, callee_ast.span)

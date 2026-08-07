@@ -219,3 +219,16 @@ def test_dot_call_falls_back_to_field_access_when_no_method_matches(tmp_path):
     """
     with pytest.raises(errors.NotCallableError):
         util.compile_str(tmp_path, src)
+
+
+def test_dot_call_falls_back_to_callable_struct_field(tmp_path):
+    src = """
+    fn answer() i32 { 42 }
+    struct Holder[T] { f: T }
+    fn make[T](f: T) Holder[T] { Holder[T] { f: f } }
+    pub fn main() i32 {
+        let h = make(answer);
+        return h.f();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)

@@ -43,8 +43,8 @@ class CalleeResolution(enum.Enum):
 
     # TODO: Python 3.15 adds a `sentinel()` builtin that gives each
     # sentinel its own precisely-typeable singleton type - once leech
-    # updates to 3.15, reconsider replacing this enum with two such
-    # sentinels instead. Not available on the 3.14 this project targets now.
+    # updates to 3.15, reconsider replacing this enum with such a sentinel
+    # instead. Not available on the 3.14 this project targets now.
 
     FIELD_ACCESS = enum.auto()
     """Confirmed: no callable member of that name; fall back to plain field access."""
