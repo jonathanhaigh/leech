@@ -30,6 +30,11 @@ class TraitMethod:
         return self.ast.name.name
 
     @property
+    def trait(self) -> Trait:
+        """The trait that declares this method."""
+        return self._trait
+
+    @property
     def span(self) -> src.SrcSpan:
         """The source location of this method's prototype."""
         return self.ast.span
@@ -110,7 +115,7 @@ class Impl:
     _self_typ: Final[typs.Typ]
     env: Final[ir_env.Env]
     _mod_name: Final[str]
-    _methods: Final[dict[str, ir_module.Fn]]
+    _methods: Final[dict[TraitMethod, ir_module.Fn]]
 
     def __init__(
         self,
@@ -168,7 +173,7 @@ class Impl:
         trait_method = self._trait.get_method(fn.name)
         if trait_method is None:
             raise errors.ExtraMethodInImplError(self._trait.name, fn.name, fn.span)
-        existing = self._methods.get(fn.name)
+        existing = self._methods.get(trait_method)
         if existing is not None:
             raise errors.DuplicateItemDefnError("method", fn.name, fn.span, existing.span)
         expected_typ = trait_method.fn_typ_for_self(self._self_typ)
@@ -176,16 +181,16 @@ class Impl:
             raise errors.TraitMethodSignatureMismatchError(
                 self._trait.name, fn.name, fn.fn_typ.name, expected_typ.name, fn.span
             )
-        self._methods[fn.name] = fn
+        self._methods[trait_method] = fn
 
-    def get_method(self, name: str) -> Optional[ir_module.Fn]:
-        """Find this impl's method called ``name``.
+    def get_method(self, trait_method: TraitMethod) -> Optional[ir_module.Fn]:
+        """Find this impl's implementation of ``trait_method``.
 
-        :param name: The name to look up.
+        :param trait_method: The trait method to look up.
         :return: The method, or ``None`` if this impl defines no method of
-            that name.
+            ``trait_method``.
         """
-        return self._methods.get(name)
+        return self._methods.get(trait_method)
 
     def check_complete(self) -> None:
         """Raise if this impl is missing any of its trait's methods.
@@ -194,7 +199,7 @@ class Impl:
             declares a method this impl never defined.
         """
         for trait_method in self._trait.methods:
-            if trait_method.name not in self._methods:
+            if trait_method not in self._methods:
                 raise errors.TraitMethodNotImplementedError(
                     self._trait.name, trait_method.name, self._self_typ.name, self.span
                 )
@@ -355,11 +360,14 @@ def lookup_member(
         if inherent is not None:
             return inherent
 
-    matches = [
-        method
-        for impl in registry._find_impls_for_typ(typ)
-        if (method := impl.get_method(name)) is not None
-    ]
+    matches = []
+    for impl in registry._find_impls_for_typ(typ):
+        trait_method = impl._trait.get_method(name)
+        if trait_method is None:
+            continue
+        method = impl.get_method(trait_method)
+        if method is not None:
+            matches.append(method)
     method = disambiguate(matches, name, typ.name, span)
     if method is None:
         return None

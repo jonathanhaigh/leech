@@ -120,6 +120,29 @@ def test_trait_method_call_on_generic_typ_param_with_struct(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_trait_bound_call_uses_trait_method_over_inherent_method(tmp_path):
+    # A call on a type parameter resolves against its declared bound, even
+    # when the eventual concrete type has an inherent method of that name.
+    src = """
+    trait Show { fn show(*self) i32; }
+    struct Number {}
+    impl Number {
+        fn show(*self) i32 { 1 }
+    }
+    impl Show for Number {
+        fn show(*self) i32 { 2 }
+    }
+    fn call_show[T: Show](x: T) i32 {
+        return x.show();
+    }
+    pub fn main() i32 {
+        let n = Number {};
+        return call_show(n) - 2;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_generic_impl_body_typechecks(tmp_path):
     # A generic impl block's methods are checked eagerly, like a free
     # generic function's body - whether or not anything ever calls one.
@@ -166,6 +189,27 @@ def test_calling_method_through_generic_impl_not_supported_yet(tmp_path):
     }
     """
     with pytest.raises(AssertionError):
+        util.compile_str(tmp_path, src)
+
+
+def test_trait_bound_call_through_generic_impl_not_supported_yet(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    struct Box[T] { value: T }
+    impl[T] Show for Box[T] {
+        fn show(*self) i32 { 1 }
+    }
+    fn call_show[T: Show](x: T) i32 {
+        return x.show();
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { value: 0 };
+        return call_show(b);
+    }
+    """
+    with pytest.raises(
+        AssertionError, match="calling a method through a generic trait impl isn't supported yet"
+    ):
         util.compile_str(tmp_path, src)
 
 

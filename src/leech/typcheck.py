@@ -428,11 +428,12 @@ class TypCheck:
             # _resolve_bound_method) - this is what makes trait bounds
             # actually enforced, rather than duck-typed: only a method
             # from a bound the parameter itself declares is callable.
-            method_fn_typ = self._resolve_bound_method(
+            trait_method = self._resolve_bound_method(
                 pointee_typ, callee_ast.field.name, callee_ast.field.span, e
             )
-            if method_fn_typ is not None:
-                return method_fn_typ, callee_ast.value, recv_typ
+            if trait_method is not None:
+                self.results.resolutions.set_trait_bound_callee(call_ast, trait_method)
+                return trait_method.fn_typ_for_self(pointee_typ), callee_ast.value, recv_typ
         else:
             # Local to avoid the ir_module import cycle.
             from leech import ir_traits  # noqa: PLC0415
@@ -468,7 +469,7 @@ class TypCheck:
 
     def _resolve_bound_method(
         self, typ_param: typs.TypParamTyp, name: str, span: Optional[src.SrcSpan], e: ir_env.Env
-    ) -> Optional[typs.FnTyp]:
+    ) -> Optional[ir_traits.TraitMethod]:
         """Resolve a type parameter's method against only its declared trait bounds."""
         # Local to avoid the ir_traits import cycle.
         from leech import ir_traits  # noqa: PLC0415
@@ -481,8 +482,7 @@ class TypCheck:
             method = item.get_method(name)
             if method is not None:
                 matches.append(method)
-        method = ir_traits.disambiguate(matches, name, typ_param.name, span)
-        return opt_util.opt_map(method, lambda m: m.fn_typ_for_self(typ_param))
+        return ir_traits.disambiguate(matches, name, typ_param.name, span)
 
     def _resolve_generic_call(
         self, fn: ir_module.FnTemplate, call_ast: ast.CallExpr, e: ir_env.Env
