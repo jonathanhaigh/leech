@@ -82,12 +82,29 @@ assignment_stmt: place "=" expr ";"
   | field_access_expr
   | deref_expr
 
-?expr: block_expr
-  | if_expr
-  | while_expr
+?expr: block_like_expr
   | or_expr
 
-block_expr: "{" stmt* expr? "}"
+?block_like_expr: block_expr
+  | if_expr
+  | while_expr
+
+block_expr: "{" _stmts "}"
+
+// May end the block: empty, a tail expr (unchanged meaning: becomes the
+// block's value), a ";"-terminated stmt (then more of the same), or a
+// block-like statement with no ";" (then _req_stmts, which cannot be empty).
+_stmts:
+  | expr
+  | stmt _stmts
+  | block_like_expr _req_stmts
+
+// Must be followed by more content. Keeps a semicolon-less block-like
+// statement out of the position immediately before "}", so that position
+// stays exclusively reachable through the tail-expr alternative above.
+_req_stmts: expr
+  | stmt _stmts
+  | block_like_expr _req_stmts
 
 if_expr: "if" "(" expr ")" block_expr ("else" block_expr)?
 

@@ -170,3 +170,25 @@ def test_impl_defn_multiple_fns(tmp_path):
     new_access, helper_access = (access for _name, access in names_and_access)
     assert new_access is not None and new_access.value == "pub"
     assert helper_access is None
+
+
+def test_block_stmt_block_like_no_semicolon(tmp_path):
+    src = """
+    fn f() {
+        if (true) { 1 }
+        while (true) { 2 };
+        3;
+    }
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+
+    if_stmt, while_stmt, int_stmt = fn.block.stmts
+    assert isinstance(if_stmt, ast.ExprStmt)
+    assert isinstance(if_stmt.expr, ast.IfExpr)
+    assert isinstance(while_stmt, ast.ExprStmt)
+    assert isinstance(while_stmt.expr, ast.WhileExpr)
+    assert isinstance(int_stmt, ast.ExprStmt)
+    assert isinstance(int_stmt.expr, ast.IntLit)
+    assert fn.block.expr is None

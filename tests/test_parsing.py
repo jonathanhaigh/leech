@@ -701,6 +701,100 @@ COMMENTED_INTS = [
             ),
         ),
         ("expr", "{}", T("block_expr")),
+        (
+            "expr",
+            "{ if (x) { 1 } y }",
+            T("block_expr").cs(
+                T("if_expr").cs(
+                    T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                    T("block_expr", "int_lit", Tok("1")),
+                ),
+                T("var_expr").cs(T("path", "ident", Tok("y")), None),
+            ),
+        ),
+        (
+            "expr",
+            "{ if (x) { 1 }; y }",
+            T("block_expr").cs(
+                T("stmt", "expr_stmt", "if_expr").cs(
+                    T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                    T("block_expr", "int_lit", Tok("1")),
+                ),
+                T("var_expr").cs(T("path", "ident", Tok("y")), None),
+            ),
+        ),
+        (
+            "expr",
+            "{ while (x) { 1 } y }",
+            T("block_expr").cs(
+                T("while_expr").cs(
+                    None,
+                    T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                    T("block_expr", "int_lit", Tok("1")),
+                ),
+                T("var_expr").cs(T("path", "ident", Tok("y")), None),
+            ),
+        ),
+        (
+            "expr",
+            "{ while (x) { 1 }; y }",
+            T("block_expr").cs(
+                T("stmt", "expr_stmt", "while_expr").cs(
+                    None,
+                    T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                    T("block_expr", "int_lit", Tok("1")),
+                ),
+                T("var_expr").cs(T("path", "ident", Tok("y")), None),
+            ),
+        ),
+        (
+            "expr",
+            "{ { 1; } y }",
+            T("block_expr").cs(
+                T("block_expr", "stmt", "expr_stmt", "int_lit", Tok("1")),
+                T("var_expr").cs(T("path", "ident", Tok("y")), None),
+            ),
+        ),
+        (
+            "expr",
+            "{ { 1; }; y }",
+            T("block_expr").cs(
+                T("stmt", "expr_stmt", "block_expr", "stmt", "expr_stmt", "int_lit", Tok("1")),
+                T("var_expr").cs(T("path", "ident", Tok("y")), None),
+            ),
+        ),
+        (
+            "expr",
+            "{ if (x) { 1 } while (y) { 2 } z }",
+            T("block_expr").cs(
+                T("if_expr").cs(
+                    T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                    T("block_expr", "int_lit", Tok("1")),
+                ),
+                T("while_expr").cs(
+                    None,
+                    T("var_expr").cs(T("path", "ident", Tok("y")), None),
+                    T("block_expr", "int_lit", Tok("2")),
+                ),
+                T("var_expr").cs(T("path", "ident", Tok("z")), None),
+            ),
+        ),
+        (
+            "expr",
+            "{ if (x) { 1 } }",
+            T("block_expr", "if_expr").cs(
+                T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                T("block_expr", "int_lit", Tok("1")),
+            ),
+        ),
+        (
+            "expr",
+            "{ if (x) { 1 }; }",
+            T("block_expr", "stmt", "expr_stmt", "if_expr").cs(
+                T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                T("block_expr", "int_lit", Tok("1")),
+            ),
+        ),
         ("typ", "i32", T("basic_typ").cs(T("path", "ident", Tok("i32")), None)),
         (
             "typ",
@@ -1248,6 +1342,10 @@ def test_parse(rule, src, expected):
         ("block_expr", "{"),
         ("block_expr", "}"),
         ("block_expr", "{()}"),
+        ("expr", "{ let x = if (true) { 1 } else { 2 } y }"),
+        ("expr", "{ return if (true) { 1 } else { 2 } y }"),
+        ("expr", "{ x = if (true) { 1 } else { 2 } y }"),
+        ("expr", "{ Foo { a: 1 } y }"),
         ("stmt", ""),
         ("stmt", "let 0 = 1;"),
         ("stmt", "let x = 1"),

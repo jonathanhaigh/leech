@@ -171,12 +171,20 @@ class BlockExpr(Expr):
             stmts = children
             expr = None
 
-        self.stmts = tuple(Stmt.from_tree(file, stmt) for stmt in stmts)
+        self.stmts = tuple(BlockExpr._stmt_from_tree(file, stmt) for stmt in stmts)
 
         if expr:
             self.expr = Expr.from_tree(file, expr)
         else:
             self.expr = None
+
+    @staticmethod
+    def _stmt_from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Stmt:
+        """Build a block-body statement, which may be a ``;``-terminated ``stmt``
+        or a bare block-like expression used without one."""
+        if tree.data == "stmt":
+            return Stmt.from_tree(file, tree)
+        return ExprStmt._synthetic(Expr.from_tree(file, tree))
 
     @override
     def diag_str(self) -> str:
@@ -531,8 +539,9 @@ class Stmt(Ast):
         """Build the statement selected by a parse tree's grammar rule."""
         asserts.assert_eq(tree.data, "stmt")
         (child,) = map(_as_tree, tree.children)
+        if child.data == "expr_stmt":
+            return ExprStmt._from_expr_stmt_tree(file, child)
         child_classes = {
-            "expr_stmt": ExprStmt,
             "ret_stmt": RetStmt,
             "let_stmt": LetStmt,
             "assignment_stmt": AssignmentStmt,
@@ -543,15 +552,25 @@ class Stmt(Ast):
 
 
 class ExprStmt(Stmt):
-    """An expression evaluated for its side effects, followed by ``;``."""
+    """An expression evaluated for its side effects, with or without a trailing ``;``."""
 
     expr: Final[Expr]
 
-    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+    def __init__(self, span: src.SrcSpan, expr: Expr) -> None:
+        super().__init__(span)
+        self.expr = expr
+
+    @staticmethod
+    def _from_expr_stmt_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> ExprStmt:
         asserts.assert_eq(tree.data, "expr_stmt")
-        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        span = src.SrcSpan.from_lark_meta(file, tree.meta)
         (child,) = tree.children
-        self.expr = Expr.from_tree(file, _as_tree(child))
+        return ExprStmt(span, Expr.from_tree(file, _as_tree(child)))
+
+    @staticmethod
+    def _synthetic(expr: Expr) -> ExprStmt:
+        """Construct a statement for a block-like expression used without a trailing ``;``."""
+        return ExprStmt(expr.span, expr)
 
     @override
     def diag_str(self) -> str:
