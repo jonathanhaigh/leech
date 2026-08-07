@@ -594,7 +594,7 @@ class Compiler:
                 return ctx.ll_builder.insert_value(
                     ctx.ll_values.get(instr.aggregate),
                     ctx.ll_values.get(instr.value),
-                    [index.value for index in instr.indeces],
+                    instr.index.value,
                 )
             case ir_values.CallInstr():
                 ll_args = [ctx.ll_values.get(arg) for arg in instr.args]

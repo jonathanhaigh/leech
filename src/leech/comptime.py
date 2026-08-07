@@ -207,15 +207,10 @@ class Interpreter:
                 self._registers[instr] = ir_values.ComptimeGep(base, index, instr.ast)
             case ir_values.InsertValueInstr():
                 value = self._get_comptime_value(instr.value)
-                base_agg = self._get_comptime_value(instr.aggregate).copy()
-                agg = base_agg
-                for index in instr.indeces[:-1]:
-                    agg = asserts.checked_cast(agg, ir_values.ComptimeAggregate)
-                    agg = agg.get_element(index.value)
-
+                agg = self._get_comptime_value(instr.aggregate).copy()
                 agg = asserts.checked_cast(agg, ir_values.ComptimeAggregate)
-                agg.set_element(value, instr.indeces[-1].value)
-                self._registers[instr] = base_agg
+                agg.set_element(value, instr.index.value)
+                self._registers[instr] = agg
             case ir_values.CallInstr():
                 callee = asserts.checked_cast(
                     self._get_comptime_value(instr.callee), ir_module.FnSpec

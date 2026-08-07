@@ -857,7 +857,7 @@ class CfgBuilder:
             elt_ast = arr_expr.elements[i]
             coerced = opt_util.opt_unwrap(self._coerce(elt, elt_ast))
             elt_index = ir_values.ComptimeInt(typs.USIZE, i, elt_ast)
-            arr = self._curr_bb.insert_value(arr, coerced, (elt_index,), elt_ast)
+            arr = self._curr_bb.insert_value(arr, coerced, elt_index, elt_ast)
 
         return self._in_context(arr, ctx)
 
@@ -930,7 +930,7 @@ class CfgBuilder:
             field_value = field_values[field.name]
             coerced = opt_util.opt_unwrap(self._coerce(field_value, field_value_asts[field.name]))
             field_index = ir_values.ComptimeInt(typs.I32, i, field_value.ast)
-            struct = self._curr_bb.insert_value(struct, coerced, (field_index,), field_value.ast)
+            struct = self._curr_bb.insert_value(struct, coerced, field_index, field_value.ast)
 
         return self._in_context(struct, ctx)
 

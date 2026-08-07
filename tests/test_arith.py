@@ -75,6 +75,23 @@ def test_division_by_non_comptime_value_is_not_a_compile_error(tmp_path):
     util.compile_str(tmp_path, src)
 
 
+def test_signed_division_in_unreachable_code_is_not_a_compile_error(tmp_path):
+    # A signed division built into an already-dead block (see
+    # CfgBuilder._build_div_signed) must stay inert rather than build its
+    # own overflow-check control flow into dead code.
+    src = """
+    fn f(x: i32, y: i32) i32 {
+        return 0;
+        return x / y;
+    }
+
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    util.compile_str(tmp_path, src)
+
+
 def test_comptime_signed_division_by_zero(tmp_path):
     # Compile-time evaluation shares the same runtime safety checks as
     # codegen (see CfgBuilder._panic_if): this hits the same `panic` call
@@ -87,6 +104,19 @@ def test_comptime_signed_division_by_zero(tmp_path):
     """
     with pytest.raises(errors.PanicAtComptimeError):
         util.compile_str(tmp_path, src)
+
+
+def test_comptime_unsigned_division(tmp_path):
+    src = """
+    let x = 7usize / 2usize;
+    pub fn main() i32 {
+        if (x == 3usize) {
+            return 1;
+        };
+        return 0;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
 def test_comptime_unsigned_division_by_zero(tmp_path):

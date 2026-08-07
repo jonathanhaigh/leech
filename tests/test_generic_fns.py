@@ -85,6 +85,20 @@ def test_generic_fn_let_stmt_declared_typ_param_is_substituted_when_invoked(tmp_
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_generic_fn_typ_arg_inferred_through_array_param(tmp_path):
+    # Exercises ArrayTyp.infer_typ_args: T must be inferred from the
+    # actual argument's element type, not just from a bare-T parameter.
+    src = """
+    fn first[T](arr: [T; 3]) T {
+        return arr.[0usize];
+    }
+    pub fn main() i32 {
+        return first([1, 2, 3]) - 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_generic_fn_let_stmt_declared_generic_struct_typ_is_substituted(tmp_path):
     # The declared type can itself be a generic struct instantiation that
     # depends on the enclosing function's own type parameter, not just a

@@ -927,14 +927,13 @@ class InsertValueInstr(Instr):
     :param bb: The basic block this instruction belongs to.
     :param aggregate: The aggregate value to copy.
     :param value: The value to insert.
-    :param indeces: The path of indices identifying the element to
-        replace within nested aggregates.
+    :param index: The index of the element to replace.
     :param ast_node: The AST node this instruction was built from, if any.
     """
 
     aggregate: Final[Value]
     value: Final[Value]
-    indeces: Final[tuple[ComptimeInt, ...]]
+    index: Final[ComptimeInt]
 
     @override
     def __init__(
@@ -942,13 +941,13 @@ class InsertValueInstr(Instr):
         bb: BasicBlock,
         aggregate: Value,
         value: Value,
-        indeces: tuple[ComptimeInt, ...],
+        index: ComptimeInt,
         ast_node: Optional[ast.Ast],
     ) -> None:
         super().__init__(bb, ast_node)
         self.aggregate = aggregate
         self.value = value
-        self.indeces = indeces
+        self.index = index
 
     @override
     def calculate_typ(self) -> typs.Typ:
@@ -1234,10 +1233,10 @@ class BasicBlock:
         self,
         aggregate: Value,
         value: Value,
-        indeces: tuple[ComptimeInt, ...],
+        index: ComptimeInt,
         ast_node: Optional[ast.Ast],
     ) -> InsertValueInstr:
-        return self._add_instr(InsertValueInstr(self, aggregate, value, indeces, ast_node))
+        return self._add_instr(InsertValueInstr(self, aggregate, value, index, ast_node))
 
     def call(
         self, callee: Value, args: tuple[Value, ...], ast_node: Optional[ast.CallExpr]

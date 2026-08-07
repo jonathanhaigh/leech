@@ -3,8 +3,11 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import subprocess
+import sys
 
-from leech import errors
+import pytest
+
+from leech import driver, errors
 
 
 def run_cli(*args) -> subprocess.CompletedProcess:
@@ -14,6 +17,17 @@ def run_cli(*args) -> subprocess.CompletedProcess:
         text=True,
         check=False,
     )
+
+
+def run_leech_in_process(monkeypatch, *args) -> int:
+    monkeypatch.setattr(errors, "_errors", [])
+    monkeypatch.setattr(errors, "_error_level", errors.NOTE)
+    monkeypatch.setattr(sys, "argv", ["leech", *(str(a) for a in args)])
+    with pytest.raises(SystemExit) as exc_info:
+        driver.run()
+    code = exc_info.value.code
+    assert isinstance(code, int)
+    return code
 
 
 def test_cli_success_infers_output_path(tmp_path):
@@ -170,3 +184,60 @@ def test_cli_warning_fires_once_for_multiple_dead_statements(tmp_path):
     assert proc.returncode == errors.WARNING
     assert proc.stdout == ""
     assert proc.stderr == ("WARNING: let statement is unreachable\n3|     let y = 2;\n-------^\n")
+
+
+def test_run_in_process_infers_output_path(tmp_path, monkeypatch, capsys):
+    src_path = tmp_path / "main.leech"
+    src_path.write_text("""pub fn main() i32 {
+    return 42;
+}
+""")
+
+    code = run_leech_in_process(monkeypatch, src_path)
+
+    assert code == errors.NOTE
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+    ll_path = src_path.with_suffix(".ll")
+    assert ll_path.exists()
+    assert "ret i32 42" in ll_path.read_text()
+
+
+def test_run_in_process_ll_suffix_requires_explicit_o(tmp_path, monkeypatch, capsys):
+    src_path = tmp_path / "main.ll"
+    src_path.write_text("""pub fn main() i32 {
+    return 0;
+}
+""")
+
+    code = run_leech_in_process(monkeypatch, src_path)
+
+    assert code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "-o option must be given if source file name ends in '.ll'\n"
+
+
+def test_run_in_process_error_renders_message_and_skips_output(tmp_path, monkeypatch, capsys):
+    src_path = tmp_path / "main.leech"
+    src_path.write_text("""pub fn main() i32 {
+    return true + 1;
+}
+""")
+
+    code = run_leech_in_process(monkeypatch, src_path)
+
+    assert code == errors.ERROR
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        'ERROR: Left operand of binary operation "+" has invalid type "bool", '
+        'expecting "an integer type"\n'
+        "2|     return true + 1;\n"
+        "--------------^\n"
+        'NOTE: For "+" operation here\n'
+        "2|     return true + 1;\n"
+        "-------------------^\n"
+    )
+    assert not src_path.with_suffix(".ll").exists()

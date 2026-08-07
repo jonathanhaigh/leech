@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import asserts, errors, ir_env, ir_module, typs
+from leech import asserts, errors, ir_env, ir_module, target, typs
 
 
 def _get_builtin(mod, name: str) -> ir_module.GenericBuiltinFn:
@@ -113,6 +113,39 @@ def test_size_of_at_comptime_matches_runtime(tmp_path, typ, expected_size):
     pub fn main() i32 {{
         if (comptime_size == {expected_size}usize) {{
             if (comptime_size == __size_of[{typ}]()) {{
+                return 1;
+            }};
+        }};
+        return 0;
+    }}
+    """
+    util.check_prog_output(tmp_path, src, "", 1)
+
+
+def test_is_null_false_at_comptime(tmp_path):
+    # No Comptime* pointer value the interpreter can ever produce is null
+    # (see comptime.py's IsNullInstr handling) - unlike a real runtime
+    # pointer, comptime pointers always refer to something real.
+    src = """
+    let mut x = 1;
+    let p = &x;
+    let comptime_is_null = __is_null(p);
+    pub fn main() i32 {
+        if (comptime_is_null) {
+            return 1;
+        };
+        return 0;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_size_of_ptr_typ_at_comptime_matches_runtime(tmp_path):
+    src = f"""
+    let comptime_size = __size_of[*i32]();
+    pub fn main() i32 {{
+        if (comptime_size == {target.ADDR_SIZE // 8}usize) {{
+            if (comptime_size == __size_of[*i32]()) {{
                 return 1;
             }};
         }};

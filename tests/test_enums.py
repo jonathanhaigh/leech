@@ -23,6 +23,17 @@ def test_enum_to_int_explicit_typ_args_uncalled_reference(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_enum_to_int_at_comptime(tmp_path):
+    src = """
+    enum Color(u8) { Red, Green, Blue }
+    let c = __enum_to_int(Color::Green);
+    pub fn main() i32 {
+        return c - 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_enum_variant_address_of_copies_to_a_temporary(tmp_path):
     # A variant is a value, not a place (it has no address of its own) -
     # `&` on one falls back to the general "copy into a temporary, take
