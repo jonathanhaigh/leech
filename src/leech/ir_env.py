@@ -131,9 +131,13 @@ class Env:
 
     @staticmethod
     def _private_item_diag_info(
-        value: Container | Var,
+        value: Container | ir_values.Value[typs.PtrTyp] | ir_module.GenericFn,
     ) -> Optional[tuple[str, Optional[src.SrcSpan]]]:
-        """Return a private item's diagnostic kind and definition span, if applicable."""
+        """Return a private item's diagnostic kind and definition span, if applicable.
+
+        Only ever called with a :class:`~leech.ir_module.ModItem`'s own
+        value, never a local binding - narrower than the general ``Var``.
+        """
         if isinstance(value, ir_module.FnSpec):
             return "function", value.span
         if isinstance(value, ir_module.GenericFn):
