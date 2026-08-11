@@ -65,6 +65,7 @@ instance the program needs, but can include one requested only as a side
 effect of validating an unrelated, never-instantiated generic template.
 """
 
+
 @dataclasses.dataclass(frozen=True)
 class MonoResult:
     """Every generic instance discovered reachable from a program, in discovery order."""
