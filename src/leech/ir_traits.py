@@ -4,6 +4,7 @@
 
 """Trait declarations and their implementations."""
 
+import functools
 from collections.abc import Collection, Hashable
 from typing import Final, Optional
 
@@ -68,7 +69,7 @@ class Trait:
         self.ast = trait_ast
         self.mod_name = mod_name
         self._env = e.new_child()
-        for typ_param in typs.typ_params_from_ast(trait_ast, trait_ast.generic_params):
+        for typ_param in self.typ_params:
             self._env.add_container(typ_param.name, typ_param)
         self._methods = {}
         for method_ast in trait_ast.methods:
@@ -79,6 +80,11 @@ class Trait:
                     "trait method", method.name, method.span, existing.span
                 )
             self._methods[method.name] = method
+
+    @functools.cached_property
+    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+        """This trait's own interned generic parameters, in declaration order."""
+        return typs.typ_params_from_ast(self.ast, self.ast.generic_params)
 
     @property
     def name(self) -> str:
@@ -380,7 +386,8 @@ def lookup_member(
     # would need the impl's own type parameters substituted throughout
     # its body first, which nothing here does yet - unlike a generic
     # *function* call, which monomorphizes through `Fn.instance`.
-    assert method.recv_typ is typ, (
-        "calling a method through a generic trait impl isn't supported yet"
-    )
+    if method.recv_typ is not typ:
+        raise NotImplementedError(
+            "calling a method through a generic trait impl isn't supported yet"
+        )
     return method

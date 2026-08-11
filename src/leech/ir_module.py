@@ -863,7 +863,8 @@ class Mod:
         # A generic trait's own type parameters aren't supported yet -
         # nothing upstream rejects `impl Eq[i32] for i32` syntactically,
         # so fail loudly here rather than silently ignore the arguments.
-        assert not trait_typ_ast.generic_args, "generic traits aren't supported yet"
+        if trait_typ_ast.generic_args:
+            raise NotImplementedError("generic traits aren't supported yet")
 
         self_typ = typs.Typ.from_ast(opt_util.opt_unwrap(impl_ast.for_typ), impl_env)
 
@@ -904,7 +905,8 @@ class Mod:
             # nothing upstream rejects the syntax, so fail loudly here
             # rather than silently mistreat the function's one literal
             # FnTyp as real.
-            assert not fn_ast.generic_params, "generic associated functions aren't supported yet"
+            if fn_ast.generic_params:
+                raise NotImplementedError("generic associated functions aren't supported yet")
             fn = Fn(fn_ast, fn_env, self.name, recv_typ=recv_typ)
             register(fn)
             if impl_ast.generic_params:

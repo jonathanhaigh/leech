@@ -488,12 +488,20 @@ class TypCheck:
         from leech import ir_traits  # noqa: PLC0415
 
         matches: list[ir_traits.TraitMethod] = []
-        for bound_path in typ_param.bounds:
-            item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound_path)
+        for bound in typ_param.bounds:
+            item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
             if not isinstance(item, ir_traits.Trait):
-                raise errors.BoundNotATraitError(bound_path.str(), bound_path.span)
+                raise errors.BoundNotATraitError(bound.path.str(), bound.path.span)
             method = item.get_method(name)
             if method is not None:
+                if bound.generic_args:
+                    # The signature would still name the trait's own type
+                    # parameters, not the bound's arguments; substituting
+                    # them needs generic traits.
+                    raise NotImplementedError(
+                        "calling a method through a bound with generic arguments"
+                        " isn't supported yet"
+                    )
                 matches.append(method)
         return ir_traits.disambiguate(matches, name, typ_param.name, span)
 

@@ -1154,8 +1154,8 @@ COMMENTED_INTS = [
                     T("generic_param").cs(
                         T("ident", Tok("T")),
                         T("bound_list").cs(
-                            T("path", "ident", Tok("Show")),
-                            T("path", "ident", Tok("Eq")),
+                            T("basic_typ").cs(T("path", "ident", Tok("Show")), None),
+                            T("basic_typ").cs(T("path", "ident", Tok("Eq")), None),
                         ),
                     ),
                 ),

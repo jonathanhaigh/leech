@@ -188,7 +188,7 @@ def test_calling_method_through_generic_impl_not_supported_yet(tmp_path):
         return p.show();
     }
     """
-    with pytest.raises(AssertionError):
+    with pytest.raises(NotImplementedError):
         util.compile_str(tmp_path, src)
 
 
@@ -208,7 +208,8 @@ def test_trait_bound_call_through_generic_impl_not_supported_yet(tmp_path):
     }
     """
     with pytest.raises(
-        AssertionError, match="calling a method through a generic trait impl isn't supported yet"
+        NotImplementedError,
+        match="calling a method through a generic trait impl isn't supported yet",
     ):
         util.compile_str(tmp_path, src)
 
@@ -532,3 +533,314 @@ def test_get_trait_item_from_mod(tmp_path):
     assert isinstance(item.value, ir_traits.Trait)
     assert item.value.name == "Show"
     assert [m.name for m in item.value.methods] == ["show"]
+
+
+def test_bound_with_generic_args_parses(tmp_path):
+    # Bounds are lazy: an uninstantiated generic fn never has its bounds
+    # checked, so this exercises parsing alone.
+    src = """
+    trait Container[T] { fn get(*self) T; }
+    fn unused[T: Container[i32]](x: T) i32 { return 0; }
+    pub fn main() i32 { return 0; }
+    """
+    util.compile_str(tmp_path, src)
+
+
+def test_generic_trait_exposes_typ_params(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "trait Container[T] { fn get(*self) T; }")
+    item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Container")
+    assert item is not None
+    assert isinstance(item.value, ir_traits.Trait)
+    assert [p.name for p in item.value.typ_params] == ["T"]
+
+
+def test_non_generic_trait_has_no_typ_params(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "trait Show { fn show(*self) i32; }")
+    item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Show")
+    assert item is not None
+    assert isinstance(item.value, ir_traits.Trait)
+    assert item.value.typ_params == ()
+
+
+def test_bound_with_generic_args_on_non_generic_trait(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    fn f[T: Show[i32]](x: T) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"Show"' in str(exc_info.value)
+
+
+def test_bound_on_generic_trait_without_typ_args(tmp_path):
+    src = """
+    trait Container[T] { fn get(*self) T; }
+    fn f[T: Container](x: T) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"Container"' in str(exc_info.value)
+
+
+def test_bound_with_wrong_number_of_typ_args(tmp_path):
+    src = """
+    trait Container[T] { fn get(*self) T; }
+    fn f[T: Container[i32, i32]](x: T) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"Container"' in str(exc_info.value)
+
+
+def test_checking_bound_with_generic_args_not_supported_yet(tmp_path):
+    src = """
+    trait Container[T] { fn get(*self) T; }
+    fn f[T: Container[i32]](x: T) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(
+        NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
+    ):
+        util.compile_str(tmp_path, src)
+
+
+def test_bound_typ_arg_violating_traits_own_bound(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    trait Container[T: Show] { fn get(*self) T; }
+    fn f[U: Container[bool]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    msg = str(exc_info.value)
+    assert '"bool"' in msg
+    assert '"Show"' in msg
+
+
+def test_bound_typ_arg_satisfying_traits_own_bound(tmp_path):
+    # Reaches the unsupported-feature guard, which means the nested bound
+    # check ran and accepted i32 rather than rejecting it.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    trait Container[T: Show] { fn get(*self) T; }
+    fn f[U: Container[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(
+        NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
+    ):
+        util.compile_str(tmp_path, src)
+
+
+_SIBLING_PRELUDE = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    trait Container[T: Show] { fn get(*self) T; }
+"""
+
+
+def test_bound_referencing_earlier_sibling_typ_param(tmp_path):
+    src = (
+        _SIBLING_PRELUDE
+        + """
+    struct Pair[A, B: Container[A]] { mut first: A, mut second: B }
+    pub fn main() i32 {
+        let p = Pair[bool, i32] { first: true, second: 1 };
+        return 0;
+    }
+    """
+    )
+    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"bool"' in str(exc_info.value)
+
+
+def test_bound_referencing_later_sibling_typ_param(tmp_path):
+    src = (
+        _SIBLING_PRELUDE
+        + """
+    struct Pair[A: Container[B], B] { mut first: A, mut second: B }
+    pub fn main() i32 {
+        let p = Pair[i32, bool] { first: 1, second: true };
+        return 0;
+    }
+    """
+    )
+    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"bool"' in str(exc_info.value)
+
+
+def test_bound_referencing_sibling_typ_param_satisfied(tmp_path):
+    # Reaching the unsupported-feature guard means `A` resolved to i32 and
+    # passed Container's own Show bound.
+    src = (
+        _SIBLING_PRELUDE
+        + """
+    struct Pair[A, B: Container[A]] { mut first: A, mut second: B }
+    pub fn main() i32 {
+        let p = Pair[i32, i32] { first: 1, second: 1 };
+        return 0;
+    }
+    """
+    )
+    with pytest.raises(
+        NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
+    ):
+        util.compile_str(tmp_path, src)
+
+
+def test_self_referential_trait_bound_not_supported_yet(tmp_path):
+    src = """
+    trait Foo[T: Foo[T]] { fn get(*self) T; }
+    fn f[U: Foo[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(NotImplementedError, match="recursive trait bound"):
+        util.compile_str(tmp_path, src)
+
+
+def test_mutually_recursive_trait_bounds_not_supported_yet(tmp_path):
+    src = """
+    trait A[T: B[T]] { fn a(*self) T; }
+    trait B[T: A[T]] { fn b(*self) T; }
+    fn f[U: A[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(NotImplementedError, match="recursive trait bound"):
+        util.compile_str(tmp_path, src)
+
+
+def test_growing_recursive_trait_bound_via_pointer(tmp_path):
+    # The type argument grows each step, so no (trait, args) key ever
+    # repeats and only the depth limit stops it.
+    src = """
+    trait Foo[T: Foo[*T]] { fn get(*self) T; }
+    fn f[U: Foo[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(NotImplementedError, match="levels of bound resolution"):
+        util.compile_str(tmp_path, src)
+
+
+def test_growing_recursive_trait_bound_via_array(tmp_path):
+    src = """
+    trait Bar[T: Bar[[T; 2]]] { fn get(*self) T; }
+    fn f[U: Bar[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(NotImplementedError, match="levels of bound resolution"):
+        util.compile_str(tmp_path, src)
+
+
+def test_growing_mutually_recursive_trait_bounds(tmp_path):
+    src = """
+    trait P[T: Q[*T]] { fn p(*self) T; }
+    trait Q[T: P[*T]] { fn q(*self) T; }
+    fn f[U: P[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(NotImplementedError, match="levels of bound resolution"):
+        util.compile_str(tmp_path, src)
+
+
+def test_calling_method_through_bound_with_generic_args_not_supported_yet(tmp_path):
+    # The bound is never checked (f is never instantiated), but f's body is
+    # type-checked once, which resolves `get` against U's bounds.
+    src = """
+    trait Container[T] { fn get(*self) T; }
+    fn f[U: Container[i32]](x: U) i32 { return x.get(); }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(
+        NotImplementedError,
+        match="calling a method through a bound with generic arguments isn't supported yet",
+    ):
+        util.compile_str(tmp_path, src)
+
+
+def test_same_trait_at_different_typ_args_is_not_a_cycle(tmp_path):
+    # Container is reached twice with different arguments; a trait-only
+    # cycle key would wrongly reject this before the unsupported guard.
+    src = """
+    trait Container[T] { fn get(*self) T; }
+    trait Outer[A: Container[i32], B: Container[bool]] { fn o(*self) A; }
+    fn f[U: Outer[i32, bool]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(
+        NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
+    ):
+        util.compile_str(tmp_path, src)
+
+
+def test_bound_with_generic_args_combined_with_plain_bound_parses(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    trait Container[T] { fn get(*self) T; }
+    fn unused[T: Container[i32] + Show](x: T) i32 { return 0; }
+    pub fn main() i32 { return 0; }
+    """
+    util.compile_str(tmp_path, src)
+
+
+def test_legal_nested_bound_chain_is_not_treated_as_recursive(tmp_path):
+    # Three levels of distinct traits terminate on their own, well under the
+    # depth limit, so neither recursion guard should fire.
+    src = """
+    trait C[T] { fn c(*self) T; }
+    trait B[T: C[T]] { fn b(*self) T; }
+    trait A[T: B[T]] { fn a(*self) T; }
+    fn f[U: A[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(
+        NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
+    ):
+        util.compile_str(tmp_path, src)

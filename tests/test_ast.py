@@ -85,7 +85,7 @@ def test_fn_defn_generic_params(tmp_path):
 
     (param,) = fn.generic_params
     assert param.ident.name == "T"
-    assert [b.str() for b in param.bounds] == ["Show"]
+    assert [b.path.str() for b in param.bounds] == ["Show"]
 
 
 def test_fn_defn_no_generic_params(tmp_path):

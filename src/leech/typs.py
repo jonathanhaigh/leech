@@ -11,9 +11,13 @@ import re
 import types
 import weakref
 from collections.abc import Collection, Hashable, Mapping, Sequence
-from typing import ClassVar, Final, Optional, Self, override
+from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
 
 from leech import asserts, ast, errors, ir_env, ir_module, signage, src, target
+
+if TYPE_CHECKING:
+    # Runtime imports are local because ir_traits imports this module.
+    from leech import ir_traits
 
 
 class Mutability(enum.Enum):
@@ -34,22 +38,90 @@ class Mutability(enum.Enum):
 CONST = Mutability.CONST
 MUT = Mutability.MUT
 
+#: Maximum nesting depth when checking a bound's type arguments against the
+#: bounds its trait declares. Legitimate bounds nest a few levels deep; a
+#: bound whose type argument grows each step never repeats and would
+#: otherwise recurse until the stack runs out.
+_MAX_BOUND_DEPTH = 32
+
+
+def resolve_bound(
+    bound: ast.BasicTyp,
+    e: ir_env.Env,
+    in_progress: frozenset[tuple[ir_traits.Trait, tuple[Typ, ...]]] = frozenset(),
+) -> tuple[ir_traits.Trait, tuple[Typ, ...]]:
+    """Resolve a bound to its trait and its resolved type arguments.
+
+    Applies the same arity rules to a bound's trait reference that
+    :meth:`Typ._basic_typ_from_ast` applies to a type reference, and checks the
+    resolved arguments against the trait's own parameter bounds. Whether any
+    particular type *satisfies* the bound is left to callers.
+
+    :param in_progress: The trait/type-argument pairs whose own bounds are
+        already being checked further up the recursion.
+    """
+    # This must be local because ir_traits imports this module.
+    from leech import ir_traits  # noqa: PLC0415
+
+    trait = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
+    if not isinstance(trait, ir_traits.Trait):
+        raise errors.BoundNotATraitError(bound.path.str(), bound.path.span)
+    if not trait.typ_params:
+        if bound.generic_args:
+            raise errors.TypArgsOnNonGenericItemError(bound.path.str(), bound.span)
+        return trait, ()
+    if not bound.generic_args:
+        raise errors.MissingTypArgsError(trait.name, bound.span)
+    if len(bound.generic_args) != len(trait.typ_params):
+        raise errors.WrongNumberOfTypArgsError(
+            trait.name, len(bound.generic_args), len(trait.typ_params), bound.span
+        )
+    typ_args = tuple(Typ.from_ast(arg, e) for arg in bound.generic_args)
+
+    # A trait bounding its own parameter by itself, directly or through a
+    # cycle of traits, would otherwise recurse until the stack runs out.
+    key = (trait, typ_args)
+    if key in in_progress:
+        raise NotImplementedError(f"recursive trait bound on {trait.name} isn't supported yet")
+    # A bound whose type argument grows each step never repeats a key, so
+    # depth is what bounds it. Each level adds exactly one key.
+    if len(in_progress) >= _MAX_BOUND_DEPTH:
+        raise NotImplementedError(
+            f"exceeded {_MAX_BOUND_DEPTH} levels of bound resolution at {trait.name};"
+            " recursive trait bounds aren't supported yet"
+        )
+
+    check_typ_arg_bounds(trait.typ_params, typ_args, e, bound.span, in_progress | {key})
+    return trait, typ_args
+
 
 def check_typ_arg_bounds(
     typ_params: Sequence[TypParamTyp],
     typ_args: tuple[Typ, ...],
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
+    in_progress: frozenset[tuple[ir_traits.Trait, tuple[Typ, ...]]] = frozenset(),
 ) -> None:
-    """Raise if a type argument violates its corresponding parameter's bounds."""
-    # This must be local because ir_traits imports this module.
-    from leech import ir_traits  # noqa: PLC0415
+    """Raise if a type argument violates its corresponding parameter's bounds.
+
+    :param in_progress: Threaded through to :func:`resolve_bound`.
+    """
+    # Bind every parameter before checking any bound, so that a bound's type
+    # arguments can name a sibling parameter declared either side of it.
+    sub_env = e.new_child()
+    for typ_param, typ_arg in zip(typ_params, typ_args, strict=True):
+        sub_env.add_container(typ_param.name, typ_arg)
 
     for typ_param, typ_arg in zip(typ_params, typ_args, strict=True):
-        for bound_path in typ_param.bounds:
-            trait = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound_path)
-            if not isinstance(trait, ir_traits.Trait):
-                raise errors.BoundNotATraitError(bound_path.str(), bound_path.span)
+        for bound in typ_param.bounds:
+            trait, bound_typ_args = resolve_bound(bound, sub_env, in_progress)
+            if bound_typ_args:
+                # Matching these against an impl's own trait arguments needs
+                # generic traits. Nothing upstream rejects the bound, so fail
+                # loudly rather than silently ignore the arguments.
+                raise NotImplementedError(
+                    "checking bounds with generic arguments isn't supported yet"
+                )
             if e.impl_registry.find_impl(trait, typ_arg) is None:
                 raise errors.UnsatisfiedBoundError(typ_arg.name, trait.name, typ_param.name, span)
 
@@ -381,10 +453,10 @@ class TypParamTyp(Typ):
     _owner: Final[Hashable]
     _index: Final[int]
     _name: Final[str]
-    bounds: Final[tuple[ast.Path, ...]]
+    bounds: Final[tuple[ast.BasicTyp, ...]]
 
     def __init__(
-        self, owner: Hashable, index: int, name: str, bounds: tuple[ast.Path, ...] = ()
+        self, owner: Hashable, index: int, name: str, bounds: tuple[ast.BasicTyp, ...] = ()
     ) -> None:
         self._owner = owner
         self._index = index

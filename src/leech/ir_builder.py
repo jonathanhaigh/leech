@@ -376,9 +376,10 @@ class CfgBuilder:
                 assert impl is not None
                 method = impl.get_method(cached)
                 assert method is not None
-                assert method.recv_typ is recv_typ, (
-                    "calling a method through a generic trait impl isn't supported yet"
-                )
+                if method.recv_typ is not recv_typ:
+                    raise NotImplementedError(
+                        "calling a method through a generic trait impl isn't supported yet"
+                    )
             elif isinstance(cached, ir_module.Fn):
                 # Resolved against the impl block's own abstract receiver -
                 # map to this build's instance.

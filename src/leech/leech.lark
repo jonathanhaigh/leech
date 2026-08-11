@@ -47,7 +47,7 @@ import: "import" path ";"
 generic_params: "[" _generic_param_list "]"
 _generic_param_list: generic_param ("," generic_param)* ","?
 generic_param: ident (":" bound_list)?
-bound_list: path ("+" path)*
+bound_list: basic_typ ("+" basic_typ)*
 
 generic_args: "[" _generic_arg_list "]"
 _generic_arg_list: typ ("," typ)* ","?

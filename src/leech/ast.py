@@ -781,7 +781,7 @@ class GenericParam(Ast):
     """A generic type parameter and its trait bounds."""
 
     ident: Final[Ident]
-    bounds: Final[tuple[Path, ...]]
+    bounds: Final[tuple[BasicTyp, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "generic_param")
@@ -790,7 +790,7 @@ class GenericParam(Ast):
         self.ident = Ident.from_tree(file, ident)
         if rest:
             (bound_list,) = rest
-            self.bounds = tuple(Path(file, _as_tree(p)) for p in bound_list.children)
+            self.bounds = tuple(BasicTyp(file, _as_tree(b)) for b in bound_list.children)
         else:
             self.bounds = ()
 

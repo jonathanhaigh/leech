@@ -554,7 +554,7 @@ def test_generic_assoc_fn_not_yet_supported(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(AssertionError):
+    with pytest.raises(NotImplementedError):
         util.compile_str(tmp_path, src)
 
 
