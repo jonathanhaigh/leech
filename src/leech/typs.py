@@ -13,7 +13,7 @@ import weakref
 from collections.abc import Collection, Hashable, Mapping, Sequence
 from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
 
-from leech import asserts, ast, errors, ir_env, ir_module, signage, src, target
+from leech import asserts, ast, errors, ir_env, ir_module, reserved, signage, src, target
 
 if TYPE_CHECKING:
     # Runtime imports are local because ir_traits imports this module.
@@ -37,11 +37,6 @@ class Mutability(enum.Enum):
 
 CONST = Mutability.CONST
 MUT = Mutability.MUT
-
-#: The reserved name for the type an impl block or trait method is written
-#: against. It is bound per context rather than declared, so no other
-#: declaration may take it.
-SELF_TYP_NAME: Final[str] = "Self"
 
 #: Maximum nesting depth when checking a bound's type arguments against the
 #: bounds its trait declares. Legitimate bounds nest a few levels deep; a
@@ -300,17 +295,31 @@ class IntTyp(Typ):
     _NAME_RE: ClassVar[re.Pattern[str]] = re.compile("([iu])([1-9][0-9]*)")
 
     @staticmethod
+    def is_name(name: str) -> bool:
+        """Return whether ``name`` is spelled like a builtin int type.
+
+        Spelling alone: true even for a width too large to build a type from.
+        """
+        return IntTyp._NAME_RE.fullmatch(name) is not None
+
+    @staticmethod
     def from_name(name: str) -> Optional[IntTyp]:
         """Recognize and build the interned builtin int type spelled ``name``.
 
         :param name: The spelling to parse, e.g. ``"i32"`` or ``"u8"``.
-        :return: The int type, or ``None`` if ``name`` doesn't spell one.
+        :return: The int type, or ``None`` if ``name`` doesn't spell one, or
+            spells a width too large to parse.
         """
         m = IntTyp._NAME_RE.fullmatch(name)
         if m is None:
             return None
+        try:
+            width = int(m[2])
+        except ValueError:
+            # More digits than CPython will convert to an int.
+            return None
         sign = signage.SIGNED if m[1] == "i" else signage.UNSIGNED
-        return IntTyp.get_or_create(int(m[2]), sign)
+        return IntTyp.get_or_create(width, sign)
 
 
 class BoolTyp(Typ):
@@ -501,11 +510,11 @@ def typ_params_from_ast(
 ) -> tuple[TypParamTyp, ...]:
     """Intern parsed type parameters under ``owner``, preserving declaration order.
 
-    :raises ReservedTypNameError: If a parameter is named ``Self``.
+    :raises ReservedNameError: If a parameter takes a reserved name.
     """
     for param_ast in generic_params:
-        if param_ast.ident.name == SELF_TYP_NAME:
-            raise errors.ReservedTypNameError(param_ast.ident.name, param_ast.ident.span)
+        if reserved.is_reserved(param_ast.ident.name):
+            raise errors.ReservedNameError(param_ast.ident.name, param_ast.ident.span)
     return tuple(
         TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds)
         for index, param_ast in enumerate(generic_params)
@@ -680,7 +689,12 @@ class StructTyp(Typ):
         return member.ast.name.span
 
     def _add_member(self, member: StructField | ir_module.Fn) -> None:
-        """Register ``member`` in the shared field and associated-function namespace."""
+        """Register ``member`` in the shared field and associated-function namespace.
+
+        :raises ReservedNameError: If ``member`` takes a reserved name.
+        """
+        if reserved.is_reserved(member.name):
+            raise errors.ReservedNameError(member.name, StructTyp._member_ident_span(member))
         existing = self._members.get(member.name)
         if existing is not None:
             span = StructTyp._member_ident_span(member)
@@ -834,6 +848,7 @@ class EnumTyp(Typ):
         plus one, or an explicit ``= N`` override.
 
         :raises DuplicateVariantInEnumDefnError: If two variants share a name.
+        :raises ReservedNameError: If a variant takes a reserved name.
         """
         result: dict[str, int] = {}
         next_value = 0
@@ -845,6 +860,8 @@ class EnumTyp(Typ):
             else:
                 value = variant_ast.value.value
             name = variant_ast.ident.name
+            if reserved.is_reserved(name):
+                raise errors.ReservedNameError(name, variant_ast.ident.span)
             if name in result:
                 previous_span = next(v.span for v in self.ast.variants if v.ident.name == name)
                 raise errors.DuplicateVariantInEnumDefnError(name, variant_ast.span, previous_span)

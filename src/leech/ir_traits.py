@@ -8,7 +8,7 @@ import functools
 from collections.abc import Collection, Hashable
 from typing import Final, Optional
 
-from leech import ast, errors, ir_env, ir_module, src, typs
+from leech import ast, errors, ir_env, ir_module, reserved, src, typs
 
 # Keep this import module-qualified because typs may still be initializing.
 
@@ -22,6 +22,7 @@ class TraitMethod:
     def __init__(self, fn_ast: ast.TraitFn, trait: Trait) -> None:
         if fn_ast.receiver is None:
             raise errors.TraitMethodMissingReceiverError(fn_ast.name.name, fn_ast.span)
+        reserved.check_fn_params(fn_ast)
         self.ast = fn_ast
         self._trait = trait
 
@@ -51,7 +52,7 @@ class TraitMethod:
             self_typ, typs.Mutability.from_ast(self.ast.receiver.mut)
         )
         env = self._trait._env.new_child()
-        env.add_container(typs.SELF_TYP_NAME, self_typ)
+        env.add_container(reserved.SELF_TYP_NAME, self_typ)
         param_typs = [recv_typ] + [
             typs.Typ.from_ast(param_ast.typ, env) for param_ast in self.ast.params
         ]
@@ -78,6 +79,8 @@ class Trait:
         self._methods = {}
         for method_ast in trait_ast.methods:
             method = TraitMethod(method_ast, self)
+            if reserved.is_reserved(method.name):
+                raise errors.ReservedNameError(method.name, method_ast.name.span)
             existing = self._methods.get(method.name)
             if existing is not None:
                 raise errors.DuplicateItemDefnError(
@@ -140,7 +143,7 @@ class Impl:
         self._self_typ = self_typ
         self._mod_name = mod_name
         self.env = e.new_child()
-        self.env.add_container(typs.SELF_TYP_NAME, self_typ)
+        self.env.add_container(reserved.SELF_TYP_NAME, self_typ)
         self._methods = {}
 
     @property

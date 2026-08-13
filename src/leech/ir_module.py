@@ -22,6 +22,7 @@ from leech import (
     ir_traits,
     ir_values,
     opt_util,
+    reserved,
     src,
     typcheck,
     typs,
@@ -137,6 +138,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         self.env = e.new_child()
         self._mod_name = mod_name
         self.recv_typ = recv_typ
+        reserved.check_fn_params(fn_ast)
         # Eager binding lets signatures and bodies resolve parameters like named types.
         for typ_param in typs.typ_params_from_ast(fn_ast, fn_ast.generic_params):
             self.env.add_container(typ_param.name, typ_param)
@@ -822,7 +824,7 @@ class Mod:
         fn_env = typ.env.new_child()
         for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params):
             fn_env.add_container(typ_param.name, typ_param)
-        fn_env.add_container(typs.SELF_TYP_NAME, typ)
+        fn_env.add_container(reserved.SELF_TYP_NAME, typ)
 
         self._build_impl_fns(impl_ast, fn_env, typ, generic_fns, typ.add_assoc_fn, typ.name)
 
@@ -926,10 +928,8 @@ class Mod:
         span: Optional[src.SrcSpan] = None,
     ) -> None:
         item = ModItem(self, name, access, value, qualify_name)
-        if item._ns == ir_env.Env.Namespace.CONTAINERS and name == typs.SELF_TYP_NAME:
-            raise errors.ReservedTypNameError(
-                name, span if span is not None else ast.opt_span(value)
-            )
+        if reserved.is_reserved(name):
+            raise errors.ReservedNameError(name, span if span is not None else ast.opt_span(value))
         # Bind in env before recording the item: Env.add is what rejects a
         # duplicate definition, and it has to raise before _items is
         # written to, so that a name can never be silently rebound to a

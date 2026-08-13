@@ -131,10 +131,16 @@ declaration sites, of which there are two:
   struct, enum and trait declarations and imports, since `_add_item`
   derives the namespace from the value it is given.
 
-Both raise a new `errors.ReservedTypNameError`. `Impl` and `TraitMethod`
+Both raise a new `errors.ReservedNameError`. `Impl` and `TraitMethod`
 bind `Self` through `Env.add_container` directly, not through either
 checkpoint, so the legitimate bindings are unaffected. Builtins are
 likewise unaffected — `ir_builtins` binds through `add_container` too.
+
+Superseded in scope by
+[Reserve keywords and compiler-bound type names](2026-08-13-reserved-names-design.md),
+which generalizes this to keywords and builtin type names across both
+namespaces and widens the two checkpoints to seven. The reservation of
+`Self` itself, and the reason for it, are unchanged.
 
 ## Non-goals
 
@@ -192,7 +198,7 @@ type arguments, proving `Self` substitutes rather than sticking to the
 first instantiation.
 
 **Reservation.** `struct Self`, `trait Self`, `fn f[Self](x: Self)` and
-`impl[Self] Foo[Self]` each rejected with `ReservedTypNameError`, covering
+`impl[Self] Foo[Self]` each rejected with `ReservedNameError`, covering
 both checkpoints. A trait impl's own `Self` still working, as the guard
 that the reservation didn't over-reach.
 

@@ -648,12 +648,8 @@ class AmbiguousMethodError(UserError):
         )
 
 
-class ReservedTypNameError(UserError):
-    """Raised when a declaration reuses a name the language reserves.
-
-    ``Self`` is the only such name: it always denotes the type an ``impl``
-    block or trait method is written against.
-    """
+class ReservedNameError(UserError):
+    """Raised when a declaration takes a name the language reserves."""
 
     def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'"{name}" is reserved and cannot be used as a name', span)

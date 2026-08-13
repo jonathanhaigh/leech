@@ -320,8 +320,9 @@ both sides already funnel through `fn_typ_for_self`. Binding rather than
 substituting also removes a class of bug outright — an unsubstituted `Self`
 cannot escape into type checking or codegen, because `Self` never becomes a
 `Typ`. The reservation check is the only part touching code beyond the two
-binding sites, and it lands at two funnels: `typs.typ_params_from_ast` and
-`Mod._add_item` for the `CONTAINERS` namespace. The "small" holds only for
+binding sites. (It was later generalized to keywords and builtin type
+names across both namespaces — see
+[reserved names](2026-08-13-reserved-names-design.md).) The "small" holds only for
 the scope above — signatures, not bodies.
 
 **Dependencies.** None — it's independent of every other gap here. It

@@ -12,7 +12,19 @@ import dataclasses
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Final, Optional
 
-from leech import asserts, ast, errors, ir_env, ir_values, opt_util, resolve, signage, src, typs
+from leech import (
+    asserts,
+    ast,
+    errors,
+    ir_env,
+    ir_values,
+    opt_util,
+    reserved,
+    resolve,
+    signage,
+    src,
+    typs,
+)
 
 if TYPE_CHECKING:
     # Runtime imports are local because ir_module imports this module.
@@ -349,6 +361,8 @@ class TypCheck:
                 while_ast.condition.span,
             )
 
+        if while_ast.label is not None and reserved.is_reserved(while_ast.label.name):
+            raise errors.ReservedNameError(while_ast.label.name, while_ast.label.span)
         self._loop_labels.append((opt_util.opt_map(while_ast.label, lambda x: x.name), while_ast))
         try:
             block_typ = self._check_expr(while_ast.block, e, None)
@@ -1032,6 +1046,8 @@ class TypCheck:
         mut = typs.Mutability.from_ast(let_ast.mut)
         place_typ = typs.PtrTyp.get_or_create(bound_typ, mut)
         self._local_typs[let_ast] = place_typ
+        if reserved.is_reserved(let_ast.ident.name):
+            raise errors.ReservedNameError(let_ast.ident.name, let_ast.ident.span)
         e.add_var(let_ast.ident.name, let_ast)
         return expr_typ == typs.NEVER
 

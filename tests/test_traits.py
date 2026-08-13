@@ -913,7 +913,7 @@ def test_self_reserved_as_struct_name(tmp_path):
     struct Self { mut x: i32 }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ReservedTypNameError):
+    with pytest.raises(errors.ReservedNameError):
         util.compile_str(tmp_path, src)
 
 
@@ -922,7 +922,7 @@ def test_self_reserved_as_trait_name(tmp_path):
     trait Self { fn f(*self) i32; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ReservedTypNameError):
+    with pytest.raises(errors.ReservedNameError):
         util.compile_str(tmp_path, src)
 
 
@@ -931,7 +931,7 @@ def test_self_reserved_as_fn_generic_param_name(tmp_path):
     fn f[Self](x: Self) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ReservedTypNameError):
+    with pytest.raises(errors.ReservedNameError):
         util.compile_str(tmp_path, src)
 
 
@@ -941,7 +941,7 @@ def test_self_reserved_as_impl_generic_param_name(tmp_path):
     impl[Self] Foo[Self] { fn get(*self) Self { self.*.val } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ReservedTypNameError):
+    with pytest.raises(errors.ReservedNameError):
         util.compile_str(tmp_path, src)
 
 

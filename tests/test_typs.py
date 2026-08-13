@@ -341,3 +341,11 @@ def test_substitute_typ_params_recurses_through_composite_typs(tmp_path):
     assert fn_typ.substitute_typ_params(mapping) is typs.FnTyp.get_or_create(
         typs.I32, (typs.I32, typs.BOOL)
     )
+
+
+def test_int_typ_name_with_unparseable_width_is_not_a_typ(tmp_path):
+    # The width exceeds CPython's int-from-string digit limit; resolving it
+    # must diagnose an unknown type rather than crash.
+    name = "i" + "9" * 5000
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, f"pub fn main() i32 {{ let x: {name} = 5; return 0; }}")
