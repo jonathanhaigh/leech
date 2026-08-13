@@ -844,3 +844,129 @@ def test_legal_nested_bound_chain_is_not_treated_as_recursive(tmp_path):
         NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
     ):
         util.compile_str(tmp_path, src)
+
+
+def test_self_as_param_typ_in_trait_method(tmp_path):
+    src = """
+    trait Comparable { fn cmp(*self, other: *Self) i32; }
+    impl Comparable for i32 { fn cmp(*self, other: *i32) i32 { self.* - other.* } }
+    pub fn main() i32 {
+        let a: i32 = 7;
+        let b: i32 = 7;
+        return a.cmp(&b);
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_self_as_ret_typ_in_trait_method(tmp_path):
+    src = """
+    trait Dup { fn dup(*self) Self; }
+    impl Dup for i32 { fn dup(*self) i32 { self.* } }
+    pub fn main() i32 {
+        let a: i32 = 3;
+        return a.dup() - 3;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_impl_may_write_self_instead_of_concrete_typ(tmp_path):
+    src = """
+    trait Comparable { fn cmp(*self, other: *Self) i32; }
+    impl Comparable for i32 { fn cmp(*self, other: *Self) i32 { self.* - other.* } }
+    pub fn main() i32 {
+        let a: i32 = 7;
+        let b: i32 = 7;
+        return a.cmp(&b);
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_impl_with_wrong_typ_for_self_param_still_rejected(tmp_path):
+    src = """
+    trait Comparable { fn cmp(*self, other: *Self) i32; }
+    impl Comparable for i32 { fn cmp(*self, other: *bool) i32 { 0 } }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.TraitMethodSignatureMismatchError):
+        util.compile_str(tmp_path, src)
+
+
+def test_self_resolves_to_typ_param_through_trait_bound(tmp_path):
+    src = """
+    trait Comparable { fn cmp(*self, other: *Self) i32; }
+    impl Comparable for i32 { fn cmp(*self, other: *i32) i32 { self.* - other.* } }
+    fn cmp_them[T: Comparable](x: T, y: *T) i32 { return x.cmp(y); }
+    pub fn main() i32 {
+        let a: i32 = 7;
+        let b: i32 = 7;
+        return cmp_them(a, &b);
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_self_reserved_as_struct_name(tmp_path):
+    src = """
+    struct Self { mut x: i32 }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ReservedTypNameError):
+        util.compile_str(tmp_path, src)
+
+
+def test_self_reserved_as_trait_name(tmp_path):
+    src = """
+    trait Self { fn f(*self) i32; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ReservedTypNameError):
+        util.compile_str(tmp_path, src)
+
+
+def test_self_reserved_as_fn_generic_param_name(tmp_path):
+    src = """
+    fn f[Self](x: Self) i32 { return 0; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ReservedTypNameError):
+        util.compile_str(tmp_path, src)
+
+
+def test_self_reserved_as_impl_generic_param_name(tmp_path):
+    src = """
+    struct Foo[T] { mut val: T }
+    impl[Self] Foo[Self] { fn get(*self) Self { self.*.val } }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ReservedTypNameError):
+        util.compile_str(tmp_path, src)
+
+
+def test_self_does_not_resolve_in_trait_generic_param_bound(tmp_path):
+    # Documented limitation: bounds resolve in an env derived from the
+    # instantiation site, not from the trait, so Self isn't in scope.
+    src = """
+    trait Container[X] { fn c(*self) X; }
+    trait Holder[T: Container[Self]] { fn h(*self) T; }
+    fn f[U: Holder[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(errors.ItemNotFoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"Self"' in str(exc_info.value)
+
+
+def test_self_does_not_resolve_in_free_fn(tmp_path):
+    src = """
+    fn f(x: Self) i32 { return 0; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ItemNotFoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"Self"' in str(exc_info.value)

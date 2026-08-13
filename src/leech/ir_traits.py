@@ -41,18 +41,22 @@ class TraitMethod:
         return self.ast.span
 
     def fn_typ_for_self(self, self_typ: typs.Typ) -> typs.FnTyp:
-        """Return this method's signature with ``self_typ`` as its receiver pointee."""
+        """Return this method's signature with ``self_typ`` as its receiver pointee.
+
+        ``self_typ`` is also what ``Self`` names in the declared parameter and
+        return types.
+        """
         assert self.ast.receiver is not None
         recv_typ = typs.PtrTyp.get_or_create(
             self_typ, typs.Mutability.from_ast(self.ast.receiver.mut)
         )
+        env = self._trait._env.new_child()
+        env.add_container(typs.SELF_TYP_NAME, self_typ)
         param_typs = [recv_typ] + [
-            typs.Typ.from_ast(param_ast.typ, self._trait._env) for param_ast in self.ast.params
+            typs.Typ.from_ast(param_ast.typ, env) for param_ast in self.ast.params
         ]
         ret_typ = (
-            typs.VOID
-            if self.ast.ret_typ is None
-            else typs.Typ.from_ast(self.ast.ret_typ, self._trait._env)
+            typs.VOID if self.ast.ret_typ is None else typs.Typ.from_ast(self.ast.ret_typ, env)
         )
         return typs.FnTyp.get_or_create(ret_typ, tuple(param_typs))
 
@@ -136,7 +140,7 @@ class Impl:
         self._self_typ = self_typ
         self._mod_name = mod_name
         self.env = e.new_child()
-        self.env.add_container("Self", self_typ)
+        self.env.add_container(typs.SELF_TYP_NAME, self_typ)
         self._methods = {}
 
     @property

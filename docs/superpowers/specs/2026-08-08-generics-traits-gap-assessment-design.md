@@ -33,11 +33,12 @@ Recommended order, driven by dependencies and cost, not by preference:
 
 1. [Bound generic-args](#bound-generic-args) — trivial, isolated, and a hard
    prerequisite for bounds like `T: Container[i32]`.
-2. [`Self` in trait declarations](#self-in-trait-declarations) — also small
-   and isolated, and worth doing early for the same reason: it changes what
-   later gaps have to accommodate. Without it a trait can't say a method
-   takes or returns the implementing type, which forces F-bounded
-   workarounds that (5) and (7) would otherwise have to support well.
+2. [`Self` in trait declarations](#self-in-trait-declarations) — and in
+   inherent impls, which share the gap. Also small and isolated, and worth
+   doing early for the same reason: it changes what later gaps have to
+   accommodate. Without it a trait can't say a method takes or returns the
+   implementing type, which forces F-bounded workarounds that (5) and (7)
+   would otherwise have to support well.
 3. [Calling methods through generic trait impls](#calling-methods-through-generic-trait-impls)
    — the mechanism already exists for structs' inherent impls; this is
    mostly generalizing and wiring it up, not inventing it. Do the
@@ -265,13 +266,16 @@ express what it needs to check.
 
 ### `Self` in trait declarations
 
-**Current state.** `Self` is bound only by `Impl.__init__`
-(`self.env.add_container("Self", self_typ)`, `ir_traits.py:133`).
-`Trait.__init__` binds only the trait's own generic parameters, so `Self`
-doesn't resolve anywhere inside a trait declaration. An impl can name
-`Self`; the trait it implements cannot. Verified by compiling `trait
-Comparable { fn cmp(*self, other: *Self) i32; }`, which fails with
-`ItemNotFoundError: Type or module "Self" not found.`
+**Current state.** `Self` is bound in exactly one place: `Impl.__init__`
+(`self.env.add_container("Self", self_typ)`, `ir_traits.py:133`), which
+covers *trait* impls only. `Trait.__init__` binds only the trait's own
+generic parameters, and `_build_inherent_impl_defn` binds only the impl's,
+so `Self` resolves in neither a trait declaration nor an inherent impl. A
+trait impl can name `Self`; the trait it implements cannot, and neither can
+`impl Foo { ... }`. Verified by compiling both `trait Comparable { fn
+cmp(*self, other: *Self) i32; }` and `impl Foo { fn twin(*self) Self {
+... } }`, each failing with `ItemNotFoundError: Type or module "Self" not
+found.`
 
 The practical effect: a trait cannot state that a method takes or returns
 the implementing type. `fn cmp(*self, other: *Self) i32` is inexpressible,
@@ -281,44 +285,44 @@ have every use site bound it F-style (`trait Comparable[T]` used as
 generic-args](#bound-generic-args) and [generic traits](#generic-traits)
 just to say something `Self` says directly.
 
-**What's needed.** Bind `Self` in `Trait`'s env to an abstract placeholder.
-`TypParamTyp` already fits that role exactly — opaque identity, no LLVM
-representation, and it participates in `substitute_typ_params`.
-`TraitMethod.fn_typ_for_self` resolves parameter and return types in
-`self._trait._env` and today substitutes only the receiver; it would also
-substitute the placeholder with the passed `self_typ`, through the existing
-generic `Typ.substitute_typ_params`. The impl side needs no change:
-`Impl.add_method` compares `fn.fn_typ is not
+**What's needed.** `Self` is resolved as a *name*, bound per context to
+whatever type it stands for there — not represented as a type of its own.
+`TraitMethod.fn_typ_for_self` is the only place a trait method's parameter
+and return types are ever resolved, and every caller already supplies a
+concrete self type, so it can resolve them in a child env binding `Self` to
+that type. Inherent impls need the same one-line binding trait impls
+already have. `Self` also becomes a reserved name, rejected at generic
+parameter and type declarations, since it is otherwise a plain identifier.
+The impl side needs no change: `Impl.add_method` compares `fn.fn_typ is not
 trait_method.fn_typ_for_self(self._self_typ)` (`ir_traits.py:179-183`), and
-an impl's env already binds `Self` to its concrete self type, so both sides
-resolve to the same interned `FnTyp`.
+an impl's env already binds `Self` to its concrete self type, so an impl may
+write either `Self` or the concrete type and both intern to the same
+`FnTyp`.
 
-**What this does not give you.** `Self` in *signatures* only. Calling a
-method *on* a value of type `Self` would not work, and this matters as soon
-as anything type-checks a body against an abstract `Self`. Method lookup on
-a `TypParamTyp` receiver goes through exactly one path —
-`typcheck._resolve_bound_method`, which searches only the parameter's
-declared bounds (`typcheck.py`, the `isinstance(pointee_typ,
-typs.TypParamTyp)` branch of `_resolve_callee`). A bare `Self` placeholder
-has no bounds, so the search finds nothing, `disambiguate` returns `None`,
-and resolution falls through to struct-field access and fails with a
-misleading `NotCallableError`.
+Fully designed in
+[Bind `Self` in trait declarations and inherent impls](2026-08-11-self-in-traits-design.md),
+including why an abstract `TypParamTyp` placeholder was considered and
+rejected for this gap.
 
-That costs nothing here, because trait method prototypes have no bodies —
-there is no code checked against an abstract `Self` for this gap to break.
-It becomes load-bearing for [default method
-bodies](#default-method-bodies), which is where the mechanism belongs; see
-that gap.
+**What this does not give you.** `Self` in *signatures* only. Under
+name-binding no `Self`-typed value ever exists — `Self` always resolves to
+a real type — so there is nothing to call a method *on*, and nothing here
+breaks. What is missing is the *abstract* `Self` needed to type-check a
+body once, independently of any implementer. Introducing that is
+straightforward under name-binding (bind `Self` to a placeholder instead of
+to a concrete type), but the placeholder alone is not enough: method lookup
+on it must also find the declaring trait's methods. See [default method
+bodies](#default-method-bodies), which needs both and is where they belong.
 
-**Feasibility & cost.** Small, and smaller than it looks: it reuses
-`TypParamTyp` and the substitution machinery rather than adding a new kind
-of type, and the impl-side comparison falls out for free because both sides
-already funnel through `fn_typ_for_self`. The main care needed is deciding
-where the placeholder may legally appear (parameter and return types,
-certainly; nested inside `PtrTyp`/`ArrayTyp`, which substitution already
-handles recursively) and making sure nothing that expects a concrete type
-receives an unsubstituted one. The "small" holds only for the scope above —
-signatures, not bodies.
+**Feasibility & cost.** Small. It adds no type, no substitution pass and no
+cache-key decision; the impl-side comparison falls out for free because
+both sides already funnel through `fn_typ_for_self`. Binding rather than
+substituting also removes a class of bug outright — an unsubstituted `Self`
+cannot escape into type checking or codegen, because `Self` never becomes a
+`Typ`. The reservation check is the only part touching code beyond the two
+binding sites, and it lands at two funnels: `typs.typ_params_from_ast` and
+`Mod._add_item` for the `CONTAINERS` namespace. The "small" holds only for
+the scope above — signatures, not bodies.
 
 **Dependencies.** None — it's independent of every other gap here. It
 should come early regardless of when its dependents do, because it changes
@@ -525,47 +529,50 @@ prototype with no body. `TraitMethod` has no notion of one.
 semicolon (`_fn_prototype (";" | block_expr)`). Type-check a default body
 once, against an abstract `Self`, the same way a generic function's body is
 checked once against its own type parameters (an existing, working pattern
-— see `Fn.typ_check_results`) rather than once per implementer. That
-abstract `Self` binding doesn't exist yet — creating it is its own gap,
-[`Self` in trait declarations](#self-in-trait-declarations), which should
-land first. `Impl.check_complete` needs to stop requiring every method when
+— see `Fn.typ_check_results`) rather than once per implementer. [`Self` in
+trait declarations](#self-in-trait-declarations) makes `Self` resolve as a
+name bound per context, but always to a *concrete* type; this gap adds the
+abstract case, by binding `Self` to a placeholder when checking a body
+instead of to an implementer's type. That reuses the binding mechanism
+rather than replacing it, but the placeholder itself is new work here.
+`Impl.check_complete` needs to stop requiring every method when
 one has a default, and dispatch (`ir_traits.lookup_member`/`Impl.get_method`)
 needs to fall back to the trait's default, instantiated against the
 concrete `Self`, when an impl doesn't override it.
 
 Crucially, a default body needs to call the trait's *other* methods on
 `self` — `fn a(*self) { self.b(); }` is core default-method behavior, not an
-edge case. That does not work with a bare abstract `Self`, and it is the
-main piece of new machinery this gap needs. Method lookup on a
-`TypParamTyp` receiver consults only that parameter's declared bounds
-(`typcheck._resolve_bound_method`), and a `Self` placeholder has none, so
-`self.b()` fails to resolve during the check-once phase — before any
-substitution could help. Resolution has to be taught that an abstract
-`Self` belongs to its declaring trait and that the trait's own methods are
-in scope on it. Two plausible shapes, to be chosen in this gap's own spec:
-give the placeholder an explicit link to its declaring `Trait` and extend
-the `TypParamTyp` branch of `_resolve_callee` to consult it, or give it a
+edge case. That is the main piece of new machinery this gap needs, and an
+abstract `Self` alone does not provide it. If the placeholder is a
+`TypParamTyp`, method lookup on it consults only that parameter's declared
+bounds (`typcheck._resolve_bound_method`), and it has none, so `self.b()`
+fails to resolve during the check-once phase — before any substitution
+could help. Resolution has to be taught that an abstract `Self` belongs to
+its declaring trait and that the trait's own methods are in scope on it.
+Two plausible shapes, to be chosen in this gap's own spec: give the
+placeholder an explicit link to its declaring `Trait` and extend the
+`TypParamTyp` branch of `_resolve_callee` to consult it, or give it a
 synthetic bound naming its own trait so the existing
 `_resolve_bound_method` path works unchanged. Once
 [supertraits](#supertraits) exist, this lookup needs to search them too.
 
-**Feasibility & cost.** Medium, and sensitive to whether `Self` lands
-first. If it does, the *typing* half is close to a generic function with one
-implicit type parameter — checked once against the abstract parameter,
-substituted per implementer, reusing `substitute_typ_params` throughout,
-with the residual novelty being that the parameter's value comes from
-whichever impl is dispatching rather than from a call site. The *resolution*
-half is genuinely new work and is where the risk concentrates: a generic
-function's type parameter carries bounds that make method calls on it
-resolve, and `Self` has none, so the analogy to a generic function breaks
-exactly at same-trait method calls. Done without `Self` first, this gap
-would have to invent the binder as well, on top of that.
+**Feasibility & cost.** Medium. Three separable pieces: the grammar and
+completeness/dispatch changes above; an abstract `Self` placeholder; and
+same-trait method resolution on it. The first is routine. The second is
+small — [`Self`](#self-in-trait-declarations) establishes that `Self` is a
+name bound per context, so the abstract case is a different binding, not a
+different mechanism. The third is where the risk concentrates and is
+genuinely new: it is the one part no earlier gap sets up, and the reason
+this gap is not merely "a generic function with one implicit type
+parameter" — a generic function's type parameter carries bounds that make
+method calls on it resolve, and `Self` has none.
 
 **Dependencies.** [`Self` in trait
-declarations](#self-in-trait-declarations) — not strictly blocking, but
-doing it first is what keeps this gap medium rather than large. Composes
-naturally with [supertraits](#supertraits) (a default body calling a
-supertrait method).
+declarations](#self-in-trait-declarations) — not strictly blocking, but it
+establishes the binding mechanism and gets `Self` resolving in signatures,
+so doing it first leaves this gap with only the abstract binding and the
+resolution work. Composes naturally with [supertraits](#supertraits) (a
+default body calling a supertrait method).
 
 ### Non-method associated functions in traits
 
@@ -644,6 +651,34 @@ methods](#generic-associated-functions--generic-methods)'s substitution
 groundwork, since resolving `Self::Item` inside a method body is the same
 kind of substitution problem those establish machinery for.
 
+## Potential future work
+
+Smaller items deferred out of a gap's own spec. Each is a real limitation
+with a known shape, not a speculative feature; none blocks anything above.
+
+- **`Self` in a trait's own generic-parameter bounds**
+  (`trait Convert[T: Convert[Self]]`, `trait Graph[N: Node[Self]]`).
+  Deferred from the [`Self`](#self-in-trait-declarations) spec. Bounds
+  resolve through `typs.check_typ_arg_bounds` in an env derived from the
+  instantiation site rather than from the trait, so `Self` doesn't resolve
+  there. The fix is to thread the current self type down alongside the
+  existing `in_progress` parameter; note that binding `Self` to the type
+  argument being checked is *wrong*, because `Self` refers to the enclosing
+  obligation's subject, not the current one. Worth doing once [generic
+  traits](#generic-traits) land: these two bound families are exactly the
+  ones that stay useful after `Self` exists, and both are why recursive
+  bounds are detected rather than rejected outright.
+- **`Self` in struct definitions** (`struct Node { next: *Self }`). Sugar
+  only — `struct Node { next: *Node }` already works.
+- **Trait objects / dynamic dispatch.** Out of scope for this document (see
+  [Purpose](#purpose)), recorded here so it isn't lost.
+- **Minimising `mono.discover`'s over-approximation.** It reports any
+  instance a template's cache holds, so validating a never-instantiated
+  generic struct template can surface an unused instantiation and emit a
+  dead LLVM struct type. Harmless but untidy; see the
+  [mono module design](2026-08-07-mono-module-design.md) for the analysis
+  and the recommended narrow fix.
+
 ## Dependency graph
 
 Solid edges are hard prerequisites; dashed edges are "helps, not required."
@@ -654,7 +689,7 @@ digraph gaps {
     node [shape=box];
 
     bound_args [label="Bound generic-args"];
-    self_typ [label="`Self` in trait\ndeclarations"];
+    self_typ [label="Self in trait declarations\nand inherent impls"];
     arch [label="Architecture prerequisites\n(self-type widening,\nshared call-site resolution)"];
     call_generic_impl [label="Calling methods through\ngeneric trait impls"];
     generic_methods [label="Generic associated fns /\ngeneric methods"];

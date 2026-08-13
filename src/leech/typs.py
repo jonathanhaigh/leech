@@ -38,6 +38,11 @@ class Mutability(enum.Enum):
 CONST = Mutability.CONST
 MUT = Mutability.MUT
 
+#: The reserved name for the type an impl block or trait method is written
+#: against. It is bound per context rather than declared, so no other
+#: declaration may take it.
+SELF_TYP_NAME: Final[str] = "Self"
+
 #: Maximum nesting depth when checking a bound's type arguments against the
 #: bounds its trait declares. Legitimate bounds nest a few levels deep; a
 #: bound whose type argument grows each step never repeats and would
@@ -494,7 +499,13 @@ class TypParamTyp(Typ):
 def typ_params_from_ast(
     owner: Hashable, generic_params: Sequence[ast.GenericParam]
 ) -> tuple[TypParamTyp, ...]:
-    """Intern parsed type parameters under ``owner``, preserving declaration order."""
+    """Intern parsed type parameters under ``owner``, preserving declaration order.
+
+    :raises ReservedTypNameError: If a parameter is named ``Self``.
+    """
+    for param_ast in generic_params:
+        if param_ast.ident.name == SELF_TYP_NAME:
+            raise errors.ReservedTypNameError(param_ast.ident.name, param_ast.ident.span)
     return tuple(
         TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds)
         for index, param_ast in enumerate(generic_params)

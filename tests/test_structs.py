@@ -476,3 +476,38 @@ def test_comptime_field_access_into_non_struct(tmp_path):
     """
     with pytest.raises(errors.FieldAccessIntoInvalidTypError):
         util.compile_str(tmp_path, src)
+
+
+def test_self_as_ret_typ_in_inherent_impl(tmp_path):
+    src = """
+    struct Foo { mut x: i32 }
+    impl Foo {
+        fn get(*self) i32 { self.*.x }
+        fn twin(*self) Self { Foo { x: self.*.x } }
+    }
+    pub fn main() i32 {
+        let f = Foo { x: 5 };
+        let g = f.twin();
+        return g.get() - 5;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_self_in_generic_inherent_impl_substitutes_per_instance(tmp_path):
+    src = """
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn get(*self) T { self.*.val }
+        fn twin(*self) Self { Box[T] { val: self.*.val } }
+    }
+    pub fn main() i32 {
+        let a = Box[i32] { val: 5 };
+        let b = Box[bool] { val: true };
+        let c = a.twin();
+        let d = b.twin();
+        if (d.get()) { return c.get() - 5; }
+        return 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)

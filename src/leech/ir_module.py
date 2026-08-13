@@ -822,6 +822,7 @@ class Mod:
         fn_env = typ.env.new_child()
         for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params):
             fn_env.add_container(typ_param.name, typ_param)
+        fn_env.add_container(typs.SELF_TYP_NAME, typ)
 
         self._build_impl_fns(impl_ast, fn_env, typ, generic_fns, typ.add_assoc_fn, typ.name)
 
@@ -925,6 +926,10 @@ class Mod:
         span: Optional[src.SrcSpan] = None,
     ) -> None:
         item = ModItem(self, name, access, value, qualify_name)
+        if item._ns == ir_env.Env.Namespace.CONTAINERS and name == typs.SELF_TYP_NAME:
+            raise errors.ReservedTypNameError(
+                name, span if span is not None else ast.opt_span(value)
+            )
         # Bind in env before recording the item: Env.add is what rejects a
         # duplicate definition, and it has to raise before _items is
         # written to, so that a name can never be silently rebound to a
