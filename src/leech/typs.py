@@ -13,7 +13,18 @@ import weakref
 from collections.abc import Collection, Hashable, Mapping, Sequence
 from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
 
-from leech import asserts, ast, errors, ir_env, ir_module, reserved, signage, src, target
+from leech import (
+    asserts,
+    ast,
+    errors,
+    ir_env,
+    ir_module,
+    opt_util,
+    reserved,
+    signage,
+    src,
+    target,
+)
 
 if TYPE_CHECKING:
     # Runtime imports are local because ir_traits imports this module.
@@ -42,7 +53,7 @@ MUT = Mutability.MUT
 #: bounds its trait declares. Legitimate bounds nest a few levels deep; a
 #: bound whose type argument grows each step never repeats and would
 #: otherwise recurse until the stack runs out.
-_MAX_BOUND_DEPTH = 32
+MAX_BOUND_DEPTH = 32
 
 
 def resolve_bound(
@@ -85,14 +96,67 @@ def resolve_bound(
         raise NotImplementedError(f"recursive trait bound on {trait.name} isn't supported yet")
     # A bound whose type argument grows each step never repeats a key, so
     # depth is what bounds it. Each level adds exactly one key.
-    if len(in_progress) >= _MAX_BOUND_DEPTH:
+    if len(in_progress) >= MAX_BOUND_DEPTH:
         raise NotImplementedError(
-            f"exceeded {_MAX_BOUND_DEPTH} levels of bound resolution at {trait.name};"
+            f"exceeded {MAX_BOUND_DEPTH} levels of bound resolution at {trait.name};"
             " recursive trait bounds aren't supported yet"
         )
 
     check_typ_arg_bounds(trait.typ_params, typ_args, e, bound.span, in_progress | {key})
     return trait, typ_args
+
+
+def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[TypParamTyp, Typ]]:
+    """Match a possibly generic ``declared`` type against a specific ``actual`` one.
+
+    The match succeeds when some substitution for ``declared``'s own type
+    parameters turns it into exactly ``actual`` - so ``Pair[A, A]``
+    matches ``Pair[i32, i32]`` but not ``Pair[i32, bool]``.
+
+    :param declared: The type as written, possibly naming type parameters.
+    :param actual: The type to match it against.
+    :return: The substitution that makes them equal, or ``None`` if no
+        substitution does. An empty mapping means they were already equal.
+    """
+    bindings: dict[TypParamTyp, Typ] = {}
+    declared.infer_typ_args(actual, bindings)
+    return bindings if declared.substitute_typ_params(bindings) is actual else None
+
+
+def unsatisfied_bound(
+    bindings: Mapping[TypParamTyp, Typ],
+    e: ir_env.Env,
+    in_progress: frozenset[tuple[ir_traits.Trait, tuple[Typ, ...]]] = frozenset(),
+) -> Optional[tuple[TypParamTyp, Typ, ir_traits.Trait]]:
+    """Find a type argument that doesn't satisfy its parameter's bounds.
+
+    :param bindings: Each type parameter mapped to the type argument
+        standing in for it.
+    :param e: The scope each bound's trait name resolves in.
+    :param in_progress: Threaded through to :func:`resolve_bound`.
+    :return: The first parameter, argument and trait for which the
+        argument doesn't implement the trait, or ``None`` if every bound
+        holds.
+    """
+    # Bind every parameter before checking any bound, so that a bound's type
+    # arguments can name a sibling parameter declared either side of it.
+    sub_env = e.new_child()
+    for typ_param, typ_arg in bindings.items():
+        sub_env.add_container(typ_param.name, typ_arg)
+
+    for typ_param, typ_arg in bindings.items():
+        for bound in typ_param.bounds:
+            trait, bound_typ_args = resolve_bound(bound, sub_env, in_progress)
+            if bound_typ_args:
+                # Matching these against an impl's own trait arguments needs
+                # generic traits. Nothing upstream rejects the bound, so fail
+                # loudly rather than silently ignore the arguments.
+                raise NotImplementedError(
+                    "checking bounds with generic arguments isn't supported yet"
+                )
+            if not e.impl_registry.implements(trait, typ_arg):
+                return typ_param, typ_arg, trait
+    return None
 
 
 def check_typ_arg_bounds(
@@ -105,25 +169,12 @@ def check_typ_arg_bounds(
     """Raise if a type argument violates its corresponding parameter's bounds.
 
     :param in_progress: Threaded through to :func:`resolve_bound`.
+    :raises UnsatisfiedBoundError: If a bound doesn't hold.
     """
-    # Bind every parameter before checking any bound, so that a bound's type
-    # arguments can name a sibling parameter declared either side of it.
-    sub_env = e.new_child()
-    for typ_param, typ_arg in zip(typ_params, typ_args, strict=True):
-        sub_env.add_container(typ_param.name, typ_arg)
-
-    for typ_param, typ_arg in zip(typ_params, typ_args, strict=True):
-        for bound in typ_param.bounds:
-            trait, bound_typ_args = resolve_bound(bound, sub_env, in_progress)
-            if bound_typ_args:
-                # Matching these against an impl's own trait arguments needs
-                # generic traits. Nothing upstream rejects the bound, so fail
-                # loudly rather than silently ignore the arguments.
-                raise NotImplementedError(
-                    "checking bounds with generic arguments isn't supported yet"
-                )
-            if e.impl_registry.find_impl(trait, typ_arg) is None:
-                raise errors.UnsatisfiedBoundError(typ_arg.name, trait.name, typ_param.name, span)
+    violated = unsatisfied_bound(dict(zip(typ_params, typ_args, strict=True)), e, in_progress)
+    if violated is not None:
+        typ_param, typ_arg, trait = violated
+        raise errors.UnsatisfiedBoundError(typ_arg.name, trait.name, typ_param.name, span)
 
 
 class Typ(abc.ABC):
@@ -197,6 +248,18 @@ class Typ(abc.ABC):
     @abc.abstractmethod
     def name(self) -> str:
         """This type's human-readable name, as used in diagnostics."""
+
+    @property
+    def qualified_name(self) -> str:
+        """This type's name as used to build LLVM symbol names.
+
+        Unlike :attr:`name`, this must identify the type program-wide, so
+        a type declared in a module carries that module's name and a type
+        built from others qualifies those too. The base implementation is
+        the bare name, correct for the builtin types, which are declared
+        in no module and contain nothing.
+        """
+        return self.name
 
     @staticmethod
     def from_ast(typ_ast: ast.Typ, e: ir_env.Env) -> Typ:
@@ -397,6 +460,12 @@ class PtrTyp(Typ):
         mut_str = "mut " if self.mut == MUT else ""
         return f"*{mut_str}{self.pointee_typ.name}"
 
+    @property
+    @override
+    def qualified_name(self) -> str:
+        mut_str = "mut " if self.mut == MUT else ""
+        return f"*{mut_str}{self.pointee_typ.qualified_name}"
+
     @override
     def coerces_to(self, target_typ: Typ) -> bool:
         """Allow a mutable pointer where a const one is wanted.
@@ -444,6 +513,11 @@ class ArrayTyp(Typ):
     def name(self) -> str:
         return f"[{self.element_typ.name}; {self.length}]"
 
+    @property
+    @override
+    def qualified_name(self) -> str:
+        return f"[{self.element_typ.qualified_name}; {self.length}]"
+
     @override
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
         return ArrayTyp.get_or_create(self.element_typ.substitute_typ_params(mapping), self.length)
@@ -461,21 +535,49 @@ class ArrayTyp(Typ):
 class TypParamTyp(Typ):
     """An opaque generic type parameter interned by its owner and position.
 
-    It has no LLVM representation and stores only its display name and trait bounds.
+    It has no LLVM representation and stores only its display name, trait
+    bounds and the scope those bounds are written in.
+
+    :param decl_env: The scope enclosing this parameter's declaration, in
+        which its bounds' trait names are spelled. Not part of the cache
+        key, which the owner alone determines - a parameter is declared
+        in exactly one place, so the first interning fixes it.
     """
 
     _owner: Final[Hashable]
     _index: Final[int]
     _name: Final[str]
     bounds: Final[tuple[ast.BasicTyp, ...]]
+    decl_env: Final[Optional[ir_env.Env]]
 
     def __init__(
-        self, owner: Hashable, index: int, name: str, bounds: tuple[ast.BasicTyp, ...] = ()
+        self,
+        owner: Hashable,
+        index: int,
+        name: str,
+        bounds: tuple[ast.BasicTyp, ...] = (),
+        decl_env: Optional[ir_env.Env] = None,
     ) -> None:
         self._owner = owner
         self._index = index
         self._name = name
         self.bounds = bounds
+        self.decl_env = decl_env
+
+    def declares_bound(self, trait: ir_traits.Trait) -> bool:
+        """Whether this parameter's own declared bounds include ``trait``.
+
+        This is what stands in for an impl inside a generic definition:
+        nothing is registered against a type parameter, so what its
+        declaration assumes about it is all that can be known.
+
+        :param trait: The trait to look for.
+        :return: Whether some bound resolves to ``trait``.
+        """
+        return any(
+            resolve_bound(bound, opt_util.opt_unwrap(self.decl_env))[0] is trait
+            for bound in self.bounds
+        )
 
     @override
     @classmethod
@@ -506,17 +608,19 @@ class TypParamTyp(Typ):
 
 
 def typ_params_from_ast(
-    owner: Hashable, generic_params: Sequence[ast.GenericParam]
+    owner: Hashable, generic_params: Sequence[ast.GenericParam], e: ir_env.Env
 ) -> tuple[TypParamTyp, ...]:
     """Intern parsed type parameters under ``owner``, preserving declaration order.
 
+    :param e: The scope enclosing the declaration, which its parameters'
+        bounds are resolved in. See :attr:`TypParamTyp.decl_env`.
     :raises ReservedNameError: If a parameter takes a reserved name.
     """
     for param_ast in generic_params:
         if reserved.is_reserved(param_ast.ident.name):
             raise errors.ReservedNameError(param_ast.ident.name, param_ast.ident.span)
     return tuple(
-        TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds)
+        TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds, e)
         for index, param_ast in enumerate(generic_params)
     )
 
@@ -611,7 +715,7 @@ class StructTyp(Typ):
         """Return this template's interned parameters, or empty for an instance."""
         if self._typ_args:
             return ()
-        return typ_params_from_ast(self.ast, self.ast.generic_params)
+        return typ_params_from_ast(self.ast, self.ast.generic_params, self._decl_env)
 
     @functools.cached_property
     def _instance_cache(self) -> dict[tuple[Typ, ...], StructTyp]:
@@ -634,9 +738,20 @@ class StructTyp(Typ):
         return inst
 
     @property
+    @override
     def qualified_name(self) -> str:
-        """This instantiation's mangled symbol name, e.g. ``mod::Pair[i32, i32]``."""
-        return f"{self.mod_name}::{self.name}"
+        """This instantiation's mangled symbol name, e.g. ``mod::Pair[i32, i32]``.
+
+        The type arguments are qualified too, rather than rendered as
+        :attr:`name` renders them: two same-named structs declared in
+        different modules are different types, so ``Box[a::Foo]`` and
+        ``Box[b::Foo]`` must not arrive at one symbol.
+        """
+        qualified = f"{self.mod_name}::{self.ast.ident.name}"
+        if not self._typ_args:
+            return qualified
+        arg_names = ", ".join(typ_arg.qualified_name for typ_arg in self._typ_args)
+        return f"{qualified}[{arg_names}]"
 
     @override
     def is_concrete(self) -> bool:
@@ -748,9 +863,12 @@ class StructTyp(Typ):
             member = candidate._members.get(name)
             if not isinstance(member, ir_module.Fn):
                 continue
-            bindings: dict[TypParamTyp, Typ] = {}
-            candidate.infer_typ_args(self, bindings)
-            if candidate.substitute_typ_params(bindings) is not self:
+            bindings = match_typ_args(candidate, self)
+            if bindings is None:
+                continue
+            # An inherent impl's own bounds gate it exactly as a trait
+            # impl's do - see `ir_traits.ImplRegistry._impl_bounds_hold`.
+            if unsatisfied_bound(bindings, candidate.env) is not None:
                 continue
             # Two conflicting generic `impl` blocks aren't rejected
             # elsewhere - fail loudly rather than pick one arbitrarily.
@@ -775,11 +893,6 @@ class StructTyp(Typ):
     def field_at(self, index: int) -> StructField:
         """Return the field at declaration-order ``index``."""
         return tuple(self.fields.values())[index]
-
-    @property
-    def assoc_fns(self) -> Collection[ir_module.Fn]:
-        """Return this struct's own associated functions."""
-        return tuple(m for m in self._members.values() if isinstance(m, ir_module.Fn))
 
     def _check_finite_size(
         self,
@@ -840,6 +953,11 @@ class EnumTyp(Typ):
     @override
     def name(self) -> str:
         return self.ast.ident.name
+
+    @property
+    @override
+    def qualified_name(self) -> str:
+        return f"{self.mod_name}::{self.name}"
 
     @functools.cached_property
     def variants(self) -> types.MappingProxyType[str, int]:

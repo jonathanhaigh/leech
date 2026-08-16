@@ -143,6 +143,176 @@ def test_trait_bound_call_uses_trait_method_over_inherent_method(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_generic_trait_impl_method_calls_sibling(tmp_path):
+    # `show` resolves against the impl's own abstract self type, so it
+    # has to be remapped to this instantiation rather than called as the
+    # unsubstituted template it was resolved to.
+    src = """
+    trait Show { fn show(*self) i32; fn twice(*self) i32; }
+    struct Box[T] { mut val: T }
+    impl[T] Show for Box[T] {
+        fn show(*self) i32 { 5 }
+        fn twice(*self) i32 { self.*.show() + self.*.show() }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 1 };
+        return b.twice() - 10;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_bounded_generic_trait_impl_method_calls_sibling(tmp_path):
+    # `twice` resolves `self.*.show()` against the impl's own abstract
+    # `Box[T]`, where the impl's `T: Show` is a premise rather than
+    # something to discharge - no concrete type is in hand to check it
+    # against yet.
+    src = """
+    trait Show { fn show(*self) i32; fn twice(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } fn twice(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Show for Box[T] {
+        fn show(*self) i32 { self.*.val.show() }
+        fn twice(*self) i32 { self.*.show() + self.*.show() }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 5 };
+        return b.twice() - 10;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_trait_impl_method_calls_sibling_for_non_struct_self_typ(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; fn twice(*self) i32; }
+    impl[T] Show for [T; 3] {
+        fn show(*self) i32 { 5 }
+        fn twice(*self) i32 { self.*.show() + self.*.show() }
+    }
+    pub fn main() i32 {
+        let mut a: [i32; 3] = [1, 2, 3];
+        return a.twice() - 10;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(tmp_path):
+    # Resolving a sibling instantiates it, and an instance exists to be
+    # lowered and emitted - so instantiating a whole block at once would
+    # emit methods the program never reaches.
+    src = """
+    trait Show { fn used(*self) i32; fn unused(*self) i32; }
+    struct Box[T] { mut val: T }
+    impl[T] Show for Box[T] {
+        fn used(*self) i32 { 1 }
+        fn unused(*self) i32 { 2 }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 0 };
+        return b.used() - 1;
+    }
+    """
+    (llir_path,) = util.compile_modules(tmp_path, main=src)
+    ir_text = llir_path.read_text()
+    assert "used" in ir_text
+    assert "unused" not in ir_text
+
+
+def test_generic_trait_impl_method_calls_free_fn(tmp_path):
+    # Sibling remapping is consulted for every resolved function
+    # reference in an instantiated body, not just genuine sibling calls,
+    # so an ordinary free-function call goes through it too.
+    src = """
+    trait Show { fn show(*self) i32; }
+    fn helper() i32 { return 4; }
+    impl[T] Show for [T; 3] { fn show(*self) i32 { helper() } }
+    pub fn main() i32 {
+        let mut a: [i32; 3] = [1, 2, 3];
+        return a.show() - 4;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_trait_impl_for_non_struct_self_typ(tmp_path):
+    # A trait impl's self type isn't restricted to a struct the way an
+    # inherent impl's target is, so a generic one can be built over any
+    # type constructor.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl[T] Show for [T; 3] { fn show(*self) i32 { 7 } }
+    pub fn main() i32 {
+        let mut a: [i32; 3] = [1, 2, 3];
+        return a.show() - 7;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_non_struct_self_typs_differing_only_by_an_enum_elements_module(tmp_path):
+    # The self type is qualified by recursing into it, so a nominal type
+    # nested inside one has to qualify itself for the whole to be
+    # distinct.
+    a_src = "pub enum E(u8) { A }"
+    b_src = "pub enum E(u8) { A }"
+    main_src = """
+    import a;
+    import b;
+    trait Show { fn show(*self) i32; }
+    impl[T] Show for [T; 2] { fn show(*self) i32 { 1 } }
+    pub fn main() i32 {
+        let mut x: [a::E; 2] = [a::E::A, a::E::A];
+        let mut y: [b::E; 2] = [b::E::A, b::E::A];
+        return x.show() + y.show() - 2;
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+
+
+def test_two_traits_with_same_method_name_for_one_generic_typ(tmp_path):
+    # Both instances are methods called `go` on the same `Box[i32]`, so
+    # the self type alone doesn't tell their symbols apart - the trait is
+    # what discriminates them.
+    src = """
+    trait A { fn go(*self) i32; }
+    trait B { fn go(*self) i32; }
+    struct Box[T] { mut val: T }
+    impl[T] A for Box[T] { fn go(*self) i32 { 1 } }
+    impl[T] B for Box[T] { fn go(*self) i32 { 2 } }
+    fn call_a[T: A](x: T) i32 { return x.go(); }
+    fn call_b[T: B](x: T) i32 { return x.go(); }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 0 };
+        return call_a(b) + call_b(b) - 3;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_same_named_traits_in_different_mods(tmp_path):
+    # Two distinct traits both named `Show`, both implemented for the
+    # same generic struct: only the trait's own module tells the two
+    # instantiated methods' symbols apart.
+    a_src = "pub trait Show { fn show(*self) i32; }"
+    b_src = "pub trait Show { fn show(*self) i32; }"
+    main_src = """
+    import a;
+    import b;
+    struct Box[T] { mut val: T }
+    impl[T] a::Show for Box[T] { fn show(*self) i32 { 1 } }
+    impl[T] b::Show for Box[T] { fn show(*self) i32 { 2 } }
+    fn call_a[T: a::Show](x: T) i32 { return x.show(); }
+    fn call_b[T: b::Show](x: T) i32 { return x.show(); }
+    pub fn main() i32 {
+        let x = Box[i32] { val: 0 };
+        return call_a(x) + call_b(x) - 3;
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+
+
 def test_generic_impl_body_typechecks(tmp_path):
     # A generic impl block's methods are checked eagerly, like a free
     # generic function's body - whether or not anything ever calls one.
@@ -171,11 +341,10 @@ def test_generic_impl_body_rejects_invalid_op(tmp_path):
         util.compile_str(tmp_path, src)
 
 
-def test_calling_method_through_generic_impl_not_supported_yet(tmp_path):
-    # Dispatching a call to a generic trait impl's method needs
-    # substituting the impl's own type parameters throughout its body -
-    # a monomorphization mechanism this compiler doesn't have for
-    # impl-level (as opposed to function-level) generics yet.
+def test_calling_method_through_generic_impl(tmp_path):
+    # Dispatching to a generic trait impl's method substitutes the impl's
+    # own type parameters throughout its body, the same way a generic
+    # inherent impl's methods are monomorphized.
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -185,14 +354,13 @@ def test_calling_method_through_generic_impl_not_supported_yet(tmp_path):
     }
     pub fn main() i32 {
         let p = Pair[i32, i32] { first: 1, second: 2 };
-        return p.show();
+        return p.show() - 3;
     }
     """
-    with pytest.raises(NotImplementedError):
-        util.compile_str(tmp_path, src)
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_trait_bound_call_through_generic_impl_not_supported_yet(tmp_path):
+def test_trait_bound_call_through_generic_impl(tmp_path):
     src = """
     trait Show { fn show(*self) i32; }
     struct Box[T] { value: T }
@@ -204,14 +372,124 @@ def test_trait_bound_call_through_generic_impl_not_supported_yet(tmp_path):
     }
     pub fn main() i32 {
         let b = Box[i32] { value: 0 };
+        return call_show(b) - 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_trait_impl_instantiated_twice(tmp_path):
+    # Each instantiation gets its own monomorphized body and its own
+    # symbol; one must not stand in for the other.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    impl Show for bool { fn show(*self) i32 { 10 } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Show for Box[T] {
+        fn show(*self) i32 { self.*.val.show() }
+    }
+    pub fn main() i32 {
+        let a = Box[i32] { val: 7 };
+        let b = Box[bool] { val: true };
+        return a.show() + b.show() - 17;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_impl_with_unsatisfied_bound_does_not_apply(tmp_path):
+    # `Box[bool]` doesn't satisfy the impl's own `T: Show`, so the impl
+    # doesn't apply to it and `Box[bool]` implements nothing - which is
+    # what the call site's own bound check then reports.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Show for Box[T] {
+        fn show(*self) i32 { self.*.val.show() }
+    }
+    fn call_show[T: Show](x: T) i32 { return x.show(); }
+    pub fn main() i32 {
+        let b = Box[bool] { val: true };
         return call_show(b);
     }
     """
-    with pytest.raises(
-        NotImplementedError,
-        match="calling a method through a generic trait impl isn't supported yet",
-    ):
+    with pytest.raises(errors.UnsatisfiedBoundError):
         util.compile_str(tmp_path, src)
+
+
+def test_generic_impl_with_unsatisfied_bound_provides_no_method(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Show for Box[T] {
+        fn show(*self) i32 { self.*.val.show() }
+    }
+    pub fn main() i32 {
+        let b = Box[bool] { val: true };
+        return b.show();
+    }
+    """
+    with pytest.raises(errors.NotCallableError):
+        util.compile_str(tmp_path, src)
+
+
+def test_generic_impl_bound_unsatisfied_by_callers_typ_param(tmp_path):
+    # `f` never declares `U: Show`, so nothing proves the impl's own
+    # `T: Show` for `Box[U]` - the impl doesn't apply, and that has to be
+    # settled here rather than left for `f[bool]` to discover.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Show for Box[T] { fn show(*self) i32 { self.*.val.show() } }
+    fn f[U](x: Box[U]) i32 { return x.show(); }
+    pub fn main() i32 {
+        let b = Box[bool] { val: true };
+        return f(b);
+    }
+    """
+    with pytest.raises(errors.NotCallableError):
+        util.compile_str(tmp_path, src)
+
+
+def test_generic_impl_bound_satisfied_by_callers_typ_param(tmp_path):
+    # `U: Show` is an assumption in scope, and discharges the impl's own
+    # `T: Show` without any concrete type being known.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Show for Box[T] { fn show(*self) i32 { self.*.val.show() } }
+    fn f[U: Show](x: Box[U]) i32 { return x.show(); }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 5 };
+        return f(b) - 5;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_impl_bound_satisfied_through_another_generic_impl(tmp_path):
+    # Selecting the impl for `Box[Box[i32]]` checks `Box[i32]: Show`,
+    # which selects the same impl again - the recursion between impl
+    # selection and bound checking has to bottom out.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Show for Box[T] {
+        fn show(*self) i32 { self.*.val.show() }
+    }
+    pub fn main() i32 {
+        let inner = Box[i32] { val: 6 };
+        let outer = Box[Box[i32]] { val: inner };
+        return outer.show() - 6;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_unsatisfied_bound_on_generic_fn_call(tmp_path):

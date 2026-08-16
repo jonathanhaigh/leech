@@ -376,6 +376,201 @@ def test_generic_impl_block_method_instances_get_distinct_mangled_symbols(tmp_pa
     assert '@"main::Box[bool]::get"' in ir_text
 
 
+def test_instances_differing_only_by_a_typ_argument_s_module(tmp_path):
+    # `Box`'s own module qualifies the instance, but the argument types
+    # need qualifying too - two same-named structs from different modules
+    # are different types and must not share a symbol.
+    a_src = "pub struct Foo { pub val: i32 }"
+    b_src = "pub struct Foo { pub val: i32 }"
+    main_src = """
+    import a;
+    import b;
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn get(*self) i32 { 1 }
+    }
+    pub fn main() i32 {
+        let x = Box[a::Foo] { val: a::Foo { val: 0 } };
+        let y = Box[b::Foo] { val: b::Foo { val: 0 } };
+        return x.get() + y.get() - 2;
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+
+
+def test_free_generic_fn_instances_differing_only_by_an_arguments_module(tmp_path):
+    # A generic function's instances are mangled with their type
+    # arguments too, so those need qualifying just as a generic struct's
+    # do.
+    a_src = "pub struct Foo { pub val: i32 }"
+    b_src = "pub struct Foo { pub val: i32 }"
+    main_src = """
+    import a;
+    import b;
+    fn id[T](v: T) T { return v; }
+    pub fn main() i32 {
+        let x = id(a::Foo { val: 1 });
+        let y = id(b::Foo { val: 2 });
+        return x.val + y.val - 3;
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+
+
+def test_instances_differing_only_by_an_enum_arguments_module(tmp_path):
+    # Same as above for an enum type argument. An enum is nominal, so two
+    # same-named ones from different modules are as distinct as two
+    # structs are, and must not share a symbol.
+    a_src = "pub enum E(u8) { A }"
+    b_src = "pub enum E(u8) { A }"
+    main_src = """
+    import a;
+    import b;
+    struct Box[T] { mut val: T }
+    impl[T] Box[T] {
+        fn get(*self) i32 { 1 }
+    }
+    pub fn main() i32 {
+        let x = Box[a::E] { val: a::E::A };
+        let y = Box[b::E] { val: b::E::A };
+        return x.get() + y.get() - 2;
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+
+
+def test_generic_inherent_impl_with_unsatisfied_bound_does_not_apply(tmp_path):
+    # An inherent impl's own bounds gate it the same way a trait impl's
+    # do: `Box[bool]` doesn't satisfy `T: Show`, so it has no `get`.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Box[T] {
+        fn get(*self) i32 { self.*.val.show() }
+    }
+    pub fn main() i32 {
+        let b = Box[bool] { val: true };
+        return b.get();
+    }
+    """
+    with pytest.raises(errors.NotCallableError):
+        util.compile_str(tmp_path, src)
+
+
+def test_bounded_generic_inherent_impl_method_calls_sibling(tmp_path):
+    # `outer` resolves `get` against the impl's own abstract `Box[T]`,
+    # where `T: Show` is the impl's premise and nothing concrete is in
+    # hand to check it against.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Box[T] {
+        fn get(*self) i32 { self.*.val.show() }
+        fn outer(*self) i32 { self.*.get() }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 5 };
+        return b.outer() - 5;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_bounded_generic_inherent_impl_method_called_on_abstract_typ(tmp_path):
+    # `use_box`'s own `Box[U]` isn't the `Box[T]` the impl registered its
+    # methods on, so finding `get` scans for a structurally matching
+    # generic impl. `U` is abstract, so the impl's `T: Show` can't be
+    # decided here - it's discharged where `use_box` is instantiated.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Box[T] {
+        fn get(*self) i32 { self.*.val.show() }
+    }
+    fn use_box[U: Show](b: Box[U]) i32 { return b.get(); }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 5 };
+        return use_box(b) - 5;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_generic_inherent_impl_bound_unsatisfied_by_callers_typ_param(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Box[T] { fn get(*self) i32 { self.*.val.show() } }
+    fn f[U](x: Box[U]) i32 { return x.get(); }
+    pub fn main() i32 {
+        let b = Box[bool] { val: true };
+        return f(b);
+    }
+    """
+    with pytest.raises(errors.NotCallableError):
+        util.compile_str(tmp_path, src)
+
+
+def test_declared_bound_discharges_a_structs_own_bound(tmp_path):
+    # `Box[U]` needs `U: Show`, which `wrap` declares. Nothing concrete is
+    # in hand, so only the assumption in scope can prove it.
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T: Show] { mut val: T }
+    fn wrap[U: Show](v: U) i32 {
+        let b = Box[U] { val: v };
+        return b.val.show();
+    }
+    pub fn main() i32 {
+        let v: i32 = 3;
+        return wrap(v) - 3;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_typ_param_bound_resolves_in_its_own_declaring_mod(tmp_path):
+    # `U`'s bound is spelled `a::Show`, which resolves only in `main`,
+    # where `U` is declared - not in `a`, whose scope is where the impl
+    # being matched against was written.
+    a_src = """
+    pub trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    pub struct Box[T] { pub mut val: T }
+    impl[T: Show] Box[T] { pub fn get(*self) i32 { 5 } }
+    """
+    main_src = """
+    import a;
+    fn f[U: a::Show](x: a::Box[U]) i32 { return x.get(); }
+    pub fn main() i32 {
+        let b = a::Box[i32] { val: 5 };
+        return f(b) - 5;
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+
+
+def test_generic_inherent_impl_with_satisfied_bound_applies(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+    struct Box[T] { mut val: T }
+    impl[T: Show] Box[T] {
+        fn get(*self) i32 { self.*.val.show() }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 5 };
+        return b.get() - 5;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_generic_impl_block_method_calls_free_generic_function(tmp_path):
     # A generic-impl method's own body can request a free generic function
     # instance the compiled module's own bodies never directly request -

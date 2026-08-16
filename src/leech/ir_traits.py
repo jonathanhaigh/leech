@@ -5,7 +5,7 @@
 """Trait declarations and their implementations."""
 
 import functools
-from collections.abc import Collection, Hashable
+from collections.abc import Collection, Hashable, Mapping
 from typing import Final, Optional
 
 from leech import ast, errors, ir_env, ir_module, reserved, src, typs
@@ -91,7 +91,7 @@ class Trait:
     @functools.cached_property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
         """This trait's own interned generic parameters, in declaration order."""
-        return typs.typ_params_from_ast(self.ast, self.ast.generic_params)
+        return typs.typ_params_from_ast(self.ast, self.ast.generic_params, self._env)
 
     @property
     def name(self) -> str:
@@ -248,13 +248,7 @@ def _typs_overlap(a: typs.Typ, b: typs.Typ) -> bool:
     :param b: The other impl's self type.
     :return: Whether the two could overlap.
     """
-    bindings: dict[typs.TypParamTyp, typs.Typ] = {}
-    a.infer_typ_args(b, bindings)
-    if a.substitute_typ_params(bindings) is b:
-        return True
-    bindings = {}
-    b.infer_typ_args(a, bindings)
-    return b.substitute_typ_params(bindings) is a
+    return typs.match_typ_args(a, b) is not None or typs.match_typ_args(b, a) is not None
 
 
 class ImplRegistry:
@@ -268,10 +262,15 @@ class ImplRegistry:
     #: :attr:`_impls` so :meth:`_find_impls_for_typ` doesn't have to scan
     #: every trait/shape pair ever registered in the program.
     _traits_by_shape: Final[dict[Hashable, list[Trait]]]
+    #: How many impl selections are checking their own bounds further up
+    #: the stack, bounding the mutual recursion between selection and
+    #: bound checking. See :meth:`_impl_bounds_hold`.
+    _selection_depth: int
 
     def __init__(self) -> None:
         self._impls = {}
         self._traits_by_shape = {}
+        self._selection_depth = 0
 
     def add_impl(self, impl: Impl) -> None:
         """Register ``impl``, rejecting it if it's incoherent or conflicts with one
@@ -302,15 +301,62 @@ class ImplRegistry:
         """Find the impl of ``trait`` that applies to ``typ``, if any.
 
         :param trait: The trait to find an implementation of.
-        :param typ: The (concrete) type to find an implementation for.
+        :param typ: The type to find an implementation for.
         :return: The applicable impl, or ``None`` if none is registered.
         """
         for impl in self._impls.get((trait, _head_shape(typ)), ()):
-            bindings: dict[typs.TypParamTyp, typs.Typ] = {}
-            impl._self_typ.infer_typ_args(typ, bindings)
-            if impl._self_typ.substitute_typ_params(bindings) is typ:
+            bindings = typs.match_typ_args(impl._self_typ, typ)
+            if bindings is not None and self._impl_bounds_hold(impl, bindings):
                 return impl
         return None
+
+    def implements(self, trait: Trait, typ: typs.Typ) -> bool:
+        """Whether ``typ`` is known to implement ``trait``.
+
+        Two things can establish that. A registered impl proves it for a
+        concrete type. Inside a generic definition there is no concrete
+        type and nothing is registered against a type parameter, so what
+        stands in is an assumption in scope: the parameter's own declared
+        bounds. ``fn f[U: Show]`` may call ``Show``'s methods on ``U``,
+        and ``fn f[U]`` may not - the obligation moves to wherever ``f``
+        is instantiated, which is checked against a concrete type there.
+
+        :param trait: The trait to prove an implementation of.
+        :param typ: The type to prove it for.
+        :return: Whether an impl or a bound in scope establishes it.
+        """
+        if isinstance(typ, typs.TypParamTyp) and typ.declares_bound(trait):
+            return True
+        return self.find_impl(trait, typ) is not None
+
+    def _impl_bounds_hold(self, impl: Impl, bindings: Mapping[typs.TypParamTyp, typs.Typ]) -> bool:
+        """Whether ``impl``'s own bounds hold for the arguments matching it to ``typ``.
+
+        An impl whose bounds don't hold doesn't apply, rather than making
+        the program ill-formed: ``Box[bool]`` simply doesn't implement
+        ``Show`` when only ``impl[T: Show] Show for Box[T]`` provides it.
+        Two impls distinguished only by their bounds still conflict,
+        though, so this gates selection and not :meth:`add_impl`'s
+        coherence checks.
+
+        This holds for an abstract type as much as a concrete one, by way
+        of :meth:`implements`: matching the impl above against its own
+        ``Box[T]`` binds ``T`` to itself, and the impl's ``T: Show`` is
+        exactly the assumption that discharges it.
+
+        :raises NotImplementedError: If checking a bound needs more than
+            :data:`~leech.typs.MAX_BOUND_DEPTH` nested selections.
+        """
+        if self._selection_depth >= typs.MAX_BOUND_DEPTH:
+            raise NotImplementedError(
+                f"exceeded {typs.MAX_BOUND_DEPTH} levels of impl selection at {impl.name};"
+                " recursive trait bounds aren't supported yet"
+            )
+        self._selection_depth += 1
+        try:
+            return typs.unsatisfied_bound(bindings, impl.env) is None
+        finally:
+            self._selection_depth -= 1
 
     def _find_impls_for_typ(self, typ: typs.Typ) -> list[Impl]:
         """Find every trait impl that applies to ``typ``.
@@ -389,12 +435,7 @@ def lookup_member(
     # type against `typ` (e.g. `Pair[A, A]` against a concrete
     # `Pair[i32, i32]`), but the method it returns is still the one built
     # against the impl's own *abstract* self type - identical to `typ`
-    # only when the matched impl is a non-generic one. Calling it as-is
-    # would need the impl's own type parameters substituted throughout
-    # its body first, which nothing here does yet - unlike a generic
-    # *function* call, which monomorphizes through `Fn.instance`.
-    if method.recv_typ is not typ:
-        raise NotImplementedError(
-            "calling a method through a generic trait impl isn't supported yet"
-        )
-    return method
+    # only when the matched impl is a non-generic one. Otherwise it needs
+    # the impl's own type parameters substituted throughout its body,
+    # which is what instantiating it against `typ` does.
+    return method.for_recv_typ(typ)

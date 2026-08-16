@@ -374,12 +374,9 @@ class CfgBuilder:
                 recv_typ = recv_place.typ.pointee_typ
                 impl = self._impl_registry.find_impl(cached.trait, recv_typ)
                 assert impl is not None
-                method = impl.get_method(cached)
-                assert method is not None
-                if method.recv_typ is not recv_typ:
-                    raise NotImplementedError(
-                        "calling a method through a generic trait impl isn't supported yet"
-                    )
+                found = impl.get_method(cached)
+                assert found is not None
+                method = found.for_recv_typ(recv_typ)
             elif isinstance(cached, ir_module.Fn):
                 # Resolved against the impl block's own abstract receiver -
                 # map to this build's instance.
@@ -724,10 +721,10 @@ class CfgBuilder:
         """Map a resolved impl-block sibling to this build's own instance.
 
         A no-op unless this build is itself a method instance - see
-        :attr:`~leech.ir_module.FnInstance.sibling_instances`.
+        :meth:`~leech.ir_module.FnInstance.sibling_instance`.
         """
         if isinstance(self._fn, ir_module.FnInstance):
-            return self._fn.sibling_instances.get(target, target)
+            return self._fn.sibling_instance(target)
         return target
 
     def _resolve_fn_instance(

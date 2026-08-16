@@ -8,7 +8,7 @@ import abc
 import dataclasses
 import enum
 import functools
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import ClassVar, Final, Optional, Protocol, override
 
 from leech import (
@@ -140,7 +140,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         self.recv_typ = recv_typ
         reserved.check_fn_params(fn_ast)
         # Eager binding lets signatures and bodies resolve parameters like named types.
-        for typ_param in typs.typ_params_from_ast(fn_ast, fn_ast.generic_params):
+        for typ_param in typs.typ_params_from_ast(fn_ast, fn_ast.generic_params, self.env):
             self.env.add_container(typ_param.name, typ_param)
 
     @override
@@ -250,12 +250,37 @@ class FnTemplate(Protocol):
 
 
 class Fn(NonBuiltinFnSpec[ast.FnDefn]):
-    """A source-defined function that may serve as a generic template."""
+    """A source-defined function that may serve as a generic template.
+
+    :param trait_name: The module-qualified name of the trait this
+        method implements, for a trait impl's method; ``None`` for a free
+        function or an inherent impl's associated function.
+    :param impl_siblings: Every function declared in the same ``impl``
+        block, this one included; empty for a free function. Aliased
+        rather than copied, so entries added to it afterwards count.
+    """
+
+    trait_name: Final[Optional[str]]
+    impl_siblings: Final[Sequence[Fn]]
+
+    @override
+    def __init__(
+        self,
+        fn_ast: ast.FnDefn,
+        e: ir_env.Env,
+        mod_name: str,
+        recv_typ: Optional[typs.Typ] = None,
+        trait_name: Optional[str] = None,
+        impl_siblings: Sequence[Fn] = (),
+    ) -> None:
+        super().__init__(fn_ast, e, mod_name, recv_typ)
+        self.trait_name = trait_name
+        self.impl_siblings = impl_siblings
 
     @functools.cached_property
     def _instance_cache(
         self,
-    ) -> dict[tuple[Optional[typs.StructTyp], tuple[typs.Typ, ...]], FnInstance]:
+    ) -> dict[tuple[Optional[typs.Typ], tuple[typs.Typ, ...]], FnInstance]:
         return {}
 
     @property
@@ -267,15 +292,23 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         """Return the cached instance for ``typ_args``, creating it if needed."""
         return self._get_instance(None, typ_args)
 
-    def impl_instance(
-        self, self_typ: typs.StructTyp, typ_args: tuple[typs.Typ, ...] = ()
-    ) -> FnInstance:
-        """Get this method's instantiation for ``self_typ``, building it if
-        needed. Only for a method declared in a generic inherent ``impl``
-        block.
+    def for_recv_typ(self, typ: typs.Typ) -> Fn | FnInstance:
+        """Return this method as callable on a receiver of type ``typ``.
 
-        :param self_typ: The concrete struct instantiation to substitute
-            for the enclosing ``impl`` block's own type parameters.
+        A method of a generic ``impl`` block is built against that
+        block's own abstract self type, and needs instantiating for the
+        concrete one. A method of a non-generic block already is the
+        one wanted.
+        """
+        return self if self.recv_typ is typ else self.impl_instance(typ)
+
+    def impl_instance(self, self_typ: typs.Typ, typ_args: tuple[typs.Typ, ...] = ()) -> FnInstance:
+        """Get this method's instantiation for ``self_typ``, building it if
+        needed. Only for a method declared in a generic ``impl`` block,
+        inherent or trait.
+
+        :param self_typ: The concrete type to substitute for the enclosing
+            ``impl`` block's own type parameters.
         :param typ_args: The concrete type to substitute for each of this
             method's own type parameters, if it's separately generic.
 
@@ -285,7 +318,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         return self._get_instance(self_typ, typ_args)
 
     def _get_instance(
-        self, self_typ: Optional[typs.StructTyp], typ_args: tuple[typs.Typ, ...]
+        self, self_typ: Optional[typs.Typ], typ_args: tuple[typs.Typ, ...]
     ) -> FnInstance:
         key = (self_typ, typ_args)
         inst = self._instance_cache.get(key)
@@ -298,7 +331,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
         """This function's interned type parameters in declaration order."""
         fn_ast = opt_util.opt_unwrap(self.ast)
-        return typs.typ_params_from_ast(fn_ast, fn_ast.generic_params)
+        return typs.typ_params_from_ast(fn_ast, fn_ast.generic_params, self.env)
 
     @functools.cached_property
     def typ_check_results(self) -> typcheck.TypCheckResults:
@@ -354,20 +387,20 @@ class FnInstance(FnSpec[ast.FnDefn]):
     :param fn: The generic function or method this is an instantiation of.
     :param self_typ: The concrete receiver type to infer the enclosing
         ``impl`` block's own type parameters from - only for a method
-        declared in a generic inherent ``impl`` block; ``None`` otherwise.
+        declared in a generic ``impl`` block; ``None`` otherwise.
     :param typ_args: The concrete type to substitute for each of ``fn``'s
         own type parameters, in declaration order.
     """
 
     _fn: Final[FnTemplate]
-    _self_typ: Final[Optional[typs.StructTyp]]
+    _self_typ: Final[Optional[typs.Typ]]
     _typ_args: Final[tuple[typs.Typ, ...]]
     _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
 
     def __init__(
         self,
         fn: FnTemplate,
-        self_typ: Optional[typs.StructTyp],
+        self_typ: Optional[typs.Typ],
         typ_args: tuple[typs.Typ, ...],
     ) -> None:
         super().__init__(fn.ast)
@@ -377,7 +410,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
         mapping: dict[typs.TypParamTyp, typs.Typ] = dict(zip(fn.typ_params, typ_args, strict=True))
         if self_typ is not None:
             recv_typ = asserts.checked_cast(fn, Fn).recv_typ
-            assert isinstance(recv_typ, typs.StructTyp)
+            assert recv_typ is not None
             recv_typ.infer_typ_args(self_typ, mapping)
         self._mapping = mapping
 
@@ -395,18 +428,46 @@ class FnInstance(FnSpec[ast.FnDefn]):
     @property
     @override
     def name(self) -> str:
-        arg_names = ", ".join(typ_arg.name for typ_arg in self._typ_args)
+        return self._render_name(qualified=False)
+
+    def _render_name(self, qualified: bool) -> str:
+        """Render this instance's own name and type arguments.
+
+        :param qualified: Whether to render the type arguments as they
+            appear in a symbol name rather than in a diagnostic.
+        """
+        arg_names = ", ".join(
+            typ_arg.qualified_name if qualified else typ_arg.name for typ_arg in self._typ_args
+        )
         return f"{self._fn.name}[{arg_names}]" if arg_names else self._fn.name
 
     @property
     def qualified_name(self) -> str:
         """This instance's mangled symbol name, e.g. ``mod::id[i32]``,
-        ``main::Box[i32]::get``, or ``__size_of[i32]`` (no module prefix)
-        for a builtin."""
+        ``main::Box[i32]::get``, ``<main::Box[i32] as main::Show>::show``,
+        or ``__size_of[i32]`` (no module prefix) for a builtin.
+
+        A trait impl's method takes the trait as well as the self type,
+        because two traits may declare a method of the same name and the
+        same type may implement both. The shape matches the one
+        :attr:`~leech.ir_traits.Impl.name` gives a non-generic impl, but
+        is rebuilt here per instance from that instance's own concrete
+        self type rather than from the impl's abstract one.
+
+        The type arguments are qualified too, for the same reason
+        :attr:`~leech.typs.StructTyp.qualified_name` qualifies its own:
+        two same-named types from different modules are distinct and
+        must not reach one symbol.
+        """
+        name = self._render_name(qualified=True)
         if self._self_typ is not None:
-            return f"{self._self_typ.qualified_name}::{self.name}"
+            prefix = self._self_typ.qualified_name
+            trait_name = asserts.checked_cast(self._fn, Fn).trait_name
+            if trait_name is not None:
+                prefix = f"<{prefix} as {trait_name}>"
+            return f"{prefix}::{name}"
         prefix = self._fn._qualified_name_prefix
-        return f"{prefix}::{self.name}" if prefix else self.name
+        return f"{prefix}::{name}" if prefix else name
 
     def is_accessible_from(self, file: src.SrcFile) -> bool:
         return asserts.checked_cast(self._fn, Fn).is_accessible_from(file)
@@ -424,19 +485,36 @@ class FnInstance(FnSpec[ast.FnDefn]):
         if self._self_typ is None:
             return asserts.checked_cast(self._fn, Fn).instance(new_typ_args)
         new_self_typ = self._self_typ.substitute_typ_params(mapping)
-        assert isinstance(new_self_typ, typs.StructTyp)
         return asserts.checked_cast(self._fn, Fn).impl_instance(new_self_typ, new_typ_args)
 
     @functools.cached_property
-    def sibling_instances(self) -> Mapping[Fn, FnInstance]:
-        """Each impl-block sibling, mapped to its own instance for
-        :attr:`_self_typ`. Empty unless this is a method instance.
+    def _siblings(self) -> frozenset[Fn]:
+        """Every function declared alongside this instance's own.
+
+        Siblings come from the ``impl`` block a function was declared in
+        rather than from the self type, which only an inherent impl's
+        methods are registered on. Empty unless this is a method
+        instance.
         """
         if self._self_typ is None:
-            return {}
-        recv_typ = asserts.checked_cast(self._fn, Fn).recv_typ
-        assert isinstance(recv_typ, typs.StructTyp)
-        return {sibling: sibling.impl_instance(self._self_typ) for sibling in recv_typ.assoc_fns}
+            return frozenset()
+        return frozenset(asserts.checked_cast(self._fn, Fn).impl_siblings)
+
+    def sibling_instance(self, target: Fn) -> Fn | FnInstance:
+        """Return ``target`` instantiated for this instance's self type.
+
+        Resolved one at a time rather than as a map of the whole block,
+        so that a method nothing calls is never instantiated - an
+        instance exists to be lowered and emitted, so building one
+        speculatively emits a function the program never reaches.
+
+        :param target: The function referred to from this instance's
+            body.
+        :return: ``target`` itself unless it is a sibling.
+        """
+        if target not in self._siblings:
+            return target
+        return target.impl_instance(opt_util.opt_unwrap(self._self_typ))
 
     @functools.cached_property
     def cfg(self) -> ir_values.Cfg:
@@ -787,7 +865,7 @@ class Mod:
         # or method's own signature and body can too (see
         # `Impl.__init__`/the inherent branch's `fn_env`).
         impl_env = self.env.new_child()
-        for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params):
+        for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params, self.env):
             impl_env.add_container(typ_param.name, typ_param)
 
         if impl_ast.for_typ is None:
@@ -822,7 +900,7 @@ class Mod:
             raise errors.ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         fn_env = typ.env.new_child()
-        for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params):
+        for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params, self.env):
             fn_env.add_container(typ_param.name, typ_param)
         fn_env.add_container(reserved.SELF_TYP_NAME, typ)
 
@@ -880,7 +958,15 @@ class Mod:
         # `ir_traits.Impl.check_orphan_rule`).
         self.loader.impl_registry.add_impl(impl)
 
-        self._build_impl_fns(impl_ast, impl.env, self_typ, generic_fns, impl.add_method, impl.name)
+        self._build_impl_fns(
+            impl_ast,
+            impl.env,
+            self_typ,
+            generic_fns,
+            impl.add_method,
+            impl.name,
+            trait_name=f"{trait.mod_name}::{trait.name}",
+        )
         impl.check_complete()
 
     def _build_impl_fns(
@@ -891,6 +977,7 @@ class Mod:
         generic_fns: list[Fn],
         register: Callable[[Fn], None],
         qualified_prefix: str,
+        trait_name: Optional[str] = None,
     ) -> None:
         """Build and register every function in an ``impl`` block.
 
@@ -902,7 +989,13 @@ class Mod:
         :param qualified_prefix: The prefix (a struct's or an impl's own
             name) a non-generic function is registered as a
             :class:`ModItem` under, as ``f"{qualified_prefix}::{name}"``.
+        :param trait_name: The module-qualified name of the trait this
+            block implements, or ``None`` for an inherent block.
         """
+        # Aliased by every function built here, so each one ends up
+        # seeing the whole block without this loop needing to know its
+        # contents up front.
+        siblings: list[Fn] = []
         for fn_ast in impl_ast.fns:
             # Generic associated functions/methods aren't supported yet -
             # nothing upstream rejects the syntax, so fail loudly here
@@ -910,7 +1003,15 @@ class Mod:
             # FnTyp as real.
             if fn_ast.generic_params:
                 raise NotImplementedError("generic associated functions aren't supported yet")
-            fn = Fn(fn_ast, fn_env, self.name, recv_typ=recv_typ)
+            fn = Fn(
+                fn_ast,
+                fn_env,
+                self.name,
+                recv_typ=recv_typ,
+                trait_name=trait_name,
+                impl_siblings=siblings,
+            )
+            siblings.append(fn)
             register(fn)
             if impl_ast.generic_params:
                 generic_fns.append(fn)

@@ -42,10 +42,13 @@ Recommended order, driven by dependencies and cost, not by preference:
 3. [Calling methods through generic trait impls](#calling-methods-through-generic-trait-impls)
    — the mechanism already exists for structs' inherent impls; this is
    mostly generalizing and wiring it up, not inventing it. Do the
-   [architecture prerequisites](#architecture) as part of this spec.
+   self-type half of the [architecture prerequisites](#architecture) as
+   part of this spec; the call-site half turned out not to be needed until
+   (4).
 4. [Generic associated functions / generic methods](#generic-associated-functions--generic-methods)
    — its inherent-impl half is independent of (3); its trait-impl half
-   depends on (3).
+   depends on (3). Owns the shared call-site type-argument resolution
+   prerequisite, which has both of its motivating callers.
 5. [Generic traits' impl side](#generic-traits) — largely orthogonal to (3)
    and (4) mechanically, but only pays off once they exist (a generic trait
    impl that's itself generic needs both).
@@ -91,11 +94,19 @@ field, unlike `VarExpr`.
 
 Consequence: [generic methods](#generic-associated-functions--generic-methods)
 isn't "invent instantiation for methods," it's "extend the existing
-free-function call-site logic to two more call shapes." [Calling methods
-through generic trait impls](#calling-methods-through-generic-trait-impls)
-needs that same logic once it starts building `FnInstance`s for trait-impl
-methods. Building it once, as a shared helper, the first time either gap
-needs it, avoids a third near-duplicate copy when the other gap's turn comes.
+free-function call-site logic to two more call shapes."
+
+An earlier version of this document also assigned this prerequisite to
+[calling methods through generic trait impls](#calling-methods-through-generic-trait-impls),
+on the grounds that it needs the same logic once it starts building
+`FnInstance`s for trait-impl methods. It doesn't. A method reached through a
+generic trait impl introduces no type parameters of its own — those are gap
+4 — and the impl's own parameters are inferred from the self type inside
+`FnInstance.__init__`, not at the call site. Gap 3 therefore has no
+call-site type arguments to resolve, and extracting a shared helper against
+its single caller would be designing it blind. This prerequisite belongs
+wholly to [generic methods](#generic-associated-functions--generic-methods),
+which has both of the callers that motivate sharing it.
 
 ### The self-type restriction to `StructTyp` looks incidental
 
@@ -142,17 +153,23 @@ the impl is inherent or a trait impl, and independently of whether the self
 type happens to be a `StructTyp` — a StructTyp-based guard wouldn't even
 distinguish the two (a generic trait impl's self type can itself be a
 `StructTyp`, like `Pair[A, B]` above), so it would silently misroute rather
-than crash in that case. Fixing this properly likely means basing
+than crash in that case. Fixing this properly means basing
 "siblings" on the impl block a `Fn` was declared in, uniformly for inherent
-and trait impls, rather than on `StructTyp.assoc_fns` specifically — but
-`ir_traits.Impl` doesn't currently expose an enumerable collection of its own
-methods the way `StructTyp.assoc_fns` does (only a `TraitMethod`-keyed
-lookup), so this needs its own small piece of design, not just a guard
-clause. Left deliberately unresolved here, per this document's own scope —
-see [Purpose](#purpose) — rather than guessed at a third time; it's a
-concrete open question for gap 2's own spec, with a regression test to match:
-a generic trait impl (struct or non-struct self type) whose method calls
-another method of the same impl on `self`.
+and trait impls, rather than on `StructTyp.assoc_fns` specifically.
+`ir_traits.Impl` doesn't expose an enumerable collection of its own methods
+the way `StructTyp.assoc_fns` does (only a `TraitMethod`-keyed lookup), but
+it turns out not to need one: `ir_module._build_impl_fns` already constructs
+one block's functions in a single loop and can hand each the list. Resolved
+in [gap 3's own spec](2026-08-13-generic-trait-impl-calls-design.md), which
+also records why that is behaviour-preserving for the inherent case.
+
+One correction, from actually running it: the sibling *call* itself doesn't
+reach the assert described above. `sibling_instances` returns an empty map,
+because a trait impl's methods live on `ir_traits.Impl` and never enter
+`StructTyp._members`, so the unsubstituted `Fn` reaches codegen and fails
+there instead. The assert is a genuine second failure, but reaching it needs
+a non-`StructTyp` self type — which is why an ordinary free-function call
+from such a method is the case that exposes it.
 
 A second, separate piece is missing alongside the `sibling_instances` fix:
 symbol naming. `FnInstance.qualified_name` (`ir_module.py:400`) builds every
@@ -203,11 +220,21 @@ already gets this right for the self-type half in the *inherent*-impl case
 (`main::Pair[i32, i32]`, not just `Pair[i32, i32]`); the fix must not lose
 that when generalizing to non-`StructTyp` self types. The cleanest way to
 keep it is to make `qualified_name` a `Typ`-base-class property in the first
-place (default `= self.name`, correct as-is for structural/builtin types
-like `i32` or `*T`, which aren't declared in any module and need no
-qualifier), with `StructTyp`'s existing override doing the right thing
-unchanged — rather than `FnInstance` special-casing `.name` vs
-`.qualified_name` itself. On the trait side, `Trait` already carries its own
+place (default `= self.name`, correct as-is for builtin types like `i32`,
+which aren't declared in any module and need no qualifier) — rather than
+`FnInstance` special-casing `.name` vs `.qualified_name` itself.
+
+A default plus `StructTyp`'s existing override isn't sufficient, though, as
+an earlier version of this document assumed. Qualification has to be
+*recursive*, because a type can contain another: `*T` and `[T; 3]` render
+their pointee and element with `.name`, and `StructTyp.name` renders its own
+type arguments the same way — so `Box[a::Foo]` and `Box[b::Foo]` already
+mangle identically today, with no generic trait impl involved at all.
+`PtrTyp`, `ArrayTyp` and `EnumTyp` need their own overrides, and
+`StructTyp`'s must be re-derived over its arguments' qualified names. See
+[gap 3's spec](2026-08-13-generic-trait-impl-calls-design.md).
+
+On the trait side, `Trait` already carries its own
 `mod_name`, so the string threaded onto `Fn` should be
 `f"{trait.mod_name}::{trait.name}"`, not the bare trait name — still a plain
 string, still no object reference, just the qualified one. Small once
@@ -358,9 +385,22 @@ same-impl-block sibling-resolution mechanism that works for a trait impl
 (not just a `StructTyp`-based guard, which this document tried and rejected
 twice — see [Architecture](#architecture) for why), and
 `FnInstance.qualified_name` needs module-qualified, collision-free mangled
-names for a non-`StructTyp` impl instance, which is fully specified above
-(a `Typ`-base-class `qualified_name` default, plus threading each trait
-impl's own module-qualified trait name onto `Fn`).
+names for a non-`StructTyp` impl instance (a recursive `qualified_name` on
+`Typ`, plus threading each trait impl's own module-qualified trait name onto
+`Fn`).
+
+A third piece, which this document missed entirely: an impl's own bounds
+(`impl[T: Show] Show for Box[T]`) are not consulted when selecting an impl,
+so `Box[bool]` matches and then dies at lowering on a bare
+`assert impl is not None`. That is pre-existing — the inherent form fails
+the same way — but gap 3 opens a second route to it, and the fix is
+selection-shaped rather than a check to bolt on: an unsatisfied bound means
+the impl doesn't apply.
+
+Fully designed in
+[Calling methods through generic trait impls](2026-08-13-generic-trait-impl-calls-design.md),
+which reproduced each of these against a spike rather than predicting them,
+and corrects two of this document's predictions in the process.
 
 **Feasibility & cost.** Medium. The core substitution mechanism
 (monomorphizing a method against an impl-level substitution) is already
@@ -368,15 +408,14 @@ solved and tested for inherent impls, so this is generalizing an existing,
 working mechanism to a second call site rather than designing one from
 nothing — that part's risk is low. But two supporting pieces the widening
 doesn't cover on its own turned out to need real thought rather than being
-incidental: symbol naming (resolved above, module-qualification was the
-catch) and sibling resolution (not fully resolved above — see
-[Architecture](#architecture) — because the guard-based fix this document
+incidental: symbol naming (module-qualification was the catch, and it has to
+be recursive) and sibling resolution (the guard-based fix this document
 proposed twice was wrong both times, most recently because a generic trait
 impl can itself have a `StructTyp` self type, which a `StructTyp`-based
 guard can't distinguish from the inherent case it's meant to exclude). Both
-need to be explicit line items in the spec, and the sibling-resolution one
-specifically needs its semantics nailed down as part of that spec's own
-design work, not assumed solved by analogy with the inherent case.
+are explicit line items in the spec, as is bound-aware impl selection, which
+this document didn't anticipate at all and which is the one piece that
+widened the feature rather than just generalizing it.
 
 **Dependencies.** Needs the architecture prerequisites above. Nothing else
 blocks it — it doesn't need [generic traits](#generic-traits) (the trait
@@ -654,8 +693,9 @@ kind of substitution problem those establish machinery for.
 
 ## Potential future work
 
-Smaller items deferred out of a gap's own spec. Each is a real limitation
-with a known shape, not a speculative feature; none blocks anything above.
+Items deferred out of a gap's own spec. Each is a real limitation with a
+known shape, not a speculative feature; none blocks anything above. Most are
+small; the two impl-unification entries are not, and say so.
 
 - **`Self` in a trait's own generic-parameter bounds**
   (`trait Convert[T: Convert[Self]]`, `trait Graph[N: Node[Self]]`).
@@ -669,6 +709,78 @@ with a known shape, not a speculative feature; none blocks anything above.
   traits](#generic-traits) land: these two bound families are exactly the
   ones that stay useful after `Self` exists, and both are why recursive
   bounds are detected rather than rejected outright.
+- **Reify inherent impl blocks, so impl selection exists once.** Not small.
+  Raised by a design-depth review of
+  [gap 3](2026-08-13-generic-trait-impl-calls-design.md), which made the
+  duplication complete rather than partial.
+
+  `ir_traits.ImplRegistry.find_impl` and `typs.StructTyp._scan_generic_assoc_fn`
+  now run the same algorithm — match a generic impl's self type against a
+  concrete one, then gate on the impl's own bounds — in two modules that
+  import each other in a cycle. Gap 3 factored out the matching half as
+  `typs.match_typ_args`; the gating half is still written twice.
+
+  The reason is that an inherent `impl` block is never reified. There is no
+  object for one, so the inherent path recovers "which generic impl blocks
+  exist" by scanning a struct template's instantiations for non-concrete
+  ones that happen to carry the member — the block inferred from a side
+  effect of having been built. That already costs: conflicting generic
+  inherent impls are an `assert` rather than `ConflictingImplsError`, and
+  the impl-selection recursion guard exists only on the trait path.
+
+  The fix is to give inherent blocks an `Impl` with an optional trait and
+  register them in `ImplRegistry` alongside trait impls, so one `find_impl`
+  serves both. `_scan_generic_assoc_fn`, `_generic_assoc_fn_cache` and the
+  template-instance scan all go. It touches `StructTyp.get_assoc_fn`,
+  `lookup_member`, `Mod._build_inherent_impl_defn` and
+  `mono._generic_impl_method_fns` — too much to fold into a feature spec,
+  and worth doing before impl selection grows any further (specificity,
+  negative reasoning, where-clauses would each otherwise be written twice).
+
+- **One producer for an impl method's symbol name.** Blocked on the entry
+  above. `ir_traits.Impl.name` (plus `ModItem`'s module prefix) and
+  `ir_module.FnInstance.qualified_name` both build the `<SelfTyp as Trait>`
+  shape, and already differ: a non-generic impl emits
+  `m::<Foo as Show>::show`, a generic instance
+  `<m::Box[m::Foo] as m::Show>::show`. Both are collision-free, so this is
+  duplication rather than a defect. `Fn` also carries the trait as a
+  pre-flattened `trait_name` string it can't ask anything else of; the
+  natural fix is one `Impl.qualified_name` and a single `Fn.impl`
+  reference replacing `trait_name`, `impl_siblings` and `qualified_prefix`
+  — which needs an `Impl` to exist for inherent blocks first.
+
+- **Trait impl method visibility.** Needs its own spec; the shape is
+  settled, the plumbing isn't. Found while testing
+  [gap 3](2026-08-13-generic-trait-impl-calls-design.md).
+
+  A trait impl's methods default to private, and one `Access` drives both
+  enforcement points: `typcheck` rejects `x.show()` from another module,
+  and `codegen._program_items` yields an imported item only when it's
+  public, so the symbol is never declared there. Writing `pub fn show`
+  inside the impl already flips both and works end to end — nothing else
+  blocks cross-module calls.
+
+  But the default is backwards and the privacy isn't real:
+  `typcheck._resolve_bound_method` never applies the accessibility check,
+  so a call routed through a bound (`fn call[T: a::Show](x: T)`) reaches a
+  private method, type-checks, and then **crashes codegen** with a
+  `KeyError` for the undeclared symbol. Separately, a *private* trait's
+  method is already callable from any module, because `lookup_member`
+  never consults trait visibility.
+
+  Decision: a trait impl method's visibility is **the trait's**, as in
+  Rust, where writing `pub` there is an error (E0449). Implementing a
+  trait is a promise to provide its interface, and anyone who can name
+  the trait can dispatch through it, so per-impl privacy is meaningless.
+  `Trait` doesn't currently know its own access — the `ModItem` holds it
+  — so that needs threading, and the spec should decide how far to go on
+  the second leak, which needs `lookup_member` to consider whether the
+  caller can name the trait at all.
+- **Unconstrained impl type parameters** (`impl[T, U] Box[T] { ... }`).
+  Accepted silently today. `U` is never inferred from the self type, so it
+  is never bound and never bound-checked; a method body naming it would leak
+  an abstract type into lowering. Rust rejects these outright (E0207).
+  Deferred from [gap 3's spec](2026-08-13-generic-trait-impl-calls-design.md).
 - **`Self` in struct definitions** (`struct Node { next: *Self }`). Sugar
   only — `struct Node { next: *Node }` already works.
 - **Trait objects / dynamic dispatch.** Out of scope for this document (see
@@ -691,7 +803,8 @@ digraph gaps {
 
     bound_args [label="Bound generic-args"];
     self_typ [label="Self in trait declarations\nand inherent impls"];
-    arch [label="Architecture prerequisites\n(self-type widening,\nshared call-site resolution)"];
+    arch_self [label="Self-type widening\n(naming, siblings,\nbound-aware selection)"];
+    arch_call [label="Shared call-site\ntype-arg resolution"];
     call_generic_impl [label="Calling methods through\ngeneric trait impls"];
     generic_methods [label="Generic associated fns /\ngeneric methods"];
     generic_traits [label="Generic traits\n(impl side)"];
@@ -700,9 +813,9 @@ digraph gaps {
     nonmethod_assoc [label="Non-method associated\nfunctions in traits"];
     assoc_types [label="Associated types"];
 
-    arch -> call_generic_impl;
+    arch_self -> call_generic_impl;
     call_generic_impl -> generic_methods [label="trait-impl half"];
-    arch -> generic_methods [label="inherent-impl half"];
+    arch_call -> generic_methods;
     bound_args -> generic_traits;
     call_generic_impl -> generic_traits [style=dashed, label="to be useful"];
     generic_methods -> generic_traits [style=dashed, label="to be useful"];
