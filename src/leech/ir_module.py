@@ -6,7 +6,6 @@
 
 import abc
 import dataclasses
-import enum
 import functools
 from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import ClassVar, Final, Optional, Protocol, override
@@ -26,26 +25,8 @@ from leech import (
     src,
     typcheck,
     typs,
+    visibility,
 )
-
-
-class Access(enum.Enum):
-    """Whether a module item is visible outside its declaring module."""
-
-    PRIVATE = 0
-    PUBLIC = 1
-
-    @staticmethod
-    def from_ast(pub_ast: Optional[ast.Access]) -> Access:
-        """Return public for a parsed ``pub`` keyword and private otherwise."""
-        if pub_ast is None:
-            return PRIVATE
-        asserts.assert_eq(pub_ast.value, "pub")
-        return PUBLIC
-
-
-PRIVATE = Access.PRIVATE
-PUBLIC = Access.PUBLIC
 
 
 @dataclasses.dataclass
@@ -54,7 +35,7 @@ class ModItem:
 
     mod: Final[Mod]
     name: Final[str]
-    access: Final[Access]
+    access: Final[visibility.Access]
     value: Final[ir_values.Value[typs.PtrTyp] | ir_env.Container | GenericFn]
     qualify_name: Final[bool] = True
 
@@ -377,7 +358,10 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         :return: Whether this function is accessible from ``file``.
         """
         assert self.ast is not None
-        return Access.from_ast(self.ast.access) == PUBLIC or self.ast.span.file.path == file.path
+        return (
+            visibility.Access.from_ast(self.ast.access) == visibility.PUBLIC
+            or self.ast.span.file.path == file.path
+        )
 
 
 class FnInstance(FnSpec[ast.FnDefn]):
@@ -754,7 +738,7 @@ class Mod:
         # by `build()`, shadowing whatever's bound here.
         if loader.prelude is not None:
             for item in loader.prelude.items:
-                if item.access == PUBLIC:
+                if item.access == visibility.PUBLIC:
                     builtin_env.add(item._ns, item.name, item.value)
 
     def build(self) -> None:
@@ -799,7 +783,7 @@ class Mod:
             case ast.VarDefn():
                 self._add_item(
                     defn_ast.let_stmt.ident.name,
-                    Access.from_ast(defn_ast.access),
+                    visibility.Access.from_ast(defn_ast.access),
                     ModVar(defn_ast, self.env),
                 )
             case ast.FnDecl():
@@ -807,7 +791,7 @@ class Mod:
                     raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
                 self._add_item(
                     defn_ast.name.name,
-                    Access.PUBLIC,
+                    visibility.PUBLIC,
                     FnDecl(defn_ast, self.env, self.name),
                     False,
                 )
@@ -821,24 +805,27 @@ class Mod:
                     value = GenericFn(fn)
                     generic_fns.append(fn)
                 self._add_item(
-                    defn_ast.name.name, Access.from_ast(defn_ast.access), value, qualify_name
+                    defn_ast.name.name,
+                    visibility.Access.from_ast(defn_ast.access),
+                    value,
+                    qualify_name,
                 )
             case ast.StructDefn():
                 self._add_item(
                     defn_ast.ident.name,
-                    Access.from_ast(defn_ast.access),
+                    visibility.Access.from_ast(defn_ast.access),
                     typs.StructTyp.create(defn_ast, self.env, (), self.name),
                 )
             case ast.EnumDefn():
                 self._add_item(
                     defn_ast.ident.name,
-                    Access.from_ast(defn_ast.access),
+                    visibility.Access.from_ast(defn_ast.access),
                     typs.EnumTyp.create(defn_ast, self.env, self.name),
                 )
             case ast.TraitDefn():
                 self._add_item(
                     defn_ast.ident.name,
-                    Access.from_ast(defn_ast.access),
+                    visibility.Access.from_ast(defn_ast.access),
                     ir_traits.Trait(defn_ast, self.env, self.name),
                 )
             case ast.Import():
@@ -847,7 +834,7 @@ class Mod:
                     defn_ast.span.file, defn_ast.path
                 )
                 mod = self.loader.load(mod_path, qualified_name)
-                self._add_item(last_ident.name, PRIVATE, mod, span=last_ident.span)
+                self._add_item(last_ident.name, visibility.PRIVATE, mod, span=last_ident.span)
             case _:
                 # Impl blocks are handled separately.
                 raise AssertionError(f"unhandled definition {defn_ast}")
@@ -963,7 +950,7 @@ class Mod:
             impl.env,
             self_typ,
             generic_fns,
-            impl.add_method,
+            impl.add_fn,
             impl.name,
             trait_name=f"{trait.mod_name}::{trait.name}",
         )
@@ -1017,13 +1004,15 @@ class Mod:
                 generic_fns.append(fn)
             else:
                 self._add_item(
-                    f"{qualified_prefix}::{fn_ast.name.name}", Access.from_ast(fn_ast.access), fn
+                    f"{qualified_prefix}::{fn_ast.name.name}",
+                    visibility.Access.from_ast(fn_ast.access),
+                    fn,
                 )
 
     def _add_item(
         self,
         name: str,
-        access: Access,
+        access: visibility.Access,
         value: ir_values.Value[typs.PtrTyp] | ir_env.Container | GenericFn,
         qualify_name: bool = True,
         span: Optional[src.SrcSpan] = None,

@@ -372,9 +372,9 @@ class CfgBuilder:
                 method = None
             elif isinstance(cached, ir_traits.TraitMethod):
                 recv_typ = recv_place.typ.pointee_typ
-                impl = self._impl_registry.find_impl(cached.trait, recv_typ)
-                assert impl is not None
-                found = impl.get_method(cached)
+                trait_impl = self._impl_registry.find_trait_impl(cached.trait, recv_typ)
+                assert trait_impl is not None
+                found = trait_impl.get_trait_method(cached)
                 assert found is not None
                 method = found.for_recv_typ(recv_typ)
             elif isinstance(cached, ir_module.Fn):

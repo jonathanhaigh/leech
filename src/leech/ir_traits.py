@@ -121,40 +121,61 @@ def _is_local(item: Trait | typs.Typ, mod_name: str) -> bool:
 
 
 class Impl:
-    """A trait implementation with methods resolved under its ``Self`` binding."""
+    """An ``impl`` block's functions, resolved under its ``Self`` binding.
+
+    :param trait: The trait implemented, or ``None`` for an inherent
+        block.
+    """
 
     ast: Final[ast.ImplDefn]
-    _trait: Final[Trait]
-    _self_typ: Final[typs.Typ]
+    trait: Final[Optional[Trait]]
+    self_typ: Final[typs.Typ]
     env: Final[ir_env.Env]
     _mod_name: Final[str]
-    _methods: Final[dict[TraitMethod, ir_module.Fn]]
+    _trait_methods: Final[dict[TraitMethod, ir_module.Fn]]
+    _fns: Final[dict[str, ir_module.Fn]]
 
     def __init__(
         self,
         impl_ast: ast.ImplDefn,
-        trait: Trait,
+        trait: Optional[Trait],
         self_typ: typs.Typ,
         e: ir_env.Env,
         mod_name: str,
     ) -> None:
         self.ast = impl_ast
-        self._trait = trait
-        self._self_typ = self_typ
+        self.trait = trait
+        self.self_typ = self_typ
         self._mod_name = mod_name
         self.env = e.new_child()
         self.env.add_container(reserved.SELF_TYP_NAME, self_typ)
-        self._methods = {}
+        self._trait_methods = {}
+        self._fns = {}
 
     @property
     def name(self) -> str:
-        """This impl's diagnostic name, e.g. ``<i32 as Show>``."""
-        return f"<{self._self_typ.name} as {self._trait.name}>"
+        """This impl's diagnostic name, e.g. ``<i32 as Show>`` or ``Foo``."""
+        if self.trait is None:
+            return self.self_typ.name
+        return f"<{self.self_typ.name} as {self.trait.name}>"
 
     @property
     def span(self) -> src.SrcSpan:
         """The source location of this impl block."""
         return self.ast.span
+
+    @property
+    def fns(self) -> Collection[ir_module.Fn]:
+        """Every function declared in this block, in declaration order.
+
+        Read live, so a function registered after a caller takes this
+        still counts.
+        """
+        return self._fns.values()
+
+    def get_fn(self, name: str) -> Optional[ir_module.Fn]:
+        """Return the function called ``name``, if this block declares one."""
+        return self._fns.get(name)
 
     def check_orphan_rule(self) -> None:
         """Raise unless this impl's trait or self type is defined in its own module.
@@ -162,59 +183,70 @@ class Impl:
         Leech's orphan rule (similar to Rust's): it keeps any two modules
         from being able to write conflicting impls of the same trait for
         the same type, since the self type isn't restricted to a local
-        type the way an inherent impl's target is.
+        type the way an inherent impl's target is. An inherent block is
+        exempt - its own target is required to be local.
 
         :raises OrphanImplError: If neither is local.
         """
-        if not _is_local(self._trait, self._mod_name) and not _is_local(
-            self._self_typ, self._mod_name
+        if self.trait is None:
+            return
+        if not _is_local(self.trait, self._mod_name) and not _is_local(
+            self.self_typ, self._mod_name
         ):
-            raise errors.OrphanImplError(self._trait.name, self._self_typ.name, self.span)
+            raise errors.OrphanImplError(self.trait.name, self.self_typ.name, self.span)
 
-    def add_method(self, fn: ir_module.Fn) -> None:
-        """Register ``fn`` as one of this impl's methods.
+    def add_fn(self, fn: ir_module.Fn) -> None:
+        """Register ``fn`` as one of this block's functions.
 
-        :param fn: The method, already constructed with :attr:`env` as its
-            enclosing scope and this impl's self type as its receiver type.
+        For a trait impl this also checks ``fn`` against the prototype
+        the trait declares for it.
+
         :raises ExtraMethodInImplError: If this impl's trait declares no
             method named ``fn.name``.
         :raises DuplicateItemDefnError: If this impl already defines a
-            method of that name.
+            function of that name.
         :raises TraitMethodSignatureMismatchError: If ``fn``'s signature
             doesn't match the one this impl's trait declares for it.
         """
-        trait_method = self._trait.get_method(fn.name)
-        if trait_method is None:
-            raise errors.ExtraMethodInImplError(self._trait.name, fn.name, fn.span)
-        existing = self._methods.get(trait_method)
+        trait = self.trait
+        trait_method = None
+        if trait is not None:
+            trait_method = trait.get_method(fn.name)
+            if trait_method is None:
+                raise errors.ExtraMethodInImplError(trait.name, fn.name, fn.span)
+        existing = self._fns.get(fn.name)
         if existing is not None:
-            raise errors.DuplicateItemDefnError("method", fn.name, fn.span, existing.span)
-        expected_typ = trait_method.fn_typ_for_self(self._self_typ)
-        if fn.fn_typ is not expected_typ:
-            raise errors.TraitMethodSignatureMismatchError(
-                self._trait.name, fn.name, fn.fn_typ.name, expected_typ.name, fn.span
-            )
-        self._methods[trait_method] = fn
+            kind = "associated function" if trait is None else "method"
+            raise errors.DuplicateItemDefnError(kind, fn.name, fn.span, existing.span)
+        if trait_method is not None:
+            assert trait is not None
+            expected_typ = trait_method.fn_typ_for_self(self.self_typ)
+            if fn.fn_typ is not expected_typ:
+                raise errors.TraitMethodSignatureMismatchError(
+                    trait.name, fn.name, fn.fn_typ.name, expected_typ.name, fn.span
+                )
+        self._fns[fn.name] = fn
+        if trait_method is not None:
+            self._trait_methods[trait_method] = fn
 
-    def get_method(self, trait_method: TraitMethod) -> Optional[ir_module.Fn]:
-        """Find this impl's implementation of ``trait_method``.
-
-        :param trait_method: The trait method to look up.
-        :return: The method, or ``None`` if this impl defines no method of
-            ``trait_method``.
-        """
-        return self._methods.get(trait_method)
+    def get_trait_method(self, trait_method: TraitMethod) -> Optional[ir_module.Fn]:
+        """Find this impl's implementation of ``trait_method``."""
+        return self._trait_methods.get(trait_method)
 
     def check_complete(self) -> None:
         """Raise if this impl is missing any of its trait's methods.
 
+        An inherent block has no obligations to check.
+
         :raises TraitMethodNotImplementedError: If this impl's trait
             declares a method this impl never defined.
         """
-        for trait_method in self._trait.methods:
-            if trait_method not in self._methods:
+        if self.trait is None:
+            return
+        for trait_method in self.trait.methods:
+            if trait_method not in self._trait_methods:
                 raise errors.TraitMethodNotImplementedError(
-                    self._trait.name, trait_method.name, self._self_typ.name, self.span
+                    self.trait.name, trait_method.name, self.self_typ.name, self.span
                 )
 
 
@@ -252,14 +284,14 @@ def _typs_overlap(a: typs.Typ, b: typs.Typ) -> bool:
 
 
 class ImplRegistry:
-    """Program-wide trait implementations keyed by receiver type.
+    """Program-wide implementations, with trait implementations indexed by receiver type.
 
     :invariant: for every t in _traits_by_shape[s], (t, s) in _impls [ctor]
     """
 
     _impls: Final[dict[tuple[Trait, Hashable], list[Impl]]]
     #: Every trait with at least one impl of a given head shape, indexing
-    #: :attr:`_impls` so :meth:`_find_impls_for_typ` doesn't have to scan
+    #: :attr:`_impls` so :meth:`_find_trait_impls_for_typ` doesn't have to scan
     #: every trait/shape pair ever registered in the program.
     _traits_by_shape: Final[dict[Hashable, list[Trait]]]
     #: How many impl selections are checking their own bounds further up
@@ -283,37 +315,39 @@ class ImplRegistry:
             overlap with an already-registered impl of the same trait.
         """
         impl.check_orphan_rule()
-        shape = _head_shape(impl._self_typ)
-        key = (impl._trait, shape)
-        impls = self._impls.get(key)
-        if impls is None:
-            impls = []
-            self._impls[key] = impls
-            self._traits_by_shape.setdefault(shape, []).append(impl._trait)
-        for existing in impls:
-            if _typs_overlap(impl._self_typ, existing._self_typ):
+        trait = impl.trait
+        assert trait is not None
+        shape = _head_shape(impl.self_typ)
+        key = (trait, shape)
+        trait_impls = self._impls.get(key)
+        if trait_impls is None:
+            trait_impls = []
+            self._impls[key] = trait_impls
+            self._traits_by_shape.setdefault(shape, []).append(trait)
+        for existing_trait_impl in trait_impls:
+            if _typs_overlap(impl.self_typ, existing_trait_impl.self_typ):
                 raise errors.ConflictingImplsError(
-                    impl._trait.name, impl._self_typ.name, impl.span, existing.span
+                    trait.name, impl.self_typ.name, impl.span, existing_trait_impl.span
                 )
-        impls.append(impl)
+        trait_impls.append(impl)
 
-    def find_impl(self, trait: Trait, typ: typs.Typ) -> Optional[Impl]:
-        """Find the impl of ``trait`` that applies to ``typ``, if any.
+    def find_trait_impl(self, trait: Trait, typ: typs.Typ) -> Optional[Impl]:
+        """Find the trait impl of ``trait`` that applies to ``typ``, if any.
 
         :param trait: The trait to find an implementation of.
         :param typ: The type to find an implementation for.
-        :return: The applicable impl, or ``None`` if none is registered.
+        :return: The applicable trait impl, or ``None`` if none is registered.
         """
-        for impl in self._impls.get((trait, _head_shape(typ)), ()):
-            bindings = typs.match_typ_args(impl._self_typ, typ)
-            if bindings is not None and self._impl_bounds_hold(impl, bindings):
-                return impl
+        for trait_impl in self._impls.get((trait, _head_shape(typ)), ()):
+            bindings = typs.match_typ_args(trait_impl.self_typ, typ)
+            if bindings is not None and self._impl_bounds_hold(trait_impl, bindings):
+                return trait_impl
         return None
 
     def implements(self, trait: Trait, typ: typs.Typ) -> bool:
         """Whether ``typ`` is known to implement ``trait``.
 
-        Two things can establish that. A registered impl proves it for a
+        Two things can establish that. A registered trait impl proves it for a
         concrete type. Inside a generic definition there is no concrete
         type and nothing is registered against a type parameter, so what
         stands in is an assumption in scope: the parameter's own declared
@@ -327,7 +361,7 @@ class ImplRegistry:
         """
         if isinstance(typ, typs.TypParamTyp) and typ.declares_bound(trait):
             return True
-        return self.find_impl(trait, typ) is not None
+        return self.find_trait_impl(trait, typ) is not None
 
     def _impl_bounds_hold(self, impl: Impl, bindings: Mapping[typs.TypParamTyp, typs.Typ]) -> bool:
         """Whether ``impl``'s own bounds hold for the arguments matching it to ``typ``.
@@ -358,19 +392,19 @@ class ImplRegistry:
         finally:
             self._selection_depth -= 1
 
-    def _find_impls_for_typ(self, typ: typs.Typ) -> list[Impl]:
+    def _find_trait_impls_for_typ(self, typ: typs.Typ) -> list[Impl]:
         """Find every trait impl that applies to ``typ``.
 
         :param typ: The (concrete) type to find implementations for.
-        :return: The applicable impls, one per trait at most.
+        :return: The applicable trait impls, one per trait at most.
         """
         shape = _head_shape(typ)
-        result = []
+        trait_impls = []
         for trait in self._traits_by_shape.get(shape, ()):
-            found = self.find_impl(trait, typ)
-            if found is not None:
-                result.append(found)
-        return result
+            trait_impl = self.find_trait_impl(trait, typ)
+            if trait_impl is not None:
+                trait_impls.append(trait_impl)
+        return trait_impls
 
 
 def disambiguate[T](
@@ -415,23 +449,25 @@ def lookup_member(
         provides a member of that name.
     """
     if isinstance(typ, typs.StructTyp):
-        inherent = typ.get_assoc_fn(name)
-        if inherent is not None:
-            return inherent
+        inherent_fn = typ.get_assoc_fn(name)
+        if inherent_fn is not None:
+            return inherent_fn
 
     matches = []
-    for impl in registry._find_impls_for_typ(typ):
-        trait_method = impl._trait.get_method(name)
+    for trait_impl in registry._find_trait_impls_for_typ(typ):
+        trait = trait_impl.trait
+        assert trait is not None
+        trait_method = trait.get_method(name)
         if trait_method is None:
             continue
-        method = impl.get_method(trait_method)
+        method = trait_impl.get_trait_method(trait_method)
         if method is not None:
             matches.append(method)
     method = disambiguate(matches, name, typ.name, span)
     if method is None:
         return None
 
-    # `_find_impls_for_typ` structurally matches a generic impl's self
+    # `_find_trait_impls_for_typ` structurally matches a generic impl's self
     # type against `typ` (e.g. `Pair[A, A]` against a concrete
     # `Pair[i32, i32]`), but the method it returns is still the one built
     # against the impl's own *abstract* self type - identical to `typ`

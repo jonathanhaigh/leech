@@ -131,8 +131,9 @@ def test_duplicate_assoc_fn_name(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
         util.compile_str(tmp_path, src)
+    assert "associated function" in str(exc_info.value)
 
 
 def test_duplicate_assoc_fn_name_across_impl_blocks(tmp_path):

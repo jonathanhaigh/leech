@@ -18,6 +18,7 @@ from leech import (
     opt_util,
     src,
     typs,
+    visibility,
 )
 
 type Container = typs.Typ | ir_module.Mod | ir_traits.Trait
@@ -161,7 +162,7 @@ class Env:
                 res = scope.get(ns, ident.name)
             case ir_module.Mod():
                 item = scope.get_item(ns, ident.name)
-                if item is None or item.access == ir_module.PUBLIC:
+                if item is None or item.access == visibility.PUBLIC:
                     res = opt_util.opt_map(item, lambda i: i.value)
                 else:
                     diag_info = Env._private_item_diag_info(item.value)

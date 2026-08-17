@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import errors, ir_env, ir_traits
+from leech import ast, errors, ir_env, ir_module, ir_traits, typs
 
 
 def test_trait_impl_for_builtin_typ(tmp_path):
@@ -636,6 +636,45 @@ def test_trait_impl_extra_method(tmp_path):
     with pytest.raises(errors.ExtraMethodInImplError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"other"' in str(exc_info.value)
+
+
+def test_trait_impl_duplicate_method(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 {
+        fn show(*self) i32 { self.* }
+        fn show(*self) bool { true }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert "method" in str(exc_info.value)
+
+
+def test_trait_impl_duplicate_extra_method_is_rejected_atomically(tmp_path):
+    mod_ast = util.parse_mod(
+        tmp_path,
+        """
+        trait Show { fn show(*self) i32; }
+        impl Show for i32 {
+            fn other(*self) i32 { 1 }
+            fn other(*self) i32 { 2 }
+        }
+        """,
+    )
+    trait_ast, impl_ast = mod_ast.defns
+    assert isinstance(trait_ast, ast.TraitDefn)
+    assert isinstance(impl_ast, ast.ImplDefn)
+    env = ir_env.Env()
+    trait = ir_traits.Trait(trait_ast, env, "main")
+    trait_impl = ir_traits.Impl(impl_ast, trait, typs.I32, env, "main")
+
+    for fn_ast in impl_ast.fns:
+        fn = ir_module.Fn(fn_ast, trait_impl.env, "main", recv_typ=typs.I32)
+        with pytest.raises(errors.ExtraMethodInImplError):
+            trait_impl.add_fn(fn)
+        assert not trait_impl.fns
 
 
 def test_trait_impl_method_signature_mismatch(tmp_path):

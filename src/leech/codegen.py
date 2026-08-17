@@ -12,7 +12,7 @@ from typing import Final, Optional
 import networkx as nx
 from llvmlite import ir as ll
 
-from leech import asserts, ir_module, ir_traits, ir_values, mono, naming, signage, typs
+from leech import asserts, ir_module, ir_traits, ir_values, mono, naming, signage, typs, visibility
 
 _BIN_OP_LL_METHODS: Final[dict[type[ir_values.BinOpInstr], str]] = {
     ir_values.AddInstr: "add",
@@ -37,12 +37,12 @@ _OVERFLOW_INTRINSIC_PREFIXES: Final[dict[tuple[type[ir_values.Instr], signage.Si
 }
 
 
-def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: ir_module.Access) -> None:
+def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: visibility.Access) -> None:
     """Set an LLVM global's linkage from a Leech access level."""
-    if access == ir_module.PRIVATE:
+    if access == visibility.PRIVATE:
         ll_global.linkage = "private"
     else:
-        asserts.assert_eq(access, ir_module.PUBLIC)
+        asserts.assert_eq(access, visibility.PUBLIC)
 
 
 class Compiler:
@@ -175,7 +175,7 @@ class Compiler:
             for item in mod.items:
                 if isinstance(item.value, ir_module.Mod):
                     continue
-                if mod is self._mod or item.access == ir_module.PUBLIC:
+                if mod is self._mod or item.access == visibility.PUBLIC:
                     yield item
 
     def _declare_struct_instance(self, inst: typs.StructTyp) -> None:

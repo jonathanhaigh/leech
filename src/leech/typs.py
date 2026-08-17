@@ -24,6 +24,7 @@ from leech import (
     signage,
     src,
     target,
+    visibility,
 )
 
 if TYPE_CHECKING:
@@ -648,9 +649,9 @@ class StructField:
         return Typ.from_ast(self.ast.typ, self.env)
 
     @functools.cached_property
-    def access(self) -> ir_module.Access:
+    def access(self) -> visibility.Access:
         """Whether the field is public or private."""
-        return ir_module.Access.from_ast(self.ast.access)
+        return visibility.Access.from_ast(self.ast.access)
 
     @functools.cached_property
     def mut(self) -> Mutability:
@@ -663,7 +664,7 @@ class StructField:
 
     def is_accessible_from(self, file: src.SrcFile) -> bool:
         """Return whether this field is accessible from ``file``."""
-        return self.access == ir_module.PUBLIC or self.ast.span.file.path == file.path
+        return self.access == visibility.PUBLIC or self.ast.span.file.path == file.path
 
 
 #: Maximum nesting allowed while resolving generic struct fields.
