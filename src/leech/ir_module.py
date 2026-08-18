@@ -7,7 +7,7 @@
 import abc
 import dataclasses
 import functools
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping
 from typing import ClassVar, Final, Optional, Protocol, override
 
 from leech import (
@@ -233,16 +233,11 @@ class FnTemplate(Protocol):
 class Fn(NonBuiltinFnSpec[ast.FnDefn]):
     """A source-defined function that may serve as a generic template.
 
-    :param trait_name: The module-qualified name of the trait this
-        method implements, for a trait impl's method; ``None`` for a free
-        function or an inherent impl's associated function.
-    :param impl_siblings: Every function declared in the same ``impl``
-        block, this one included; empty for a free function. Aliased
-        rather than copied, so entries added to it afterwards count.
+    :param impl: The ``impl`` block this function is declared in;
+        ``None`` for a free function.
     """
 
-    trait_name: Final[Optional[str]]
-    impl_siblings: Final[Sequence[Fn]]
+    impl: Final[Optional[ir_traits.Impl]]
 
     @override
     def __init__(
@@ -251,12 +246,10 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         e: ir_env.Env,
         mod_name: str,
         recv_typ: Optional[typs.Typ] = None,
-        trait_name: Optional[str] = None,
-        impl_siblings: Sequence[Fn] = (),
+        impl: Optional[ir_traits.Impl] = None,
     ) -> None:
         super().__init__(fn_ast, e, mod_name, recv_typ)
-        self.trait_name = trait_name
-        self.impl_siblings = impl_siblings
+        self.impl = impl
 
     @functools.cached_property
     def _instance_cache(
@@ -446,9 +439,10 @@ class FnInstance(FnSpec[ast.FnDefn]):
         name = self._render_name(qualified=True)
         if self._self_typ is not None:
             prefix = self._self_typ.qualified_name
-            trait_name = asserts.checked_cast(self._fn, Fn).trait_name
-            if trait_name is not None:
-                prefix = f"<{prefix} as {trait_name}>"
+            impl = asserts.checked_cast(self._fn, Fn).impl
+            trait = None if impl is None else impl.trait
+            if trait is not None:
+                prefix = f"<{prefix} as {trait.mod_name}::{trait.name}>"
             return f"{prefix}::{name}"
         prefix = self._fn._qualified_name_prefix
         return f"{prefix}::{name}" if prefix else name
@@ -482,7 +476,8 @@ class FnInstance(FnSpec[ast.FnDefn]):
         """
         if self._self_typ is None:
             return frozenset()
-        return frozenset(asserts.checked_cast(self._fn, Fn).impl_siblings)
+        impl = asserts.checked_cast(self._fn, Fn).impl
+        return frozenset() if impl is None else frozenset(impl.fns)
 
     def sibling_instance(self, target: Fn) -> Fn | FnInstance:
         """Return ``target`` instantiated for this instance's self type.
@@ -959,15 +954,9 @@ class Mod:
 
         :param impl_ast: The parsed ``impl`` block.
         :param impl: The block's reified form, which every built function
-            is registered on.
+            is registered on and points back at.
         :param generic_fns: Accumulates functions from generic impls.
         """
-        trait = impl.trait
-        trait_name = None if trait is None else f"{trait.mod_name}::{trait.name}"
-        # Aliased by every function built here, so each one ends up
-        # seeing the whole block without this loop needing to know its
-        # contents up front.
-        siblings: list[Fn] = []
         for fn_ast in impl_ast.fns:
             # Generic associated functions/methods aren't supported yet -
             # nothing upstream rejects the syntax, so fail loudly here
@@ -975,15 +964,7 @@ class Mod:
             # FnTyp as real.
             if fn_ast.generic_params:
                 raise NotImplementedError("generic associated functions aren't supported yet")
-            fn = Fn(
-                fn_ast,
-                impl.env,
-                self.name,
-                recv_typ=impl.self_typ,
-                trait_name=trait_name,
-                impl_siblings=siblings,
-            )
-            siblings.append(fn)
+            fn = Fn(fn_ast, impl.env, self.name, recv_typ=impl.self_typ, impl=impl)
             impl.add_fn(fn)
             if impl.trait is None:
                 asserts.checked_cast(impl.self_typ, typs.StructTyp).add_assoc_fn(fn)

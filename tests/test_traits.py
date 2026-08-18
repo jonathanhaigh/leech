@@ -99,6 +99,26 @@ def test_inherent_impl_is_registered(tmp_path):
     assert inherent_impls[0].get_fn("get") is not None
 
 
+def test_fn_points_at_its_impl_block(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        """
+        struct Foo { a: i32 }
+        trait Show { fn show(*self) i32; }
+        impl Show for Foo {
+            pub fn show(*self) i32 { return self.*.a; }
+        }
+        """,
+    )
+    foo = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Foo")
+    method = ir_traits.lookup_member(foo, "show", mod.env.impl_registry, None)
+    assert method is not None
+    assert isinstance(method, ir_module.Fn)
+    assert method.impl is not None
+    assert method.impl.trait is not None
+    assert method.impl.trait.name == "Show"
+
+
 def test_trait_method_call_on_generic_typ_param(tmp_path):
     src = """
     trait Show {
