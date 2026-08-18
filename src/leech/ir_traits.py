@@ -289,7 +289,7 @@ class ImplRegistry:
     :invariant: for every t in _traits_by_shape[s], (t, s) in _impls [ctor]
     """
 
-    _impls: Final[dict[tuple[Trait, Hashable], list[Impl]]]
+    _impls: Final[dict[tuple[Optional[Trait], Hashable], list[Impl]]]
     #: Every trait with at least one impl of a given head shape, indexing
     #: :attr:`_impls` so :meth:`_find_trait_impls_for_typ` doesn't have to scan
     #: every trait/shape pair ever registered in the program.
@@ -315,21 +315,41 @@ class ImplRegistry:
             overlap with an already-registered impl of the same trait.
         """
         impl.check_orphan_rule()
-        trait = impl.trait
-        assert trait is not None
         shape = _head_shape(impl.self_typ)
-        key = (trait, shape)
-        trait_impls = self._impls.get(key)
-        if trait_impls is None:
-            trait_impls = []
-            self._impls[key] = trait_impls
-            self._traits_by_shape.setdefault(shape, []).append(trait)
-        for existing_trait_impl in trait_impls:
-            if _typs_overlap(impl.self_typ, existing_trait_impl.self_typ):
-                raise errors.ConflictingImplsError(
-                    trait.name, impl.self_typ.name, impl.span, existing_trait_impl.span
-                )
-        trait_impls.append(impl)
+        key = (impl.trait, shape)
+        impls = self._impls.get(key)
+        if impls is None:
+            impls = []
+            self._impls[key] = impls
+            if impl.trait is not None:
+                self._traits_by_shape.setdefault(shape, []).append(impl.trait)
+        if impl.trait is not None:
+            for existing_trait_impl in impls:
+                if _typs_overlap(impl.self_typ, existing_trait_impl.self_typ):
+                    raise errors.ConflictingImplsError(
+                        impl.trait.name,
+                        impl.self_typ.name,
+                        impl.span,
+                        existing_trait_impl.span,
+                    )
+        impls.append(impl)
+
+    def find_inherent_impls(self, typ: typs.Typ) -> list[Impl]:
+        """Find every inherent ``impl`` block that applies to ``typ``.
+
+        Unlike :meth:`find_trait_impl`, more than one can apply: inherent
+        blocks are distinguished by the members they declare, not by being
+        mutually exclusive.
+
+        :param typ: The type to find inherent implementations for.
+        :return: The applicable inherent impl blocks.
+        """
+        inherent_impls = []
+        for inherent_impl in self._impls.get((None, _head_shape(typ)), ()):
+            bindings = typs.match_typ_args(inherent_impl.self_typ, typ)
+            if bindings is not None and self._impl_bounds_hold(inherent_impl, bindings):
+                inherent_impls.append(inherent_impl)
+        return inherent_impls
 
     def find_trait_impl(self, trait: Trait, typ: typs.Typ) -> Optional[Impl]:
         """Find the trait impl of ``trait`` that applies to ``typ``, if any.

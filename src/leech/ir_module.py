@@ -7,7 +7,7 @@
 import abc
 import dataclasses
 import functools
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import ClassVar, Final, Optional, Protocol, override
 
 from leech import (
@@ -889,9 +889,10 @@ class Mod:
         fn_env = typ.env.new_child()
         for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params, self.env):
             fn_env.add_container(typ_param.name, typ_param)
-        fn_env.add_container(reserved.SELF_TYP_NAME, typ)
 
-        self._build_impl_fns(impl_ast, fn_env, typ, generic_fns, typ.add_assoc_fn, typ.name)
+        impl = ir_traits.Impl(impl_ast, None, typ, fn_env, self.name)
+        self.loader.impl_registry.add_impl(impl)
+        self._build_impl_fns(impl_ast, impl, generic_fns)
 
     def _build_trait_impl_defn(
         self, impl_ast: ast.ImplDefn, impl_env: ir_env.Env, generic_fns: list[Fn]
@@ -945,40 +946,24 @@ class Mod:
         # `ir_traits.Impl.check_orphan_rule`).
         self.loader.impl_registry.add_impl(impl)
 
-        self._build_impl_fns(
-            impl_ast,
-            impl.env,
-            self_typ,
-            generic_fns,
-            impl.add_fn,
-            impl.name,
-            trait_name=f"{trait.mod_name}::{trait.name}",
-        )
+        self._build_impl_fns(impl_ast, impl, generic_fns)
         impl.check_complete()
 
     def _build_impl_fns(
         self,
         impl_ast: ast.ImplDefn,
-        fn_env: ir_env.Env,
-        recv_typ: typs.Typ,
+        impl: ir_traits.Impl,
         generic_fns: list[Fn],
-        register: Callable[[Fn], None],
-        qualified_prefix: str,
-        trait_name: Optional[str] = None,
     ) -> None:
         """Build and register every function in an ``impl`` block.
 
         :param impl_ast: The parsed ``impl`` block.
-        :param fn_env: Each function's enclosing scope.
-        :param recv_typ: The receiver type to build each function with.
+        :param impl: The block's reified form, which every built function
+            is registered on.
         :param generic_fns: Accumulates functions from generic impls.
-        :param register: Records each built function.
-        :param qualified_prefix: The prefix (a struct's or an impl's own
-            name) a non-generic function is registered as a
-            :class:`ModItem` under, as ``f"{qualified_prefix}::{name}"``.
-        :param trait_name: The module-qualified name of the trait this
-            block implements, or ``None`` for an inherent block.
         """
+        trait = impl.trait
+        trait_name = None if trait is None else f"{trait.mod_name}::{trait.name}"
         # Aliased by every function built here, so each one ends up
         # seeing the whole block without this loop needing to know its
         # contents up front.
@@ -992,19 +977,21 @@ class Mod:
                 raise NotImplementedError("generic associated functions aren't supported yet")
             fn = Fn(
                 fn_ast,
-                fn_env,
+                impl.env,
                 self.name,
-                recv_typ=recv_typ,
+                recv_typ=impl.self_typ,
                 trait_name=trait_name,
                 impl_siblings=siblings,
             )
             siblings.append(fn)
-            register(fn)
+            impl.add_fn(fn)
+            if impl.trait is None:
+                asserts.checked_cast(impl.self_typ, typs.StructTyp).add_assoc_fn(fn)
             if impl_ast.generic_params:
                 generic_fns.append(fn)
             else:
                 self._add_item(
-                    f"{qualified_prefix}::{fn_ast.name.name}",
+                    f"{impl.name}::{fn_ast.name.name}",
                     visibility.Access.from_ast(fn_ast.access),
                     fn,
                 )

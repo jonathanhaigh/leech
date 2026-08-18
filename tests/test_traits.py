@@ -81,6 +81,24 @@ def test_inherent_and_trait_methods_coexist(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_inherent_impl_is_registered(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        """
+        struct Foo { a: i32 }
+        impl Foo {
+            fn get(*self) i32 { return self.*.a; }
+        }
+        """,
+    )
+    foo = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Foo")
+    inherent_impls = mod.env.impl_registry.find_inherent_impls(foo)
+    assert len(inherent_impls) == 1
+    assert inherent_impls[0].trait is None
+    assert inherent_impls[0].self_typ is foo
+    assert inherent_impls[0].get_fn("get") is not None
+
+
 def test_trait_method_call_on_generic_typ_param(tmp_path):
     src = """
     trait Show {
