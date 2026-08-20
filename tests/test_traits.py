@@ -706,7 +706,7 @@ def test_trait_impl_duplicate_extra_method_is_rejected_atomically(tmp_path):
     assert isinstance(impl_ast, ast.ImplDefn)
     env = ir_env.Env()
     trait = ir_traits.Trait(trait_ast, env, "main")
-    trait_impl = ir_traits.Impl(impl_ast, trait, typs.I32, env, "main")
+    trait_impl = ir_traits.Impl(impl_ast, trait, typs.I32, (), env, "main")
 
     for fn_ast in impl_ast.fns:
         fn = ir_module.Fn(fn_ast, trait_impl.env, "main", recv_typ=typs.I32)

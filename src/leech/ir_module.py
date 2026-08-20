@@ -843,16 +843,21 @@ class Mod:
         # impl's self type) can name them, and each associated function's
         # or method's own signature and body can too (see `Impl.__init__`).
         impl_env = self.env.new_child()
-        for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params, self.env):
+        impl_typ_params = typs.typ_params_from_ast(impl_ast, impl_ast.generic_params, self.env)
+        for typ_param in impl_typ_params:
             impl_env.add_container(typ_param.name, typ_param)
 
         if impl_ast.for_typ is None:
-            self._build_inherent_impl_defn(impl_ast, impl_env, generic_fns)
+            self._build_inherent_impl_defn(impl_ast, impl_typ_params, impl_env, generic_fns)
         else:
-            self._build_trait_impl_defn(impl_ast, impl_env, generic_fns)
+            self._build_trait_impl_defn(impl_ast, impl_typ_params, impl_env, generic_fns)
 
     def _build_inherent_impl_defn(
-        self, impl_ast: ast.ImplDefn, impl_env: ir_env.Env, generic_fns: list[Fn]
+        self,
+        impl_ast: ast.ImplDefn,
+        impl_typ_params: tuple[typs.TypParamTyp, ...],
+        impl_env: ir_env.Env,
+        generic_fns: list[Fn],
     ) -> None:
         """Build one inherent ``impl SomeStruct { ... }`` block's associated functions.
 
@@ -877,12 +882,17 @@ class Mod:
         if len(impl_typ_ast.path.idents) > 1:
             raise errors.ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
-        impl = ir_traits.Impl(impl_ast, None, typ, impl_env, self.name)
+        impl = ir_traits.Impl(impl_ast, None, typ, impl_typ_params, impl_env, self.name)
+        impl.check_typ_params_constrained()
         self.loader.impl_registry.add_impl(impl)
         self._build_impl_fns(impl_ast, impl, generic_fns)
 
     def _build_trait_impl_defn(
-        self, impl_ast: ast.ImplDefn, impl_env: ir_env.Env, generic_fns: list[Fn]
+        self,
+        impl_ast: ast.ImplDefn,
+        impl_typ_params: tuple[typs.TypParamTyp, ...],
+        impl_env: ir_env.Env,
+        generic_fns: list[Fn],
     ) -> None:
         """Build one ``impl Trait for SelfTyp { ... }`` block's methods.
 
@@ -924,7 +934,8 @@ class Mod:
 
         self_typ = typs.Typ.from_ast(opt_util.opt_unwrap(impl_ast.for_typ), impl_env)
 
-        impl = ir_traits.Impl(impl_ast, trait, self_typ, impl_env, self.name)
+        impl = ir_traits.Impl(impl_ast, trait, self_typ, impl_typ_params, impl_env, self.name)
+        impl.check_typ_params_constrained()
         # Registered before building any method: two impls of the same
         # trait for the same (or overlapping) self type would otherwise
         # collide on method naming first (DuplicateItemDefnError), a less

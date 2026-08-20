@@ -561,6 +561,17 @@ class OrphanImplError(UserError):
         )
 
 
+class UnconstrainedImplTypParamError(UserError):
+    """Raised when impl selection cannot determine one of its type parameters."""
+
+    def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'Impl type parameter "{name}" is not constrained by the impl self type',
+            span,
+        )
+
+
 class ConflictingImplsError(UserError):
     """Raised when two impls of the same trait could apply to overlapping
     self types."""

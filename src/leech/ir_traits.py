@@ -130,6 +130,7 @@ class Impl:
     ast: Final[ast.ImplDefn]
     trait: Final[Optional[Trait]]
     self_typ: Final[typs.Typ]
+    typ_params: Final[tuple[typs.TypParamTyp, ...]]
     env: Final[ir_env.Env]
     _mod_name: Final[str]
     _trait_methods: Final[dict[TraitMethod, ir_module.Fn]]
@@ -140,12 +141,14 @@ class Impl:
         impl_ast: ast.ImplDefn,
         trait: Optional[Trait],
         self_typ: typs.Typ,
+        typ_params: tuple[typs.TypParamTyp, ...],
         e: ir_env.Env,
         mod_name: str,
     ) -> None:
         self.ast = impl_ast
         self.trait = trait
         self.self_typ = self_typ
+        self.typ_params = typ_params
         self._mod_name = mod_name
         self.env = e.new_child()
         self.env.add_container(reserved.SELF_TYP_NAME, self_typ)
@@ -194,6 +197,12 @@ class Impl:
             self.self_typ, self._mod_name
         ):
             raise errors.OrphanImplError(self.trait.name, self.self_typ.name, self.span)
+
+    def check_typ_params_constrained(self) -> None:
+        """Raise if the self type does not determine every impl type parameter."""
+        for typ_param, param_ast in zip(self.typ_params, self.ast.generic_params, strict=True):
+            if not typs.contains_typ_param(self.self_typ, typ_param):
+                raise errors.UnconstrainedImplTypParamError(typ_param.name, param_ast.ident.span)
 
     def add_fn(self, fn: ir_module.Fn) -> None:
         """Register ``fn`` as one of this block's functions.

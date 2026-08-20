@@ -619,3 +619,22 @@ pub fn main() i32 {
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == util.find_pos(src, "f[i32](5)")
+
+
+def test_unconstrained_impl_typ_param_message(tmp_path):
+    src = """struct Box[T] { val: T }
+impl[T, U] Box[T] {
+    fn get(*self) T { return self.*.val; }
+}
+pub fn main() i32 { return 0; }
+"""
+    with pytest.raises(errors.UnconstrainedImplTypParamError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert 'Impl type parameter "U"' in msg
+    assert "not constrained by the impl self type" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "U]")

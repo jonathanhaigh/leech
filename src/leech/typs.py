@@ -10,7 +10,7 @@ import functools
 import re
 import types
 import weakref
-from collections.abc import Collection, Hashable, Mapping, Sequence
+from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
 from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
 
 from leech import (
@@ -123,6 +123,26 @@ def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[TypParamTyp, Typ
     return bindings if declared.substitute_typ_params(bindings) is actual else None
 
 
+def _contains_typ_param(typ: Typ, typ_param: TypParamTyp, resolve: Callable[[Typ], Typ]) -> bool:
+    """Check occurrence after resolving each type reached by the traversal."""
+    typ = resolve(typ)
+    if typ is typ_param:
+        return True
+    if isinstance(typ, FnTyp):
+        return _contains_typ_param(typ.ret_typ, typ_param, resolve) or any(
+            _contains_typ_param(param_typ, typ_param, resolve) for param_typ in typ.param_typs
+        )
+    if isinstance(typ, PtrTyp):
+        return _contains_typ_param(typ.pointee_typ, typ_param, resolve)
+    if isinstance(typ, ArrayTyp):
+        return _contains_typ_param(typ.element_typ, typ_param, resolve)
+    if isinstance(typ, StructTyp):
+        return any(_contains_typ_param(typ_arg, typ_param, resolve) for typ_arg in typ._typ_args)
+    if isinstance(typ, EnumBackingTyp):
+        return _contains_typ_param(typ.inner, typ_param, resolve)
+    return False
+
+
 def typs_overlap(a: Typ, b: Typ) -> bool:
     """Return whether substitutions can make ``a`` and ``b`` the same type.
 
@@ -139,22 +159,7 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
         return typ
 
     def occurs(typ_param: TypParamTyp, typ: Typ) -> bool:
-        typ = resolve(typ)
-        if typ is typ_param:
-            return True
-        if isinstance(typ, FnTyp):
-            return occurs(typ_param, typ.ret_typ) or any(
-                occurs(typ_param, param_typ) for param_typ in typ.param_typs
-            )
-        if isinstance(typ, PtrTyp):
-            return occurs(typ_param, typ.pointee_typ)
-        if isinstance(typ, ArrayTyp):
-            return occurs(typ_param, typ.element_typ)
-        if isinstance(typ, StructTyp):
-            return any(occurs(typ_param, typ_arg) for typ_arg in typ._typ_args)
-        if isinstance(typ, EnumBackingTyp):
-            return occurs(typ_param, typ.inner)
-        return False
+        return _contains_typ_param(typ, typ_param, resolve)
 
     def bind(typ_param: TypParamTyp, typ: Typ) -> bool:
         typ = resolve(typ)
@@ -203,6 +208,11 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
         return False
 
     return unify(a, b)
+
+
+def contains_typ_param(typ: Typ, typ_param: TypParamTyp) -> bool:
+    """Return whether ``typ_param`` occurs structurally within ``typ``."""
+    return _contains_typ_param(typ, typ_param, lambda candidate: candidate)
 
 
 def unsatisfied_bound(

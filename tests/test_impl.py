@@ -220,6 +220,42 @@ def test_partially_overlapping_generic_inherent_impls_with_same_fn_name_rejected
         util.compile_str(tmp_path, src)
 
 
+def test_unconstrained_impl_typ_param_rejected(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    impl[T, U] Box[T] {
+        fn get(*self) T { return self.*.val; }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.UnconstrainedImplTypParamError):
+        util.compile_str(tmp_path, src)
+
+
+def test_impl_typ_param_nested_in_self_typ_is_constrained(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    struct Pair[A, B] { first: A, second: B }
+    impl[T] Pair[Box[T], i32] {
+        fn get(*self) T { return self.*.first.val; }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    util.compile_str(tmp_path, src)
+
+
+def test_impl_typ_param_used_only_by_method_is_unconstrained(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    impl[T, U] Box[T] {
+        fn unused(x: U) U { return x; }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.UnconstrainedImplTypParamError):
+        util.compile_str(tmp_path, src)
+
+
 def test_disjoint_inherent_impls_reuse_assoc_fn_name(tmp_path):
     src = """
     struct Pair[A, B] {}
@@ -274,7 +310,7 @@ def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(tmp_path):
     mod_ast = util.parse_mod(tmp_path, src)
     _, impl_ast = mod_ast.defns
     assert isinstance(impl_ast, ast.ImplDefn)
-    impl = ir_traits.Impl(impl_ast, None, typs.I32, ir_env.Env(), "main")
+    impl = ir_traits.Impl(impl_ast, None, typs.I32, (), ir_env.Env(), "main")
 
     first, second = (
         ir_module.Fn(fn_ast, impl.env, "main", recv_typ=typs.I32, impl=impl)
