@@ -18,7 +18,6 @@ from leech import (
     ast,
     errors,
     ir_env,
-    ir_module,
     opt_util,
     reserved,
     signage,
@@ -122,6 +121,88 @@ def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[TypParamTyp, Typ
     bindings: dict[TypParamTyp, Typ] = {}
     declared.infer_typ_args(actual, bindings)
     return bindings if declared.substitute_typ_params(bindings) is actual else None
+
+
+def typs_overlap(a: Typ, b: Typ) -> bool:
+    """Return whether substitutions can make ``a`` and ``b`` the same type.
+
+    Type parameters in either argument are unification variables. This differs
+    from :func:`match_typ_args`, whose parameters are only variables on its
+    ``declared`` side. Bindings must remain finite, so an equation such as
+    ``T = Box[T]`` does not establish an overlap.
+    """
+    bindings: dict[TypParamTyp, Typ] = {}
+
+    def resolve(typ: Typ) -> Typ:
+        while isinstance(typ, TypParamTyp) and typ in bindings:
+            typ = bindings[typ]
+        return typ
+
+    def occurs(typ_param: TypParamTyp, typ: Typ) -> bool:
+        typ = resolve(typ)
+        if typ is typ_param:
+            return True
+        if isinstance(typ, FnTyp):
+            return occurs(typ_param, typ.ret_typ) or any(
+                occurs(typ_param, param_typ) for param_typ in typ.param_typs
+            )
+        if isinstance(typ, PtrTyp):
+            return occurs(typ_param, typ.pointee_typ)
+        if isinstance(typ, ArrayTyp):
+            return occurs(typ_param, typ.element_typ)
+        if isinstance(typ, StructTyp):
+            return any(occurs(typ_param, typ_arg) for typ_arg in typ._typ_args)
+        if isinstance(typ, EnumBackingTyp):
+            return occurs(typ_param, typ.inner)
+        return False
+
+    def bind(typ_param: TypParamTyp, typ: Typ) -> bool:
+        typ = resolve(typ)
+        if typ is typ_param:
+            return True
+        if occurs(typ_param, typ):
+            return False
+        bindings[typ_param] = typ
+        return True
+
+    def unify(left: Typ, right: Typ) -> bool:
+        left = resolve(left)
+        right = resolve(right)
+        if left is right:
+            return True
+        if isinstance(left, TypParamTyp):
+            return bind(left, right)
+        if isinstance(right, TypParamTyp):
+            return bind(right, left)
+        if isinstance(left, FnTyp) and isinstance(right, FnTyp):
+            return (
+                len(left.param_typs) == len(right.param_typs)
+                and unify(left.ret_typ, right.ret_typ)
+                and all(
+                    unify(left_param, right_param)
+                    for left_param, right_param in zip(
+                        left.param_typs, right.param_typs, strict=True
+                    )
+                )
+            )
+        if isinstance(left, PtrTyp) and isinstance(right, PtrTyp):
+            return left.mut == right.mut and unify(left.pointee_typ, right.pointee_typ)
+        if isinstance(left, ArrayTyp) and isinstance(right, ArrayTyp):
+            return left.length == right.length and unify(left.element_typ, right.element_typ)
+        if isinstance(left, StructTyp) and isinstance(right, StructTyp):
+            return (
+                left.ast is right.ast
+                and len(left._typ_args) == len(right._typ_args)
+                and all(
+                    unify(left_arg, right_arg)
+                    for left_arg, right_arg in zip(left._typ_args, right._typ_args, strict=True)
+                )
+            )
+        if isinstance(left, EnumBackingTyp) and isinstance(right, EnumBackingTyp):
+            return unify(left.inner, right.inner)
+        return False
+
+    return unify(a, b)
 
 
 def unsatisfied_bound(
@@ -631,12 +712,12 @@ class StructField:
 
     index: Final[int]
     ast: Final[ast.StructFieldDefn]
-    env: Final[ir_env.Env]
+    _env: Final[ir_env.Env]
 
     def __init__(self, index: int, field_ast: ast.StructFieldDefn, e: ir_env.Env) -> None:
         self.index = index
         self.ast = field_ast
-        self.env = e
+        self._env = e
 
     @property
     def name(self) -> str:
@@ -646,7 +727,7 @@ class StructField:
     @functools.cached_property
     def typ(self) -> Typ:
         """The field's type."""
-        return Typ.from_ast(self.ast.typ, self.env)
+        return Typ.from_ast(self.ast.typ, self._env)
 
     @functools.cached_property
     def access(self) -> visibility.Access:
@@ -675,17 +756,15 @@ class StructTyp(Typ):
     """A nominal struct type identified by its declaration and type arguments.
 
     A generic declaration owns an unusable template with opaque parameters and caches one
-    identity-distinct instance per argument tuple. Fields and associated functions share a
-    namespace on the template.
+    identity-distinct instance per argument tuple. It stores its fields only.
     """
 
     ast: Final[ast.StructDefn]
     _decl_env: Final[ir_env.Env]
     _typ_args: Final[tuple[Typ, ...]]
     mod_name: Final[str]
-    env: Final[ir_env.Env]
-    #: Fields then associated functions, keyed by their shared name namespace.
-    _members: Final[dict[str, StructField | ir_module.Fn]]
+    _env: Final[ir_env.Env]
+    _members: Final[dict[str, StructField]]
 
     def __init__(
         self,
@@ -698,18 +777,18 @@ class StructTyp(Typ):
         self._decl_env = e
         self._typ_args = typ_args
         self.mod_name = mod_name
-        self.env = e.new_child()
+        self._env = e.new_child()
         # Binding parameters here lets field types resolve them like named types.
         if typ_args:
             for param_ast, typ_arg in zip(struct_ast.generic_params, typ_args, strict=True):
-                self.env.add_container(param_ast.ident.name, typ_arg)
+                self._env.add_container(param_ast.ident.name, typ_arg)
         else:
             for typ_param in self.typ_params:
-                self.env.add_container(typ_param.name, typ_param)
+                self._env.add_container(typ_param.name, typ_param)
         self._members = {}
         # Registration does not resolve field types, which may name later declarations.
         for i, field_ast in enumerate(struct_ast.fields):
-            self._add_member(StructField(i, field_ast, self.env))
+            self._add_field(StructField(i, field_ast, self._env))
 
     @functools.cached_property
     def typ_params(self) -> tuple[TypParamTyp, ...]:
@@ -796,100 +875,25 @@ class StructTyp(Typ):
         arg_names = ", ".join(typ_arg.name for typ_arg in self._typ_args)
         return f"{self.ast.ident.name}[{arg_names}]"
 
-    @staticmethod
-    def _member_ident_span(member: StructField | ir_module.Fn) -> Optional[src.SrcSpan]:
-        """Return the span of ``member``'s name for duplicate diagnostics."""
-        if isinstance(member, StructField):
-            return member.ast.ident.span
-        assert member.ast is not None
-        return member.ast.name.span
+    def _add_field(self, field: StructField) -> None:
+        """Register ``field`` in this struct's field namespace.
 
-    def _add_member(self, member: StructField | ir_module.Fn) -> None:
-        """Register ``member`` in the shared field and associated-function namespace.
-
-        :raises ReservedNameError: If ``member`` takes a reserved name.
+        :raises ReservedNameError: If ``field`` takes a reserved name.
         """
-        if reserved.is_reserved(member.name):
-            raise errors.ReservedNameError(member.name, StructTyp._member_ident_span(member))
-        existing = self._members.get(member.name)
+        if reserved.is_reserved(field.name):
+            raise errors.ReservedNameError(field.name, field.ast.ident.span)
+        existing = self._members.get(field.name)
         if existing is not None:
-            span = StructTyp._member_ident_span(member)
-            existing_span = StructTyp._member_ident_span(existing)
-            if isinstance(member, StructField):
-                # Every field is registered during construction, before
-                # the enclosing module builds any impl block, so the only
-                # thing a field can collide with is another field.
-                assert isinstance(existing, StructField)
-                raise errors.DuplicateFieldInStructDefnError(member.name, span, existing_span)
-            raise errors.DuplicateItemDefnError(
-                "associated function", member.name, span, existing_span
+            raise errors.DuplicateFieldInStructDefnError(
+                field.name, field.ast.ident.span, existing.ast.ident.span
             )
-        self._members[member.name] = member
-
-    def add_assoc_fn(self, fn: ir_module.Fn) -> None:
-        """Register ``fn`` as both a member and a bare name in the struct's scope."""
-        self._add_member(fn)
-        self.env.add_var(fn.name, fn)
-
-    def get_assoc_fn(self, name: str) -> Optional[ir_module.Fn | ir_module.FnInstance]:
-        """Return the associated function called ``name``, ignoring fields."""
-        member = self._members.get(name)
-        if isinstance(member, ir_module.Fn):
-            return member
-        if not self._typ_args:
-            return None
-        generic = self._find_generic_assoc_fn(name)
-        return None if generic is None else generic.impl_instance(self)
-
-    @functools.cached_property
-    def _generic_assoc_fn_cache(self) -> dict[str, Optional[ir_module.Fn]]:
-        return {}
-
-    def _find_generic_assoc_fn(self, name: str) -> Optional[ir_module.Fn]:
-        if name not in self._generic_assoc_fn_cache:
-            self._generic_assoc_fn_cache[name] = self._scan_generic_assoc_fn(name)
-        return self._generic_assoc_fn_cache[name]
-
-    def _scan_generic_assoc_fn(self, name: str) -> Optional[ir_module.Fn]:
-        # A generic inherent `impl` block's methods are registered onto
-        # the (non-concrete) instantiation its own type parameters
-        # produced, not this one - scan the template's other
-        # instantiations for one whose members include `name` and whose
-        # receiver type structurally matches `self`.
-        template = StructTyp.get(self.ast, self._decl_env)
-        found: Optional[ir_module.Fn] = None
-        for candidate in template.instances:
-            if candidate.is_concrete():
-                continue
-            member = candidate._members.get(name)
-            if not isinstance(member, ir_module.Fn):
-                continue
-            bindings = match_typ_args(candidate, self)
-            if bindings is None:
-                continue
-            # An inherent impl's own bounds gate it exactly as a trait
-            # impl's do - see `ir_traits.ImplRegistry._impl_bounds_hold`.
-            if unsatisfied_bound(bindings, candidate.env) is not None:
-                continue
-            # Two conflicting generic `impl` blocks aren't rejected
-            # elsewhere - fail loudly rather than pick one arbitrarily.
-            assert found is None, (
-                f"more than one applicable generic impl provides {self.name}::{name}"
-            )
-            found = member
-        return found
+        self._members[field.name] = field
 
     @functools.cached_property
     def fields(self) -> types.MappingProxyType[str, StructField]:
         """Return fields by declaration order after rejecting infinite-size layouts."""
         self._check_finite_size([], [])
-
-        fields = {
-            name: member
-            for name, member in self._members.items()
-            if isinstance(member, StructField)
-        }
-        return fields.items().mapping
+        return types.MappingProxyType(self._members)
 
     def field_at(self, index: int) -> StructField:
         """Return the field at declaration-order ``index``."""
@@ -910,7 +914,7 @@ class StructTyp(Typ):
 
         visiting = [*visiting, self]
         for field_ast in self.ast.fields:
-            typ = Typ.from_ast(field_ast.typ, self.env)
+            typ = Typ.from_ast(field_ast.typ, self._env)
             while isinstance(typ, ArrayTyp):
                 typ = typ.element_typ
             if isinstance(typ, StructTyp):

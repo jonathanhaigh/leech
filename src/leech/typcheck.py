@@ -446,13 +446,13 @@ class TypCheck:
 
         if isinstance(pointee_typ, typs.TypParamTyp):
             # An unsubstituted type parameter has no inherent members and
-            # nothing registered against it in the impl registry - it
-            # isn't a real type yet. What it does have is its own
-            # declared bounds, which is the only thing a method call on
-            # one can resolve against inside a generic body (see
-            # _resolve_bound_method) - this is what makes trait bounds
-            # actually enforced, rather than duck-typed: only a method
-            # from a bound the parameter itself declares is callable.
+            # method lookup inside a generic body deliberately does not
+            # select registry impls, including blanket impls. What it does
+            # have is its own declared bounds, which is the only thing a
+            # method call on one can resolve against here (see
+            # _resolve_bound_method). This makes trait bounds actually
+            # enforced rather than duck-typed: only a method from a bound
+            # the parameter itself declares is callable.
             trait_method = self._resolve_bound_method(
                 pointee_typ, callee_ast.field.name, callee_ast.field.span, e
             )
@@ -460,11 +460,8 @@ class TypCheck:
                 self.results.resolutions.set_trait_bound_callee(call_ast, trait_method)
                 return trait_method.fn_typ_for_self(pointee_typ), callee_ast.value, recv_typ
         else:
-            # Local to avoid the ir_module import cycle.
-            from leech import ir_traits  # noqa: PLC0415
-
-            method = ir_traits.lookup_member(
-                pointee_typ, callee_ast.field.name, e.impl_registry, callee_ast.field.span
+            method = e.impl_registry.lookup_member(
+                pointee_typ, callee_ast.field.name, callee_ast.field.span
             )
             self.results.resolutions.set_callee(call_ast, method)
             if method is not None:

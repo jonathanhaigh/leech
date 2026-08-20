@@ -111,7 +111,7 @@ def test_fn_points_at_its_impl_block(tmp_path):
         """,
     )
     foo = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Foo")
-    method = ir_traits.lookup_member(foo, "show", mod.env.impl_registry, None)
+    method = mod.env.impl_registry.lookup_member(foo, "show", None)
     assert method is not None
     assert isinstance(method, ir_module.Fn)
     assert method.impl is not None
@@ -749,6 +749,57 @@ def test_conflicting_impls_of_same_trait_same_typ(tmp_path):
     """
     with pytest.raises(errors.ConflictingImplsError):
         util.compile_str(tmp_path, src)
+
+
+def test_partially_overlapping_generic_trait_impls_conflict(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    struct Pair[A, B] {}
+    impl[T] Show for Pair[T, i32] { fn show(*self) i32 { 1 } }
+    impl[U] Show for Pair[bool, U] { fn show(*self) i32 { 2 } }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ConflictingImplsError):
+        util.compile_str(tmp_path, src)
+
+
+@pytest.mark.parametrize(
+    "impls",
+    (
+        """
+        impl[T] Show for T { fn show(*self) i32 { 1 } }
+        impl Show for i32 { fn show(*self) i32 { 2 } }
+        """,
+        """
+        impl Show for i32 { fn show(*self) i32 { 2 } }
+        impl[T] Show for T { fn show(*self) i32 { 1 } }
+        """,
+    ),
+)
+def test_blanket_trait_impl_conflicts_with_concrete_impl(tmp_path, impls):
+    src = (
+        """
+    trait Show { fn show(*self) i32; }
+    """
+        + impls
+        + """
+    pub fn main() i32 { return 0; }
+    """
+    )
+    with pytest.raises(errors.ConflictingImplsError):
+        util.compile_str(tmp_path, src)
+
+
+def test_blanket_trait_impl_is_selected_for_concrete_typ(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl[T] Show for T { fn show(*self) i32 { 42 } }
+    pub fn main() i32 {
+        let value: i32 = 0;
+        return value.show();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
 def test_impls_of_different_traits_for_same_typ_do_not_conflict(tmp_path):

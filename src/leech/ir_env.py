@@ -151,8 +151,8 @@ class Env:
             return "trait", value.span
         return None
 
-    @staticmethod
     def _resolve_path_segment(
+        self,
         ns: Env.Namespace,
         scope: Env | ir_module.Mod | typs.StructTyp | typs.EnumTyp,
         ident: ast.Ident,
@@ -174,12 +174,13 @@ class Env:
                             item_kind, ident.name, ident.span, defn_span
                         )
             case typs.StructTyp():
-                # A struct's members share one namespace and are all values,
-                # never types, so a type lookup can't name one. Of those
-                # members only associated functions are reachable by path:
-                # `SomeStruct::x` is not a way to name a field, so a field
-                # falls through to "not found" below.
-                res = scope.get_assoc_fn(ident.name) if ns == Env.Namespace.VARS else None
+                # Only associated functions are reachable by path:
+                # `SomeStruct::x` is not a way to name a field.
+                res = (
+                    self.impl_registry.lookup_assoc_fn(scope, ident.name)
+                    if ns == Env.Namespace.VARS
+                    else None
+                )
                 # Private associated functions are invisible outside the
                 # struct's own module, same as private Mod items above.
                 if res is not None and not res.is_accessible_from(ident.span.file):
@@ -222,6 +223,6 @@ class Env:
 
         scope = self
         for ident in path.idents[:-1]:
-            scope = Env._resolve_path_segment(Env.Namespace.CONTAINERS, scope, ident)
+            scope = self._resolve_path_segment(Env.Namespace.CONTAINERS, scope, ident)
 
-        return Env._resolve_path_segment(ns, scope, path.idents[-1])
+        return self._resolve_path_segment(ns, scope, path.idents[-1])

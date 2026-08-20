@@ -439,6 +439,19 @@ def test_instances_differing_only_by_an_enum_arguments_module(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
 
 
+def test_generic_inherent_impl_does_not_inherit_struct_typ_param_name(tmp_path):
+    src = """
+    struct Box[A] { val: A }
+    impl[T] Box[T] {
+        fn bad(x: A) i32 { 0 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ItemNotFoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"A"' in str(exc_info.value)
+
+
 def test_generic_inherent_impl_with_unsatisfied_bound_does_not_apply(tmp_path):
     # An inherent impl's own bounds gate it the same way a trait impl's
     # do: `Box[bool]` doesn't satisfy `T: Show`, so it has no `get`.
@@ -617,10 +630,9 @@ def test_free_generic_fn_dot_calls_generic_impl_method_through_typ_param(tmp_pat
 
 def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
     # A generic-impl method's body can call a sibling method from the same
-    # impl block by bare name, not just via `self.method()` - the sibling
-    # is bound in the impl's own scope (see
-    # StructTyp.add_assoc_fn). That bare reference must resolve to the
-    # sibling's own instance for the same concrete receiver, not the
+    # impl block by bare name, not just via `self.method()`. The sibling is
+    # bound in the impl block's environment, so that reference must resolve to
+    # the sibling's own instance for the same concrete receiver, not the
     # still-generic original.
     src = """
     struct Box[T] { mut val: T }
@@ -641,8 +653,8 @@ def test_generic_impl_block_sibling_method_calls_by_dot_call(tmp_path):
     # `self.*.method()` too (leech has no automatic dereferencing, so the
     # explicit deref is required, same as `self.*.val` for a field) -
     # resolved through lookup_member against the impl block's own abstract
-    # receiver type, the same underlying Fn a bare reference finds (see
-    # StructTyp.get_assoc_fn), so it needs the same per-instantiation
+    # receiver type, the same underlying Fn a bare reference finds, so it
+    # needs the same per-instantiation
     # substitution.
     src = """
     struct Box[T] { mut val: T }
@@ -719,6 +731,16 @@ def test_generic_struct_field_typs_are_substituted(tmp_path):
 
     inst = box.instance((typs.I32,))
     assert inst.fields["val"].typ is typs.I32
+
+
+def test_struct_fields_mapping_is_live(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "struct Box { val: i32 }")
+    box = _get_struct_typ(mod, "Box")
+
+    fields = box.fields
+    box._members.clear()
+
+    assert fields == {}
 
 
 def test_impl_on_generic_struct_target_qualified_path(tmp_path):

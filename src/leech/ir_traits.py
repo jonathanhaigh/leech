@@ -5,10 +5,10 @@
 """Trait declarations and their implementations."""
 
 import functools
-from collections.abc import Collection, Hashable, Mapping
+from collections.abc import Collection, Hashable, Iterator, Mapping
 from typing import Final, Optional
 
-from leech import ast, errors, ir_env, ir_module, reserved, src, typs
+from leech import ast, errors, ir_env, ir_module, opt_util, reserved, src, typs
 
 # Keep this import module-qualified because typs may still be initializing.
 
@@ -203,6 +203,8 @@ class Impl:
 
         :raises ExtraMethodInImplError: If this impl's trait declares no
             method named ``fn.name``.
+        :raises ReservedNameError: If an inherent associated function takes
+            a reserved name.
         :raises DuplicateItemDefnError: If this impl already defines a
             function of that name.
         :raises TraitMethodSignatureMismatchError: If ``fn``'s signature
@@ -214,10 +216,17 @@ class Impl:
             trait_method = trait.get_method(fn.name)
             if trait_method is None:
                 raise errors.ExtraMethodInImplError(trait.name, fn.name, fn.span)
+        elif reserved.is_reserved(fn.name):
+            assert fn.ast is not None
+            raise errors.ReservedNameError(fn.name, fn.ast.name.span)
         existing = self._fns.get(fn.name)
         if existing is not None:
             kind = "associated function" if trait is None else "method"
-            raise errors.DuplicateItemDefnError(kind, fn.name, fn.span, existing.span)
+            assert fn.ast is not None
+            assert existing.ast is not None
+            raise errors.DuplicateItemDefnError(
+                kind, fn.name, fn.ast.name.span, existing.ast.name.span
+            )
         if trait_method is not None:
             assert trait is not None
             expected_typ = trait_method.fn_typ_for_self(self.self_typ)
@@ -264,27 +273,16 @@ def _head_shape(typ: typs.Typ) -> Hashable:
     return type(typ)
 
 
-def _typs_overlap(a: typs.Typ, b: typs.Typ) -> bool:
-    """Whether two impl self types could both apply to some concrete type.
-
-    Attempts a structural match in both directions (``a`` as the
-    "declared" shape and ``b`` as the "actual" one, then vice versa),
-    using the same machinery generic call resolution infers type
-    arguments with (see :meth:`~leech.typs.Typ.infer_typ_args`). Neither
-    direction alone suffices: if ``a`` is ``Pair[A, A]`` (from one impl's
-    own type parameter) and ``b`` is a plain ``Pair[i32, i32]``, only
-    ``a``-as-declared matches; if the roles were reversed the same pair of
-    impls should still be reported as conflicting.
-
-    :param a: One impl's self type.
-    :param b: The other impl's self type.
-    :return: Whether the two could overlap.
-    """
-    return typs.match_typ_args(a, b) is not None or typs.match_typ_args(b, a) is not None
+def _selection_shapes(typ: typs.Typ) -> tuple[Hashable, ...]:
+    """Return the exact and wildcard head shapes that can apply to ``typ``."""
+    shape = _head_shape(typ)
+    if isinstance(typ, typs.TypParamTyp):
+        return (shape,)
+    return (shape, typs.TypParamTyp)
 
 
 class ImplRegistry:
-    """Program-wide implementations, with trait implementations indexed by receiver type.
+    """Program-wide implementations indexed by trait and receiver type.
 
     :invariant: for every t in _traits_by_shape[s], (t, s) in _impls [ctor]
     """
@@ -313,6 +311,8 @@ class ImplRegistry:
             type is defined in ``impl``'s own module.
         :raises ConflictingImplsError: If ``impl``'s self type could
             overlap with an already-registered impl of the same trait.
+        :raises DuplicateItemDefnError: If an overlapping inherent impl
+            declares an associated function with the same name.
         """
         impl.check_orphan_rule()
         shape = _head_shape(impl.self_typ)
@@ -320,19 +320,64 @@ class ImplRegistry:
         impls = self._impls.get(key)
         if impls is None:
             impls = []
+        if impl.trait is not None:
+            self._check_trait_impl_conflicts(impl)
+        else:
+            self._check_inherent_impl_conflicts(impl, impls)
+        if key not in self._impls:
             self._impls[key] = impls
             if impl.trait is not None:
                 self._traits_by_shape.setdefault(shape, []).append(impl.trait)
-        if impl.trait is not None:
-            for existing_trait_impl in impls:
-                if _typs_overlap(impl.self_typ, existing_trait_impl.self_typ):
-                    raise errors.ConflictingImplsError(
-                        impl.trait.name,
-                        impl.self_typ.name,
-                        impl.span,
-                        existing_trait_impl.span,
-                    )
         impls.append(impl)
+
+    def _iter_trait_impl_conflict_candidates(self, trait_impl: Impl) -> Iterator[Impl]:
+        """Yield registered impls that could conflict with ``trait_impl``."""
+        trait = trait_impl.trait
+        assert trait is not None
+        if isinstance(trait_impl.self_typ, typs.TypParamTyp):
+            for (candidate_trait, _), candidate_trait_impls in self._impls.items():
+                if candidate_trait is not trait:
+                    continue
+                for candidate_trait_impl in candidate_trait_impls:
+                    yield candidate_trait_impl
+            return
+
+        for candidate_shape in _selection_shapes(trait_impl.self_typ):
+            for candidate_trait_impl in self._impls.get((trait, candidate_shape), ()):
+                yield candidate_trait_impl
+
+    def _check_trait_impl_conflicts(self, trait_impl: Impl) -> None:
+        """Reject ``trait_impl`` when it overlaps a registered trait impl."""
+        trait = trait_impl.trait
+        assert trait is not None
+        for existing_trait_impl in self._iter_trait_impl_conflict_candidates(trait_impl):
+            if typs.typs_overlap(trait_impl.self_typ, existing_trait_impl.self_typ):
+                raise errors.ConflictingImplsError(
+                    trait.name,
+                    trait_impl.self_typ.name,
+                    trait_impl.span,
+                    existing_trait_impl.span,
+                )
+
+    def _check_inherent_impl_conflicts(
+        self, inherent_impl: Impl, existing_inherent_impls: Collection[Impl]
+    ) -> None:
+        """Reject shared associated-function names in overlapping inherent impls."""
+        for existing_inherent_impl in existing_inherent_impls:
+            if not typs.typs_overlap(inherent_impl.self_typ, existing_inherent_impl.self_typ):
+                continue
+            existing_name_spans = {
+                fn_ast.name.name: fn_ast.name.span for fn_ast in existing_inherent_impl.ast.fns
+            }
+            for fn_ast in inherent_impl.ast.fns:
+                existing_span = existing_name_spans.get(fn_ast.name.name)
+                if existing_span is not None:
+                    raise errors.DuplicateItemDefnError(
+                        "associated function",
+                        fn_ast.name.name,
+                        fn_ast.name.span,
+                        existing_span,
+                    )
 
     def find_inherent_impls(self, typ: typs.Typ) -> list[Impl]:
         """Find every inherent ``impl`` block that applies to ``typ``.
@@ -358,22 +403,22 @@ class ImplRegistry:
         :param typ: The type to find an implementation for.
         :return: The applicable trait impl, or ``None`` if none is registered.
         """
-        for trait_impl in self._impls.get((trait, _head_shape(typ)), ()):
-            bindings = typs.match_typ_args(trait_impl.self_typ, typ)
-            if bindings is not None and self._impl_bounds_hold(trait_impl, bindings):
-                return trait_impl
+        for shape in _selection_shapes(typ):
+            for trait_impl in self._impls.get((trait, shape), ()):
+                bindings = typs.match_typ_args(trait_impl.self_typ, typ)
+                if bindings is not None and self._impl_bounds_hold(trait_impl, bindings):
+                    return trait_impl
         return None
 
     def implements(self, trait: Trait, typ: typs.Typ) -> bool:
         """Whether ``typ`` is known to implement ``trait``.
 
-        Two things can establish that. A registered trait impl proves it for a
-        concrete type. Inside a generic definition there is no concrete
-        type and nothing is registered against a type parameter, so what
-        stands in is an assumption in scope: the parameter's own declared
-        bounds. ``fn f[U: Show]`` may call ``Show``'s methods on ``U``,
-        and ``fn f[U]`` may not - the obligation moves to wherever ``f``
-        is instantiated, which is checked against a concrete type there.
+        Two things can establish that. A registered trait impl, including a
+        blanket impl whose self type is a bare type parameter, proves it through
+        registry selection. An unsubstituted type parameter can also carry an
+        assumption in scope through its own declared bounds. Method lookup inside
+        a generic body uses only that second form: ``fn f[U: Show]`` may call
+        ``Show``'s methods on ``U``, and ``fn f[U]`` may not.
 
         :param trait: The trait to prove an implementation of.
         :param typ: The type to prove it for.
@@ -418,13 +463,75 @@ class ImplRegistry:
         :param typ: The (concrete) type to find implementations for.
         :return: The applicable trait impls, one per trait at most.
         """
-        shape = _head_shape(typ)
         trait_impls = []
-        for trait in self._traits_by_shape.get(shape, ()):
-            trait_impl = self.find_trait_impl(trait, typ)
-            if trait_impl is not None:
-                trait_impls.append(trait_impl)
+        seen_traits = set()
+        for shape in _selection_shapes(typ):
+            for trait in self._traits_by_shape.get(shape, ()):
+                if trait in seen_traits:
+                    continue
+                seen_traits.add(trait)
+                trait_impl = self.find_trait_impl(trait, typ)
+                if trait_impl is not None:
+                    trait_impls.append(trait_impl)
         return trait_impls
+
+    def lookup_assoc_fn(
+        self, typ: typs.Typ, name: str
+    ) -> Optional[ir_module.Fn | ir_module.FnInstance]:
+        """Find ``typ``'s inherent associated function called ``name``."""
+        matches = []
+        for inherent_impl in self.find_inherent_impls(typ):
+            fn = inherent_impl.get_fn(name)
+            if fn is not None:
+                matches.append(fn)
+        # If two matches applied to this concrete type, their impl self types
+        # would overlap. add_impl rejects overlapping inherent impls that
+        # declare the same name, so registry coherence guarantees uniqueness.
+        assert len(matches) <= 1
+        if not matches:
+            return None
+        found = matches[0]
+        # Structural impl matching returns a function built for the impl's
+        # abstract receiver, so inherent and trait matches need specialization.
+        return found.for_recv_typ(typ)
+
+    def lookup_member(
+        self, typ: typs.Typ, name: str, span: Optional[src.SrcSpan]
+    ) -> Optional[ir_module.Fn | ir_module.FnInstance]:
+        """Find ``typ``'s member (inherent or via a trait impl) called ``name``.
+
+        Only ever meaningful for a *concrete* type - a call through an
+        unsubstituted type parameter resolves differently, against the
+        parameter's own declared bounds rather than the registry.
+
+        :param typ: The type to look up a member on.
+        :param name: The member's name.
+        :param span: Where to point an :class:`~leech.errors.AmbiguousMethodError`
+            at, if one applies.
+        :return: The member, or ``None`` if neither an inherent member nor any
+            applicable trait impl provides one of that name.
+        :raises AmbiguousMethodError: If more than one applicable impl provides
+            a member of that name.
+        """
+        inherent_fn = self.lookup_assoc_fn(typ, name)
+        if inherent_fn is not None:
+            return inherent_fn
+
+        matches = []
+        for trait_impl in self._find_trait_impls_for_typ(typ):
+            trait_method = opt_util.opt_unwrap(trait_impl.trait).get_method(name)
+            if trait_method is None:
+                continue
+            method = trait_impl.get_trait_method(trait_method)
+            if method is not None:
+                matches.append(method)
+        method = disambiguate(matches, name, typ.name, span)
+        if method is None:
+            return None
+
+        # Structural impl matching returns a function built for the impl's
+        # abstract receiver, so inherent and trait matches need specialization.
+        return method.for_recv_typ(typ)
 
 
 def disambiguate[T](
@@ -444,54 +551,3 @@ def disambiguate[T](
     if len(matches) > 1:
         raise errors.AmbiguousMethodError(name, typ_name, span)
     return matches[0] if matches else None
-
-
-def lookup_member(
-    typ: typs.Typ,
-    name: str,
-    registry: ImplRegistry,
-    span: Optional[src.SrcSpan],
-) -> Optional[ir_module.Fn | ir_module.FnInstance]:
-    """Find ``typ``'s member (inherent or via a trait impl) called ``name``.
-
-    Only ever meaningful for a *concrete* type - a call through an
-    unsubstituted type parameter resolves differently, against the
-    parameter's own declared bounds rather than the registry.
-
-    :param typ: The type to look up a member on.
-    :param name: The member's name.
-    :param registry: The program-wide trait impl registry.
-    :param span: Where to point an :class:`~leech.errors.AmbiguousMethodError`
-        at, if one applies.
-    :return: The member, or ``None`` if neither an inherent member nor any
-        applicable trait impl provides one of that name.
-    :raises AmbiguousMethodError: If more than one applicable trait impl
-        provides a member of that name.
-    """
-    if isinstance(typ, typs.StructTyp):
-        inherent_fn = typ.get_assoc_fn(name)
-        if inherent_fn is not None:
-            return inherent_fn
-
-    matches = []
-    for trait_impl in registry._find_trait_impls_for_typ(typ):
-        trait = trait_impl.trait
-        assert trait is not None
-        trait_method = trait.get_method(name)
-        if trait_method is None:
-            continue
-        method = trait_impl.get_trait_method(trait_method)
-        if method is not None:
-            matches.append(method)
-    method = disambiguate(matches, name, typ.name, span)
-    if method is None:
-        return None
-
-    # `_find_trait_impls_for_typ` structurally matches a generic impl's self
-    # type against `typ` (e.g. `Pair[A, A]` against a concrete
-    # `Pair[i32, i32]`), but the method it returns is still the one built
-    # against the impl's own *abstract* self type - identical to `typ`
-    # only when the matched impl is a non-generic one. Otherwise it needs
-    # the impl's own type parameters substituted throughout its body,
-    # which is what instantiating it against `typ` does.
-    return method.for_recv_typ(typ)

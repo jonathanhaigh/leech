@@ -291,16 +291,14 @@ def test_mod_and_typ_name_clash_message(tmp_path):
     assert str(exc_info.value) == 'Duplicate definition of type or module "a"'
 
 
-def test_field_and_assoc_fn_name_clash_message(tmp_path):
-    # The note pointing at the field is what makes this diagnostic
-    # comprehensible: without it, "duplicate associated function" gives no
-    # hint that the other definition is a field.
+def test_overlapping_inherent_impl_assoc_fn_name_clash_message(tmp_path):
     src = """
-    struct Counter {
-        get: i32,
-    }
+    struct Counter {}
     impl Counter {
         fn get(*self) i32 { 0 }
+    }
+    impl Counter {
+        fn get(*self) i32 { 1 }
     }
     pub fn main() i32 {
         return 0;
@@ -315,12 +313,12 @@ def test_field_and_assoc_fn_name_clash_message(tmp_path):
 
     span = exc_info.value.message.span
     assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "get(*self)")
+    assert (span.start_line, span.start_col) == util.find_pos(src, "get(*self) i32 { 1 }")
 
     (note,) = exc_info.value.extra
     assert note.message == "Previous definition here"
     assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "get: i32")
+    assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "get(*self) i32 { 0 }")
 
 
 def test_infinite_size_struct_message(tmp_path):

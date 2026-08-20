@@ -467,12 +467,9 @@ class FnInstance(FnSpec[ast.FnDefn]):
 
     @functools.cached_property
     def _siblings(self) -> frozenset[Fn]:
-        """Every function declared alongside this instance's own.
+        """Return functions from this instance's declaring ``impl`` block.
 
-        Siblings come from the ``impl`` block a function was declared in
-        rather than from the self type, which only an inherent impl's
-        methods are registered on. Empty unless this is a method
-        instance.
+        A free function has no parent ``impl`` and therefore no siblings.
         """
         if self._self_typ is None:
             return frozenset()
@@ -844,8 +841,7 @@ class Mod:
         # either the inherent or trait branch resolves its target type(s)
         # - so a generic impl's target (e.g. `Pair[T, T]`, or a trait
         # impl's self type) can name them, and each associated function's
-        # or method's own signature and body can too (see
-        # `Impl.__init__`/the inherent branch's `fn_env`).
+        # or method's own signature and body can too (see `Impl.__init__`).
         impl_env = self.env.new_child()
         for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params, self.env):
             impl_env.add_container(typ_param.name, typ_param)
@@ -881,11 +877,7 @@ class Mod:
         if len(impl_typ_ast.path.idents) > 1:
             raise errors.ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
-        fn_env = typ.env.new_child()
-        for typ_param in typs.typ_params_from_ast(impl_ast, impl_ast.generic_params, self.env):
-            fn_env.add_container(typ_param.name, typ_param)
-
-        impl = ir_traits.Impl(impl_ast, None, typ, fn_env, self.name)
+        impl = ir_traits.Impl(impl_ast, None, typ, impl_env, self.name)
         self.loader.impl_registry.add_impl(impl)
         self._build_impl_fns(impl_ast, impl, generic_fns)
 
@@ -967,7 +959,7 @@ class Mod:
             fn = Fn(fn_ast, impl.env, self.name, recv_typ=impl.self_typ, impl=impl)
             impl.add_fn(fn)
             if impl.trait is None:
-                asserts.checked_cast(impl.self_typ, typs.StructTyp).add_assoc_fn(fn)
+                impl.env.add_var(fn.name, fn)
             if impl_ast.generic_params:
                 generic_fns.append(fn)
             else:

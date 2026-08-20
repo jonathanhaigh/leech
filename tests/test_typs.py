@@ -343,6 +343,76 @@ def test_substitute_typ_params_recurses_through_composite_typs(tmp_path):
     )
 
 
+def _assert_typs_overlap_symmetric(left: typs.Typ, right: typs.Typ, expected: bool) -> None:
+    assert typs.typs_overlap(left, right) is expected
+    assert typs.typs_overlap(right, left) is expected
+
+
+def test_typs_overlap_fn_typs_symmetrically(tmp_path):
+    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
+
+    generic = typs.FnTyp.get_or_create(typs.BOOL, (t,))
+    _assert_typs_overlap_symmetric(generic, typs.FnTyp.get_or_create(typs.BOOL, (typs.I32,)), True)
+    _assert_typs_overlap_symmetric(generic, typs.FnTyp.get_or_create(typs.I32, (typs.I32,)), False)
+    _assert_typs_overlap_symmetric(
+        generic, typs.FnTyp.get_or_create(typs.BOOL, (typs.I32, typs.I32)), False
+    )
+
+
+def test_typs_overlap_ptr_typs_symmetrically_and_distinguishes_mutability(tmp_path):
+    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
+
+    generic = typs.PtrTyp.get_or_create(t, typs.CONST)
+    _assert_typs_overlap_symmetric(generic, typs.PtrTyp.get_or_create(typs.I32, typs.CONST), True)
+    _assert_typs_overlap_symmetric(generic, typs.PtrTyp.get_or_create(typs.I32, typs.MUT), False)
+
+
+def test_typs_overlap_array_typs_symmetrically_and_distinguishes_length(tmp_path):
+    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
+
+    generic = typs.ArrayTyp.get_or_create(t, 3)
+    _assert_typs_overlap_symmetric(generic, typs.ArrayTyp.get_or_create(typs.I32, 3), True)
+    _assert_typs_overlap_symmetric(generic, typs.ArrayTyp.get_or_create(typs.I32, 4), False)
+
+
+def test_typs_overlap_struct_typ_arity_mismatch_is_false(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "struct Pair[A, B] {}")
+    pair = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Pair")
+    assert isinstance(pair, typs.StructTyp)
+
+    _assert_typs_overlap_symmetric(pair, pair.instance((typs.I32, typs.BOOL)), False)
+
+
+def test_typs_overlap_enum_backing_typs_symmetrically(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "enum E(u8) { A } enum F(u8) { A }")
+    enum_e = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "E")
+    enum_f = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "F")
+    assert isinstance(enum_e, typs.EnumTyp)
+    assert isinstance(enum_f, typs.EnumTyp)
+
+    parsed = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+    (fn,) = parsed.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = typs.TypParamTyp.get_or_create(fn, 0, fn.generic_params[0].ident.name)
+
+    generic = typs.EnumBackingTyp.get_or_create(t)
+    _assert_typs_overlap_symmetric(generic, typs.EnumBackingTyp.get_or_create(enum_e), True)
+    _assert_typs_overlap_symmetric(
+        typs.EnumBackingTyp.get_or_create(enum_e),
+        typs.EnumBackingTyp.get_or_create(enum_f),
+        False,
+    )
+
+
 def test_int_typ_name_with_unparseable_width_is_not_a_typ(tmp_path):
     # The width exceeds CPython's int-from-string digit limit; resolving it
     # must diagnose an unknown type rather than crash.

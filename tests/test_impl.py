@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import errors
+from leech import ast, errors, ir_env, ir_module, ir_traits, typs
 
 
 def test_assoc_fn_call(tmp_path):
@@ -17,6 +17,34 @@ def test_assoc_fn_call(tmp_path):
     pub fn main() i32 {
         let f = Foo::new();
         return f.a;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
+def test_generic_inherent_impl_method_found_through_registry(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    impl[T] Box[T] {
+        fn get(*self) T { return self.*.val; }
+    }
+    pub fn main() i32 {
+        let b = Box[i32] { val: 7 };
+        return b.get();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 7)
+
+
+def test_field_and_method_same_name_coexist(tmp_path):
+    src = """
+    struct Counter { get: i32 }
+    impl Counter {
+        fn get(*self) i32 { return self.*.get + 1; }
+    }
+    pub fn main() i32 {
+        let counter = Counter { get: 41 };
+        return counter.get();
     }
     """
     util.check_prog_output(tmp_path, src, "", 42)
@@ -151,48 +179,114 @@ def test_duplicate_assoc_fn_name_across_impl_blocks(tmp_path):
         util.compile_str(tmp_path, src)
 
 
-def test_field_and_method_same_name_rejected(tmp_path):
-    # A struct's fields and associated functions share one namespace, so a
-    # field and a method can't have the same name - unlike Rust, where
-    # `c.get` and `c.get()` would disambiguate them.
-    src = """
-    struct Counter { get: i32 }
-    impl Counter {
-        fn get(*self) i32 { self.*.get }
-    }
-    pub fn main() i32 { return 0; }
-    """
-    with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_str(tmp_path, src)
-
-
-def test_field_and_receiverless_assoc_fn_same_name_rejected(tmp_path):
-    # The clash is with the shared member namespace, not with method-call
-    # syntax, so a receiverless associated function collides just the same.
+def test_field_and_receiverless_assoc_fn_same_name_coexist(tmp_path):
     src = """
     struct Foo { new: i32 }
     impl Foo {
-        fn new() Foo { Foo { new: 1 } }
+        fn new() Foo { Foo { new: 42 } }
     }
-    pub fn main() i32 { return 0; }
+    pub fn main() i32 { return Foo::new().new; }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_str(tmp_path, src)
+    util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_field_and_method_same_name_rejected_in_separate_impl_block(tmp_path):
+def test_overlapping_generic_inherent_impls_with_same_fn_name_rejected_at_declaration(tmp_path):
     src = """
-    struct Foo { a: i32 }
-    impl Foo {
-        fn f() i32 { 1 }
+    struct Box[T] {}
+    impl[T] Box[T] {
+        fn value() i32 { 1 }
     }
-    impl Foo {
-        fn a(*self) i32 { 2 }
+    impl[U] Box[U] {
+        fn value() i32 { 2 }
     }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
         util.compile_str(tmp_path, src)
+
+
+def test_partially_overlapping_generic_inherent_impls_with_same_fn_name_rejected(tmp_path):
+    src = """
+    struct Pair[A, B] {}
+    impl[T] Pair[T, i32] {
+        fn tag() i32 { 1 }
+    }
+    impl[U] Pair[bool, U] {
+        fn tag() i32 { 2 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.compile_str(tmp_path, src)
+
+
+def test_disjoint_inherent_impls_reuse_assoc_fn_name(tmp_path):
+    src = """
+    struct Pair[A, B] {}
+    impl[T] Pair[i32, T] {
+        fn tag() i32 { 1 }
+    }
+    impl[T] Pair[bool, T] {
+        fn tag() i32 { 2 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    util.compile_str(tmp_path, src)
+
+
+def test_repeated_generic_inherent_impl_is_disjoint_from_unequal_concrete_args(tmp_path):
+    src = """
+    struct Pair[A, B] {}
+    impl[T] Pair[T, T] {
+        fn tag() i32 { 1 }
+    }
+    impl Pair[bool, i32] {
+        fn tag() i32 { 2 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    util.compile_str(tmp_path, src)
+
+
+def test_recursive_generic_inherent_impl_equation_does_not_overlap(tmp_path):
+    src = """
+    struct Box[T] {}
+    struct Pair[A, B] {}
+    impl[T] Pair[T, Box[T]] {
+        fn tag() i32 { 1 }
+    }
+    impl[U] Pair[Box[U], U] {
+        fn tag() i32 { 2 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    util.compile_str(tmp_path, src)
+
+
+def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(tmp_path):
+    src = """
+    struct Foo {}
+    impl Foo {
+        fn duplicate() i32 { 1 }
+        fn duplicate() i32 { 2 }
+    }
+    """
+    mod_ast = util.parse_mod(tmp_path, src)
+    _, impl_ast = mod_ast.defns
+    assert isinstance(impl_ast, ast.ImplDefn)
+    impl = ir_traits.Impl(impl_ast, None, typs.I32, ir_env.Env(), "main")
+
+    first, second = (
+        ir_module.Fn(fn_ast, impl.env, "main", recv_typ=typs.I32, impl=impl)
+        for fn_ast in impl_ast.fns
+    )
+    impl.add_fn(first)
+    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+        impl.add_fn(second)
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "duplicate() i32 { 2 }")
 
 
 def test_same_name_field_and_method_in_different_structs(tmp_path):
@@ -214,8 +308,7 @@ def test_same_name_field_and_method_in_different_structs(tmp_path):
 
 
 def test_field_not_reachable_by_assoc_fn_path(tmp_path):
-    # Sharing a namespace with associated functions doesn't make a field
-    # addressable as Foo::a - fields are only reachable through a value.
+    # Fields are only reachable through a value, never a ``Foo::a`` path.
     src = """
     struct Foo { a: i32 }
     impl Foo {
@@ -246,9 +339,9 @@ def test_assoc_fn_not_usable_as_typ(tmp_path):
 
 
 def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
-    # Associated functions are bound in their struct's own scope, which a
-    # function body's scope descends from, so they can call each other
-    # without qualification.
+    # Associated functions are bound in their impl block's scope, which a
+    # function body's scope descends from, so they can call each other without
+    # qualification.
     src = """
     struct S { n: i32 }
     impl S {
@@ -261,6 +354,21 @@ def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, src, "", 42)
+
+
+def test_separate_inherent_impl_blocks_do_not_share_bare_assoc_fn_names(tmp_path):
+    src = """
+    struct S {}
+    impl S {
+        fn helper() i32 { 42 }
+    }
+    impl S {
+        fn get() i32 { helper() }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ItemNotFoundError):
+        util.compile_str(tmp_path, src)
 
 
 @pytest.mark.parametrize(
