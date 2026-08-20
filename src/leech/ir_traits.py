@@ -204,6 +204,12 @@ class Impl:
             if not typs.contains_typ_param(self.self_typ, typ_param):
                 raise errors.UnconstrainedImplTypParamError(typ_param.name, param_ast.ident.span)
 
+    def instantiation_args(self, concrete_self_typ: typs.Typ) -> tuple[typs.Typ, ...]:
+        """Return this impl's arguments as selected for ``concrete_self_typ``."""
+        bindings = typs.match_typ_args(self.self_typ, concrete_self_typ)
+        assert bindings is not None
+        return tuple(bindings[typ_param] for typ_param in self.typ_params)
+
     def add_fn(self, fn: ir_module.Fn) -> None:
         """Register ``fn`` as one of this block's functions.
 
@@ -502,7 +508,9 @@ class ImplRegistry:
         found = matches[0]
         # Structural impl matching returns a function built for the impl's
         # abstract receiver, so inherent and trait matches need specialization.
-        return found.for_recv_typ(typ)
+        impl = opt_util.opt_unwrap(found.impl)
+        args = impl.instantiation_args(typ)
+        return found.instantiate(args) if args else found
 
     def lookup_member(
         self, typ: typs.Typ, name: str, span: Optional[src.SrcSpan]
@@ -540,7 +548,9 @@ class ImplRegistry:
 
         # Structural impl matching returns a function built for the impl's
         # abstract receiver, so inherent and trait matches need specialization.
-        return method.for_recv_typ(typ)
+        impl = opt_util.opt_unwrap(method.impl)
+        args = impl.instantiation_args(typ)
+        return method.instantiate(args) if args else method
 
 
 def disambiguate[T](

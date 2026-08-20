@@ -376,7 +376,8 @@ class CfgBuilder:
                 assert trait_impl is not None
                 found = trait_impl.get_trait_method(cached)
                 assert found is not None
-                method = found.for_recv_typ(recv_typ)
+                impl_args = trait_impl.instantiation_args(recv_typ)
+                method = found.instantiate(impl_args) if impl_args else found
             elif isinstance(cached, ir_module.Fn):
                 # Resolved against the impl block's own abstract receiver -
                 # map to this build's instance.
@@ -720,8 +721,7 @@ class CfgBuilder:
     def _resolve_sibling(self, target: ir_module.Fn) -> ir_module.FnSpec:
         """Map a resolved impl-block sibling to this build's own instance.
 
-        A no-op unless this build is itself a method instance - see
-        :meth:`~leech.ir_module.FnInstance.sibling_instance`.
+        A no-op until this build is itself an instance.
         """
         if isinstance(self._fn, ir_module.FnInstance):
             return self._fn.sibling_instance(target)
@@ -746,7 +746,7 @@ class CfgBuilder:
         concrete_typ_args = tuple(
             typ_arg.substitute_typ_params(self._typ_arg_mapping) for typ_arg in typ_args
         )
-        return fn.instance(concrete_typ_args)
+        return fn.instantiate(concrete_typ_args)
 
     def _build_var_expr(self, var_ast: ast.VarExpr, ctx: _ExprContext) -> ir_values.Value:
         """Lower a possibly qualified variable or function reference.

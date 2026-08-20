@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import ast, errors, ir_env, ir_module, ir_traits, typs
+from leech import asserts, ast, errors, ir_env, ir_module, ir_traits, opt_util, typs
 
 
 def test_assoc_fn_call(tmp_path):
@@ -242,6 +242,29 @@ def test_impl_typ_param_nested_in_self_typ_is_constrained(tmp_path):
     pub fn main() i32 { return 0; }
     """
     util.compile_str(tmp_path, src)
+
+
+def test_generic_impl_instance_args_follow_declaration_order(tmp_path):
+    src = """
+    struct Pair[A, B] { first: A, second: B }
+    impl[A, B] Pair[A, B] {
+        fn first(*self) A { return self.*.first; }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    mod = util.build_ir_mod(tmp_path, src)
+    pair_item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Pair")
+    assert pair_item is not None
+    pair = asserts.checked_cast(pair_item.value, typs.StructTyp)
+    concrete_pair = pair.instance((typs.I32, typs.BOOL))
+    (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_pair)
+    fn = opt_util.opt_unwrap(impl.get_fn("first"))
+
+    inst = fn.instantiate((typs.I32, typs.BOOL))
+    assert inst.args == (typs.I32, typs.BOOL)
+    assert inst.impl_args == (typs.I32, typs.BOOL)
+    assert inst.fn_args == ()
+    assert inst is fn.instantiate((typs.I32, typs.BOOL))
 
 
 def test_impl_typ_param_used_only_by_method_is_unconstrained(tmp_path):

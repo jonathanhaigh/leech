@@ -562,15 +562,15 @@ def test_fn_instance_caches_by_typ_args(tmp_path):
     mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    assert fn.instance((typs.I32,)) is fn.instance((typs.I32,))
-    assert fn.instance((typs.I32,)) is not fn.instance((typs.BOOL,))
+    assert fn.instantiate((typs.I32,)) is fn.instantiate((typs.I32,))
+    assert fn.instantiate((typs.I32,)) is not fn.instantiate((typs.BOOL,))
 
 
 def test_fn_instance_signature_is_substituted(tmp_path):
     mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    inst = fn.instance((typs.I32,))
+    inst = fn.instantiate((typs.I32,))
     assert inst.fn_typ.param_typs == (typs.I32,)
     assert inst.fn_typ.ret_typ is typs.I32
 
@@ -579,7 +579,7 @@ def test_fn_instance_mangled_name(tmp_path):
     mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    inst = fn.instance((typs.I32,))
+    inst = fn.instantiate((typs.I32,))
     assert inst.name == "id[i32]"
     assert inst.qualified_name == "main::id[i32]"
 
@@ -588,7 +588,7 @@ def test_fn_instance_mangled_name_with_multiple_typ_args(tmp_path):
     mod = util.build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
     fn = _get_generic_fn(mod, "pair_first")
 
-    inst = fn.instance((typs.I32, typs.BOOL))
+    inst = fn.instantiate((typs.I32, typs.BOOL))
     assert inst.name == "pair_first[i32, bool]"
 
 
@@ -601,14 +601,14 @@ def test_fn_instance_body_lowers(tmp_path):
     mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    _ = fn.instance((typs.I32,)).cfg
+    _ = fn.instantiate((typs.I32,)).cfg
 
 
 def test_fn_instance_body_lowers_for_multiple_typ_args(tmp_path):
     mod = util.build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
     fn = _get_generic_fn(mod, "pair_first")
 
-    _ = fn.instance((typs.I32, typs.BOOL)).cfg
+    _ = fn.instantiate((typs.I32, typs.BOOL)).cfg
 
 
 def test_fn_instance_recursive_call_lowers(tmp_path):
@@ -630,7 +630,7 @@ def test_fn_instance_recursive_call_lowers(tmp_path):
     )
     fn = _get_generic_fn(mod, "depth")
 
-    _ = fn.instance((typs.I32,)).cfg
+    _ = fn.instantiate((typs.I32,)).cfg
 
 
 def test_calling_generic_fn_lowers_to_an_instance_call(tmp_path):

@@ -218,10 +218,10 @@ class FnTemplate(Protocol):
         """Every instantiation requested so far."""
         ...
 
-    def instance(self, typ_args: tuple[typs.Typ, ...]) -> FnInstance:
-        """Return the cached instance for ``typ_args``, creating it if needed.
+    def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
+        """Return the cached instance for ``args``, creating it if needed.
 
-        :post: instance(a) is instance(a) for equal a [cache]
+        :post: instantiate(a) is instantiate(a) for equal a [cache]
         """
         ...
 
@@ -252,9 +252,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         self.impl = impl
 
     @functools.cached_property
-    def _instance_cache(
-        self,
-    ) -> dict[tuple[Optional[typs.Typ], tuple[typs.Typ, ...]], FnInstance]:
+    def _instance_cache(self) -> dict[tuple[typs.Typ, ...], FnInstance]:
         return {}
 
     @property
@@ -262,43 +260,18 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         """Every instantiation requested so far."""
         return self._instance_cache.values()
 
-    def instance(self, typ_args: tuple[typs.Typ, ...]) -> FnInstance:
-        """Return the cached instance for ``typ_args``, creating it if needed."""
-        return self._get_instance(None, typ_args)
-
-    def for_recv_typ(self, typ: typs.Typ) -> Fn | FnInstance:
-        """Return this method as callable on a receiver of type ``typ``.
-
-        A method of a generic ``impl`` block is built against that
-        block's own abstract self type, and needs instantiating for the
-        concrete one. A method of a non-generic block already is the
-        one wanted.
-        """
-        return self if self.recv_typ is typ else self.impl_instance(typ)
-
-    def impl_instance(self, self_typ: typs.Typ, typ_args: tuple[typs.Typ, ...] = ()) -> FnInstance:
-        """Get this method's instantiation for ``self_typ``, building it if
-        needed. Only for a method declared in a generic ``impl`` block,
-        inherent or trait.
-
-        :param self_typ: The concrete type to substitute for the enclosing
-            ``impl`` block's own type parameters.
-        :param typ_args: The concrete type to substitute for each of this
-            method's own type parameters, if it's separately generic.
-
-        :pre: self.recv_typ is not None [assert]
-        """
-        assert self.recv_typ is not None
-        return self._get_instance(self_typ, typ_args)
-
-    def _get_instance(
-        self, self_typ: Optional[typs.Typ], typ_args: tuple[typs.Typ, ...]
-    ) -> FnInstance:
-        key = (self_typ, typ_args)
-        inst = self._instance_cache.get(key)
+    def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
+        """Return the cached instance identified by all impl and function arguments."""
+        impl_arity = len(self.impl.typ_params) if self.impl is not None else 0
+        fn_arity = len(self.typ_params)
+        assert len(args) == impl_arity + fn_arity, (
+            f"{self.name}: expected {impl_arity} impl and {fn_arity} function type arguments; "
+            f"got {len(args)} total"
+        )
+        inst = self._instance_cache.get(args)
         if inst is None:
-            inst = FnInstance(self, self_typ, typ_args)
-            self._instance_cache[key] = inst
+            inst = FnInstance(self, args)
+            self._instance_cache[args] = inst
         return inst
 
     @functools.cached_property
@@ -362,34 +335,44 @@ class FnInstance(FnSpec[ast.FnDefn]):
     method's already-checked body.
 
     :param fn: The generic function or method this is an instantiation of.
-    :param self_typ: The concrete receiver type to infer the enclosing
-        ``impl`` block's own type parameters from - only for a method
-        declared in a generic ``impl`` block; ``None`` otherwise.
-    :param typ_args: The concrete type to substitute for each of ``fn``'s
-        own type parameters, in declaration order.
+    :param args: The impl's type arguments followed by the function's own.
     """
 
     _fn: Final[FnTemplate]
-    _self_typ: Final[Optional[typs.Typ]]
-    _typ_args: Final[tuple[typs.Typ, ...]]
+    _args: Final[tuple[typs.Typ, ...]]
+    _impl_arity: Final[int]
     _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
 
-    def __init__(
-        self,
-        fn: FnTemplate,
-        self_typ: Optional[typs.Typ],
-        typ_args: tuple[typs.Typ, ...],
-    ) -> None:
+    def __init__(self, fn: FnTemplate, args: tuple[typs.Typ, ...]) -> None:
         super().__init__(fn.ast)
         self._fn = fn
-        self._self_typ = self_typ
-        self._typ_args = typ_args
-        mapping: dict[typs.TypParamTyp, typs.Typ] = dict(zip(fn.typ_params, typ_args, strict=True))
-        if self_typ is not None:
-            recv_typ = asserts.checked_cast(fn, Fn).recv_typ
-            assert recv_typ is not None
-            recv_typ.infer_typ_args(self_typ, mapping)
-        self._mapping = mapping
+        self._args = args
+        impl = fn.impl if isinstance(fn, Fn) else None
+        self._impl_arity = len(impl.typ_params) if impl is not None else 0
+        all_params = (*impl.typ_params, *fn.typ_params) if impl is not None else fn.typ_params
+        self._mapping = dict(zip(all_params, args, strict=True))
+
+    @property
+    def args(self) -> tuple[typs.Typ, ...]:
+        """Every flat instantiation argument, with impl arguments first."""
+        return self._args
+
+    @property
+    def impl_args(self) -> tuple[typs.Typ, ...]:
+        """The prefix corresponding to the parent impl's parameters."""
+        return self._args[: self._impl_arity]
+
+    @property
+    def fn_args(self) -> tuple[typs.Typ, ...]:
+        """The suffix corresponding to the function's own parameters."""
+        return self._args[self._impl_arity :]
+
+    @property
+    def _self_typ(self) -> Optional[typs.Typ]:
+        fn = self._fn
+        if not isinstance(fn, Fn) or fn.impl is None:
+            return None
+        return fn.impl.self_typ.substitute_typ_params(self._mapping)
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
@@ -414,7 +397,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
             appear in a symbol name rather than in a diagnostic.
         """
         arg_names = ", ".join(
-            typ_arg.qualified_name if qualified else typ_arg.name for typ_arg in self._typ_args
+            typ_arg.qualified_name if qualified else typ_arg.name for typ_arg in self.fn_args
         )
         return f"{self._fn.name}[{arg_names}]" if arg_names else self._fn.name
 
@@ -459,11 +442,8 @@ class FnInstance(FnSpec[ast.FnDefn]):
         into its own type arguments and (for a method) its receiver type.
         A no-op when already concrete.
         """
-        new_typ_args = tuple(arg.substitute_typ_params(mapping) for arg in self._typ_args)
-        if self._self_typ is None:
-            return asserts.checked_cast(self._fn, Fn).instance(new_typ_args)
-        new_self_typ = self._self_typ.substitute_typ_params(mapping)
-        return asserts.checked_cast(self._fn, Fn).impl_instance(new_self_typ, new_typ_args)
+        new_args = tuple(arg.substitute_typ_params(mapping) for arg in self._args)
+        return self._fn.instantiate(new_args)
 
     @functools.cached_property
     def _siblings(self) -> frozenset[Fn]:
@@ -471,9 +451,8 @@ class FnInstance(FnSpec[ast.FnDefn]):
 
         A free function has no parent ``impl`` and therefore no siblings.
         """
-        if self._self_typ is None:
-            return frozenset()
-        impl = asserts.checked_cast(self._fn, Fn).impl
+        fn = self._fn
+        impl = fn.impl if isinstance(fn, Fn) else None
         return frozenset() if impl is None else frozenset(impl.fns)
 
     def sibling_instance(self, target: Fn) -> Fn | FnInstance:
@@ -486,11 +465,11 @@ class FnInstance(FnSpec[ast.FnDefn]):
 
         :param target: The function referred to from this instance's
             body.
-        :return: ``target`` itself unless it is a sibling.
+        :return: The sibling instance, or an unrelated declaration unchanged.
         """
         if target not in self._siblings:
             return target
-        return target.impl_instance(opt_util.opt_unwrap(self._self_typ))
+        return target.instantiate(self.impl_args)
 
     @functools.cached_property
     def cfg(self) -> ir_values.Cfg:
@@ -503,7 +482,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
             self,
             self._mapping,
         )
-        self._fn._build_body(builder, self._typ_args)
+        self._fn._build_body(builder, self.fn_args)
         return builder.cfg
 
     @override
@@ -533,12 +512,13 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn]):
         """Every instantiation requested so far."""
         return self._instance_cache.values()
 
-    def instance(self, typ_args: tuple[typs.Typ, ...]) -> FnInstance:
-        """Return the cached instance for ``typ_args``, creating it if needed."""
-        inst = self._instance_cache.get(typ_args)
+    def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
+        """Return the cached instance for ``args``, creating it if needed."""
+        assert len(args) == len(self.typ_params)
+        inst = self._instance_cache.get(args)
         if inst is None:
-            inst = FnInstance(self, None, typ_args)
-            self._instance_cache[typ_args] = inst
+            inst = FnInstance(self, args)
+            self._instance_cache[args] = inst
         return inst
 
     @functools.cached_property

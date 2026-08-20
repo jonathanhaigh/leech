@@ -5,7 +5,7 @@
 """Monomorphization: discovering every concrete generic instance a program reaches.
 
 Generic function/method and struct instances are created on demand — see
-ir_module.Fn.instance/impl_instance and typs.StructTyp.instance — whenever
+ir_module.Fn.instantiate and typs.StructTyp.instance — whenever
 type checking, or a previously discovered instance's own body, references
 them. This module forces that on-demand machinery to a fixpoint and
 collects whatever it produces.

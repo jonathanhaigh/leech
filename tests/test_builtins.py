@@ -274,8 +274,8 @@ def test_size_of_builtin_instance_caches_by_typ_args(tmp_path):
     mod = util.build_ir_mod(tmp_path, "pub fn main() i32 { return 0; }")
     size_of = _get_builtin(mod, "__size_of")
 
-    assert size_of.instance((typs.I32,)) is size_of.instance((typs.I32,))
-    assert size_of.instance((typs.I32,)) is not size_of.instance((typs.BOOL,))
+    assert size_of.instantiate((typs.I32,)) is size_of.instantiate((typs.I32,))
+    assert size_of.instantiate((typs.I32,)) is not size_of.instantiate((typs.BOOL,))
 
 
 def test_size_of_builtin_compiled_once_across_multiple_calls(tmp_path):
