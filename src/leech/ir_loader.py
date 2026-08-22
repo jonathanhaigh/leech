@@ -78,7 +78,8 @@ class ModLoader:
         item = self._prelude.get_item(ir_env.Env.Namespace.VARS, "panic")
         if item is None:
             return None
-        return asserts.checked_cast(item.value, ir_module.FnSpec)
+        panic_fn = asserts.checked_cast(item.value, ir_module.Fn)
+        return panic_fn.instantiate(())
 
     @property
     def builtins(self) -> tuple[ir_module.GenericBuiltinFn, ...]:
@@ -127,6 +128,11 @@ class ModLoader:
         self._mods[key] = mod
         mod.build()
         return mod
+
+    def check_declarations(self) -> None:
+        """Type-check every declaration after the complete module graph is loaded."""
+        for mod in self._mods.values():
+            mod.check_declarations()
 
     @property
     def mods(self) -> Collection[ir_module.Mod]:

@@ -324,10 +324,28 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         :return: Whether this function is accessible from ``file``.
         """
         assert self.ast is not None
-        return (
-            visibility.Access.from_ast(self.ast.access) == visibility.PUBLIC
-            or self.ast.span.file.path == file.path
-        )
+        return self.access == visibility.PUBLIC or self.ast.span.file.path == file.path
+
+    @property
+    def access(self) -> visibility.Access:
+        """This declaration's source visibility."""
+        assert self.ast is not None
+        return visibility.Access.from_ast(self.ast.access)
+
+    @property
+    def is_generic(self) -> bool:
+        """Whether this function has impl-level or function-level type parameters."""
+        return (self.impl is not None and bool(self.impl.typ_params)) or bool(self.typ_params)
+
+    @property
+    def is_main(self) -> bool:
+        """Whether this declaration is the executable module's ``main`` function."""
+        return self.mod_name == "main" and self.name == "main"
+
+    @property
+    def mod_name(self) -> str:
+        """The qualified name of the module that declares this function."""
+        return self._mod_name
 
 
 class FnInstance(FnSpec[ast.FnDefn]):
@@ -368,11 +386,10 @@ class FnInstance(FnSpec[ast.FnDefn]):
         return self._args[self._impl_arity :]
 
     @property
-    def _self_typ(self) -> Optional[typs.Typ]:
-        fn = self._fn
-        if not isinstance(fn, Fn) or fn.impl is None:
+    def _receiver_typ(self) -> Optional[typs.Typ]:
+        if not isinstance(self._fn, Fn) or self._fn.impl is None:
             return None
-        return fn.impl.self_typ.substitute_typ_params(self._mapping)
+        return self._fn.impl.self_typ.substitute_typ_params(self._mapping)
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
@@ -420,18 +437,34 @@ class FnInstance(FnSpec[ast.FnDefn]):
         must not reach one symbol.
         """
         name = self._render_name(qualified=True)
-        if self._self_typ is not None:
-            prefix = self._self_typ.qualified_name
+        if self._receiver_typ is not None:
+            prefix = self._receiver_typ.qualified_name
             impl = asserts.checked_cast(self._fn, Fn).impl
             trait = None if impl is None else impl.trait
             if trait is not None:
                 prefix = f"<{prefix} as {trait.mod_name}::{trait.name}>"
             return f"{prefix}::{name}"
+        # A root module can contain a function named main without itself
+        # being the executable module. Only main::main is the linker entry.
+        if isinstance(self._fn, Fn) and not self._fn.is_generic and self._fn.is_main:
+            return name
         prefix = self._fn._qualified_name_prefix
         return f"{prefix}::{name}" if prefix else name
 
     def is_accessible_from(self, file: src.SrcFile) -> bool:
         return asserts.checked_cast(self._fn, Fn).is_accessible_from(file)
+
+    @property
+    def uses_generic_linkage(self) -> bool:
+        """Whether this is a generic specialization that may be emitted in many modules."""
+        if not isinstance(self._fn, Fn):
+            return True
+        return self._fn.is_generic
+
+    @property
+    def source_fn(self) -> Optional[Fn]:
+        """The source declaration behind this instance, if it has one."""
+        return self._fn if isinstance(self._fn, Fn) else None
 
     def is_concrete(self) -> bool:
         """Return whether every type this instance's signature mentions is concrete."""
@@ -451,12 +484,11 @@ class FnInstance(FnSpec[ast.FnDefn]):
 
         A free function has no parent ``impl`` and therefore no siblings.
         """
-        fn = self._fn
-        impl = fn.impl if isinstance(fn, Fn) else None
+        impl = self._fn.impl if isinstance(self._fn, Fn) else None
         return frozenset() if impl is None else frozenset(impl.fns)
 
-    def sibling_instance(self, target: Fn) -> Fn | FnInstance:
-        """Return ``target`` instantiated for this instance's self type.
+    def sibling_instance(self, target: Fn) -> Optional[FnInstance]:
+        """Instantiate ``target`` if it belongs to this instance's impl.
 
         Resolved one at a time rather than as a map of the whole block,
         so that a method nothing calls is never instantiated - an
@@ -465,10 +497,10 @@ class FnInstance(FnSpec[ast.FnDefn]):
 
         :param target: The function referred to from this instance's
             body.
-        :return: The sibling instance, or an unrelated declaration unchanged.
+        :return: The sibling instance, or ``None`` if ``target`` is unrelated.
         """
         if target not in self._siblings:
-            return target
+            return None
         return target.instantiate(self.impl_args)
 
     @functools.cached_property
@@ -660,7 +692,9 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
         Built lazily, on first access.
         """
         builder = ir_builder.CfgBuilder(
-            self.typ_check_results, self.env.impl_registry, self.env.panic_fn
+            self.typ_check_results,
+            self.env.impl_registry,
+            self.env.panic_fn,
         )
         builder.build_var_initializer(opt_util.opt_unwrap(self.ast))
         return builder.cfg
@@ -682,7 +716,7 @@ class Mod:
     _items: Final[dict[tuple[ir_env.Env.Namespace, str], ModItem]]
     env: Final[ir_env.Env]
     loader: Final[ir_loader.ModLoader]
-    _generic_fns: tuple[Fn, ...]
+    _fns: tuple[Fn, ...]
 
     def __init__(self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader) -> None:
         # Deferred because builtin classes subclass GenericBuiltinFn.
@@ -696,7 +730,7 @@ class Mod:
         self._items = {}
         self.env = builtin_env.new_child()
         self.loader = loader
-        self._generic_fns = ()
+        self._fns = ()
 
         ir_builtins.register(builtin_env, loader)
 
@@ -714,22 +748,24 @@ class Mod:
                     builtin_env.add(item._ns, item.name, item.value)
 
     def build(self) -> None:
-        """Build definitions, then impls, and eagerly check generic bodies."""
+        """Build definitions and impls, then eagerly check every declared body."""
         impl_defns = []
-        generic_fns: list[Fn] = []
+        fns: list[Fn] = []
         for defn_ast in self.ast.defns:
             if isinstance(defn_ast, ast.ImplDefn):
                 impl_defns.append(defn_ast)
             else:
-                self._build_defn(defn_ast, generic_fns)
+                self._build_defn(defn_ast, fns)
 
         for impl_ast in impl_defns:
-            self._build_impl_defn(impl_ast, generic_fns)
+            self._build_impl_defn(impl_ast, fns)
 
-        for fn in generic_fns:
+        self._fns = tuple(fns)
+
+    def check_declarations(self) -> None:
+        """Type-check every body after the complete import graph has been built."""
+        for fn in self._fns:
             _ = fn.typ_check_results
-
-        self._generic_fns = tuple(generic_fns)
 
     @property
     def name(self) -> str:
@@ -742,15 +778,15 @@ class Mod:
         return self._items.values()
 
     @property
-    def generic_fns(self) -> Collection[Fn]:
-        """Every eagerly checked generic function or generic-impl method."""
-        return self._generic_fns
+    def fns(self) -> Collection[Fn]:
+        """Every source function declaration, including impl functions."""
+        return self._fns
 
     def get_item(self, ns: ir_env.Env.Namespace, name: str) -> Optional[ModItem]:
         """Return the item named ``name`` in ``ns``, if declared."""
         return self._items.get((ns, name))
 
-    def _build_defn(self, defn_ast: ast.Defn, generic_fns: list[Fn]) -> None:
+    def _build_defn(self, defn_ast: ast.Defn, fns: list[Fn]) -> None:
         match defn_ast:
             case ast.VarDefn():
                 self._add_item(
@@ -772,10 +808,10 @@ class Mod:
                     raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
                 qualify_name = self.name != "main" or defn_ast.name.name != "main"
                 fn = Fn(defn_ast, self.env, self.name)
+                fns.append(fn)
                 value: Fn | GenericFn = fn
                 if defn_ast.generic_params:
                     value = GenericFn(fn)
-                    generic_fns.append(fn)
                 self._add_item(
                     defn_ast.name.name,
                     visibility.Access.from_ast(defn_ast.access),
@@ -811,11 +847,11 @@ class Mod:
                 # Impl blocks are handled separately.
                 raise AssertionError(f"unhandled definition {defn_ast}")
 
-    def _build_impl_defn(self, impl_ast: ast.ImplDefn, generic_fns: list[Fn]) -> None:
+    def _build_impl_defn(self, impl_ast: ast.ImplDefn, fns: list[Fn]) -> None:
         """Build one inherent or trait ``impl`` block.
 
         :param impl_ast: The parsed ``impl`` block.
-        :param generic_fns: Accumulates functions from generic impls.
+        :param fns: Accumulates every source function declaration.
         """
         # The impl's own type parameters, if any, are bound here - before
         # either the inherent or trait branch resolves its target type(s)
@@ -828,16 +864,16 @@ class Mod:
             impl_env.add_container(typ_param.name, typ_param)
 
         if impl_ast.for_typ is None:
-            self._build_inherent_impl_defn(impl_ast, impl_typ_params, impl_env, generic_fns)
+            self._build_inherent_impl_defn(impl_ast, impl_typ_params, impl_env, fns)
         else:
-            self._build_trait_impl_defn(impl_ast, impl_typ_params, impl_env, generic_fns)
+            self._build_trait_impl_defn(impl_ast, impl_typ_params, impl_env, fns)
 
     def _build_inherent_impl_defn(
         self,
         impl_ast: ast.ImplDefn,
         impl_typ_params: tuple[typs.TypParamTyp, ...],
         impl_env: ir_env.Env,
-        generic_fns: list[Fn],
+        fns: list[Fn],
     ) -> None:
         """Build one inherent ``impl SomeStruct { ... }`` block's associated functions.
 
@@ -845,7 +881,7 @@ class Mod:
             None``).
         :param impl_env: The impl's own scope, with its type parameters
             (if any) already bound.
-        :param generic_fns: Accumulates functions from generic impls.
+        :param fns: Accumulates every source function declaration.
         :raises ImplForNonStructTypError: If ``impl_ast.typ`` doesn't name
             a struct type.
         :raises ImplForNonLocalStructTypError: If ``impl_ast.typ`` names a
@@ -865,14 +901,14 @@ class Mod:
         impl = ir_traits.Impl(impl_ast, None, typ, impl_typ_params, impl_env, self.name)
         impl.check_typ_params_constrained()
         self.loader.impl_registry.add_impl(impl)
-        self._build_impl_fns(impl_ast, impl, generic_fns)
+        self._build_impl_fns(impl_ast, impl, fns)
 
     def _build_trait_impl_defn(
         self,
         impl_ast: ast.ImplDefn,
         impl_typ_params: tuple[typs.TypParamTyp, ...],
         impl_env: ir_env.Env,
-        generic_fns: list[Fn],
+        fns: list[Fn],
     ) -> None:
         """Build one ``impl Trait for SelfTyp { ... }`` block's methods.
 
@@ -885,7 +921,7 @@ class Mod:
             not None``).
         :param impl_env: The impl's own scope, with its type parameters
             (if any) already bound.
-        :param generic_fns: Accumulates functions from generic impls.
+        :param fns: Accumulates every source function declaration.
         :raises ImplForNonTraitError: If ``impl_ast.typ`` doesn't name a
             trait.
         :raises OrphanImplError: If neither the trait nor the self type is
@@ -924,21 +960,21 @@ class Mod:
         # `ir_traits.Impl.check_orphan_rule`).
         self.loader.impl_registry.add_impl(impl)
 
-        self._build_impl_fns(impl_ast, impl, generic_fns)
+        self._build_impl_fns(impl_ast, impl, fns)
         impl.check_complete()
 
     def _build_impl_fns(
         self,
         impl_ast: ast.ImplDefn,
         impl: ir_traits.Impl,
-        generic_fns: list[Fn],
+        fns: list[Fn],
     ) -> None:
         """Build and register every function in an ``impl`` block.
 
         :param impl_ast: The parsed ``impl`` block.
         :param impl: The block's reified form, which every built function
             is registered on and points back at.
-        :param generic_fns: Accumulates functions from generic impls.
+        :param fns: Accumulates every source function declaration.
         """
         for fn_ast in impl_ast.fns:
             # Generic associated functions/methods aren't supported yet -
@@ -948,17 +984,10 @@ class Mod:
             if fn_ast.generic_params:
                 raise NotImplementedError("generic associated functions aren't supported yet")
             fn = Fn(fn_ast, impl.env, self.name, recv_typ=impl.self_typ, impl=impl)
+            fns.append(fn)
             impl.add_fn(fn)
             if impl.trait is None:
                 impl.env.add_var(fn.name, fn)
-            if impl_ast.generic_params:
-                generic_fns.append(fn)
-            else:
-                self._add_item(
-                    f"{impl.name}::{fn_ast.name.name}",
-                    visibility.Access.from_ast(fn_ast.access),
-                    fn,
-                )
 
     def _add_item(
         self,

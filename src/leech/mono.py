@@ -20,14 +20,17 @@ effect of validating an unrelated, never-instantiated generic template.
 import dataclasses
 from collections.abc import Callable, Iterator
 
-from leech import ir_module, typs
+from leech import ir_module, typs, visibility
 
 
 @dataclasses.dataclass(frozen=True)
 class MonoResult:
-    """Every generic instance discovered reachable from a program, in discovery order."""
+    """Function definitions, external declarations, and struct instances for one module."""
 
+    #: Instances whose bodies this module owns or specializes and must emit.
     fn_instances: tuple[ir_module.FnInstance, ...]
+    #: Imported non-generic instances that need declarations but not bodies.
+    external_fn_instances: tuple[ir_module.FnInstance, ...]
     struct_instances: tuple[typs.StructTyp, ...]
 
 
@@ -37,9 +40,9 @@ def discover(mod: ir_module.Mod) -> MonoResult:
     """
     # Fn instances first: forcing their bodies can request struct
     # instantiations that only a subsequent struct-discovery pass would catch.
-    fn_instances = _discover_fn_instances(mod)
+    fn_instances, external_fn_instances = _discover_fn_instances(mod)
     struct_instances = _discover_struct_instances(mod)
-    return MonoResult(tuple(fn_instances), tuple(struct_instances))
+    return MonoResult(tuple(fn_instances), tuple(external_fn_instances), tuple(struct_instances))
 
 
 def _fixpoint[T](newly_requested: Callable[[], list[T]], resolve: Callable[[T], None]) -> list[T]:
@@ -55,35 +58,36 @@ def _fixpoint[T](newly_requested: Callable[[], list[T]], resolve: Callable[[T], 
 
 
 def _fn_templates(mod: ir_module.Mod) -> Iterator[ir_module.FnTemplate]:
-    """Yield every generic function and compiler-intrinsic builtin."""
+    """Yield every source and compiler-intrinsic function declaration."""
     for loaded_mod in mod.loader.mods:
-        for item in loaded_mod.items:
-            if isinstance(item.value, ir_module.GenericFn):
-                yield item.value.fn
+        yield from loaded_mod.fns
     yield from mod.loader.builtins
 
 
-def _generic_impl_method_fns(mod: ir_module.Mod) -> Iterator[ir_module.Fn]:
-    """Yield methods declared by generic inherent impls."""
-    for loaded_mod in mod.loader.mods:
-        for fn in loaded_mod.generic_fns:
-            if fn.recv_typ is not None:
-                yield fn
+def _is_external_fn_instance(inst: ir_module.FnInstance, mod: ir_module.Mod) -> bool:
+    """Return whether ``inst`` is a non-generic body owned by another module."""
+    source_fn = inst.source_fn
+    return (
+        source_fn is not None and not inst.uses_generic_linkage and source_fn.mod_name != mod.name
+    )
 
 
-def _discover_fn_instances(mod: ir_module.Mod) -> list[ir_module.FnInstance]:
-    """Discover generic function and impl-method instances to a fixpoint.
+def _discover_fn_instances(
+    mod: ir_module.Mod,
+) -> tuple[list[ir_module.FnInstance], list[ir_module.FnInstance]]:
+    """Discover reachable function instances to a fixpoint.
 
     Lowering an instance can request more instances, so both kinds
     must participate in the same fixpoint.
 
-    :return: Every instance discovered, in discovery order.
+    :return: Body-owning instances and external declaration instances,
+        each in discovery order.
     """
     seen: set[ir_module.FnInstance] = set()
 
     def newly_requested() -> list[ir_module.FnInstance]:
         new = []
-        for template in (*_fn_templates(mod), *_generic_impl_method_fns(mod)):
+        for template in _fn_templates(mod):
             for inst in template.instances:
                 if inst.is_concrete() and inst not in seen:
                     seen.add(inst)
@@ -91,13 +95,28 @@ def _discover_fn_instances(mod: ir_module.Mod) -> list[ir_module.FnInstance]:
         return new
 
     def lower(inst: ir_module.FnInstance) -> None:
-        _ = inst.cfg
+        if not _is_external_fn_instance(inst, mod):
+            _ = inst.cfg
 
+    for fn in mod.fns:
+        if not fn.is_generic and (fn.is_main or fn.access == visibility.PUBLIC):
+            fn.instantiate(())
+
+    # Module variables are still emitted as ordinary module items. Lower
+    # every local initializer before discovering function instances it requests.
     for item in mod.items:
-        if isinstance(item.value, (ir_module.Fn, ir_module.ModVar)):
+        if isinstance(item.value, ir_module.ModVar):
             _ = item.value.cfg
 
-    return _fixpoint(newly_requested, lower)
+    discovered = _fixpoint(newly_requested, lower)
+    local = []
+    external = []
+    for inst in discovered:
+        if _is_external_fn_instance(inst, mod):
+            external.append(inst)
+        else:
+            local.append(inst)
+    return local, external
 
 
 def _discover_struct_instances(mod: ir_module.Mod) -> list[typs.StructTyp]:

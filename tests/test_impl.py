@@ -279,6 +279,18 @@ def test_impl_typ_param_used_only_by_method_is_unconstrained(tmp_path):
         util.compile_str(tmp_path, src)
 
 
+def test_uncalled_private_impl_method_body_is_still_typechecked(tmp_path):
+    src = """
+    struct Foo {}
+    impl Foo {
+        fn invalid(*self) i32 { return true; }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InvalidRetTypError):
+        util.compile_str(tmp_path, src)
+
+
 def test_disjoint_inherent_impls_reuse_assoc_fn_name(tmp_path):
     src = """
     struct Pair[A, B] {}

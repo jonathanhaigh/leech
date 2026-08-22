@@ -42,6 +42,11 @@ xfail_strict = true
 target-version = "py314"
 line-length = 100
 
+[tool.ruff.format]
+# Markdown plans contain Python fragments at their intended surrounding
+# indentation; formatting them as standalone modules destroys that context.
+exclude = ["docs/**/*.md"]
+
 [tool.ruff.lint]
 # UP045 (Optional[X] -> X | None) is disabled: this codebase prefers
 # `Optional[X]` over PEP 604 syntax for nullable types.

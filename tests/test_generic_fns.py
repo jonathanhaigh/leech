@@ -55,6 +55,66 @@ def test_generic_fn_body_typechecks_with_identity_only_ops(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_uncalled_private_fn_body_is_still_typechecked(tmp_path):
+    src = """
+    fn invalid() i32 { return true; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InvalidRetTypError):
+        util.compile_str(tmp_path, src)
+
+
+def test_uncalled_private_fn_is_not_emitted(tmp_path):
+    src = """
+    fn unused_private() i32 { return 1; }
+    pub fn main() i32 { return 0; }
+    """
+    llir_path = util.compile_str(tmp_path, src)
+    assert 'define private i32 @"main::unused_private"' not in llir_path.read_text()
+
+
+def test_uncalled_public_generic_fn_has_no_instance_to_emit(tmp_path):
+    src = """
+    pub fn unused_generic[T](x: T) T { return x; }
+    pub fn main() i32 { return 0; }
+    """
+    llir_path = util.compile_str(tmp_path, src)
+    assert "unused_generic[" not in llir_path.read_text()
+
+
+def test_function_instance_symbols_and_linkage(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    struct Foo {}
+    impl Show for Foo { fn show(*self) i32 { 1 } }
+    impl Foo { fn get(*self) i32 { 2 } }
+
+    struct Box[T] { val: T }
+    impl[T] Box[T] { fn unwrap(*self) T { self.*.val } }
+
+    fn private_fn() i32 { 3 }
+    pub fn public_fn() i32 { 4 }
+    fn id[T](x: T) T { x }
+
+    pub fn main() i32 {
+        let foo = Foo {};
+        let box = Box[i32] { val: 5 };
+        return foo.show() + foo.get() + box.unwrap() + private_fn()
+            + public_fn() + id[i32](6) - 21;
+    }
+    """
+    ir_text = util.compile_str(tmp_path, src).read_text()
+
+    assert 'define i32 @"main"' in ir_text
+    assert '@"main::main"' not in ir_text
+    assert 'define private i32 @"<main::Foo as main::Show>::show"' in ir_text
+    assert 'define private i32 @"main::Foo::get"' in ir_text
+    assert 'define private i32 @"main::private_fn"' in ir_text
+    assert 'define i32 @"main::public_fn"' in ir_text
+    assert 'define linkonce_odr i32 @"main::id[i32]"' in ir_text
+    assert 'define linkonce_odr i32 @"main::Box[i32]::unwrap"' in ir_text
+
+
 def test_generic_fn_with_multiple_typ_params_typechecks(tmp_path):
     src = """
     fn pair_first[T, U](x: T, y: U) T {
@@ -644,15 +704,18 @@ def test_calling_generic_fn_lowers_to_an_instance_call(tmp_path):
     """
     cfg = _lower_main(tmp_path, src)
 
-    # Filtered to calls to a generic instance specifically, not every
-    # CallInstr in the function - `- 5`'s own compiler-synthesized
-    # overflow check also compiles to a (non-generic) call, to `panic`.
-    instance_calls = [
-        instr
-        for bb in cfg.nodes
-        for instr in bb.instrs
-        if isinstance(instr, ir_values.CallInstr) and isinstance(instr.callee, ir_module.FnInstance)
-    ]
+    # Filtered to the generic instance under test specifically: `- 5`'s
+    # compiler-synthesized overflow check is also an instance call, to
+    # the imported non-generic `panic` function.
+    instance_calls = []
+    for bb in cfg.nodes:
+        for instr in bb.instrs:
+            if (
+                isinstance(instr, ir_values.CallInstr)
+                and isinstance(instr.callee, ir_module.FnInstance)
+                and instr.callee.name == "id[i32]"
+            ):
+                instance_calls.append(instr)
     (call,) = instance_calls
     callee = asserts.checked_cast(call.callee, ir_module.FnInstance)
     assert callee.name == "id[i32]"

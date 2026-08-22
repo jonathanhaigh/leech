@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import pytest
 import util
 
-from leech import asserts, ir_env, ir_loader, ir_module, typs
+from leech import asserts, errors, ir_env, ir_loader, ir_module, typs
 
 
 def load_main(tmp_path, **modules):
@@ -36,6 +37,29 @@ def test_load_normalizes_paths(tmp_path):
     assert direct is indirect
     # +1 for the bundled prelude module, always loaded by ModLoader.__init__.
     assert len(loader.mods) == 2
+
+
+def test_declaration_checking_is_an_explicit_post_load_phase(tmp_path):
+    util.write_whole_file(
+        tmp_path / "main.leech",
+        "fn invalid() i32 { return true; }\npub fn main() i32 { return 0; }",
+    )
+    loader = ir_loader.ModLoader()
+
+    loader.load(tmp_path / "main.leech", "main")
+
+    with pytest.raises(errors.InvalidRetTypError):
+        loader.check_declarations()
+
+
+def test_main_name_outside_main_module_is_not_entry_point(tmp_path):
+    util.write_whole_file(tmp_path / "library.leech", "fn main() i32 { return 0; }")
+    loader = ir_loader.ModLoader()
+
+    mod = loader.load(tmp_path / "library.leech", "library")
+
+    fn = next(fn for fn in mod.fns if fn.name == "main")
+    assert not fn.is_main
 
 
 def test_diamond_loads_each_module_once(tmp_path):

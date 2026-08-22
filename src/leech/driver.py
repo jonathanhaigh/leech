@@ -20,7 +20,10 @@ def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir
     qualified_name = opt_util.opt_or_default(qualified_name, file.path.stem)
     # TODO: thread a --search-path/env-var CLI option through to
     # ModLoader's extra_search_roots once one exists.
-    return ir_loader.ModLoader().load(file.path, qualified_name)
+    loader = ir_loader.ModLoader()
+    mod = loader.load(file.path, qualified_name)
+    loader.check_declarations()
+    return mod
 
 
 def compile_to_llvm_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> str:

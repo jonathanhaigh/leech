@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import errors
+from leech import errors, mono
 
 
 def test_import_of_module_with_syntax_error(tmp_path):
@@ -41,6 +41,64 @@ def test_import_fn(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, main_src, "abc\n", 101, a=a_src)
+
+
+def test_imported_non_generic_fn_is_an_external_monomorphization_leaf(tmp_path):
+    main_src = """
+    import a;
+    pub fn main() i32 { return a::f(); }
+    """
+    a_src = """
+    fn id[T](x: T) T { x }
+    pub fn f() i32 { return id[i32](7); }
+    """
+    util.write_whole_file(tmp_path / "a.leech", a_src)
+    mod = util.build_ir_mod(tmp_path, main_src)
+
+    result = mono.discover(mod)
+
+    assert [inst.qualified_name for inst in result.external_fn_instances] == [
+        "prelude::panic",
+        "a::f",
+    ]
+    assert all(inst.qualified_name != "a::f" for inst in result.fn_instances)
+    assert all(inst.qualified_name != "a::id[i32]" for inst in result.fn_instances)
+
+
+def test_uncalled_private_fn_in_imported_module_is_typechecked(tmp_path):
+    main_src = """
+    import helper;
+    pub fn main() i32 { return helper::ok() - 1; }
+    """
+    helper_src = """
+    pub fn ok() i32 { return 1; }
+    fn invalid() i32 { return true; }
+    """
+    util.write_whole_file(tmp_path / "helper.leech", helper_src)
+
+    with pytest.raises(errors.InvalidRetTypError):
+        util.compile_str(tmp_path, main_src)
+
+
+def test_imported_unreachable_body_can_request_unused_struct_instance(tmp_path):
+    main_src = """
+    import a;
+    pub fn main() i32 { return a::ok() - 1; }
+    """
+    a_src = """
+    pub struct Widget[T] { val: T }
+    pub fn ok() i32 { return 1; }
+    fn private_uses_widget() i32 {
+        let w = Widget[bool] { val: true };
+        if (w.val) { return 2; };
+        return 3;
+    }
+    """
+    util.write_whole_file(tmp_path / "a.leech", a_src)
+
+    ir_text = util.compile_str(tmp_path, main_src).read_text()
+
+    assert '%"a::Widget[bool]" = type' in ir_text
 
 
 def test_comptime_import_fn(tmp_path):

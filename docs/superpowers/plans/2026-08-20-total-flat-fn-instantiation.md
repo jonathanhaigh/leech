@@ -10,7 +10,7 @@ SPDX-License-Identifier: MPL-2.0
 
 **Goal:** Give every source and built-in function declaration one flat `instantiate(args)` entry point and make every emitted function body belong to an `FnInstance`.
 
-**Architecture:** An impl's type arguments precede a function's own arguments in one cache key. Module construction eagerly type-checks every declaration but monomorphization lowers only `main`, the public surface, and instances reached from those roots. Declarations retain enough symbol and access policy for instances to preserve every current LLVM name and linkage.
+**Architecture:** An impl's type arguments precede a function's own arguments in one cache key. Module construction eagerly type-checks every declaration in the complete import graph, but monomorphization lowers only `main`, the public surface, and instances reached from those roots. Every instance uses one qualified symbol renderer while declarations retain the access policy needed for linkage.
 
 **Tech Stack:** Python 3.14, uv, pytest, Ruff, basedpyright, llvmlite.
 
@@ -21,8 +21,8 @@ SPDX-License-Identifier: MPL-2.0
 - Work on `main`, as explicitly requested by the user.
 - Ask before every commit; leave implementation changes unstaged for review.
 - Do not use comprehensions containing more than one `for`; write explicit nested loops.
-- Preserve all accepted-language behavior except the separately committed rejection of unconstrained impl parameters.
-- Preserve every existing emitted symbol spelling and linkage.
+- Preserve accepted-language behavior except the separately committed rejection of unconstrained impl parameters and the deliberate rejection of invalid uncalled private bodies in imported modules.
+- Preserve linkage; use one uniform instance-symbol spelling except for the bare `main` entry point.
 - Keep imports module-qualified and docstrings Sphinx-style according to `AGENTS.md`.
 - Before completing the stage, run `uv run pytest -q`, `uv run ruff format --check .`, `uv run ruff check .`, `uv run basedpyright`, and `uv run reuse --no-multiprocessing lint`.
 - The pre-stage baseline is 1,134 passing tests.
@@ -193,12 +193,12 @@ Suggested commit subject: `Flatten function instantiation arguments`.
 **Interfaces:**
 - Produces: `Mod.fns: Collection[Fn]`, containing every source function declaration.
 - Deletes: `Mod.generic_fns` and the generic/non-generic `_build_impl_fns` split.
-- Changes: `Mod.build()` eagerly asks every function and module variable for `typ_check_results`.
+- Changes: after the import graph is built, the loader eagerly asks every source function in every loaded module for `typ_check_results`.
 - Changes: monomorphization roots are `main`, public concrete functions and public variables.
 
 - [ ] **Step 1: Add checking and reachability regressions**
 
-Add compile-error tests for an uncalled private free function and private impl method with invalid return types. Add monomorphization tests proving an unused private function has no emitted body, a public non-generic function does, and a public generic declaration has no instance until concretely referenced.
+Add compile-error tests for an uncalled private free function, private impl method, and imported private function with invalid return types. Add monomorphization tests proving an unused private function has no emitted body, a public non-generic function does, and a public generic declaration has no instance until concretely referenced. Pin the accepted over-approximation where checking an unreachable imported body requests an inert generic struct instance.
 
 - [ ] **Step 2: Run the focused tests**
 
@@ -213,7 +213,7 @@ Expected: the type-check tests already characterize current behavior; the reacha
 
 - [ ] **Step 3: Collect and eagerly check every declaration**
 
-Replace `_generic_fns` with `_fns`. Append every free and impl `Fn` during construction. After definitions and impls are complete, force `typ_check_results` for every function and `ModVar`, without forcing their CFGs. Preserve `GenericFn` wrappers for generic free-function bindings.
+Replace `_generic_fns` with `_fns`. Append every free and impl `Fn` during construction. Keep `ModLoader.load` responsible only for building the requested module and its import graph; after it returns, have `driver.compile_to_ir` call an explicit `ModLoader.check_declarations` phase that forces `typ_check_results` for every source function in every loaded module without forcing their CFGs. Preserve `GenericFn` wrappers for generic free-function bindings.
 
 - [ ] **Step 4: Collapse impl-function construction**
 
@@ -253,17 +253,17 @@ Suggested commit subject: `Separate function checking from emission`.
 - Modify: `tests/test_traits.py`
 
 **Interfaces:**
-- Produces: declaration-owned symbol spelling and access/linkage policy used by `FnInstance`.
+- Produces: uniform instance-owned symbol spelling and declaration-owned access/linkage policy.
 - Deletes: code-generation paths that declare or compile a source `Fn` body directly.
 - Preserves: bodyless `FnDecl` LLVM declarations.
 
-- [ ] **Step 1: Pin current symbols and linkage**
+- [ ] **Step 1: Pin instance symbols and linkage**
 
 Compile fixtures and assert the LLVM definitions include exactly:
 
 ```text
 main
-main::<Foo as Show>::show
+<main::Foo as main::Show>::show
 main::Foo::get
 main::id[i32]
 main::Box[i32]::unwrap
@@ -273,11 +273,13 @@ Assert `main` is not `main::main`. Add linkage assertions for ordinary private/p
 
 - [ ] **Step 2: Run the symbol tests against the current compiler**
 
-Expected: all spelling tests pass as characterization tests.
+Expected: the qualified non-generic trait-method spelling fails until the
+uniform renderer is implemented; the other spellings characterize current
+behavior.
 
-- [ ] **Step 3: Move symbol policy onto source declarations**
+- [ ] **Step 3: Unify symbol rendering on instances**
 
-Record the exact legacy non-generic qualified name, access, and whether generic-instance linkage applies when each `Fn` is built. `FnInstance.qualified_name` uses the legacy spelling when the declaration has zero impl and function parameters; otherwise it derives the substituted receiver prefix and renders only `fn_args` after the function name.
+Give `Fn` one `is_generic` predicate and retain its access and declaring-module metadata. `FnInstance.qualified_name` always derives method prefixes from the substituted receiver and qualified trait, and renders only `fn_args` after the function name. Free functions use the module prefix. Only the executable entry point is special-cased to bare `main`.
 
 - [ ] **Step 4: Unify body declaration and compilation on `FnInstance`**
 

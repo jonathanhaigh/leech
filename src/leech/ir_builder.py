@@ -377,11 +377,11 @@ class CfgBuilder:
                 found = trait_impl.get_trait_method(cached)
                 assert found is not None
                 impl_args = trait_impl.instantiation_args(recv_typ)
-                method = found.instantiate(impl_args) if impl_args else found
+                method = found.instantiate(impl_args)
             elif isinstance(cached, ir_module.Fn):
                 # Resolved against the impl block's own abstract receiver -
                 # map to this build's instance.
-                method = self._resolve_sibling(cached)
+                method = self._instantiate_source_fn(cached)
             else:
                 # A no-op unless resolved against a still-abstract receiver.
                 method = cached.substitute_typ_params(self._typ_arg_mapping)
@@ -718,14 +718,18 @@ class CfgBuilder:
             case _:
                 raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
-    def _resolve_sibling(self, target: ir_module.Fn) -> ir_module.FnSpec:
-        """Map a resolved impl-block sibling to this build's own instance.
+    def _instantiate_source_fn(self, target: ir_module.Fn) -> ir_module.FnInstance:
+        """Instantiate a source function referenced by this lowering.
 
-        A no-op until this build is itself an instance.
+        A sibling in a generic impl inherits the current impl arguments;
+        every other non-generic source function has an empty argument tuple.
+        Emission ownership is decided later by monomorphization.
         """
         if isinstance(self._fn, ir_module.FnInstance):
-            return self._fn.sibling_instance(target)
-        return target
+            sibling = self._fn.sibling_instance(target)
+            if sibling is not None:
+                return sibling
+        return target.instantiate(())
 
     def _resolve_fn_instance(
         self, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
@@ -767,7 +771,7 @@ class CfgBuilder:
 
         target = self._typ_check_results.resolutions.var(var_ast)
         if isinstance(target, ir_module.Fn):
-            return self._resolve_sibling(target)
+            return self._instantiate_source_fn(target)
         if isinstance(target, ir_module.FnSpec):
             return target
         if isinstance(target, ir_values.ComptimeEnum):

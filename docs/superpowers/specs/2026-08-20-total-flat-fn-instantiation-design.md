@@ -16,7 +16,8 @@ template declarations are never body-emission targets. Bodyless external
 
 This is Stage 2 of the
 [`Fn` hierarchy restructure staging plan](../plans/2026-08-17-fn-hierarchy-restructure-staging.md).
-It preserves the language accepted by the compiler.
+It deliberately tightens checking across module boundaries: every loaded
+source body is checked, including uncalled private bodies in imported modules.
 
 ## Instantiation interface
 
@@ -137,12 +138,13 @@ become `Box[i32]::unwrap[i32]`.
 
 ## Checking, module construction, and reachability
 
-Type checking and emission reachability are separate. `Mod.build()` eagerly
-forces `typ_check_results` for every source function and module variable after
-all declarations and impls have been built. This preserves today's rejection
-of errors in unreachable private functions, impl methods, generic functions,
-generic impl methods, and variable initializers. Lowering a CFG is not required
-merely to check a declaration.
+Type checking and emission reachability are separate. `ModLoader.load` only
+builds the requested module and its import graph. Once it returns,
+`driver.compile_to_ir` explicitly calls `ModLoader.check_declarations`, which
+forces `typ_check_results` for every source function in every loaded module.
+This deliberately rejects errors in uncalled private bodies even when they
+belong to imported modules. Lowering a CFG is not required merely to check a
+declaration.
 
 `Mod` keeps one collection of every source `Fn` declaration, rather than the
 current special `generic_fns` collection. `_build_defn` and `_build_impl_fns`
@@ -176,28 +178,36 @@ request more, so polling continues to a fixpoint. The special module-item walk
 that lowers every private concrete function and variable is removed. Only
 `FnInstance` objects enter monomorphization and code generation.
 
+Struct-instance discovery intentionally remains an over-approximation. Type
+checking an unreachable body can populate a generic struct's instance cache,
+and monomorphization may consequently emit that inert named struct type. Exact
+struct reachability would require separate traversal of types referenced by
+emitted signatures, CFGs, variables, and nested layouts; that is outside this
+stage.
+
+The prelude `panic` function is normalized eagerly to its `()` instance when a
+module environment is created. Consequently, a module may contain an unused
+external declaration for `prelude::panic`; keeping one uniform callable
+representation is preferred over avoiding that harmless declaration.
+
 ## Symbol names and linkage
 
-Changing which IR object is emitted must not change existing external names or
-linkage. A source declaration therefore carries the symbol policy currently
-held partly by `ModItem` and partly by `FnInstance`.
-
-The following current spellings are preserved exactly:
+Every function instance uses one qualified-name rendering path:
 
 ```text
 main
-main::unused_private
-main::unused_public
-main::<Foo as Show>::show
+main::free_fn
+<main::Foo as main::Show>::show
 main::Foo::get
 main::id[i32]
 main::Box[i32]::unwrap
 ```
 
-In particular, `main` remains unqualified rather than becoming `main::main`.
-A non-generic trait-impl method retains the unqualified self and trait names in
-its existing `ModItem` spelling; a generic impl instance retains the qualified
-concrete spelling already produced by `FnInstance`.
+Free functions use their module prefix, methods use their qualified concrete
+receiver, and trait methods additionally use the qualified trait. Only the
+executable entry point is special: it remains bare `main`, as required by the
+linker. This deliberately changes the spelling of non-generic trait methods;
+symbol-name compatibility is not a goal for this compiler stage.
 
 The declaration also carries the access needed to preserve the current linkage
 of formerly module-emitted non-generic functions. Generic instances retain
@@ -217,10 +227,10 @@ The contract also supports a future non-generic built-in through
 
 ## Diagnostics and invariants
 
-Apart from the separately committed unconstrained-impl-parameter defect fix,
-this stage introduces no language diagnostic. Existing checks for missing,
-extra, or unsatisfied function type arguments remain at
-resolution/type-checking sites.
+This stage deliberately diagnoses invalid uncalled private bodies in imported
+modules. It also includes the separately committed unconstrained-impl-parameter
+defect fix. Existing checks for missing, extra, or unsatisfied function type
+arguments remain at resolution/type-checking sites.
 
 The following are internal invariants:
 
@@ -250,8 +260,11 @@ Focused tests cover:
 - public generic declarations not being emitted until concretely referenced;
 - an uncalled private function and an uncalled private method with ill-typed
   bodies remaining compile errors;
+- an ill-typed uncalled private function in an imported module being rejected;
+- the documented struct-instance over-approximation from an unreachable
+  imported body;
 - the entry point retaining the bare symbol `main`, not `main::main`;
-- exact current symbols for a non-generic inherent method, a non-generic trait
+- the uniform symbols for a non-generic inherent method, a non-generic trait
   method, a generic free function, and a generic impl method.
 
 A separate test rejects an impl type parameter that does not occur in its self
@@ -262,8 +275,7 @@ test coverage.
 
 The full test suite, Ruff formatting and linting, basedpyright, and REUSE lint
 must pass. The pre-stage baseline is 1,134 passing tests; the defect-fix test
-increases that count. Since the remaining change is structural, any other
-language-visible difference is a regression.
+increases that count. Other language-visible differences are regressions.
 
 ## Out of scope
 
@@ -274,4 +286,4 @@ language-visible difference is a regression.
 - Centralizing caches outside their declarations. That is Stage 5.
 - Generic associated functions and generic trait methods. This stage provides
   the argument model they require but does not add them to the language.
-- Changing any emitted symbol spelling or linkage.
+- Changing linkage policy.
