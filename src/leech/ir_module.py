@@ -174,12 +174,32 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
 class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
     """A function declared without a body (e.g. an external/builtin function)."""
 
+    @functools.cached_property
+    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+        """Extern declarations have no type parameters."""
+        return ()
+
+    @functools.cached_property
+    def _instance(self) -> FnInstance:
+        """The declaration's sole bodyless instance."""
+        return FnInstance(self, ())
+
+    def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
+        """Return this declaration's cached bodyless instance."""
+        assert not args, f"{self.name}: extern declarations take no type arguments"
+        return self._instance
+
+    @property
+    def _qualified_name_prefix(self) -> str:
+        """Keep the bare symbol name required by the external ABI."""
+        return ""
+
 
 class FnTemplate(Protocol):
     """A source or builtin generic function that creates monomorphized instances."""
 
     @property
-    def ast(self) -> Optional[ast.FnDefn]: ...
+    def ast(self) -> Optional[ast.FnSpec]: ...
 
     @property
     def env(self) -> ir_env.Env: ...
@@ -348,20 +368,22 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         return self._mod_name
 
 
-class FnInstance(FnSpec[ast.FnDefn]):
-    """One concrete, monomorphized instantiation of a generic function or
-    method's already-checked body.
+class FnInstance(FnSpec[ast.FnSpec]):
+    """One concrete instantiation of a function declaration.
 
-    :param fn: The generic function or method this is an instantiation of.
+    The declaration may own a checked source or builtin body, or it may
+    be a bodyless extern declaration.
+
+    :param fn: The declaration this is an instantiation of.
     :param args: The impl's type arguments followed by the function's own.
     """
 
-    _fn: Final[FnTemplate]
+    _fn: Final[FnTemplate | FnDecl]
     _args: Final[tuple[typs.Typ, ...]]
     _impl_arity: Final[int]
     _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
 
-    def __init__(self, fn: FnTemplate, args: tuple[typs.Typ, ...]) -> None:
+    def __init__(self, fn: FnTemplate | FnDecl, args: tuple[typs.Typ, ...]) -> None:
         super().__init__(fn.ast)
         self._fn = fn
         self._args = args
@@ -457,9 +479,16 @@ class FnInstance(FnSpec[ast.FnDefn]):
     @property
     def uses_generic_linkage(self) -> bool:
         """Whether this is a generic specialization that may be emitted in many modules."""
+        if isinstance(self._fn, FnDecl):
+            return False
         if not isinstance(self._fn, Fn):
             return True
         return self._fn.is_generic
+
+    @property
+    def has_body(self) -> bool:
+        """Whether this instance owns a body that can be lowered."""
+        return not isinstance(self._fn, FnDecl)
 
     @property
     def source_fn(self) -> Optional[Fn]:
@@ -512,6 +541,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
     def cfg(self) -> ir_values.Cfg:
         """This instance's body, lowered to a control-flow graph. Built
         lazily, on first access."""
+        assert not isinstance(self._fn, FnDecl), "extern instances have no body"
         builder = ir_builder.CfgBuilder(
             self._fn.typ_check_results,
             self._fn.env.impl_registry,
@@ -524,7 +554,7 @@ class FnInstance(FnSpec[ast.FnDefn]):
 
     @override
     def body_cfg(self) -> Optional[ir_values.Cfg]:
-        return self.cfg
+        return self.cfg if self.has_body else None
 
 
 class FnRef(ir_values.ComptimeValue[typs.PtrTyp, ast.FnSpec]):

@@ -212,17 +212,17 @@ class Interpreter:
                 agg.set_element(value, instr.index.value)
                 self._registers[instr] = agg
             case ir_values.CallInstr():
-                callee = self._get_comptime_value(instr.callee)
+                callee = asserts.checked_cast(
+                    self._get_comptime_value(instr.callee), ir_module.FnRef
+                )
                 args = tuple(self._get_comptime_value(arg) for arg in instr.args)
-                if isinstance(callee, ir_module.FnRef):
-                    if self._panic_fn is not None and callee is self._panic_fn:
-                        raise errors.PanicAtComptimeError(_panic_message(args), instr.span)
-                    fn = callee.instance
-                else:
-                    fn = asserts.checked_cast(callee, ir_module.FnSpec)
+                if self._panic_fn is not None and callee is self._panic_fn:
+                    raise errors.PanicAtComptimeError(_panic_message(args), instr.span)
+                fn = callee.instance
+                if not fn.has_body:
+                    raise errors.CallExternFnAtComptimeError(callee.span)
                 cfg = fn.body_cfg()
-                if cfg is None:
-                    raise errors.CallExternFnAtComptimeError(fn.span)
+                assert cfg is not None
                 self._registers[instr] = Interpreter(cfg, fn.params, args, self._panic_fn).eval()
             case ir_values.PhiInstr():
                 assert self._prev_bb is not None

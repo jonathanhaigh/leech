@@ -307,10 +307,10 @@ class Compiler:
         ll_init = self._ll_mod_items.get(var.initializer)
         self._ll_mod_items.get(var).initializer = ll_init  # type: ignore
 
-    def _declare_mod_fn(self, item: ir_module.ModItem, fn: ir_module.FnSpec) -> ll.Value:
-        ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(fn.fn_typ), item.qualified_name)
-        self._ll_mod_items.set(fn, ll_fn)
-        # TODO: linkage for FnDecls?
+    def _declare_mod_fn(self, item: ir_module.ModItem, fn: ir_module.FnDecl) -> ll.Value:
+        inst = fn.instantiate(())
+        ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(inst.fn_typ), inst.qualified_name)
+        self._ll_mod_items.set(inst.ref, ll_fn)
         _set_linkage(ll_fn, item.access)
         return ll_fn
 

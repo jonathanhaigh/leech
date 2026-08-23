@@ -772,11 +772,8 @@ class CfgBuilder:
         target = self._typ_check_results.resolutions.var(var_ast)
         if isinstance(target, ir_module.Fn):
             return self._instantiate_source_fn(target)
-        # Extern declarations do not produce references until Task 2. All
-        # source functions are handled above, so a raw instance must not leak
-        # into a lowered expression through this transitional branch.
         if isinstance(target, ir_module.FnDecl):
-            return target
+            return target.instantiate(()).ref
         if isinstance(target, ir_values.ComptimeEnum):
             # Not a place (see Env._resolve_path_segment's EnumTyp case)
             # - in PLACE context, copy it into a temporary and address

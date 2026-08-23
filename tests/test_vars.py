@@ -76,6 +76,22 @@ def test_fn_mod_var(tmp_path):
     util.check_prog_output(tmp_path, src, "", 99)
 
 
+def test_extern_fn_value_remains_global_initializer(tmp_path):
+    source = "extern fn puts(s: *u8) i32;\nlet p = puts;\npub fn main() i32 { 0 }"
+    mod = util.build_ir_mod(tmp_path, source)
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "p")
+    assert item is not None
+    var = asserts.checked_cast(item.value, ir_module.ModVar)
+    assert isinstance(var.initializer, ir_module.FnRef)
+
+    ir_text = util.compile_str(
+        tmp_path,
+        source,
+    ).read_text()
+
+    assert '@"main::p" = private global i32 (i8*)* @"puts"' in ir_text
+
+
 def test_non_generic_fn_mod_var_initializer_is_fn_ref(tmp_path):
     # Evaluating the initializer also verifies that an FnRef is not rejected as
     # a temporary compile-time pointer.

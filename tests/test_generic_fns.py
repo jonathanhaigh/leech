@@ -744,6 +744,7 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
         struct Foo {}
         impl Foo { fn inherent(*self) i32 { 0 } }
         impl Show for Foo { fn show(*self) i32 { 0 } }
+        extern fn external_fn(value: i32) i32;
         fn ordinary() i32 { 0 }
 
         pub fn main() i32 {
@@ -753,6 +754,7 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
             foo.inherent();
             foo.show();
             helper::imported();
+            external_fn(0);
             return 0;
         }
         """,
@@ -772,6 +774,7 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
         "inherent",
         "show",
         "imported",
+        "external_fn",
     }
     assert expected_names <= callees.keys()
     assert all(isinstance(callees[name], ir_module.FnRef) for name in expected_names)

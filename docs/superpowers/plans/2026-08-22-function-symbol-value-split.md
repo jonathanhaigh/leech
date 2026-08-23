@@ -200,7 +200,7 @@ git commit -m "Introduce function reference values"
 - Produces: extern `FnInstance.qualified_name` as the bare declaration name.
 - Preserves: extern declaration emission through `_program_items`, outside `mono.discover`.
 
-- [ ] **Step 1: Add failing extern-instance regressions**
+- [x] **Step 1: Add failing extern-instance regressions**
 
 Add tests for identity, symbol/linkage, unused imported declarations, and stored references:
 
@@ -226,7 +226,7 @@ def test_extern_fn_value_remains_global_initializer(tmp_path):
 
 Add an import fixture whose unused public extern must still appear as `declare`, and assert the declaration contains neither `linkonce_odr` nor a module-qualified symbol.
 
-- [ ] **Step 2: Run the extern tests and verify failure**
+- [x] **Step 2: Run the extern tests and verify failure**
 
 Run:
 
@@ -236,7 +236,7 @@ uv run pytest tests/test_call.py tests/test_import.py tests/test_vars.py -k "ext
 
 Expected: FAIL because `FnDecl` has no instance cache and extern lowering still returns the declaration.
 
-- [ ] **Step 3: Widen instance AST and add the extern cache**
+- [x] **Step 3: Widen instance AST and add the extern cache**
 
 Widen `FnTemplate.ast` and `FnInstance` AST annotations to `Optional[ast.FnSpec]`. Add an empty-argument cache to `FnDecl`:
 
@@ -265,7 +265,7 @@ class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
 
 Represent body absence explicitly on the instance, without adding a `_build_body` stub to `FnDecl`.
 
-- [ ] **Step 4: Preserve the extern declaration walk**
+- [x] **Step 4: Preserve the extern declaration walk**
 
 Keep `FnDecl` out of `Mod.fns` and `mono._fn_templates`. Change `_declare_mod_fn` to instantiate the declaration and map its reference:
 
@@ -273,12 +273,12 @@ Keep `FnDecl` out of `Mod.fns` and `mono._fn_templates`. Change `_declare_mod_fn
 inst = fn.instantiate(())
 ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(inst.fn_typ), inst.qualified_name)
 self._ll_mod_items.set(inst.ref, ll_fn)
-ll_fn.linkage = "external"
+_set_linkage(ll_fn, item.access)
 ```
 
 Do not route extern instances through `_declare_fn_instance`, `MonoResult.fn_instances`, or `MonoResult.external_fn_instances`.
 
-- [ ] **Step 5: Route extern expressions and compile-time calls through `FnRef`**
+- [x] **Step 5: Route extern expressions and compile-time calls through `FnRef`**
 
 Lower an `FnDecl` reference as `decl.instantiate(()).ref`. In the interpreter, after unwrapping the reference, raise the existing error from the declaration span when the instance has no body:
 
@@ -287,7 +287,7 @@ if not inst.has_body:
     raise errors.CallExternFnAtComptimeError(callee.span)
 ```
 
-- [ ] **Step 6: Run focused and full verification**
+- [x] **Step 6: Run focused and full verification**
 
 Run:
 

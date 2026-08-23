@@ -65,6 +65,20 @@ def test_imported_non_generic_fn_is_an_external_monomorphization_leaf(tmp_path):
     assert all(inst.qualified_name != "a::id[i32]" for inst in result.fn_instances)
 
 
+def test_unused_imported_extern_keeps_bare_external_declaration(tmp_path):
+    main_src = "import a;\npub fn main() i32 { 0 }"
+    a_src = "extern fn unused(value: i32) i32;"
+
+    main_ir, _ = util.compile_modules(tmp_path, main=main_src, a=a_src)
+    ir_text = main_ir.read_text()
+
+    declaration = next(line for line in ir_text.splitlines() if '"unused"' in line)
+    assert declaration.startswith('declare i32 @"unused"')
+    assert not declaration.startswith("define")
+    assert "linkonce_odr" not in declaration
+    assert "a::unused" not in declaration
+
+
 def test_uncalled_private_fn_in_imported_module_is_typechecked(tmp_path):
     main_src = """
     import helper;

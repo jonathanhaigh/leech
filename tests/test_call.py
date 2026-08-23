@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import errors
+from leech import asserts, errors, ir_env, ir_module
 
 
 def test_not_callable(tmp_path):
@@ -124,5 +124,25 @@ def test_comptime_call_extern(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.CallExternFnAtComptimeError):
+    with pytest.raises(errors.CallExternFnAtComptimeError) as exc_info:
         util.compile_str(tmp_path, src)
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert span.file.src[span.start : span.end] == "extern fn puts(s: *u8) i32;"
+
+
+def test_extern_fn_has_cached_bodyless_instance(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        "extern fn puts(s: *u8) i32;\npub fn main() i32 { 0 }",
+    )
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "puts")
+    assert item is not None
+    decl = asserts.checked_cast(item.value, ir_module.FnDecl)
+
+    inst = decl.instantiate(())
+
+    assert inst is decl.instantiate(())
+    assert not inst.has_body
+    assert inst.qualified_name == "puts"
