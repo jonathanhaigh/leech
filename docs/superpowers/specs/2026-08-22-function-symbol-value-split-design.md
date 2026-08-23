@@ -265,9 +265,11 @@ external or source declaration.
 
 ## Diagnostics and Invariants
 
-This stage introduces no language diagnostic. Existing generic-argument,
+This stage introduces no new language diagnostic. Existing generic-argument,
 visibility, callability, and compile-time external-call errors retain their
-current behavior.
+current behavior. Removing `GenericFn` fixes a diagnostic defect: duplicate and
+reserved-name generic free functions now carry the same declaration spans as
+their non-generic equivalents.
 
 The following are internal invariants:
 

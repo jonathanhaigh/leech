@@ -291,6 +291,22 @@ def test_mod_and_typ_name_clash_message(tmp_path):
     assert str(exc_info.value) == 'Duplicate definition of type or module "a"'
 
 
+def test_duplicate_generic_fn_message_has_both_declaration_spans(tmp_path):
+    src = """fn id[T](x: T) T { x }
+fn id[U](x: U) U { x }
+pub fn main() i32 { 0 }
+"""
+    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "fn id[U]")
+    (note,) = exc_info.value.extra
+    assert note.span is not None
+    assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "fn id[T]")
+
+
 def test_overlapping_inherent_impl_assoc_fn_name_clash_message(tmp_path):
     src = """
     struct Counter {}

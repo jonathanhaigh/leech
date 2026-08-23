@@ -866,6 +866,7 @@ class Mod:
                     visibility.Access.from_ast(defn_ast.access),
                     value,
                     qualify_name,
+                    defn_ast.span,
                 )
             case ast.StructDefn():
                 self._add_item(
