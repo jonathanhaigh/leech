@@ -251,10 +251,6 @@ class Compiler:
                 # No LLVM symbol of its own - it lowers directly to its
                 # backing integer type's, declared (if a builtin) already.
                 pass
-            case ir_module.GenericFn():
-                # No LLVM symbol of its own - only its instances do (see
-                # mono.discover), declared separately.
-                pass
             case ir_traits.Trait():
                 # A declaration, not a value or type with anything of its
                 # own to declare - only a trait impl's methods, registered
@@ -282,10 +278,6 @@ class Compiler:
                 # An import contributes no symbols of its own; the
                 # imported module's items are handled by compile()'s walk
                 # over the whole program.
-                return None
-            case ir_module.GenericFn():
-                # No LLVM symbol of its own to compile - only its
-                # instances do (compiled separately by compile()).
                 return None
             case ir_traits.Trait():
                 # A declaration, not a value with a body to compile.

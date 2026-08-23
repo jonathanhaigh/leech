@@ -36,13 +36,13 @@ class ModItem:
     mod: Final[Mod]
     name: Final[str]
     access: Final[visibility.Access]
-    value: Final[ir_values.Value[typs.PtrTyp] | ir_env.Container | GenericFn]
+    value: Final[ir_values.Value[typs.PtrTyp] | ir_env.Container | FnSpec]
     qualify_name: Final[bool] = True
 
     @property
     def _ns(self) -> ir_env.Env.Namespace:
         """Return the namespace in which this item is bound."""
-        if isinstance(self.value, (ir_values.Value, GenericFn)):
+        if isinstance(self.value, (ir_values.Value, FnSpec)):
             return ir_env.Env.Namespace.VARS
         return ir_env.Env.Namespace.CONTAINERS
 
@@ -645,25 +645,6 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn]):
         ``ret``), given this instantiation's concrete type arguments."""
 
 
-class GenericFn:
-    """An unapplied generic function with no concrete value type."""
-
-    fn: Final[FnTemplate]
-
-    def __init__(self, fn: FnTemplate) -> None:
-        self.fn = fn
-
-    @property
-    def name(self) -> str:
-        """This function's name."""
-        return self.fn.name
-
-    @property
-    def span(self) -> Optional[src.SrcSpan]:
-        """The source location of this function's declaration."""
-        return self.fn.span
-
-
 class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     """A module-level binding whose initializer is evaluated at compile time."""
 
@@ -858,13 +839,10 @@ class Mod:
                 qualify_name = self.name != "main" or defn_ast.name.name != "main"
                 fn = Fn(defn_ast, self.env, self.name)
                 fns.append(fn)
-                value: Fn | GenericFn = fn
-                if defn_ast.generic_params:
-                    value = GenericFn(fn)
                 self._add_item(
                     defn_ast.name.name,
                     visibility.Access.from_ast(defn_ast.access),
-                    value,
+                    fn,
                     qualify_name,
                     defn_ast.span,
                 )
@@ -1043,7 +1021,7 @@ class Mod:
         self,
         name: str,
         access: visibility.Access,
-        value: ir_values.Value[typs.PtrTyp] | ir_env.Container | GenericFn,
+        value: ir_values.Value[typs.PtrTyp] | ir_env.Container | FnSpec,
         qualify_name: bool = True,
         span: Optional[src.SrcSpan] = None,
     ) -> None:

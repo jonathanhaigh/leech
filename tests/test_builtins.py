@@ -11,8 +11,22 @@ from leech import asserts, errors, ir_env, ir_module, target, typs
 def _get_builtin(mod, name: str) -> ir_module.GenericBuiltinFn:
     """Get the compiler-intrinsic builtin ambiently bound as ``name``."""
     var = mod.env.get(ir_env.Env.Namespace.VARS, name)
-    assert isinstance(var, ir_module.GenericFn)
-    return asserts.checked_cast(var.fn, ir_module.GenericBuiltinFn)
+    return asserts.checked_cast(var, ir_module.GenericBuiltinFn)
+
+
+def test_generic_builtin_is_bound_as_declaration(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "pub fn main() i32 { 0 }")
+
+    builtin = mod.env.get(ir_env.Env.Namespace.VARS, "__size_of")
+
+    assert isinstance(builtin, ir_module.GenericBuiltinFn)
+
+
+def test_bare_generic_builtin_reference_requires_typ_args(tmp_path):
+    src = "pub fn main() i32 { let size = __size_of; return 0; }"
+
+    with pytest.raises(errors.MissingTypArgsError):
+        util.compile_str(tmp_path, src)
 
 
 # Widths whose byte size is unambiguous and target-independent: these are

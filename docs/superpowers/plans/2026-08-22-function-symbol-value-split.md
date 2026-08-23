@@ -172,7 +172,7 @@ git diff --check
 
 Expected: all pass; the full count increases by the new tests.
 
-- [ ] **Step 7: Stop for review and request commit authorization**
+- [x] **Step 7: Stop for review and request commit authorization**
 
 Present the unstaged Task 1 diff and verification results. After explicit authorization only:
 
@@ -302,7 +302,7 @@ git diff --check
 
 Expected: all pass; emitted extern names and linkage match the pre-task output.
 
-- [ ] **Step 7: Stop for review and request commit authorization**
+- [x] **Step 7: Stop for review and request commit authorization**
 
 After explicit authorization only:
 
@@ -324,19 +324,23 @@ git commit -m "Instantiate extern function declarations"
 - Modify: `src/leech/typcheck.py`
 - Modify: `src/leech/ir_builder.py`
 - Modify: `src/leech/codegen.py`
-- Modify: `src/leech/mono.py`
+- Modify: `docs/superpowers/specs/2026-08-22-function-symbol-value-split-design.md`
 - Test: `tests/test_builtins.py`
+- Test: `tests/test_errors.py`
 - Test: `tests/test_generic_fns.py`
 - Test: `tests/test_generic_structs.py`
 - Test: `tests/test_impl.py`
+- Test: `tests/test_traits.py`
 
 **Interfaces:**
 - Consumes: all declaration kinds implement `instantiate(args) -> FnInstance`.
 - Produces: `ir_traits.FnSelection(fn: ir_module.Fn, impl_args: tuple[typs.Typ, ...])`.
 - Produces: environments and module items bind `FnSpec` declarations directly.
 - Deletes: `GenericFn`.
+- Fixes: duplicate and reserved-name generic free-function diagnostics gain
+  declaration spans, matching non-generic functions.
 
-- [ ] **Step 1: Add failing direct-binding and generic-impl tests**
+- [x] **Step 1: Add failing direct-binding and generic-impl tests**
 
 Replace wrapper-shape assertions with declaration assertions and add a generic-impl sibling case:
 
@@ -365,7 +369,7 @@ def test_bare_sibling_reference_in_generic_impl_needs_no_fn_args(tmp_path):
 
 Add a lookup test asserting a generic inherent or trait impl lookup returns a selection without increasing `fn.instances` until lowering requests it.
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run:
 
@@ -375,7 +379,7 @@ uv run pytest tests/test_builtins.py tests/test_generic_fns.py tests/test_generi
 
 Expected: FAIL because generic functions are wrapped and registry lookup instantiates generic impl methods.
 
-- [ ] **Step 3: Introduce an explicit registry selection**
+- [x] **Step 3: Introduce an explicit registry selection**
 
 Add the immutable selection in `ir_traits.py`:
 
@@ -394,7 +398,7 @@ class FnSelection:
 
 Change `lookup_assoc_fn` and `lookup_member` to return `FnSelection(found, args)` for concrete-receiver selections, including an empty argument tuple. Do not call `instantiate` in either lookup.
 
-- [ ] **Step 4: Record selections through type checking and resolution**
+- [x] **Step 4: Record selections through type checking and resolution**
 
 Update `resolve.VarTarget` and `resolve.Callee` to admit `FnSelection`. Type checking obtains the selected concrete signature from `selection.fn_typ`, delegates visibility/span checks to `selection.fn`, and records the selection unchanged.
 
@@ -407,7 +411,7 @@ if isinstance(var, ir_module.FnSpec) and var.typ_params:
 
 Do not use `Fn.is_generic` for this decision; it includes parent-impl parameters used only for instantiation and emission policy.
 
-- [ ] **Step 5: Instantiate selections only during lowering**
+- [x] **Step 5: Instantiate selections only during lowering**
 
 Add one lowering helper:
 
@@ -421,7 +425,7 @@ def _selection_ref(self, selection: ir_traits.FnSelection) -> ir_module.FnRef:
 
 Use it for path-based associated functions and dot-call members. Keep the existing sibling path for an abstract `Fn` inside its own generic impl.
 
-- [ ] **Step 6: Remove `GenericFn` and bind declarations directly**
+- [x] **Step 6: Remove `GenericFn` and bind declarations directly**
 
 Delete `GenericFn`. Bind every free function and built-in declaration directly:
 
@@ -431,9 +435,12 @@ fns.append(fn)
 self._add_item(defn_ast.name.name, access, fn, qualify_name)
 ```
 
-Update `ir_env.Var`, `ModItem.value`, `_add_item`, private-item diagnostics, `resolve.VarTarget`, codegen module-item matches, and mono template enumeration to use `FnSpec` declarations. Make `ModItem._ns` classify `FnSpec` explicitly as `VARS` even though it is not yet detached from `Value` until Task 4.
+Update `ir_env.Var`, `ModItem.value`, `_add_item`, private-item diagnostics,
+`resolve.VarTarget`, and codegen module-item matches to use `FnSpec` declarations.
+Make `ModItem._ns` classify `FnSpec` explicitly as `VARS` even though it is not
+yet detached from `Value` until Task 4.
 
-- [ ] **Step 7: Run focused and full verification**
+- [x] **Step 7: Run focused and full verification**
 
 Run:
 
@@ -453,7 +460,7 @@ Expected: all pass; `rg -n "GenericFn" src tests` returns no matches.
 After explicit authorization only:
 
 ```bash
-git add src/leech/ir_module.py src/leech/ir_builtins.py src/leech/ir_env.py src/leech/ir_traits.py src/leech/resolve.py src/leech/typcheck.py src/leech/ir_builder.py src/leech/codegen.py src/leech/mono.py tests/test_builtins.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_impl.py
+git add docs/superpowers/plans/2026-08-22-function-symbol-value-split.md docs/superpowers/specs/2026-08-22-function-symbol-value-split-design.md src/leech/ir_module.py src/leech/ir_builtins.py src/leech/ir_env.py src/leech/ir_traits.py src/leech/resolve.py src/leech/typcheck.py src/leech/ir_builder.py src/leech/codegen.py tests/test_builtins.py tests/test_errors.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_impl.py tests/test_traits.py
 git commit -m "Bind function declarations as symbols"
 ```
 

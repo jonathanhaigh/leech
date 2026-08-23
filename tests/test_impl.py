@@ -36,6 +36,31 @@ def test_generic_inherent_impl_method_found_through_registry(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
+def test_generic_impl_lookup_does_not_instantiate_method(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    impl[T] Box[T] {
+        fn get(*self) T { return self.*.val; }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    mod = util.build_ir_mod(tmp_path, src)
+    box_item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Box")
+    assert box_item is not None
+    box = asserts.checked_cast(box_item.value, typs.StructTyp)
+    concrete_box = box.instance((typs.I32,))
+    (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_box)
+    fn = opt_util.opt_unwrap(impl.get_fn("get"))
+    instances_before = tuple(fn.instances)
+
+    selection = mod.loader.impl_registry.lookup_member(concrete_box, "get", None)
+
+    assert tuple(fn.instances) == instances_before
+    selection = asserts.checked_cast(selection, ir_traits.FnSelection)
+    assert selection.fn is fn
+    assert selection.impl_args == (typs.I32,)
+
+
 def test_field_and_method_same_name_coexist(tmp_path):
     src = """
     struct Counter { get: i32 }

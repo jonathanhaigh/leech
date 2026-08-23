@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import ast, errors, ir_env, ir_module, ir_traits, typs
+from leech import asserts, ast, errors, ir_env, ir_module, ir_traits, typs
 
 
 def test_trait_impl_for_builtin_typ(tmp_path):
@@ -111,12 +111,41 @@ def test_fn_points_at_its_impl_block(tmp_path):
         """,
     )
     foo = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Foo")
-    method = mod.env.impl_registry.lookup_member(foo, "show", None)
-    assert method is not None
-    assert isinstance(method, ir_module.Fn)
+    selection = mod.env.impl_registry.lookup_member(foo, "show", None)
+    assert selection is not None
+    method = selection.fn
     assert method.impl is not None
     assert method.impl.trait is not None
     assert method.impl.trait.name == "Show"
+
+
+def test_generic_trait_impl_lookup_does_not_instantiate_method(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    struct Box[T] { val: T }
+    impl[T] Show for Box[T] {
+        fn show(*self) i32 { return 1; }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    mod = util.build_ir_mod(tmp_path, src)
+    box = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Box")
+    box = asserts.checked_cast(box, typs.StructTyp)
+    concrete_box = box.instance((typs.I32,))
+    trait = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Show")
+    trait = asserts.checked_cast(trait, ir_traits.Trait)
+    trait_impl = mod.loader.impl_registry.find_trait_impl(trait, concrete_box)
+    assert trait_impl is not None
+    fn = trait_impl.get_fn("show")
+    assert fn is not None
+    instances_before = tuple(fn.instances)
+
+    selection = mod.loader.impl_registry.lookup_member(concrete_box, "show", None)
+
+    assert tuple(fn.instances) == instances_before
+    selection = asserts.checked_cast(selection, ir_traits.FnSelection)
+    assert selection.fn is fn
+    assert selection.impl_args == (typs.I32,)
 
 
 def test_trait_method_call_on_generic_typ_param(tmp_path):

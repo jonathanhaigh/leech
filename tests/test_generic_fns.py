@@ -19,8 +19,7 @@ def _get_generic_fn(mod, name: str) -> ir_module.Fn:
     """Get the generic function ``name`` declares in ``mod``."""
     item = mod.get_item(ir_env.Env.Namespace.VARS, name)
     assert item is not None
-    generic_fn = asserts.checked_cast(item.value, ir_module.GenericFn)
-    return asserts.checked_cast(generic_fn.fn, ir_module.Fn)
+    return asserts.checked_cast(item.value, ir_module.Fn)
 
 
 def _lower_main(tmp_path, src):

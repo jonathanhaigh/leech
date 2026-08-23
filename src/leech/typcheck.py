@@ -429,8 +429,8 @@ class TypCheck:
             from leech import ir_module  # noqa: PLC0415
 
             var = self._resolve_var(callee_ast, e)
-            if isinstance(var, ir_module.GenericFn):
-                return self._resolve_generic_call(var.fn, call_ast, e), None, None
+            if isinstance(var, (ir_module.Fn, ir_module.GenericBuiltinFn)) and var.typ_params:
+                return self._resolve_generic_call(var, call_ast, e), None, None
 
         if not isinstance(callee_ast, ast.FieldAccessExpr):
             callee_typ = self._check_expr(callee_ast, e, None)
@@ -465,20 +465,21 @@ class TypCheck:
             )
             self.results.resolutions.set_callee(call_ast, method)
             if method is not None:
-                if not method.is_accessible_from(callee_ast.span.file):
+                selected_fn = method.fn
+                if not selected_fn.is_accessible_from(callee_ast.span.file):
                     raise errors.PrivateItemAccessError(
                         "function",
                         callee_ast.field.name,
                         callee_ast.field.span,
-                        method.span,
+                        selected_fn.span,
                     )
-                assert method.ast is not None
-                if method.ast.receiver is None:
+                assert selected_fn.ast is not None
+                if selected_fn.ast.receiver is None:
                     raise errors.NotAMethodError(
                         callee_ast.field.name,
                         pointee_typ.name,
                         callee_ast.field.span,
-                        method.span,
+                        selected_fn.span,
                     )
                 return method.fn_typ, callee_ast.value, recv_typ
 
@@ -725,13 +726,15 @@ class TypCheck:
 
     def _check_var_expr(self, var_ast: ast.VarExpr, e: ir_env.Env) -> typs.Typ:
         # Local because runtime isinstance checks cannot use the TYPE_CHECKING import.
-        from leech import ir_module  # noqa: PLC0415
+        from leech import ir_module, ir_traits  # noqa: PLC0415
 
         var = self._resolve_var(var_ast, e)
-        if isinstance(var, ir_module.GenericFn):
+        if isinstance(var, (ir_module.Fn, ir_module.GenericBuiltinFn)) and var.typ_params:
             return self._generic_var_ref_typ(var_ast, var, e)
         if var_ast.generic_args:
             raise errors.TypArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
+        if isinstance(var, ir_traits.FnSelection):
+            return var.ptr_typ
         if isinstance(var, (ir_module.FnSpec, ir_values.ComptimeEnum)):
             # Neither has a place to unwrap: a function reference's own
             # type already is its pointer type, and an enum variant has
@@ -743,19 +746,19 @@ class TypCheck:
         return var.typ.pointee_typ
 
     def _generic_var_ref_typ(
-        self, var_ast: ast.VarExpr, var: ir_module.GenericFn, e: ir_env.Env
+        self, var_ast: ast.VarExpr, var: ir_module.FnTemplate, e: ir_env.Env
     ) -> typs.PtrTyp:
         """Return an explicitly applied generic function reference's pointer type."""
         if not var_ast.generic_args:
             raise errors.MissingTypArgsError(var.name, var_ast.span)
         # An uncalled reference has no arguments from which to infer types.
-        typ_params = self._typ_params_of(var.fn)
+        typ_params = self._typ_params_of(var)
         mapping = self._resolve_explicit_typ_args(
-            var.fn, typ_params, var_ast.generic_args, var_ast.span, e
+            var, typ_params, var_ast.generic_args, var_ast.span, e
         )
         typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
-        self.results._set_generic_var_ref(var_ast, var.fn, typ_args)
-        substituted = asserts.checked_cast(var.fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
+        self.results._set_generic_var_ref(var_ast, var, typ_args)
+        substituted = asserts.checked_cast(var.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
         return typs.PtrTyp.get_or_create(substituted, typs.CONST)
 
     def _check_array_expr(
@@ -899,7 +902,7 @@ class TypCheck:
         """
         if isinstance(expr_ast, ast.VarExpr):
             # Local to avoid the ir_module import cycle.
-            from leech import ir_module  # noqa: PLC0415
+            from leech import ir_module, ir_traits  # noqa: PLC0415
 
             # A variable's own type already *is* its place's pointer type -
             # a function reference doubly so, since taking its address is
@@ -909,7 +912,7 @@ class TypCheck:
             # _generic_var_ref_typ for that case (including its
             # MissingTypArgsError if it's named bare instead).
             var = self._resolve_var(expr_ast, e)
-            if isinstance(var, ir_module.GenericFn):
+            if isinstance(var, (ir_module.Fn, ir_module.GenericBuiltinFn)) and var.typ_params:
                 return self._generic_var_ref_typ(expr_ast, var, e)
             if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
                 return self._local_typs[var]
@@ -917,6 +920,8 @@ class TypCheck:
             # case) isn't a place either - it falls through to the
             # general, value-copying case below, same as any other
             # non-place expression.
+            if isinstance(var, ir_traits.FnSelection):
+                return var.ptr_typ
             if not isinstance(var, ir_values.ComptimeEnum):
                 return var.typ
 
@@ -928,22 +933,18 @@ class TypCheck:
         match expr_ast:
             case ast.VarExpr():
                 # Local to avoid the ir_module import cycle.
-                from leech import ir_module  # noqa: PLC0415
+                from leech import ir_module, ir_traits  # noqa: PLC0415
 
                 var = self._resolve_var(expr_ast, e)
-                # An (explicitly-applied, since this is only reached once
-                # an earlier _check_expr/_check_place pass over the same
-                # node has already succeeded) GenericFn has no .typ of
-                # its own to check - but like any other function
-                # reference, its place is const regardless. An enum
-                # variant isn't a place at all (see _check_place), so it
-                # falls into the same "temporary, always const" case.
-                if isinstance(var, (ir_module.GenericFn, ir_values.ComptimeEnum)):
+                # Function symbols and selections are const, while an enum
+                # variant is a temporary rather than a place.
+                if isinstance(
+                    var, (ir_module.FnSpec, ir_traits.FnSelection, ir_values.ComptimeEnum)
+                ):
                     return typs.CONST
                 if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
                     return self._local_typs[var].mut
-                # Every remaining binding (a ModVar or function reference)
-                # has a PtrTyp .typ - see _check_place.
+                # The only remaining binding is a ModVar.
                 return asserts.checked_cast(var.typ, typs.PtrTyp).mut
             case ast.ArrayAccessExpr():
                 return self._place_mut(expr_ast.array, e)

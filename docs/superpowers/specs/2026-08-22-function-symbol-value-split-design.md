@@ -163,8 +163,9 @@ continue to use declaration metadata.
 Name-resolution facts record declarations, not function values. Associated
 function and method lookup stops instantiating generic-impl functions during
 lookup. `ImplRegistry.lookup_assoc_fn` and `lookup_member` return a small
-selection containing the `Fn` declaration and the impl arguments obtained from
-the concrete receiver. Resolution tables preserve that selection until
+selection containing the `Fn` declaration and the impl arguments obtained by
+matching the receiver against the impl's self type. Those arguments may remain
+abstract inside a generic body. Resolution tables preserve that selection until
 lowering. Thus lookup can select an impl and calculate its arguments, but no
 instance or `FnRef` is created merely by name lookup.
 
@@ -328,7 +329,7 @@ The implementation may use several reviewable commits:
    walk, bare symbols, external linkage, and value-initializer behavior.
 3. Bind function declarations directly; update `ModItem`, registry selections,
    type checking, resolution facts, and lowering.
-4. Remove `GenericFn` and function-value inheritance; retype `Param.fn`,
+4. Remove function-value inheritance; retype `Param.fn`,
    `CfgBuilder._fn`, the panic path, and resolution unions; remove obsolete
    `load`, `store`, `is_temporary`, and `body_cfg` branches; then complete the
    structural checks and full verification.

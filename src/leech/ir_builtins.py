@@ -97,7 +97,7 @@ def register(builtin_env: ir_env.Env, loader: ir_loader.ModLoader) -> None:
     builtin_env.add_container("isize", typs.ISIZE)
     builtin_env.add_container("bool", typs.BOOL)
 
-    builtin_env.add_var("__size_of", ir_module.GenericFn(loader.size_of_builtin))
-    builtin_env.add_var("__ptr_cast_mut", ir_module.GenericFn(loader.ptr_cast_mut_builtin))
-    builtin_env.add_var("__is_null", ir_module.GenericFn(loader.is_null_builtin))
-    builtin_env.add_var("__enum_to_int", ir_module.GenericFn(loader.enum_to_int_builtin))
+    builtin_env.add_var("__size_of", loader.size_of_builtin)
+    builtin_env.add_var("__ptr_cast_mut", loader.ptr_cast_mut_builtin)
+    builtin_env.add_var("__is_null", loader.is_null_builtin)
+    builtin_env.add_var("__enum_to_int", loader.enum_to_int_builtin)

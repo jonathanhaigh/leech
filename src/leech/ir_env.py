@@ -24,11 +24,8 @@ from leech import (
 type Container = typs.Typ | ir_module.Mod | ir_traits.Trait
 """A type, module, or trait bound in the shared container namespace."""
 
-type Var = (
-    ir_values.Value[typs.PtrTyp] | ir_module.GenericFn | ast.Param | ast.Receiver | ast.LetStmt
-)
-"""A value, unapplied generic function, or local binding's declaration-site
-AST node, bound in the variable namespace.
+type Var = ir_values.Value[typs.PtrTyp] | ir_module.FnSpec | ast.Param | ast.Receiver | ast.LetStmt
+"""A value, function symbol, or local declaration-site AST node.
 
 :invariant: every bound Value is PtrTyp-typed [unchecked: hot path]
 """
@@ -132,7 +129,7 @@ class Env:
 
     @staticmethod
     def _private_item_diag_info(
-        value: Container | ir_values.Value[typs.PtrTyp] | ir_module.GenericFn,
+        value: Container | ir_values.Value[typs.PtrTyp] | ir_module.FnSpec,
     ) -> Optional[tuple[str, Optional[src.SrcSpan]]]:
         """Return a private item's diagnostic kind and definition span, if applicable.
 
@@ -140,8 +137,6 @@ class Env:
         value, never a local binding - narrower than the general ``Var``.
         """
         if isinstance(value, ir_module.FnSpec):
-            return "function", value.span
-        if isinstance(value, ir_module.GenericFn):
             return "function", value.span
         if isinstance(value, ir_module.ModVar):
             return "variable", value.span
@@ -181,11 +176,12 @@ class Env:
                     if ns == Env.Namespace.VARS
                     else None
                 )
+                selected_fn = opt_util.opt_map(res, lambda selection: selection.fn)
                 # Private associated functions are invisible outside the
                 # struct's own module, same as private Mod items above.
-                if res is not None and not res.is_accessible_from(ident.span.file):
+                if selected_fn is not None and not selected_fn.is_accessible_from(ident.span.file):
                     raise errors.PrivateItemAccessError(
-                        "function", ident.name, ident.span, res.span
+                        "function", ident.name, ident.span, selected_fn.span
                     )
             case typs.EnumTyp():
                 # An enum's variants are reachable by path, e.g.

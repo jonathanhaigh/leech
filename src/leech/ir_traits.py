@@ -4,13 +4,37 @@
 
 """Trait declarations and their implementations."""
 
+import dataclasses
 import functools
 from collections.abc import Collection, Hashable, Iterator, Mapping
 from typing import Final, Optional
 
-from leech import ast, errors, ir_env, ir_module, opt_util, reserved, src, typs
+from leech import asserts, ast, errors, ir_env, ir_module, opt_util, reserved, src, typs
 
 # Keep this import module-qualified because typs may still be initializing.
+
+
+@dataclasses.dataclass(frozen=True)
+class FnSelection:
+    """An impl function and the impl arguments obtained by matching its receiver.
+
+    The arguments may remain abstract when lookup occurs inside a generic body.
+    """
+
+    fn: ir_module.Fn
+    impl_args: tuple[typs.Typ, ...]
+
+    @property
+    def fn_typ(self) -> typs.FnTyp:
+        """The selected function signature after substituting impl arguments."""
+        impl = opt_util.opt_unwrap(self.fn.impl)
+        mapping = dict(zip(impl.typ_params, self.impl_args, strict=True))
+        return asserts.checked_cast(self.fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
+
+    @property
+    def ptr_typ(self) -> typs.PtrTyp:
+        """A const function-pointer type for the selected signature."""
+        return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
 
 
 class TraitMethod:
@@ -490,9 +514,7 @@ class ImplRegistry:
                     trait_impls.append(trait_impl)
         return trait_impls
 
-    def lookup_assoc_fn(
-        self, typ: typs.Typ, name: str
-    ) -> Optional[ir_module.Fn | ir_module.FnInstance]:
+    def lookup_assoc_fn(self, typ: typs.Typ, name: str) -> Optional[FnSelection]:
         """Find ``typ``'s inherent associated function called ``name``."""
         matches = []
         for inherent_impl in self.find_inherent_impls(typ):
@@ -510,11 +532,11 @@ class ImplRegistry:
         # abstract receiver, so inherent and trait matches need specialization.
         impl = opt_util.opt_unwrap(found.impl)
         args = impl.instantiation_args(typ)
-        return found.instantiate(args) if args else found
+        return FnSelection(found, args)
 
     def lookup_member(
         self, typ: typs.Typ, name: str, span: Optional[src.SrcSpan]
-    ) -> Optional[ir_module.Fn | ir_module.FnInstance]:
+    ) -> Optional[FnSelection]:
         """Find ``typ``'s member (inherent or via a trait impl) called ``name``.
 
         Only ever meaningful for a *concrete* type - a call through an
@@ -550,7 +572,7 @@ class ImplRegistry:
         # abstract receiver, so inherent and trait matches need specialization.
         impl = opt_util.opt_unwrap(method.impl)
         args = impl.instantiation_args(typ)
-        return method.instantiate(args) if args else method
+        return FnSelection(method, args)
 
 
 def disambiguate[T](

@@ -378,13 +378,8 @@ class CfgBuilder:
                 assert found is not None
                 impl_args = trait_impl.instantiation_args(recv_typ)
                 method = found.instantiate(impl_args).ref
-            elif isinstance(cached, ir_module.Fn):
-                # Resolved against the impl block's own abstract receiver -
-                # map to this build's instance.
-                method = self._instantiate_source_fn(cached)
             else:
-                # A no-op unless resolved against a still-abstract receiver.
-                method = cached.substitute_typ_params(self._typ_arg_mapping).ref
+                method = self._selection_ref(cached)
 
             if method is not None:
                 recv_arg = recv_place
@@ -752,6 +747,13 @@ class CfgBuilder:
         )
         return fn.instantiate(concrete_typ_args).ref
 
+    def _selection_ref(self, selection: ir_traits.FnSelection) -> ir_module.FnRef:
+        """Instantiate an impl-function selection for this concrete body."""
+        args = tuple(
+            arg.substitute_typ_params(self._typ_arg_mapping) for arg in selection.impl_args
+        )
+        return selection.fn.instantiate(args).ref
+
     def _build_var_expr(self, var_ast: ast.VarExpr, ctx: _ExprContext) -> ir_values.Value:
         """Lower a possibly qualified variable or function reference.
 
@@ -770,6 +772,8 @@ class CfgBuilder:
             return self._resolve_fn_ref(*generic_ref)
 
         target = self._typ_check_results.resolutions.var(var_ast)
+        if isinstance(target, ir_traits.FnSelection):
+            return self._selection_ref(target)
         if isinstance(target, ir_module.Fn):
             return self._instantiate_source_fn(target)
         if isinstance(target, ir_module.FnDecl):
@@ -783,9 +787,8 @@ class CfgBuilder:
         if isinstance(target, (ast.Param, ast.Receiver, ast.LetStmt)):
             var = self._local_values[target]
         else:
-            # A bare, uncalled GenericFn can't reach here - TypCheck
-            # rejects it (MissingTypArgsError) unless generic_ref above
-            # already handled it - so only a ModVar remains.
+            # A bare generic declaration can't reach here: TypCheck rejects it
+            # unless generic_ref above already handled it.
             var = asserts.checked_cast(target, ir_module.ModVar)
 
         if ctx == _ExprContext.PLACE:

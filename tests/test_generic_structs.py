@@ -648,6 +648,25 @@ def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
+def test_bare_sibling_reference_in_generic_impl_needs_no_fn_args(tmp_path):
+    src = """
+    struct Box[T] { value: T }
+    impl[T] Box[T] {
+        fn get(value: T) T { value }
+        fn check_ref(*self) T {
+            let getter = get;
+            return getter(self.*.value);
+        }
+    }
+    pub fn main() i32 {
+        let box = Box[i32] { value: 9 };
+        return box.check_ref();
+    }
+    """
+
+    util.check_prog_output(tmp_path, src, "", 9)
+
+
 def test_generic_impl_block_sibling_method_calls_by_dot_call(tmp_path):
     # A generic-impl method's body can call a sibling method through
     # `self.*.method()` too (leech has no automatic dereferencing, so the
