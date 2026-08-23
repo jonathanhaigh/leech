@@ -328,8 +328,8 @@ The implementation may use several reviewable commits:
    type checking, resolution facts, and lowering.
 4. Remove `GenericFn` and function-value inheritance; retype `Param.fn`,
    `CfgBuilder._fn`, the panic path, and resolution unions; remove obsolete
-   `load`, `store`, `is_temporary`, and `body_cfg` branches.
-5. Complete structural checks and full verification.
+   `load`, `store`, `is_temporary`, and `body_cfg` branches; then complete the
+   structural checks and full verification.
 
 No intermediate commit should intentionally change accepted programs, emitted
 symbols, or linkage. The implementation must not include the Stage 4 naming

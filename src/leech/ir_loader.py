@@ -68,7 +68,7 @@ class ModLoader:
         return self._prelude
 
     @property
-    def prelude_panic_fn(self) -> Optional[ir_module.FnSpec]:
+    def prelude_panic_fn(self) -> Optional[ir_module.FnRef]:
         """Return the prelude's unshadowable ``panic`` function when available.
 
         This property must not cache the temporary ``None`` observed during prelude loading.
@@ -79,7 +79,7 @@ class ModLoader:
         if item is None:
             return None
         panic_fn = asserts.checked_cast(item.value, ir_module.Fn)
-        return panic_fn.instantiate(())
+        return panic_fn.instantiate(()).ref
 
     @property
     def builtins(self) -> tuple[ir_module.GenericBuiltinFn, ...]:

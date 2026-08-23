@@ -39,7 +39,7 @@ class Interpreter:
     _prev_bb: Optional[ir_values.BasicBlock]
     _curr_instr_index: int
     _ret_value: Optional[ir_values.ComptimeValue]
-    _panic_fn: Final[Optional[ir_module.FnSpec]]
+    _panic_fn: Final[Optional[ir_module.FnRef]]
     #: Overflow results consumed by the checked operation's paired flag instruction.
     _overflow_flags: Final[dict[ir_values.Instr, bool]]
 
@@ -48,7 +48,7 @@ class Interpreter:
         cfg: ir_values.Cfg,
         params: tuple[ir_values.Param, ...],
         args: tuple[ir_values.ComptimeValue, ...],
-        panic_fn: Optional[ir_module.FnSpec] = None,
+        panic_fn: Optional[ir_module.FnRef] = None,
     ) -> None:
         self._cfg = cfg
         self._registers = dict(zip(params, args, strict=True))
@@ -212,18 +212,18 @@ class Interpreter:
                 agg.set_element(value, instr.index.value)
                 self._registers[instr] = agg
             case ir_values.CallInstr():
-                callee = asserts.checked_cast(
-                    self._get_comptime_value(instr.callee), ir_module.FnSpec
-                )
+                callee = self._get_comptime_value(instr.callee)
                 args = tuple(self._get_comptime_value(arg) for arg in instr.args)
-                if self._panic_fn is not None and callee is self._panic_fn:
-                    raise errors.PanicAtComptimeError(_panic_message(args), instr.span)
-                cfg = callee.body_cfg()
+                if isinstance(callee, ir_module.FnRef):
+                    if self._panic_fn is not None and callee is self._panic_fn:
+                        raise errors.PanicAtComptimeError(_panic_message(args), instr.span)
+                    fn = callee.instance
+                else:
+                    fn = asserts.checked_cast(callee, ir_module.FnSpec)
+                cfg = fn.body_cfg()
                 if cfg is None:
-                    raise errors.CallExternFnAtComptimeError(callee.span)
-                self._registers[instr] = Interpreter(
-                    cfg, callee.params, args, self._panic_fn
-                ).eval()
+                    raise errors.CallExternFnAtComptimeError(fn.span)
+                self._registers[instr] = Interpreter(cfg, fn.params, args, self._panic_fn).eval()
             case ir_values.PhiInstr():
                 assert self._prev_bb is not None
                 self._registers[instr] = self._get_comptime_value(instr.incoming[self._prev_bb])

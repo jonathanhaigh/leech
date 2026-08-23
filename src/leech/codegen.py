@@ -316,7 +316,10 @@ class Compiler:
 
     def _declare_fn_instance(self, inst: ir_module.FnInstance) -> ll.Value:
         ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(inst.fn_typ), inst.qualified_name)
+        # Bodies still use the instance as their codegen key until Task 4;
+        # function-valued IR uses the reference introduced in this task.
         self._ll_mod_items.set(inst, ll_fn)
+        self._ll_mod_items.set(inst.ref, ll_fn)
         if inst.uses_generic_linkage:
             # A specialization may be emitted again, identically,
             # wherever else it's called. linkonce_odr lets the linker

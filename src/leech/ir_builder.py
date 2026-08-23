@@ -51,7 +51,7 @@ class CfgBuilder:
     _fn: Final[Optional[ir_module.FnSpec]]
     _typ_check_results: Final[typcheck.TypCheckResults]
     _impl_registry: Final[ir_traits.ImplRegistry]
-    _panic_fn: Final[Optional[ir_module.FnSpec]]
+    _panic_fn: Final[Optional[ir_module.FnRef]]
     _typ_arg_mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
     cfg: Final[ir_values.Cfg]
     _curr_bb: ir_values.BasicBlock
@@ -67,7 +67,7 @@ class CfgBuilder:
         self,
         typ_check_results: typcheck.TypCheckResults,
         impl_registry: ir_traits.ImplRegistry,
-        panic_fn: Optional[ir_module.FnSpec],
+        panic_fn: Optional[ir_module.FnRef],
         fn: Optional[ir_module.FnSpec] = None,
         typ_arg_mapping: Optional[Mapping[typs.TypParamTyp, typs.Typ]] = None,
     ) -> None:
@@ -364,7 +364,7 @@ class CfgBuilder:
         generic_call = self._typ_check_results.generic_call(call_ast)
         if generic_call is not None:
             # TypCheck recorded the resolved function and type arguments.
-            callee: ir_values.Value = self._resolve_fn_instance(*generic_call)
+            callee: ir_values.Value = self._resolve_fn_ref(*generic_call)
         elif isinstance(callee_ast, ast.FieldAccessExpr):
             recv_place = self._build_place(callee_ast.value)
             cached = self._typ_check_results.resolutions.callee(call_ast)
@@ -377,14 +377,14 @@ class CfgBuilder:
                 found = trait_impl.get_trait_method(cached)
                 assert found is not None
                 impl_args = trait_impl.instantiation_args(recv_typ)
-                method = found.instantiate(impl_args)
+                method = found.instantiate(impl_args).ref
             elif isinstance(cached, ir_module.Fn):
                 # Resolved against the impl block's own abstract receiver -
                 # map to this build's instance.
                 method = self._instantiate_source_fn(cached)
             else:
                 # A no-op unless resolved against a still-abstract receiver.
-                method = cached.substitute_typ_params(self._typ_arg_mapping)
+                method = cached.substitute_typ_params(self._typ_arg_mapping).ref
 
             if method is not None:
                 recv_arg = recv_place
@@ -718,8 +718,8 @@ class CfgBuilder:
             case _:
                 raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
-    def _instantiate_source_fn(self, target: ir_module.Fn) -> ir_module.FnInstance:
-        """Instantiate a source function referenced by this lowering.
+    def _instantiate_source_fn(self, target: ir_module.Fn) -> ir_module.FnRef:
+        """Return a reference to the source function selected by this lowering.
 
         A sibling in a generic impl inherits the current impl arguments;
         every other non-generic source function has an empty argument tuple.
@@ -728,13 +728,13 @@ class CfgBuilder:
         if isinstance(self._fn, ir_module.FnInstance):
             sibling = self._fn.sibling_instance(target)
             if sibling is not None:
-                return sibling
-        return target.instantiate(())
+                return sibling.ref
+        return target.instantiate(()).ref
 
-    def _resolve_fn_instance(
+    def _resolve_fn_ref(
         self, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
-    ) -> ir_module.FnInstance:
-        """Get the concrete instance identified by ``fn`` and ``typ_args``.
+    ) -> ir_module.FnRef:
+        """Return a reference to the instance identified by ``fn`` and ``typ_args``.
 
         :param fn: The generic function TypCheck resolved.
         :param typ_args: Its type arguments as TypCheck recorded them -
@@ -745,12 +745,12 @@ class CfgBuilder:
             here against this lowering's own type arguments (a no-op
             outside a generic instance) to resolve down to concrete
             types before asking for the instance itself.
-        :return: The (possibly newly-built, possibly cached) instance.
+        :return: The cached reference belonging to the selected instance.
         """
         concrete_typ_args = tuple(
             typ_arg.substitute_typ_params(self._typ_arg_mapping) for typ_arg in typ_args
         )
-        return fn.instantiate(concrete_typ_args)
+        return fn.instantiate(concrete_typ_args).ref
 
     def _build_var_expr(self, var_ast: ast.VarExpr, ctx: _ExprContext) -> ir_values.Value:
         """Lower a possibly qualified variable or function reference.
@@ -765,14 +765,17 @@ class CfgBuilder:
         generic_ref = self._typ_check_results.generic_var_ref(var_ast)
         if generic_ref is not None:
             # TypCheck already resolved which generic function this names
-            # and its explicit type arguments; this just has to get
-            # (building, if needed) the instance they name.
-            return self._resolve_fn_instance(*generic_ref)
+            # and its explicit type arguments; this just has to get the
+            # reference belonging to the instance they name.
+            return self._resolve_fn_ref(*generic_ref)
 
         target = self._typ_check_results.resolutions.var(var_ast)
         if isinstance(target, ir_module.Fn):
             return self._instantiate_source_fn(target)
-        if isinstance(target, ir_module.FnSpec):
+        # Extern declarations do not produce references until Task 2. All
+        # source functions are handled above, so a raw instance must not leak
+        # into a lowered expression through this transitional branch.
+        if isinstance(target, ir_module.FnDecl):
             return target
         if isinstance(target, ir_values.ComptimeEnum):
             # Not a place (see Env._resolve_path_segment's EnumTyp case)

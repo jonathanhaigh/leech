@@ -479,6 +479,11 @@ class FnInstance(FnSpec[ast.FnDefn]):
         return self._fn.instantiate(new_args)
 
     @functools.cached_property
+    def ref(self) -> FnRef:
+        """The unique function-address value for this instance."""
+        return FnRef(self)
+
+    @functools.cached_property
     def _siblings(self) -> frozenset[Fn]:
         """Return functions from this instance's declaring ``impl`` block.
 
@@ -520,6 +525,20 @@ class FnInstance(FnSpec[ast.FnDefn]):
     @override
     def body_cfg(self) -> Optional[ir_values.Cfg]:
         return self.cfg
+
+
+class FnRef(ir_values.ComptimeValue[typs.PtrTyp, ast.FnSpec]):
+    """An immutable function-address value for one concrete instance."""
+
+    instance: Final[FnInstance]
+
+    def __init__(self, instance: FnInstance) -> None:
+        super().__init__(instance.ast)
+        self.instance = instance
+
+    @override
+    def calculate_typ(self) -> typs.PtrTyp:
+        return self.instance.typ
 
 
 class GenericBuiltinFn(FnSpec[ast.FnDefn]):

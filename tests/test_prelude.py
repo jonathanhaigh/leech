@@ -6,6 +6,8 @@ import signal
 
 import util
 
+from leech import ir_module, ir_values
+
 
 def test_panic_usable_with_no_import(tmp_path):
     main_src = """
@@ -77,3 +79,35 @@ def test_synthesized_check_uses_real_panic_even_when_shadowed(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, main_src, "integer overflow\n", -signal.SIGABRT)
+
+
+def test_source_and_synthesized_panic_calls_share_reference(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        """
+        pub fn main() i32 {
+            let x: i32 = 1;
+            if (x == 0) { panic("never"); };
+            return x + 1 - 2;
+        }
+        """,
+    )
+    main = next(fn for fn in mod.fns if fn.is_main)
+    panic_calls = []
+    for bb in main.cfg.nodes:
+        for instr in bb.instrs:
+            if not isinstance(instr, ir_values.CallInstr):
+                continue
+            callee = instr.callee
+            if (isinstance(callee, ir_module.FnRef) and callee.instance.name == "panic") or (
+                isinstance(callee, ir_module.FnInstance) and callee.name == "panic"
+            ):
+                panic_calls.append(instr)
+
+    # There may be multiple synthesized arithmetic checks; require both the
+    # source call and at least one synthesized call before comparing identity.
+    assert any(call.ast is not None for call in panic_calls)
+    assert any(call.ast is None for call in panic_calls)
+    panic_callees = [call.callee for call in panic_calls]
+    assert all(isinstance(callee, ir_module.FnRef) for callee in panic_callees)
+    assert all(callee is panic_callees[0] for callee in panic_callees)

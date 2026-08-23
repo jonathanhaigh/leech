@@ -626,6 +626,16 @@ def test_fn_instance_caches_by_typ_args(tmp_path):
     assert fn.instantiate((typs.I32,)) is not fn.instantiate((typs.BOOL,))
 
 
+def test_fn_instance_caches_one_reference(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    fn = _get_generic_fn(mod, "id")
+
+    inst = fn.instantiate((typs.I32,))
+
+    assert inst.ref is inst.ref
+    assert inst.ref.instance is inst
+
+
 def test_fn_instance_signature_is_substituted(tmp_path):
     mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
@@ -693,7 +703,7 @@ def test_fn_instance_recursive_call_lowers(tmp_path):
     _ = fn.instantiate((typs.I32,)).cfg
 
 
-def test_calling_generic_fn_lowers_to_an_instance_call(tmp_path):
+def test_calling_generic_fn_lowers_to_a_fn_ref(tmp_path):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -705,17 +715,63 @@ def test_calling_generic_fn_lowers_to_an_instance_call(tmp_path):
     cfg = _lower_main(tmp_path, src)
 
     # Filtered to the generic instance under test specifically: `- 5`'s
-    # compiler-synthesized overflow check is also an instance call, to
-    # the imported non-generic `panic` function.
+    # compiler-synthesized overflow check also references the imported
+    # non-generic `panic` function.
     instance_calls = []
     for bb in cfg.nodes:
         for instr in bb.instrs:
             if (
                 isinstance(instr, ir_values.CallInstr)
-                and isinstance(instr.callee, ir_module.FnInstance)
-                and instr.callee.name == "id[i32]"
+                and isinstance(instr.callee, ir_module.FnRef)
+                and instr.callee.instance.name == "id[i32]"
             ):
                 instance_calls.append(instr)
     (call,) = instance_calls
-    callee = asserts.checked_cast(call.callee, ir_module.FnInstance)
-    assert callee.name == "id[i32]"
+    callee = asserts.checked_cast(call.callee, ir_module.FnRef)
+    assert callee.instance.name == "id[i32]"
+
+
+def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
+    util.write_whole_file(
+        tmp_path / "helper.leech",
+        "pub fn imported() i32 { 0 }",
+    )
+    cfg = _lower_main(
+        tmp_path,
+        """
+        import helper;
+        trait Show { fn show(*self) i32; }
+        struct Foo {}
+        impl Foo { fn inherent(*self) i32 { 0 } }
+        impl Show for Foo { fn show(*self) i32 { 0 } }
+        fn ordinary() i32 { 0 }
+
+        pub fn main() i32 {
+            let foo = Foo {};
+            ordinary();
+            __size_of[i32]();
+            foo.inherent();
+            foo.show();
+            helper::imported();
+            return 0;
+        }
+        """,
+    )
+
+    callees = {}
+    for bb in cfg.nodes:
+        for instr in bb.instrs:
+            if not isinstance(instr, ir_values.CallInstr):
+                continue
+            if isinstance(instr.callee, ir_module.FnRef):
+                callees[instr.callee.instance.name] = instr.callee
+
+    expected_names = {
+        "ordinary",
+        "__size_of[i32]",
+        "inherent",
+        "show",
+        "imported",
+    }
+    assert expected_names <= callees.keys()
+    assert all(isinstance(callees[name], ir_module.FnRef) for name in expected_names)

@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import errors
+from leech import asserts, errors, ir_env, ir_module
 
 
 def test_int_mod_var_ref_in_fn(tmp_path):
@@ -74,6 +74,22 @@ def test_fn_mod_var(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, src, "", 99)
+
+
+def test_non_generic_fn_mod_var_initializer_is_fn_ref(tmp_path):
+    # Evaluating the initializer also verifies that an FnRef is not rejected as
+    # a temporary compile-time pointer.
+    mod = util.build_ir_mod(
+        tmp_path,
+        "fn f() i32 { 99 }\nlet g = f;\npub fn main() i32 { g() }",
+    )
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "g")
+    assert item is not None
+    var = asserts.checked_cast(item.value, ir_module.ModVar)
+
+    assert isinstance(var.initializer, ir_module.FnRef)
+    assert var.initializer.instance.source_fn is not None
+    assert var.initializer.instance.source_fn.name == "f"
 
 
 def test_fn_local_var(tmp_path):

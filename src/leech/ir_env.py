@@ -60,13 +60,13 @@ class Env:
     #: Program-wide trait implementations shared by every scope.
     impl_registry: Final[ir_traits.ImplRegistry]
     #: The prelude's unshadowable panic function; absent only while building the prelude.
-    panic_fn: Final[Optional[ir_module.FnSpec]]
+    panic_fn: Final[Optional[ir_module.FnRef]]
 
     def __init__(
         self,
         parent: Optional[Env] = None,
         impl_registry: Optional[ir_traits.ImplRegistry] = None,
-        panic_fn: Optional[ir_module.FnSpec] = None,
+        panic_fn: Optional[ir_module.FnRef] = None,
     ) -> None:
         if parent is None:
             self.items = collections.ChainMap()
