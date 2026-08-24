@@ -22,7 +22,7 @@ SPDX-License-Identifier: MPL-2.0
 - The three intentional diagnostic corrections—growing struct recursion, recursive trait
   bounds, and recursive impl selection—must each land with focused tests and in a separate
   commit from mechanical state migration.
-- Keep imports module-qualified and avoid runtime import cycles with `TYPE_CHECKING` and callback-based construction where needed.
+- Keep imports module-qualified and avoid runtime import cycles with `TYPE_CHECKING` or local imports where needed.
 - Do not use comprehensions containing more than one `for`; use ordinary nested loops.
 - Do not build a general query engine, dependency graph, invalidation system, or parallel executor.
 - Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run basedpyright --pythonpath /home/jonathan/work/leech/.venv/bin/python`, `uv run reuse --no-multiprocessing lint`, and `git diff --check` before completion.
@@ -45,7 +45,7 @@ SPDX-License-Identifier: MPL-2.0
 - Produces: `Env.ctx: compilation.Ctx`
 - Produces: `ImplRegistry.ctx: compilation.Ctx`
 
-- [ ] **Step 1: Write context-identity tests**
+- [x] **Step 1: Write context-identity tests**
 
 Add focused tests showing that a loader, its registry, every loaded module environment,
 and child environments share one context, while two loaders use distinct contexts:
@@ -71,13 +71,13 @@ def test_env_and_registry_share_explicit_ctx() -> None:
     assert env.impl_registry.ctx is env.ctx
 ```
 
-- [ ] **Step 2: Run the new tests and verify the missing interface fails**
+- [x] **Step 2: Run the new tests and verify the missing interface fails**
 
 Run: `uv run pytest tests/test_loader.py -q`
 
 Expected: FAIL because `ModLoader`, `Env`, and `ImplRegistry` do not expose `ctx`.
 
-- [ ] **Step 3: Implement the empty compilation-state owner**
+- [x] **Step 3: Implement the empty compilation-state owner**
 
 Create `compilation.py` with SPDX headers and the context shell:
 
@@ -89,14 +89,14 @@ class Ctx:
 The request caches arrive in Task 2 and active-computation machinery in Task 4, so this
 commit does not ship unused cycle APIs.
 
-- [ ] **Step 4: Thread one context through loader, environments, and registry**
+- [x] **Step 4: Thread one context through loader, environments, and registry**
 
 Construct `ModLoader.ctx` before `ImplRegistry`, pass it to the registry and to each root
 `Env`, and pass the same context, registry, and panic reference explicitly from
 `Env.new_child()`. Make those three dependencies required constructor arguments; focused
 tests must construct them explicitly rather than relying on a special standalone fallback.
 
-- [ ] **Step 5: Run focused and full verification**
+- [x] **Step 5: Run focused and full verification**
 
 Run:
 
@@ -110,7 +110,7 @@ uv run basedpyright --pythonpath /home/jonathan/work/leech/.venv/bin/python
 
 Expected: all pass with no diagnostic or emitted-IR changes.
 
-- [ ] **Step 6: Ask for review and permission to commit**
+- [x] **Step 6: Ask for review and permission to commit**
 
 Proposed commit subject: `Add compilation-wide lazy state context`
 
@@ -133,7 +133,7 @@ Proposed commit subject: `Add compilation-wide lazy state context`
 - Produces: typed `compilation.Ctx.instantiate_struct`, `struct_instances`, and `requested_struct_instances`
 - Preserves: `FnSymbol.instances`, `FnSymbol.instantiate`, `StructTyp.instances`, and `StructTyp.instance`
 
-- [ ] **Step 1: Add per-compilation identity and request-order tests**
+- [x] **Step 1: Add per-compilation identity and request-order tests**
 
 Extend existing instantiation tests to assert:
 
@@ -148,7 +148,7 @@ Reuse one parsed generic-struct AST with two standalone environments and assert
 `StructTyp.get_or_create` returns distinct templates tied to the two contexts. This covers
 the process-cached bundled-AST case that ordinary `tmp_path` compilation does not.
 
-- [ ] **Step 2: Run focused tests and verify request-log assertions fail**
+- [x] **Step 2: Run focused tests and verify request-log assertions fail**
 
 Run:
 
@@ -158,7 +158,7 @@ uv run pytest tests/test_generic_fns.py tests/test_generic_structs.py tests/test
 
 Expected: FAIL because the context has no request caches or logs.
 
-- [ ] **Step 3: Add typed request-cache methods**
+- [x] **Step 3: Add typed request-cache methods**
 
 Implement dictionaries grouped as `owner -> {args: instance}` so `instances(owner)` keeps
 its current insertion order without scanning every compilation instance. Maintain separate
@@ -170,28 +170,28 @@ generic helper only if it does not expose `object`-typed cache values to callers
 only after construction succeeds, so exceptions leave neither a cache entry nor a request
 log entry.
 
-- [ ] **Step 4: Delegate every function instance cache to the context**
+- [x] **Step 4: Delegate every function instance cache to the context**
 
 Change `SrcFnSymbol`, `IntrinsicFnSymbol`, and `ExternFnSymbol` so `instantiate` calls
-`self.env.ctx.instantiate_fn(self, args, lambda: FnInstance(self, args))` after its
-existing arity assertions. Delete their `_instance_cache` and `_instance` cached
-properties. Make each `instances` property delegate to
-`self.env.ctx.fn_instances(self)`.
+`self.env.ctx.instantiate_fn(self, args)` after its existing arity assertions. The context
+constructs `FnInstance` directly on a miss. Delete their `_instance_cache` and `_instance`
+cached properties. Make each `instances` property delegate to `self.env.ctx.fn_instances(self)`.
 
 `ExternFnSymbol.instances` consequently stops creating its bodyless instance on inspection;
 this makes its contract match the other symbols. Extern declaration and codegen behavior do
 not change until Task 3, where bodyless requests are explicitly excluded.
 
-- [ ] **Step 5: Delegate generic struct instance caching to the context**
+- [x] **Step 5: Delegate generic struct instance caching to the context**
 
 Delete `StructTyp._instance_cache`. Make `instances` delegate through `_decl_env.ctx`
-and make `instance` call `instantiate_struct`, retaining `StructTyp.get_or_create` only as
-the creation callback. Add `_decl_env.ctx` to `StructTyp.cache_key`, so a process-cached
-bundled AST cannot reuse a template carrying another compilation's environment. The
-template itself remains the cache owner key; concrete instances must not become new
-template keys.
+and make `instance` call `instantiate_struct`. Give `StructTyp` a narrowly scoped internal
+method that owns the `StructTyp.get_or_create` arguments needed when the context misses. Add
+`_decl_env.ctx.typ_cache_token` to `StructTyp.cache_key`, so a process-cached bundled AST
+cannot reuse a template carrying another compilation's environment without making the weak
+type-cache key retain the whole context. The template itself remains the cache owner key;
+assert that concrete instances cannot become new template keys.
 
-- [ ] **Step 6: Run focused and full verification**
+- [x] **Step 6: Run focused and full verification**
 
 Run the focused command from Step 2, then the complete verification suite from Task 1.
 
@@ -208,7 +208,11 @@ Proposed commit subject: `Centralize lazy instance requests`
 
 **Files:**
 - Modify: `src/leech/mono.py`
+- Modify: `src/leech/ir_module.py`
 - Test: `tests/test_import.py`
+- Test: `tests/test_impl.py`
+- Test: `tests/test_traits.py`
+- Test: `tests/test_call.py`
 - Test: `tests/test_generic_fns.py`
 - Test: `tests/test_generic_structs.py`
 - Test: `tests/test_hello_world.py`
@@ -216,6 +220,8 @@ Proposed commit subject: `Centralize lazy instance requests`
 **Interfaces:**
 - Consumes: `compilation.Ctx.requested_fn_instances()` and `requested_struct_instances()`
 - Deletes: `mono._fixpoint` and `mono._fn_symbols`
+- Deletes: `FnSymbol.instances` and its concrete implementations
+- Preserves: validated `FnSymbol.instantiate`
 - Preserves: `MonoResult` and `mono.discover(mod) -> MonoResult`
 
 - [ ] **Step 1: Add discovery regression tests**
@@ -233,7 +239,7 @@ round to global first-request order.
 Run:
 
 ```bash
-uv run pytest tests/test_import.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_hello_world.py -q
+uv run pytest tests/test_import.py tests/test_impl.py tests/test_traits.py tests/test_call.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_hello_world.py -q
 ```
 
 Expected: PASS before implementation; these are regression tests for a mechanical
@@ -269,14 +275,21 @@ Walk the live struct request sequence the same way, skip non-concrete instances,
 `_fn_symbols`, and their now-unused imports. Rewrite `mono.py`'s module docstring to describe
 request-log draining rather than polling declaration-owned caches.
 
-- [ ] **Step 5: Verify discovery and the whole compiler**
+- [ ] **Step 5: Remove declaration-level instance enumeration**
+
+Remove the abstract `FnSymbol.instances` property and its implementations from
+`ExternFnSymbol`, `SrcFnSymbol`, and `IntrinsicFnSymbol`. Where tests need to observe that
+lookup did not instantiate a function, query `fn.env.ctx.fn_instances(fn)` explicitly;
+production code must no longer enumerate instances through a declaration.
+
+- [ ] **Step 6: Verify discovery and the whole compiler**
 
 Run the focused command from Step 2 and every global verification command.
 
 Expected: all pass; recursive functions terminate discovery because cached requests enter
 the log only once.
 
-- [ ] **Step 6: Ask for review and permission to commit**
+- [ ] **Step 7: Ask for review and permission to commit**
 
 Proposed commit subject: `Discover monomorphizations from request logs`
 

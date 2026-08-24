@@ -639,8 +639,11 @@ def test_fn_instance_caches_by_typ_args(tmp_path):
     mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
-    assert fn.instantiate((typs.I32,)) is fn.instantiate((typs.I32,))
-    assert fn.instantiate((typs.I32,)) is not fn.instantiate((typs.BOOL,))
+    i32_inst = fn.instantiate((typs.I32,))
+
+    assert i32_inst is fn.instantiate((typs.I32,))
+    assert i32_inst is not fn.instantiate((typs.BOOL,))
+    assert tuple(mod.loader.ctx.requested_fn_instances()).count(i32_inst) == 1
 
 
 def test_fn_instance_caches_one_reference(tmp_path):

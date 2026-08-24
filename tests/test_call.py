@@ -141,8 +141,11 @@ def test_extern_fn_has_cached_bodyless_instance(tmp_path):
     assert item is not None
     decl = asserts.checked_cast(item.value, ir_module.ExternFnSymbol)
 
+    assert tuple(decl.instances) == ()
     inst = decl.instantiate(())
 
     assert inst is decl.instantiate(())
+    assert tuple(decl.instances) == (inst,)
+    assert tuple(mod.loader.ctx.requested_fn_instances()).count(inst) == 1
     assert not inst.has_body
     assert inst.qualified_name == "puts"

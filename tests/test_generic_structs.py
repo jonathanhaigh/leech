@@ -731,8 +731,11 @@ def test_generic_struct_instance_caches_by_typ_args(tmp_path):
     mod = util.build_ir_mod(tmp_path, "struct Box[T] { val: T }")
     box = _get_struct_typ(mod, "Box")
 
-    assert box.instance((typs.I32,)) is box.instance((typs.I32,))
-    assert box.instance((typs.I32,)) is not box.instance((typs.BOOL,))
+    i32_inst = box.instance((typs.I32,))
+
+    assert i32_inst is box.instance((typs.I32,))
+    assert i32_inst is not box.instance((typs.BOOL,))
+    assert tuple(mod.loader.ctx.requested_struct_instances()).count(i32_inst) == 1
 
 
 def test_generic_struct_instance_qualified_name(tmp_path):

@@ -765,8 +765,8 @@ _MAX_STRUCT_INSTANTIATION_DEPTH = 64
 class StructTyp(Typ):
     """A nominal struct type identified by its declaration and type arguments.
 
-    A generic declaration owns an unusable template with opaque parameters and caches one
-    identity-distinct instance per argument tuple. It stores its fields only.
+    A generic declaration owns an unusable template with opaque parameters. Its compilation
+    context caches one identity-distinct instance per argument tuple.
     """
 
     ast: Final[ast.StructDefn]
@@ -807,25 +807,22 @@ class StructTyp(Typ):
             return ()
         return typ_params_from_ast(self.ast, self.ast.generic_params, self._decl_env)
 
-    @functools.cached_property
-    def _instance_cache(self) -> dict[tuple[Typ, ...], StructTyp]:
-        return {}
-
     @property
     def instances(self) -> Collection[StructTyp]:
         """Return every instantiation requested from this template."""
-        return self._instance_cache.values()
+        return self._decl_env.ctx.struct_instances(self)
 
     def instance(self, typ_args: tuple[Typ, ...]) -> StructTyp:
         """Return the cached instantiation for ``typ_args``, creating it if needed.
 
         :post: instance(a) is instance(a) for equal a [cache]
         """
-        inst = self._instance_cache.get(typ_args)
-        if inst is None:
-            inst = StructTyp.get_or_create(self.ast, self._decl_env, typ_args, self.mod_name)
-            self._instance_cache[typ_args] = inst
-        return inst
+        assert self.is_generic_template, "only generic struct templates own instances"
+        return self._decl_env.ctx.instantiate_struct(self, typ_args)
+
+    def _create_instance(self, typ_args: tuple[Typ, ...]) -> StructTyp:
+        """Return this template's process-interned instance for ``typ_args``."""
+        return StructTyp.get_or_create(self.ast, self._decl_env, typ_args, self.mod_name)
 
     @property
     @override
@@ -871,11 +868,12 @@ class StructTyp(Typ):
     @override
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key struct types by declaration identity and type arguments."""
-        asserts.assert_gt(len(args), 0)
+        """Key struct types by compilation, declaration identity, and type arguments."""
+        asserts.assert_gt(len(args), 1)
         struct_ast = asserts.checked_cast(args[0], ast.StructDefn)
+        decl_env = asserts.checked_cast(args[1], ir_env.Env)
         typ_args = asserts.checked_cast(args[2], tuple) if len(args) > 2 else ()
-        return (cls, struct_ast, typ_args)
+        return (cls, decl_env.ctx.typ_cache_token, struct_ast, typ_args)
 
     @property
     @override

@@ -59,7 +59,6 @@ def instantiate_fn(
     self,
     fn_symbol: ir_module.FnSymbol,
     args: tuple[typs.Typ, ...],
-    create: Callable[[], ir_module.FnInstance],
 ) -> ir_module.FnInstance: ...
 
 
@@ -71,7 +70,6 @@ def instantiate_struct(
     self,
     template: typs.StructTyp,
     args: tuple[typs.Typ, ...],
-    create: Callable[[], typs.StructTyp],
 ) -> typs.StructTyp: ...
 
 
@@ -83,17 +81,20 @@ The implementation may share a private generic helper, but callers do not manipu
 `object`-typed map or construct cache keys themselves. Equal requests in one compilation
 return the same object.
 
-`StructTyp.cache_key` additionally includes the compilation context. Bundled ASTs are
-cached process-wide, so without this distinction a bundled generic struct could retain the
-first compilation's declaration environment and send a later compilation's requests to the
-wrong context. Primitive and composite type interning otherwise remains process-wide.
+`StructTyp.cache_key` additionally includes a per-compilation identity token owned by the
+context. The token does not point back to the context, avoiding a retention cycle through
+the process-wide weak type cache. Bundled ASTs are cached process-wide, so without this
+distinction a bundled generic struct could retain the first compilation's declaration
+environment and send a later compilation's requests to the wrong context. Primitive and
+composite type interning otherwise remains process-wide.
 
 Extern functions use the same function-instance cache even though only `()` is valid.
 This removes their separate cached `_instance` field. Their `instances` property no longer
 creates that instance merely by being inspected; it reports requests like every other
 symbol. Source and intrinsic symbols also lose their per-symbol `_instance_cache`
-properties. `FnSymbol.instances` and `StructTyp.instances` remain as semantic interfaces,
-now delegating to the context.
+properties. `StructTyp.instances` remains as a semantic interface delegating to the
+context. `FnSymbol.instances` delegates during the cache-migration commit, then is removed
+when monomorphization stops polling declarations; validated `FnSymbol.instantiate` remains.
 
 ### Monomorphization drains request logs
 

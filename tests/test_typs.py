@@ -301,6 +301,26 @@ def test_typ_param_typ_distinct_across_owners(tmp_path):
     assert t_f.name == t_g.name == "T"
 
 
+def test_struct_templates_are_isolated_by_compilation_ctx(tmp_path):
+    parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
+    (struct_ast,) = parsed_mod.defns
+    assert isinstance(struct_ast, ast.StructDefn)
+    first_ctx = compilation.Ctx()
+    second_ctx = compilation.Ctx()
+    first_env = ir_env.Env(first_ctx, ir_traits.ImplRegistry(first_ctx), None)
+    second_env = ir_env.Env(second_ctx, ir_traits.ImplRegistry(second_ctx), None)
+
+    first = typs.StructTyp.get_or_create(struct_ast, first_env, (), "main")
+    second = typs.StructTyp.get_or_create(struct_ast, second_env, (), "main")
+    first_instance = first.instance((typs.I32,))
+    second_instance = second.instance((typs.I32,))
+
+    assert first is not second
+    assert first_instance is not second_instance
+    assert tuple(first_ctx.requested_struct_instances()) == (first_instance,)
+    assert tuple(second_ctx.requested_struct_instances()) == (second_instance,)
+
+
 def test_substitute_typ_params_replaces_mapped_typ_param(tmp_path):
     mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
     (fn,) = mod.defns

@@ -199,20 +199,15 @@ class ExternFnSymbol(ParsedFnSymbol[ast.ExternFnDecl]):
         """Extern declarations have no type parameters."""
         return ()
 
-    @functools.cached_property
-    def _instance(self) -> FnInstance:
-        """The declaration's sole bodyless instance."""
-        return FnInstance(self, ())
-
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return this declaration's cached bodyless instance."""
         assert not args, f"{self.name}: extern declarations take no type arguments"
-        return self._instance
+        return self.env.ctx.instantiate_fn(self, args)
 
     @property
     def instances(self) -> Collection[FnInstance]:
-        """This declaration's sole bodyless instance."""
-        return (self._instance,)
+        """Every instantiation requested so far."""
+        return self.env.ctx.fn_instances(self)
 
     @property
     def _qualified_name_prefix(self) -> str:
@@ -256,14 +251,10 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
         super().__init__(fn_ast, e, mod_name, recv_typ)
         self.impl = impl
 
-    @functools.cached_property
-    def _instance_cache(self) -> dict[tuple[typs.Typ, ...], FnInstance]:
-        return {}
-
     @property
     def instances(self) -> Collection[FnInstance]:
         """Every instantiation requested so far."""
-        return self._instance_cache.values()
+        return self.env.ctx.fn_instances(self)
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance identified by all impl and function arguments."""
@@ -273,11 +264,7 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
             f"{self.name}: expected {impl_arity} impl and {fn_arity} function type arguments; "
             f"got {len(args)} total"
         )
-        inst = self._instance_cache.get(args)
-        if inst is None:
-            inst = FnInstance(self, args)
-            self._instance_cache[args] = inst
-        return inst
+        return self.env.ctx.instantiate_fn(self, args)
 
     @property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
@@ -568,23 +555,15 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
         self._typ_param_names = typ_param_names
         self.env = e.new_child()
 
-    @functools.cached_property
-    def _instance_cache(self) -> dict[tuple[typs.Typ, ...], FnInstance]:
-        return {}
-
     @property
     def instances(self) -> Collection[FnInstance]:
         """Every instantiation requested so far."""
-        return self._instance_cache.values()
+        return self.env.ctx.fn_instances(self)
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance for ``args``, creating it if needed."""
         assert len(args) == len(self.typ_params)
-        inst = self._instance_cache.get(args)
-        if inst is None:
-            inst = FnInstance(self, args)
-            self._instance_cache[args] = inst
-        return inst
+        return self.env.ctx.instantiate_fn(self, args)
 
     @property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
