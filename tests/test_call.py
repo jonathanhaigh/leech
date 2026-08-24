@@ -141,11 +141,24 @@ def test_extern_fn_has_cached_bodyless_instance(tmp_path):
     assert item is not None
     decl = asserts.checked_cast(item.value, ir_module.ExternFnSymbol)
 
-    assert tuple(decl.instances) == ()
+    instances_before = tuple(decl.env.ctx.requested_fn_instances())
     inst = decl.instantiate(())
 
     assert inst is decl.instantiate(())
-    assert tuple(decl.instances) == (inst,)
+    assert tuple(decl.env.ctx.requested_fn_instances()) == (*instances_before, inst)
     assert tuple(mod.loader.ctx.requested_fn_instances()).count(inst) == 1
     assert not inst.has_body
     assert inst.qualified_name == "puts"
+
+
+def test_used_extern_emits_one_declaration_and_no_definition(tmp_path):
+    src = """
+    extern fn puts(s: *u8) i32;
+    pub fn main() i32 { puts("hello"); return 0; }
+    """
+
+    (main_ir,) = util.compile_modules(tmp_path, main=src)
+    lines = main_ir.read_text().splitlines()
+
+    assert sum(line.startswith('declare i32 @"puts"') for line in lines) == 1
+    assert not any(line.startswith("define") and '@"puts"' in line for line in lines)

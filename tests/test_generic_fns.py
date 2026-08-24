@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import asserts, errors, ir_env, ir_module, ir_values, typs
+from leech import asserts, errors, ir_env, ir_module, ir_values, mono, typs
 
 
 def _get_fn(mod, name: str) -> ir_module.SrcFnSymbol:
@@ -723,6 +723,44 @@ def test_fn_instance_recursive_call_lowers(tmp_path):
     _ = fn.instantiate((typs.I32,)).cfg
 
 
+def test_mono_discovers_requests_appended_while_lowering_generic_fn(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        """
+        fn inner[T](x: T) T { x }
+        fn outer[T](x: T) T {
+            __size_of[T]();
+            return inner(x);
+        }
+        """,
+    )
+    outer = _get_generic_fn(mod, "outer")
+    outer.instantiate((typs.I32,))
+
+    result = mono.discover(mod)
+    names = {inst.qualified_name for inst in result.fn_instances}
+
+    assert names == {"main::outer[i32]", "main::inner[i32]", "__size_of[i32]"}
+
+
+def test_mono_discovers_recursive_instance_once(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        """
+        fn depth[T](x: T, n: i32) T {
+            if (n == 0) { return x; };
+            return depth(x, n - 1);
+        }
+        """,
+    )
+    depth = _get_generic_fn(mod, "depth")
+    instance = depth.instantiate((typs.I32,))
+
+    result = mono.discover(mod)
+
+    assert result.fn_instances.count(instance) == 1
+
+
 def test_calling_generic_fn_lowers_to_a_fn_ref(tmp_path):
     src = """
     fn id[T](x: T) T { return x; }
@@ -764,7 +802,7 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
         struct Foo {}
         impl Foo { fn inherent(*self) i32 { 0 } }
         impl Show for Foo { fn show(*self) i32 { 0 } }
-        extern fn external_fn(value: i32) i32;
+        extern fn extern_fn(value: i32) i32;
         fn ordinary() i32 { 0 }
 
         pub fn main() i32 {
@@ -774,7 +812,7 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
             foo.inherent();
             foo.show();
             helper::imported();
-            external_fn(0);
+            extern_fn(0);
             return 0;
         }
         """,
@@ -794,7 +832,7 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
         "inherent",
         "show",
         "imported",
-        "external_fn",
+        "extern_fn",
     }
     assert expected_names <= callees.keys()
     assert all(isinstance(callees[name], ir_module.FnRef) for name in expected_names)

@@ -10,7 +10,7 @@ import functools
 import re
 import types
 import weakref
-from collections.abc import Callable, Collection, Hashable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
 
 from leech import (
@@ -806,11 +806,6 @@ class StructTyp(Typ):
         if self._typ_args:
             return ()
         return typ_params_from_ast(self.ast, self.ast.generic_params, self._decl_env)
-
-    @property
-    def instances(self) -> Collection[StructTyp]:
-        """Return every instantiation requested from this template."""
-        return self._decl_env.ctx.struct_instances(self)
 
     def instance(self, typ_args: tuple[Typ, ...]) -> StructTyp:
         """Return the cached instantiation for ``typ_args``, creating it if needed.

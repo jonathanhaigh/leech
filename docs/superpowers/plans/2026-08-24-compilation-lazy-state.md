@@ -198,7 +198,7 @@ Run the focused command from Step 2, then the complete verification suite from T
 Expected: all pass; emitted names and linkage remain byte-identical for existing symbol
 tests.
 
-- [ ] **Step 7: Ask for review and permission to commit**
+- [x] **Step 7: Ask for review and permission to commit**
 
 Proposed commit subject: `Centralize lazy instance requests`
 
@@ -207,8 +207,11 @@ Proposed commit subject: `Centralize lazy instance requests`
 ### Task 3: Make monomorphization drain request logs
 
 **Files:**
+- Modify: `src/leech/compilation.py`
+- Modify: `src/leech/ir_loader.py`
 - Modify: `src/leech/mono.py`
 - Modify: `src/leech/ir_module.py`
+- Modify: `src/leech/typs.py`
 - Test: `tests/test_import.py`
 - Test: `tests/test_impl.py`
 - Test: `tests/test_traits.py`
@@ -220,21 +223,22 @@ Proposed commit subject: `Centralize lazy instance requests`
 **Interfaces:**
 - Consumes: `compilation.Ctx.requested_fn_instances()` and `requested_struct_instances()`
 - Deletes: `mono._fixpoint` and `mono._fn_symbols`
-- Deletes: `FnSymbol.instances` and its concrete implementations
+- Deletes: declaration-level `FnSymbol.instances` and `StructTyp.instances`
+- Deletes: unused `Ctx.fn_instances`, `Ctx.struct_instances`, and `ModLoader.intrinsic_fns`
 - Preserves: validated `FnSymbol.instantiate`
 - Preserves: `MonoResult` and `mono.discover(mod) -> MonoResult`
 
-- [ ] **Step 1: Add discovery regression tests**
+- [x] **Step 1: Add discovery regression tests**
 
 Add or strengthen tests for a generic function whose lowering requests another generic
 function, an intrinsic instance, a generic struct whose field requests another struct
-instance, an imported non-generic external leaf, and recursive function calls. Add an
+instance, an imported non-generic leaf, and recursive function calls. Add an
 emitted-IR regression test proving a used extern appears exactly once as `declare`, never as
 `define`. Assert exact instance identities or qualified-name sets, not LLVM definition
 order: this rewrite deliberately changes discovery from declaration scan order within a
 round to global first-request order.
 
-- [ ] **Step 2: Run the focused discovery tests**
+- [x] **Step 2: Run the focused discovery tests**
 
 Run:
 
@@ -245,7 +249,7 @@ uv run pytest tests/test_import.py tests/test_impl.py tests/test_traits.py tests
 Expected: PASS before implementation; these are regression tests for a mechanical
 discovery rewrite.
 
-- [ ] **Step 3: Replace function-cache polling with a cursor loop**
+- [x] **Step 3: Replace function-cache polling with a cursor loop**
 
 After preserving the existing root and module-variable seeding, iterate the context's live
 function request sequence by index:
@@ -258,31 +262,33 @@ while cursor < len(requests):
     cursor += 1
     if not inst.is_concrete() or not inst.has_body:
         continue
-    if not _is_external_fn_instance(inst, mod):
+    if not _is_imported_fn_instance(inst, mod):
         _ = inst.cfg
     discovered.append(inst)
 ```
 
-Partition discovered instances into local and external lists exactly as today. Do not use a
+Partition discovered instances into local and imported lists exactly as today. Do not use a
 snapshot: lowering may append to the same live sequence. Bodyless extern instances remain
 absent from `MonoResult`; `_declare_mod_fn`'s module-item walk stays their sole declaration
 path.
 
-- [ ] **Step 4: Replace struct-cache polling with a cursor loop**
+- [x] **Step 4: Replace struct-cache polling with a cursor loop**
 
 Walk the live struct request sequence the same way, skip non-concrete instances, force
 `inst.fields`, and continue until the cursor reaches the moving end. Delete `_fixpoint`,
 `_fn_symbols`, and their now-unused imports. Rewrite `mono.py`'s module docstring to describe
 request-log draining rather than polling declaration-owned caches.
 
-- [ ] **Step 5: Remove declaration-level instance enumeration**
+- [x] **Step 5: Remove declaration-level instance enumeration**
 
 Remove the abstract `FnSymbol.instances` property and its implementations from
-`ExternFnSymbol`, `SrcFnSymbol`, and `IntrinsicFnSymbol`. Where tests need to observe that
-lookup did not instantiate a function, query `fn.env.ctx.fn_instances(fn)` explicitly;
+`ExternFnSymbol`, `SrcFnSymbol`, and `IntrinsicFnSymbol`, along with the analogous
+`StructTyp.instances` property. Remove the now-unused per-owner query methods on `Ctx` and
+the `ModLoader.intrinsic_fns` aggregate that existed only for declaration polling. Where
+tests need to observe that lookup did not instantiate a function, snapshot the request log;
 production code must no longer enumerate instances through a declaration.
 
-- [ ] **Step 6: Verify discovery and the whole compiler**
+- [x] **Step 6: Verify discovery and the whole compiler**
 
 Run the focused command from Step 2 and every global verification command.
 

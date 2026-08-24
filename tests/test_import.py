@@ -43,7 +43,7 @@ def test_import_fn(tmp_path):
     util.check_prog_output(tmp_path, main_src, "abc\n", 101, a=a_src)
 
 
-def test_imported_non_generic_fn_is_an_external_monomorphization_leaf(tmp_path):
+def test_imported_non_generic_fn_is_a_monomorphization_leaf(tmp_path):
     main_src = """
     import a;
     pub fn main() i32 { return a::f(); }
@@ -57,15 +57,15 @@ def test_imported_non_generic_fn_is_an_external_monomorphization_leaf(tmp_path):
 
     result = mono.discover(mod)
 
-    assert [inst.qualified_name for inst in result.external_fn_instances] == [
+    assert {inst.qualified_name for inst in result.imported_fn_instances} == {
         "prelude::panic",
         "a::f",
-    ]
+    }
     assert all(inst.qualified_name != "a::f" for inst in result.fn_instances)
     assert all(inst.qualified_name != "a::id[i32]" for inst in result.fn_instances)
 
 
-def test_unused_imported_extern_keeps_bare_external_declaration(tmp_path):
+def test_unused_imported_extern_keeps_bare_declaration(tmp_path):
     main_src = "import a;\npub fn main() i32 { 0 }"
     a_src = "extern fn unused(value: i32) i32;"
 
@@ -679,7 +679,7 @@ def test_import_of_typ_re_exported_by_imported_mod(tmp_path):
 
 
 def test_import_of_var_re_exported_by_imported_mod(tmp_path):
-    # A module variable reached only transitively still needs an external
+    # A module variable reached only transitively still needs an imported
     # declaration in main's output for the link to resolve.
     main_src = """
     import a;

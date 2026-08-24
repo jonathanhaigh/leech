@@ -51,11 +51,11 @@ def test_generic_impl_lookup_does_not_instantiate_method(tmp_path):
     concrete_box = box.instance((typs.I32,))
     (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_box)
     fn = opt_util.opt_unwrap(impl.get_fn_symbol("get"))
-    instances_before = tuple(fn.instances)
+    instances_before = tuple(fn.env.ctx.requested_fn_instances())
 
     selection = mod.loader.impl_registry.lookup_member(concrete_box, "get", None)
 
-    assert tuple(fn.instances) == instances_before
+    assert tuple(fn.env.ctx.requested_fn_instances()) == instances_before
     selection = asserts.checked_cast(selection, ir_traits.ImplFnSelection)
     assert selection.fn is fn
     assert selection.impl_args == (typs.I32,)

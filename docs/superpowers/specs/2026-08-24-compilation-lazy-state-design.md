@@ -62,7 +62,6 @@ def instantiate_fn(
 ) -> ir_module.FnInstance: ...
 
 
-def fn_instances(self, fn_symbol: ir_module.FnSymbol) -> Collection[ir_module.FnInstance]: ...
 def requested_fn_instances(self) -> Sequence[ir_module.FnInstance]: ...
 
 
@@ -73,7 +72,6 @@ def instantiate_struct(
 ) -> typs.StructTyp: ...
 
 
-def struct_instances(self, template: typs.StructTyp) -> Collection[typs.StructTyp]: ...
 def requested_struct_instances(self) -> Sequence[typs.StructTyp]: ...
 ```
 
@@ -92,9 +90,9 @@ Extern functions use the same function-instance cache even though only `()` is v
 This removes their separate cached `_instance` field. Their `instances` property no longer
 creates that instance merely by being inspected; it reports requests like every other
 symbol. Source and intrinsic symbols also lose their per-symbol `_instance_cache`
-properties. `StructTyp.instances` remains as a semantic interface delegating to the
-context. `FnSymbol.instances` delegates during the cache-migration commit, then is removed
-when monomorphization stops polling declarations; validated `FnSymbol.instantiate` remains.
+properties. The declaration-level `FnSymbol.instances` and `StructTyp.instances` accessors
+delegate during the cache-migration commit, then are removed when monomorphization stops
+polling declarations; validated `FnSymbol.instantiate` and `StructTyp.instance` remain.
 
 ### Monomorphization drains request logs
 
@@ -111,7 +109,7 @@ Monomorphization walks those insertion-ordered logs with integer cursors:
 Abstract instances requested while checking generic declarations stay in the cache but are
 skipped by emission. Bodyless extern instances are also skipped: their existing
 reachability-independent module-item declaration path remains their sole codegen owner.
-Imported non-generic instances remain external leaves. Discovery changes from declaration
+Imported non-generic instances remain declaration-only leaves. Discovery changes from declaration
 scan order within each fixpoint round to global first-request order; emitted symbol sets and
 linkage do not change. `_fixpoint`, `_fn_symbols`, and whole-program template scans
 disappear.

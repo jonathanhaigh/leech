@@ -138,11 +138,11 @@ def test_generic_trait_impl_lookup_does_not_instantiate_method(tmp_path):
     assert trait_impl is not None
     fn = trait_impl.get_fn_symbol("show")
     assert fn is not None
-    instances_before = tuple(fn.instances)
+    instances_before = tuple(fn.env.ctx.requested_fn_instances())
 
     selection = mod.loader.impl_registry.lookup_member(concrete_box, "show", None)
 
-    assert tuple(fn.instances) == instances_before
+    assert tuple(fn.env.ctx.requested_fn_instances()) == instances_before
     selection = asserts.checked_cast(selection, ir_traits.ImplFnSelection)
     assert selection.fn is fn
     assert selection.impl_args == (typs.I32,)

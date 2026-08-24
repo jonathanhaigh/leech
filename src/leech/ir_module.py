@@ -104,11 +104,6 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
     def _qualified_name_prefix(self) -> str:
         """The instance symbol prefix, or empty for a global declaration."""
 
-    @property
-    @abc.abstractmethod
-    def instances(self) -> Collection[FnInstance]:
-        """Every instantiation requested so far."""
-
     @abc.abstractmethod
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance for ``args``, creating it if needed.
@@ -192,7 +187,7 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
 
 
 class ExternFnSymbol(ParsedFnSymbol[ast.ExternFnDecl]):
-    """A source-level external function declaration without a body."""
+    """A source-level ``extern`` function declaration without a body."""
 
     @property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
@@ -203,11 +198,6 @@ class ExternFnSymbol(ParsedFnSymbol[ast.ExternFnDecl]):
         """Return this declaration's cached bodyless instance."""
         assert not args, f"{self.name}: extern declarations take no type arguments"
         return self.env.ctx.instantiate_fn(self, args)
-
-    @property
-    def instances(self) -> Collection[FnInstance]:
-        """Every instantiation requested so far."""
-        return self.env.ctx.fn_instances(self)
 
     @property
     def _qualified_name_prefix(self) -> str:
@@ -250,11 +240,6 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
     ) -> None:
         super().__init__(fn_ast, e, mod_name, recv_typ)
         self.impl = impl
-
-    @property
-    def instances(self) -> Collection[FnInstance]:
-        """Every instantiation requested so far."""
-        return self.env.ctx.fn_instances(self)
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance identified by all impl and function arguments."""
@@ -554,11 +539,6 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
         self._fn_name = name
         self._typ_param_names = typ_param_names
         self.env = e.new_child()
-
-    @property
-    def instances(self) -> Collection[FnInstance]:
-        """Every instantiation requested so far."""
-        return self.env.ctx.fn_instances(self)
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance for ``args``, creating it if needed."""

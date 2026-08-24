@@ -4,7 +4,7 @@
 
 """Compilation-wide state for lazy requests and active semantic computations."""
 
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
@@ -49,11 +49,6 @@ class Ctx:
             ir_module.FnInstance(symbol, args),
         )
 
-    def fn_instances(self, symbol: ir_module.FnSymbol) -> Collection[ir_module.FnInstance]:
-        """Return the instances requested from ``symbol``, in request order."""
-        instances = self._fn_instances.get(symbol)
-        return () if instances is None else instances.values()
-
     def requested_fn_instances(self) -> Sequence[ir_module.FnInstance]:
         """Return the live append-only log of requested function instances.
 
@@ -79,11 +74,6 @@ class Ctx:
             args,
             template._create_instance(args),
         )
-
-    def struct_instances(self, template: typs.StructTyp) -> Collection[typs.StructTyp]:
-        """Return the instances requested from ``template``, in request order."""
-        instances = self._struct_instances.get(template)
-        return () if instances is None else instances.values()
 
     def requested_struct_instances(self) -> Sequence[typs.StructTyp]:
         """Return the live append-only log of requested struct instances.

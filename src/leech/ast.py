@@ -860,7 +860,7 @@ class FnDecl(Defn):
 
 
 class ExternFnDecl(FnDecl):
-    """A function declared without a body (e.g. an external/builtin function).
+    """An ``extern`` function declared without a body.
 
     Never generic - an ``extern`` function has no body to monomorphize.
     """

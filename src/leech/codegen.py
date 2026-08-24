@@ -117,7 +117,7 @@ class Compiler:
     def compile(self) -> None:
         """Compile declarations before bodies and discover generic instances to a fixpoint.
 
-        Imported bodies remain external, but imported struct layouts are defined locally.
+        Imported functions remain declarations, but imported struct layouts are defined locally.
         Generic templates have no LLVM representation; only their reachable instances do.
         """
         self.ll_mod.triple = "x86_64-linux-gnu"
@@ -162,7 +162,7 @@ class Compiler:
 
         for inst in result.fn_instances:
             self._declare_fn_instance(inst)
-        for inst in result.external_fn_instances:
+        for inst in result.imported_fn_instances:
             self._declare_fn_instance(inst)
 
         for item in self._mod.items:

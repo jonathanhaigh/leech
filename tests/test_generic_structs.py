@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import asserts, ast, errors, ir_env, ir_module, typs
+from leech import asserts, ast, errors, ir_env, ir_module, mono, typs
 
 
 def _get_struct_typ(mod, name: str) -> typs.StructTyp:
@@ -736,6 +736,36 @@ def test_generic_struct_instance_caches_by_typ_args(tmp_path):
     assert i32_inst is box.instance((typs.I32,))
     assert i32_inst is not box.instance((typs.BOOL,))
     assert tuple(mod.loader.ctx.requested_struct_instances()).count(i32_inst) == 1
+
+
+def test_mono_discovers_struct_requested_while_resolving_fields(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        """
+        struct Inner[T] { value: T }
+        struct Outer[T] { inner: Inner[T] }
+        """,
+    )
+    outer = _get_struct_typ(mod, "Outer")
+    outer.instance((typs.I32,))
+
+    result = mono.discover(mod)
+    names = {inst.qualified_name for inst in result.struct_instances}
+
+    assert names == {"main::Outer[i32]", "main::Inner[i32]"}
+
+
+def test_codegen_accepts_forward_reference_to_nested_generic_struct(tmp_path):
+    src = """
+    struct Inner[T] { value: T }
+    struct Outer[T] { inner: Inner[T] }
+    pub fn main() i32 {
+        let outer = Outer[i32] { inner: Inner[i32] { value: 7 } };
+        return outer.inner.value - 7;
+    }
+    """
+
+    util.check_prog_output(tmp_path, src, "", 0)
 
 
 def test_generic_struct_instance_qualified_name(tmp_path):

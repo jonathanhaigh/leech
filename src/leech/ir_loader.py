@@ -83,16 +83,6 @@ class ModLoader:
         panic_symbol = asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
         return panic_symbol.instantiate(()).ref
 
-    @property
-    def intrinsic_fns(self) -> tuple[ir_module.IntrinsicFnSymbol, ...]:
-        """Return the compiler intrinsics owned by this loader."""
-        return (
-            self.size_of_intrinsic,
-            self.ptr_cast_mut_intrinsic,
-            self.is_null_intrinsic,
-            self.enum_to_int_intrinsic,
-        )
-
     def resolve_import(
         self, importing_file: src.SrcFile, path: ast.Path
     ) -> tuple[pathlib.Path, str]:
