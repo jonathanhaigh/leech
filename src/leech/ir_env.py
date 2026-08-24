@@ -11,6 +11,7 @@ from typing import Any, Final, Optional
 from leech import (
     asserts,
     ast,
+    compilation,
     errors,
     ir_module,
     ir_traits,
@@ -58,28 +59,28 @@ class Env:
     _spans: Final[dict[tuple[Env.Namespace, str], src.SrcSpan]]
     #: Program-wide trait implementations shared by every scope.
     impl_registry: Final[ir_traits.ImplRegistry]
+    #: Compilation-wide lazy requests and active semantic computations.
+    ctx: Final[compilation.Ctx]
     #: The prelude's unshadowable panic function; absent only while building the prelude.
     panic_ref: Final[Optional[ir_module.FnRef]]
 
     def __init__(
         self,
+        ctx: compilation.Ctx,
+        impl_registry: ir_traits.ImplRegistry,
+        panic_ref: Optional[ir_module.FnRef],
         parent: Optional[Env] = None,
-        impl_registry: Optional[ir_traits.ImplRegistry] = None,
-        panic_ref: Optional[ir_module.FnRef] = None,
     ) -> None:
-        if parent is None:
-            self.items = collections.ChainMap()
-            self.impl_registry = opt_util.opt_or_else(impl_registry, ir_traits.ImplRegistry)
-            self.panic_ref = panic_ref
-        else:
-            self.items = parent.items.new_child()
-            self.impl_registry = parent.impl_registry
-            self.panic_ref = parent.panic_ref
+        assert impl_registry.ctx is ctx
+        self.items = collections.ChainMap() if parent is None else parent.items.new_child()
+        self.ctx = ctx
+        self.impl_registry = impl_registry
+        self.panic_ref = panic_ref
         self._spans = {}
 
     def new_child(self) -> Env:
         """Create a child scope inheriting this scope's bindings."""
-        return Env(self)
+        return Env(self.ctx, self.impl_registry, self.panic_ref, self)
 
     def get(self, ns: Env.Namespace, name: str) -> Any:
         """Look up ``name`` outward through ``ns``, creating integer types on demand."""

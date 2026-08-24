@@ -33,10 +33,10 @@ dependency graph, performs no incremental invalidation, and does not replace ord
 
 ### One context per compilation
 
-`compilation.CompilationContext` is created by `ModLoader`. Every root `Env` created by the
+`compilation.Ctx` is created by `ModLoader`. Every root `Env` created by the
 loader receives that context, and child environments inherit it. `ImplRegistry` receives
-the same context. A standalone `Env()` used by focused tests creates a context and registry
-pair for itself.
+the same context. Focused tests that construct an `Env` directly must explicitly provide
+the context, registry, and optional panic reference.
 
 The context owns only state that must be shared across declarations or semantic layers:
 

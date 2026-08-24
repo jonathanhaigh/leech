@@ -9,7 +9,7 @@ import pathlib
 from collections.abc import Collection, Sequence
 from typing import Final, Optional
 
-from leech import asserts, ast, errors, ir_env, ir_module, ir_traits, parse, src
+from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, parse, src
 
 #: Resolved package directory containing the bundled standard library.
 _BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
@@ -29,6 +29,7 @@ class ModLoader:
     """
 
     _mods: Final[dict[pathlib.Path, ir_module.Mod]]
+    ctx: Final[compilation.Ctx]
     impl_registry: Final[ir_traits.ImplRegistry]
     _extra_search_roots: Final[Sequence[pathlib.Path]]
     _prelude: Optional[ir_module.Mod]
@@ -42,13 +43,14 @@ class ModLoader:
         from leech import ir_builtins  # noqa: PLC0415
 
         self._mods = {}
-        self.impl_registry = ir_traits.ImplRegistry()
+        self.ctx = compilation.Ctx()
+        self.impl_registry = ir_traits.ImplRegistry(self.ctx)
         self._extra_search_roots = extra_search_roots
 
         # Built before the prelude (below): Mod.__init__ binds these into
         # every module's builtin_env, the prelude module's own included,
         # so they must already exist by the time it's loaded.
-        builtin_env = ir_env.Env(impl_registry=self.impl_registry)
+        builtin_env = ir_env.Env(self.ctx, self.impl_registry, None)
         self.size_of_intrinsic = ir_builtins.SizeOfIntrinsicFn(builtin_env)
         self.ptr_cast_mut_intrinsic = ir_builtins.PtrCastMutIntrinsicFn(builtin_env)
         self.is_null_intrinsic = ir_builtins.IsNullIntrinsicFn(builtin_env)

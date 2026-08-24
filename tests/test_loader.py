@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import asserts, errors, ir_env, ir_loader, ir_module, typs
+from leech import asserts, compilation, errors, ir_env, ir_loader, ir_module, ir_traits, typs
 
 
 def load_main(tmp_path, **modules):
@@ -24,6 +24,28 @@ def test_load_is_memoized(tmp_path):
     assert loader.load(path, "main") is loader.load(path, "main")
     # +1 for the bundled prelude module, always loaded by ModLoader.__init__.
     assert len(loader.mods) == 2
+
+
+def test_loader_scopes_and_impl_registry_share_compilation_ctx(tmp_path):
+    path = tmp_path / "main.leech"
+    util.write_whole_file(path, "pub fn main() i32 { return 0; }")
+    loader = ir_loader.ModLoader()
+
+    mod = loader.load(path, "main")
+
+    assert mod.env.ctx is loader.ctx
+    assert mod.env.new_child().ctx is loader.ctx
+    assert loader.impl_registry.ctx is loader.ctx
+
+
+def test_loaders_have_distinct_compilation_ctxs():
+    assert ir_loader.ModLoader().ctx is not ir_loader.ModLoader().ctx
+
+
+def test_env_and_registry_share_explicit_ctx():
+    ctx = compilation.Ctx()
+    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    assert env.impl_registry.ctx is env.ctx
 
 
 def test_load_normalizes_paths(tmp_path):

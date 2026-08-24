@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import asserts, ast, errors, ir_env, ir_module, ir_traits, typs
+from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, typs
 
 
 def test_trait_impl_for_builtin_typ(tmp_path):
@@ -733,7 +733,8 @@ def test_trait_impl_duplicate_extra_method_is_rejected_atomically(tmp_path):
     trait_ast, impl_ast = mod_ast.defns
     assert isinstance(trait_ast, ast.TraitDefn)
     assert isinstance(impl_ast, ast.ImplDefn)
-    env = ir_env.Env()
+    ctx = compilation.Ctx()
+    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
     trait = ir_traits.Trait(trait_ast, env, "main")
     trait_impl = ir_traits.Impl(impl_ast, trait, typs.I32, (), env, "main")
 

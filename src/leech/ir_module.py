@@ -751,9 +751,7 @@ class Mod:
         # Deferred because intrinsic classes subclass IntrinsicFnSymbol.
         from leech import ir_builtins  # noqa: PLC0415
 
-        builtin_env = ir_env.Env(
-            impl_registry=loader.impl_registry, panic_ref=loader.prelude_panic_ref
-        )
+        builtin_env = ir_env.Env(loader.ctx, loader.impl_registry, loader.prelude_panic_ref)
         self._name = name
         self.ast = mod_ast
         self._items = {}

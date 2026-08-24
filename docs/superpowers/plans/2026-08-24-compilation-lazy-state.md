@@ -10,7 +10,7 @@ SPDX-License-Identifier: MPL-2.0
 
 **Goal:** Centralize lazy instance requests and semantic cycle tracking in one per-compilation context, replacing polling and depth-limit failures with direct cycle handling.
 
-**Architecture:** A new `CompilationContext` is owned by `ModLoader`, inherited through `Env`, and shared with `ImplRegistry`. It provides typed function/struct instance caches, insertion-ordered request logs for monomorphization, and a domain-keyed active-computation stack whose cycles are translated into existing or new user diagnostics by each semantic layer.
+**Architecture:** A new `compilation.Ctx` is owned by `ModLoader`, inherited through `Env`, and shared with `ImplRegistry`. It provides typed function/struct instance caches, insertion-ordered request logs for monomorphization, and a domain-keyed active-computation stack whose cycles are translated into existing or new user diagnostics by each semantic layer.
 
 **Tech Stack:** Python 3.14, pytest, Ruff, basedpyright, REUSE
 
@@ -41,9 +41,9 @@ SPDX-License-Identifier: MPL-2.0
 - Test: `tests/test_loader.py`
 
 **Interfaces:**
-- Produces: `compilation.CompilationContext`
-- Produces: `Env.context: compilation.CompilationContext`
-- Produces: `ImplRegistry.context: compilation.CompilationContext`
+- Produces: `compilation.Ctx`
+- Produces: `Env.ctx: compilation.Ctx`
+- Produces: `ImplRegistry.ctx: compilation.Ctx`
 
 - [ ] **Step 1: Write context-identity tests**
 
@@ -56,32 +56,33 @@ def test_loader_scopes_and_impl_registry_share_compilation_context(tmp_path):
     util.write_whole_file(path, "pub fn main() i32 { return 0; }")
     loader = ir_loader.ModLoader()
     mod = loader.load(path, "main")
-    assert mod.env.context is loader.context
-    assert mod.env.new_child().context is loader.context
-    assert loader.impl_registry.context is loader.context
+    assert mod.env.ctx is loader.ctx
+    assert mod.env.new_child().ctx is loader.ctx
+    assert loader.impl_registry.ctx is loader.ctx
 
 
 def test_loaders_have_distinct_compilation_contexts() -> None:
-    assert ir_loader.ModLoader().context is not ir_loader.ModLoader().context
+    assert ir_loader.ModLoader().ctx is not ir_loader.ModLoader().ctx
 
 
-def test_standalone_env_and_default_registry_share_context() -> None:
-    env = ir_env.Env()
-    assert env.impl_registry.context is env.context
+def test_env_and_registry_share_explicit_ctx() -> None:
+    ctx = compilation.Ctx()
+    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    assert env.impl_registry.ctx is env.ctx
 ```
 
 - [ ] **Step 2: Run the new tests and verify the missing interface fails**
 
 Run: `uv run pytest tests/test_loader.py -q`
 
-Expected: FAIL because `ModLoader`, `Env`, and `ImplRegistry` do not expose `context`.
+Expected: FAIL because `ModLoader`, `Env`, and `ImplRegistry` do not expose `ctx`.
 
 - [ ] **Step 3: Implement the empty compilation-state owner**
 
 Create `compilation.py` with SPDX headers and the context shell:
 
 ```python
-class CompilationContext:
+class Ctx:
     """Own compilation-wide lazy requests and active semantic computations."""
 ```
 
@@ -90,11 +91,10 @@ commit does not ship unused cycle APIs.
 
 - [ ] **Step 4: Thread one context through loader, environments, and registry**
 
-Construct `ModLoader.context` before `ImplRegistry`, pass it to the registry and to the root
-`Env` constructed in `Mod.__init__`, and inherit it in `Env.new_child()`. Keep `Env()`
-convenient for unit tests by creating a context when neither a parent nor an explicit
-context is supplied. Ensure its default `ImplRegistry` receives that same context rather
-than creating another one.
+Construct `ModLoader.ctx` before `ImplRegistry`, pass it to the registry and to each root
+`Env`, and pass the same context, registry, and panic reference explicitly from
+`Env.new_child()`. Make those three dependencies required constructor arguments; focused
+tests must construct them explicitly rather than relying on a special standalone fallback.
 
 - [ ] **Step 5: Run focused and full verification**
 
@@ -128,9 +128,9 @@ Proposed commit subject: `Add compilation-wide lazy state context`
 - Test: `tests/test_typs.py`
 
 **Interfaces:**
-- Consumes: `Env.context`
-- Produces: typed `CompilationContext.instantiate_fn`, `fn_instances`, and `requested_fn_instances`
-- Produces: typed `CompilationContext.instantiate_struct`, `struct_instances`, and `requested_struct_instances`
+- Consumes: `Env.ctx`
+- Produces: typed `compilation.Ctx.instantiate_fn`, `fn_instances`, and `requested_fn_instances`
+- Produces: typed `compilation.Ctx.instantiate_struct`, `struct_instances`, and `requested_struct_instances`
 - Preserves: `FnSymbol.instances`, `FnSymbol.instantiate`, `StructTyp.instances`, and `StructTyp.instance`
 
 - [ ] **Step 1: Add per-compilation identity and request-order tests**
@@ -139,9 +139,9 @@ Extend existing instantiation tests to assert:
 
 ```python
 assert fn.instantiate(args) is fn.instantiate(args)
-assert tuple(loader.context.requested_fn_instances()).count(fn.instantiate(args)) == 1
+assert tuple(loader.ctx.requested_fn_instances()).count(fn.instantiate(args)) == 1
 assert struct.instance(args) is struct.instance(args)
-assert tuple(loader.context.requested_struct_instances()).count(struct.instance(args)) == 1
+assert tuple(loader.ctx.requested_struct_instances()).count(struct.instance(args)) == 1
 ```
 
 Reuse one parsed generic-struct AST with two standalone environments and assert
@@ -173,10 +173,10 @@ log entry.
 - [ ] **Step 4: Delegate every function instance cache to the context**
 
 Change `SrcFnSymbol`, `IntrinsicFnSymbol`, and `ExternFnSymbol` so `instantiate` calls
-`self.env.context.instantiate_fn(self, args, lambda: FnInstance(self, args))` after its
+`self.env.ctx.instantiate_fn(self, args, lambda: FnInstance(self, args))` after its
 existing arity assertions. Delete their `_instance_cache` and `_instance` cached
 properties. Make each `instances` property delegate to
-`self.env.context.fn_instances(self)`.
+`self.env.ctx.fn_instances(self)`.
 
 `ExternFnSymbol.instances` consequently stops creating its bodyless instance on inspection;
 this makes its contract match the other symbols. Extern declaration and codegen behavior do
@@ -184,9 +184,9 @@ not change until Task 3, where bodyless requests are explicitly excluded.
 
 - [ ] **Step 5: Delegate generic struct instance caching to the context**
 
-Delete `StructTyp._instance_cache`. Make `instances` delegate through `_decl_env.context`
+Delete `StructTyp._instance_cache`. Make `instances` delegate through `_decl_env.ctx`
 and make `instance` call `instantiate_struct`, retaining `StructTyp.get_or_create` only as
-the creation callback. Add `_decl_env.context` to `StructTyp.cache_key`, so a process-cached
+the creation callback. Add `_decl_env.ctx` to `StructTyp.cache_key`, so a process-cached
 bundled AST cannot reuse a template carrying another compilation's environment. The
 template itself remains the cache owner key; concrete instances must not become new
 template keys.
@@ -214,7 +214,7 @@ Proposed commit subject: `Centralize lazy instance requests`
 - Test: `tests/test_hello_world.py`
 
 **Interfaces:**
-- Consumes: `CompilationContext.requested_fn_instances()` and `requested_struct_instances()`
+- Consumes: `compilation.Ctx.requested_fn_instances()` and `requested_struct_instances()`
 - Deletes: `mono._fixpoint` and `mono._fn_symbols`
 - Preserves: `MonoResult` and `mono.discover(mod) -> MonoResult`
 
@@ -246,7 +246,7 @@ function request sequence by index:
 
 ```python
 cursor = 0
-requests = mod.loader.context.requested_fn_instances()
+requests = mod.loader.ctx.requested_fn_instances()
 while cursor < len(requests):
     inst = requests[cursor]
     cursor += 1
@@ -292,14 +292,14 @@ Proposed commit subject: `Discover monomorphizations from request logs`
 - Test: `tests/test_errors.py`
 
 **Interfaces:**
-- Produces: generic `Cycle[T]` and stack-safe `CompilationContext.enter(...)`
-- Consumes: `CompilationContext.enter(CycleDomain.MOD_VAR_INITIALIZER, ...)`
+- Produces: generic `Cycle[T]` and stack-safe `compilation.Ctx.enter(...)`
+- Consumes: `compilation.Ctx.enter(CycleDomain.MOD_VAR_INITIALIZER, ...)`
 - Deletes: `ModVar._resolving`
 - Preserves: `CircularVarInitializerError` contents and spans
 
 - [ ] **Step 1: Strengthen cycle diagnostic tests**
 
-Add a unit test that raises an unrelated exception inside `CompilationContext.enter`, then
+Add a unit test that raises an unrelated exception inside `compilation.Ctx.enter`, then
 enters the same identity again and receives no cycle; this pins `finally` cleanup and stack
 discipline. For direct, two-way, three-way, and cross-module cycles, assert the primary
 variable name and the ordered note names already exposed through `UserError.extra`. Keep a
@@ -316,7 +316,7 @@ Expected: PASS; this task preserves behavior.
 - [ ] **Step 3: Implement the typed active-computation tracker**
 
 Add `CycleDomain`, a private frame, `Cycle[T]` with `details: tuple[T, ...]`, and
-`CompilationContext.enter[T]`. `enter` accepts an optional identity-comparison callback for
+`compilation.Ctx.enter[T]`. `enter` accepts an optional identity-comparison callback for
 Task 5's structural-growth rule; equality is the default. It searches only frames in the
 same domain, yields the matching suffix plus the new detail on recurrence, and otherwise
 pushes and pops in `finally` with a top-of-stack assertion. Its docstring must state that a
@@ -324,7 +324,7 @@ caller receiving a non-`None` cycle must raise rather than continue the guarded 
 
 - [ ] **Step 4: Replace the class-global module-variable stack**
 
-In `ModVar.initializer`, enter a frame using `self.env.context`, domain
+In `ModVar.initializer`, enter a frame using `self.env.ctx`, domain
 `MOD_VAR_INITIALIZER`, identity `self`, and detail `self`. If the yielded cycle is not
 `None`, construct `CircularVarInitializerError` from its `ModVar` details. Otherwise
 evaluate the CFG normally. Delete the `ClassVar` import and `_resolving` declaration when
@@ -354,7 +354,7 @@ Proposed commit subject: `Centralize module variable cycle tracking`
 - Test: `tests/test_errors.py`
 
 **Interfaces:**
-- Consumes: `CompilationContext.enter(CycleDomain.STRUCT_LAYOUT, ...)`
+- Consumes: `compilation.Ctx.enter(CycleDomain.STRUCT_LAYOUT, ...)`
 - Produces: `typs.contains_typ(container, contained) -> bool`
 - Deletes: `_MAX_STRUCT_INSTANTIATION_DEPTH`
 - Deletes: `TypInstantiationDepthExceededError`
@@ -420,7 +420,7 @@ Proposed commit subject: `Report growing struct layouts as cycles`
 - Test: `tests/test_errors.py`
 
 **Interfaces:**
-- Consumes: `CompilationContext.enter(CycleDomain.TRAIT_BOUND, ...)`
+- Consumes: `compilation.Ctx.enter(CycleDomain.TRAIT_BOUND, ...)`
 - Produces: `errors.RecursiveTraitBoundError`
 - Deletes: `resolve_bound(..., in_progress=...)` and corresponding threaded parameters
 
@@ -510,7 +510,7 @@ Proposed commit subject: `Report recursive trait bounds as cycles`
 - Test: `tests/test_errors.py`
 
 **Interfaces:**
-- Consumes: `CompilationContext.enter(CycleDomain.IMPL_SELECTION, ...)`
+- Consumes: `compilation.Ctx.enter(CycleDomain.IMPL_SELECTION, ...)`
 - Produces: `errors.RecursiveImplSelectionError`
 - Deletes: `ImplRegistry._selection_depth`
 - Deletes: `typs.MAX_BOUND_DEPTH`

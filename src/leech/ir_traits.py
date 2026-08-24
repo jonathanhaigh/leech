@@ -9,7 +9,18 @@ import functools
 from collections.abc import Collection, Hashable, Iterator, Mapping
 from typing import Final, Optional
 
-from leech import asserts, ast, errors, ir_env, ir_module, opt_util, reserved, src, typs
+from leech import (
+    asserts,
+    ast,
+    compilation,
+    errors,
+    ir_env,
+    ir_module,
+    opt_util,
+    reserved,
+    src,
+    typs,
+)
 
 # Keep this import module-qualified because typs may still be initializing.
 
@@ -327,6 +338,7 @@ class ImplRegistry:
     """
 
     _impls: Final[dict[tuple[Optional[Trait], Hashable], list[Impl]]]
+    ctx: Final[compilation.Ctx]
     #: Every trait with at least one impl of a given head shape, indexing
     #: :attr:`_impls` so :meth:`_find_trait_impls_for_typ` doesn't have to scan
     #: every trait/shape pair ever registered in the program.
@@ -336,7 +348,8 @@ class ImplRegistry:
     #: bound checking. See :meth:`_impl_bounds_hold`.
     _selection_depth: int
 
-    def __init__(self) -> None:
+    def __init__(self, ctx: compilation.Ctx) -> None:
+        self.ctx = ctx
         self._impls = {}
         self._traits_by_shape = {}
         self._selection_depth = 0

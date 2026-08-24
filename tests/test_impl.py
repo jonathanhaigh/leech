@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import asserts, ast, errors, ir_env, ir_module, ir_traits, opt_util, typs
+from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, opt_util, typs
 
 
 def test_assoc_fn_call(tmp_path):
@@ -370,7 +370,9 @@ def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(tmp_path):
     mod_ast = util.parse_mod(tmp_path, src)
     _, impl_ast = mod_ast.defns
     assert isinstance(impl_ast, ast.ImplDefn)
-    impl = ir_traits.Impl(impl_ast, None, typs.I32, (), ir_env.Env(), "main")
+    ctx = compilation.Ctx()
+    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    impl = ir_traits.Impl(impl_ast, None, typs.I32, (), env, "main")
 
     first, second = (
         ir_module.SrcFnSymbol(fn_ast, impl.env, "main", recv_typ=typs.I32, impl=impl)

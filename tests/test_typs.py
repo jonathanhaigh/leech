@@ -7,7 +7,7 @@ import pathlib
 import pytest
 import util
 
-from leech import ast, errors, ir_env, parse, typs
+from leech import ast, compilation, errors, ir_env, ir_traits, parse, typs
 from leech import src as leech_src
 
 
@@ -262,7 +262,9 @@ def test_ptr_typ_name_matches_source_syntax(src, expected):
     # type would be written.
     file = leech_src.SrcFile(pathlib.Path("test.leech"))
     tree = parse.build_parser("typ").parse(src)
-    typ = typs.Typ.from_ast(ast.Typ.from_tree(file, tree), ir_env.Env())
+    ctx = compilation.Ctx()
+    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    typ = typs.Typ.from_ast(ast.Typ.from_tree(file, tree), env)
     assert typ.name == expected
 
 
