@@ -8,11 +8,12 @@ import abc
 import dataclasses
 import functools
 from collections.abc import Collection, Mapping
-from typing import ClassVar, Final, Optional, override
+from typing import Final, Optional, override
 
 from leech import (
     asserts,
     ast,
+    compilation,
     comptime,
     errors,
     ir_builder,
@@ -609,13 +610,6 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     env: Final[ir_env.Env]
     _mut: Final[typs.Mutability]
 
-    #: Module variables whose initializer is currently being evaluated,
-    #: innermost last. Shared across every ``ModVar`` (and, since imports
-    #: can now be circular, every module) in this compilation, so a cycle
-    #: is caught regardless of which variable it's first reached from or
-    #: how many modules it passes through.
-    _resolving: ClassVar[list[ModVar]] = []
-
     @override
     def __init__(self, var_ast: ast.VarDefn, e: ir_env.Env) -> None:
         super().__init__(var_ast)
@@ -652,17 +646,19 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
             variable's initializer again.
         """
         assert self.ast is not None
-        if self in ModVar._resolving:
-            cycle = ModVar._resolving[ModVar._resolving.index(self) :]
-            raise errors.CircularVarInitializerError(
-                self.name, self.span, [(v.name, v.span) for v in cycle]
-            )
-
-        ModVar._resolving.append(self)
-        try:
+        with self.env.ctx.detect_cycle(
+            compilation.CycleDomain.MOD_VAR_INITIALIZER,
+            self,
+            self,
+        ) as cycle:
+            if cycle is not None:
+                raise errors.CircularVarInitializerError(
+                    self.name,
+                    self.span,
+                    # The final detail repeats the first to close the cycle.
+                    [(var.name, var.span) for var in cycle.details[:-1]],
+                )
             return comptime.Interpreter(self.cfg, (), (), self.env.panic_ref).eval()
-        finally:
-            ModVar._resolving.pop()
 
     @functools.cached_property
     def typ_check_results(self) -> typcheck.TypCheckResults:

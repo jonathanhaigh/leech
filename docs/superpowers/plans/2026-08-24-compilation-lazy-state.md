@@ -295,7 +295,7 @@ Run the focused command from Step 2 and every global verification command.
 Expected: all pass; recursive functions terminate discovery because cached requests enter
 the log only once.
 
-- [ ] **Step 7: Ask for review and permission to commit**
+- [x] **Step 7: Ask for review and permission to commit**
 
 Proposed commit subject: `Discover monomorphizations from request logs`
 
@@ -311,14 +311,14 @@ Proposed commit subject: `Discover monomorphizations from request logs`
 - Test: `tests/test_errors.py`
 
 **Interfaces:**
-- Produces: generic `Cycle[T]` and stack-safe `compilation.Ctx.enter(...)`
-- Consumes: `compilation.Ctx.enter(CycleDomain.MOD_VAR_INITIALIZER, ...)`
+- Produces: generic `Cycle[T]` and stack-safe `compilation.Ctx.detect_cycle(...)`
+- Consumes: `compilation.Ctx.detect_cycle(CycleDomain.MOD_VAR_INITIALIZER, ...)`
 - Deletes: `ModVar._resolving`
 - Preserves: `CircularVarInitializerError` contents and spans
 
-- [ ] **Step 1: Strengthen cycle diagnostic tests**
+- [x] **Step 1: Strengthen cycle diagnostic tests**
 
-Add a unit test that raises an unrelated exception inside `compilation.Ctx.enter`, then
+Add a unit test that raises an unrelated exception inside `compilation.Ctx.detect_cycle`, then
 enters the same identity again and receives no cycle; this pins `finally` cleanup and stack
 discipline. For direct, two-way, three-way, and cross-module cycles, assert the primary
 variable name and the ordered note names already exposed through `UserError.extra`. Keep a
@@ -326,22 +326,22 @@ non-cyclic diamond dependency test to prove repeated completed work is not an ac
 cycle twice after catching the first error and assert the same diagnostic is produced,
 proving failed `cached_property` evaluation did not cache a result or leak an active frame.
 
-- [ ] **Step 2: Run the variable-cycle tests before implementation**
+- [x] **Step 2: Run the variable-cycle tests before implementation**
 
 Run: `uv run pytest tests/test_vars.py tests/test_errors.py -q`
 
 Expected: PASS; this task preserves behavior.
 
-- [ ] **Step 3: Implement the typed active-computation tracker**
+- [x] **Step 3: Implement the typed active-computation tracker**
 
 Add `CycleDomain`, a private frame, `Cycle[T]` with `details: tuple[T, ...]`, and
-`compilation.Ctx.enter[T]`. `enter` accepts an optional identity-comparison callback for
+`compilation.Ctx.detect_cycle[T]`. `detect_cycle` accepts an identity-comparison callback for
 Task 5's structural-growth rule; equality is the default. It searches only frames in the
 same domain, yields the matching suffix plus the new detail on recurrence, and otherwise
 pushes and pops in `finally` with a top-of-stack assertion. Its docstring must state that a
 caller receiving a non-`None` cycle must raise rather than continue the guarded computation.
 
-- [ ] **Step 4: Replace the class-global module-variable stack**
+- [x] **Step 4: Replace the class-global module-variable stack**
 
 In `ModVar.initializer`, enter a frame using `self.env.ctx`, domain
 `MOD_VAR_INITIALIZER`, identity `self`, and detail `self`. If the yielded cycle is not
@@ -350,13 +350,13 @@ evaluate the CFG normally. Delete the `ClassVar` import and `_resolving` declara
 unused. This preserves diagnostics while preventing active state from leaking between
 compilations in one process.
 
-- [ ] **Step 5: Verify focused and full suites**
+- [x] **Step 5: Verify focused and full suites**
 
 Run the command from Step 2 and every global verification command.
 
 Expected: all pass with unchanged error rendering.
 
-- [ ] **Step 6: Ask for review and permission to commit**
+- [x] **Step 6: Ask for review and permission to commit**
 
 Proposed commit subject: `Centralize module variable cycle tracking`
 
@@ -373,7 +373,7 @@ Proposed commit subject: `Centralize module variable cycle tracking`
 - Test: `tests/test_errors.py`
 
 **Interfaces:**
-- Consumes: `compilation.Ctx.enter(CycleDomain.STRUCT_LAYOUT, ...)`
+- Consumes: `compilation.Ctx.detect_cycle(CycleDomain.STRUCT_LAYOUT, ...)`
 - Produces: `typs.contains_typ(container, contained) -> bool`
 - Deletes: `_MAX_STRUCT_INSTANTIATION_DEPTH`
 - Deletes: `TypInstantiationDepthExceededError`
@@ -439,7 +439,7 @@ Proposed commit subject: `Report growing struct layouts as cycles`
 - Test: `tests/test_errors.py`
 
 **Interfaces:**
-- Consumes: `compilation.Ctx.enter(CycleDomain.TRAIT_BOUND, ...)`
+- Consumes: `compilation.Ctx.detect_cycle(CycleDomain.TRAIT_BOUND, ...)`
 - Produces: `errors.RecursiveTraitBoundError`
 - Deletes: `resolve_bound(..., in_progress=...)` and corresponding threaded parameters
 
@@ -529,7 +529,7 @@ Proposed commit subject: `Report recursive trait bounds as cycles`
 - Test: `tests/test_errors.py`
 
 **Interfaces:**
-- Consumes: `compilation.Ctx.enter(CycleDomain.IMPL_SELECTION, ...)`
+- Consumes: `compilation.Ctx.detect_cycle(CycleDomain.IMPL_SELECTION, ...)`
 - Produces: `errors.RecursiveImplSelectionError`
 - Deletes: `ImplRegistry._selection_depth`
 - Deletes: `typs.MAX_BOUND_DEPTH`

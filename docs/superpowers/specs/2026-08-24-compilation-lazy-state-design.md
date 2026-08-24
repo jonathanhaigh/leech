@@ -116,20 +116,20 @@ disappear.
 
 ### One active-computation tracker
 
-The context owns a stack of frames. A frame contains:
+The context owns a separate stack of frames for each cycle domain. A frame contains:
 
 - a domain identifying the semantic operation;
 - an identity used to decide whether the operation has recurred; and
 - domain-specific display data used by diagnostics.
 
-Entering a frame searches only the active suffix, never completed work. By default,
-re-entering the same `(domain, identity)` returns the cycle beginning at the earlier frame.
+Detecting a cycle searches only the active stack for that domain, never completed work. By
+default, re-entering the same identity returns the cycle beginning at the earlier frame.
 The struct-layout domain supplies a stricter repetition predicate described below. A
 context-manager API guarantees stack cleanup when computation succeeds or raises. Its cycle
 result is generic in the detail type, so callers do not cast from `object`.
 
 A caller receiving a cycle must raise its domain-specific diagnostic rather than continue
-the guarded computation. This obligation is explicit in `enter`'s docstring.
+the guarded computation. This obligation is explicit in `detect_cycle`'s docstring.
 
 Cycle identity intentionally differs from cache identity:
 

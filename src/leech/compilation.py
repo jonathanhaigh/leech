@@ -4,11 +4,44 @@
 
 """Compilation-wide state for lazy requests and active semantic computations."""
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Final
+import contextlib
+import dataclasses
+import enum
+import operator
+from collections.abc import Callable, Iterator, Sequence
+from typing import TYPE_CHECKING, Final, Optional, cast
 
 if TYPE_CHECKING:
     from leech import ir_module, typs
+
+
+class CycleDomain(enum.Enum):
+    """A semantic operation whose active computations may form cycles.
+
+    Each domain must always use one identity type and one detail type. This invariant
+    makes it safe for :meth:`Ctx.detect_cycle` to restore the types erased in its stack.
+    """
+
+    MOD_VAR_INITIALIZER = enum.auto()
+    STRUCT_LAYOUT = enum.auto()
+    TRAIT_BOUND = enum.auto()
+
+
+@dataclasses.dataclass(frozen=True)
+class Cycle[DetailT]:
+    """The ordered details for a closed active-computation cycle.
+
+    The final detail is the recurrence that closes the cycle and therefore represents
+    the same computation as the first detail.
+    """
+
+    details: tuple[DetailT, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class _CycleFrame:
+    identity: object
+    detail: object
 
 
 class Ctx:
@@ -20,6 +53,7 @@ class Ctx:
     _requested_fn_instances: Final[list[ir_module.FnInstance]]
     _struct_instances: Final[dict[typs.StructTyp, dict[tuple[typs.Typ, ...], typs.StructTyp]]]
     _requested_struct_instances: Final[list[typs.StructTyp]]
+    _cycle_stacks: Final[dict[CycleDomain, list[_CycleFrame]]]
 
     def __init__(self) -> None:
         self.typ_cache_token = object()
@@ -27,6 +61,37 @@ class Ctx:
         self._requested_fn_instances = []
         self._struct_instances = {}
         self._requested_struct_instances = []
+        self._cycle_stacks = {}
+
+    @contextlib.contextmanager
+    def detect_cycle[IdentityT, DetailT](
+        self,
+        domain: CycleDomain,
+        identity: IdentityT,
+        detail: DetailT,
+        same_identity: Callable[[IdentityT, IdentityT], bool] = operator.eq,
+    ) -> Iterator[Optional[Cycle[DetailT]]]:
+        """Guard one active semantic computation and report recurrence.
+
+        ``same_identity`` compares an earlier active identity with the new one;
+        equality is used by default. A caller receiving a cycle must translate it into
+        a diagnostic and raise rather than continue the guarded computation.
+        """
+        frames = self._cycle_stacks.setdefault(domain, [])
+        for index, active in enumerate(frames):
+            active_identity = cast(IdentityT, active.identity)
+            if same_identity(active_identity, identity):
+                details = tuple(cast(DetailT, frame.detail) for frame in frames[index:])
+                yield Cycle((*details, detail))
+                raise AssertionError("cycle was not translated into a diagnostic")
+
+        frame = _CycleFrame(identity, detail)
+        frames.append(frame)
+        try:
+            yield None
+        finally:
+            popped = frames.pop()
+            assert popped is frame, "active computations exited out of order"
 
     def instantiate_fn(
         self,

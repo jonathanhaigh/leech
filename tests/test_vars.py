@@ -327,8 +327,11 @@ def test_mod_var_self_cycle(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.CircularVarInitializerError):
+    with pytest.raises(errors.CircularVarInitializerError) as exc_info:
         util.compile_str(tmp_path, src)
+
+    assert exc_info.value.message.message == 'Initializer of variable "a" depends on itself'
+    assert [note.message for note in exc_info.value.extra] == ['Variable "a" defined here']
 
 
 def test_mod_var_cycle(tmp_path):
@@ -352,8 +355,15 @@ def test_mod_var_three_way_cycle(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.CircularVarInitializerError):
+    with pytest.raises(errors.CircularVarInitializerError) as exc_info:
         util.compile_str(tmp_path, src)
+
+    assert exc_info.value.message.message == 'Initializer of variable "a" depends on itself'
+    assert [note.message for note in exc_info.value.extra] == [
+        'Variable "a" defined here',
+        'Variable "b" defined here',
+        'Variable "c" defined here',
+    ]
 
 
 def test_cross_module_var_cycle(tmp_path):
@@ -371,5 +381,46 @@ def test_cross_module_var_cycle(tmp_path):
     import main;
     pub let y = main::x;
     """
-    with pytest.raises(errors.CircularVarInitializerError):
+    with pytest.raises(errors.CircularVarInitializerError) as exc_info:
         util.compile_modules(tmp_path, main=main_src, a=a_src)
+
+    assert exc_info.value.message.message == 'Initializer of variable "x" depends on itself'
+    assert [note.message for note in exc_info.value.extra] == [
+        'Variable "x" defined here',
+        'Variable "y" defined here',
+    ]
+
+
+def test_mod_var_cycle_can_be_retried_after_failure(tmp_path):
+    src = """
+    let b = a;
+    let a = b;
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    mod = util.build_ir_mod(tmp_path, src)
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "b")
+    assert item is not None
+    var = asserts.checked_cast(item.value, ir_module.ModVar)
+
+    diagnostics = []
+    for _ in range(2):
+        with pytest.raises(errors.CircularVarInitializerError) as exc_info:
+            _ = var.initializer
+        diagnostics.append(str(exc_info.value))
+
+    assert diagnostics[0] == diagnostics[1]
+
+
+def test_mod_var_diamond_dependency_is_not_a_cycle(tmp_path):
+    src = """
+    let a = 1;
+    let b = a;
+    let c = a;
+    let d = b + c;
+    pub fn main() i32 {
+        return d - 2;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
