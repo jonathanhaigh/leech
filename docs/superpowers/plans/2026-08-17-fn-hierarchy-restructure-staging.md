@@ -187,19 +187,27 @@ declaration, so `ast.FnDefn` remains a concrete subclass of `ast.FnDecl`.
 
 ## Stage 5 — Centralize the lazy caches
 
-Change #6. One context object owning the caches currently spread across
-`functools.cached_property` declarations, so that four independent recursion
-guards become one cycle detector reporting cycles as cycles:
+Change #6. Design: [Compilation-wide lazy state](../specs/2026-08-24-compilation-lazy-state-design.md).
+Plan: [Compilation-wide lazy state](2026-08-24-compilation-lazy-state.md).
+
+One compilation context owns function/struct instance request caches and request logs, so
+monomorphization drains new work directly instead of polling every declaration. The same
+context owns typed active-computation frames replacing independent recursion guards for:
 
 - `typs._MAX_STRUCT_INSTANTIATION_DEPTH` and `_check_finite_size`'s
   `visiting` list
 - `typs.MAX_BOUND_DEPTH` in `resolve_bound`
 - `ir_traits.ImplRegistry._selection_depth`
-- `mono._fixpoint`
+- `ir_module.ModVar._resolving`
+
+`mono._fixpoint` disappears as a consequence of the request logs rather than as a cycle
+guard. Growing struct layouts, recursive declared bounds, and recursive impl selection each
+receive a source diagnostic in place of a depth-limit error.
 
 This deliberately stops well short of a rustc-style query engine, which a
 10k-line compiler does not need. The goal is one place for cycle detection,
-not a dependency graph.
+not a dependency graph. Ordinary immutable `cached_property` values and process-wide type
+interning stay where they are.
 
 **Exit criteria:** suite green; a cycle reports as a cycle rather than as a
 depth-limit `NotImplementedError`.
