@@ -240,9 +240,9 @@ class Compiler:
         match item.value:
             case ir_module.ModVar():
                 self._declare_mod_var(item, item.value)
-            case ir_module.FnDecl():
+            case ir_module.ExternFnSymbol():
                 self._declare_mod_fn(item, item.value)
-            case ir_module.FnSpec():
+            case ir_module.FnSymbol():
                 pass
             case typs.StructTyp():
                 ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
@@ -266,7 +266,7 @@ class Compiler:
         match item.value:
             case ir_module.ModVar():
                 return self._compile_mod_var(item, item.value)
-            case ir_module.FnSpec():
+            case ir_module.FnSymbol():
                 return None
             case typs.StructTyp():
                 # Already compiled, along with every other module's, by
@@ -299,7 +299,7 @@ class Compiler:
         ll_init = self._ll_mod_items.get(var.initializer)
         self._ll_mod_items.get(var).initializer = ll_init  # type: ignore
 
-    def _declare_mod_fn(self, item: ir_module.ModItem, fn: ir_module.FnDecl) -> ll.Value:
+    def _declare_mod_fn(self, item: ir_module.ModItem, fn: ir_module.ExternFnSymbol) -> ll.Value:
         inst = fn.instantiate(())
         ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(inst.fn_typ), inst.qualified_name)
         self._ll_mod_items.set(inst.ref, ll_fn)
@@ -315,9 +315,9 @@ class Compiler:
             # keep one interchangeable copy.
             ll_fn.linkage = "linkonce_odr"
         else:
-            source_fn = inst.source_fn
-            assert source_fn is not None
-            _set_linkage(ll_fn, source_fn.access)
+            src_fn = inst.src_fn
+            assert src_fn is not None
+            _set_linkage(ll_fn, src_fn.access)
         return ll_fn
 
     def _compile_fn_instance(self, inst: ir_module.FnInstance) -> None:

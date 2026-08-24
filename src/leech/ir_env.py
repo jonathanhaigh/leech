@@ -24,7 +24,9 @@ from leech import (
 type Container = typs.Typ | ir_module.Mod | ir_traits.Trait
 """A type, module, or trait bound in the shared container namespace."""
 
-type Var = ir_values.Value[typs.PtrTyp] | ir_module.FnSpec | ast.Param | ast.Receiver | ast.LetStmt
+type Var = (
+    ir_values.Value[typs.PtrTyp] | ir_module.FnSymbol | ast.Param | ast.Receiver | ast.LetStmt
+)
 """A value, function symbol, or local declaration-site AST node.
 
 :invariant: every bound Value is PtrTyp-typed [unchecked: hot path]
@@ -57,22 +59,22 @@ class Env:
     #: Program-wide trait implementations shared by every scope.
     impl_registry: Final[ir_traits.ImplRegistry]
     #: The prelude's unshadowable panic function; absent only while building the prelude.
-    panic_fn: Final[Optional[ir_module.FnRef]]
+    panic_ref: Final[Optional[ir_module.FnRef]]
 
     def __init__(
         self,
         parent: Optional[Env] = None,
         impl_registry: Optional[ir_traits.ImplRegistry] = None,
-        panic_fn: Optional[ir_module.FnRef] = None,
+        panic_ref: Optional[ir_module.FnRef] = None,
     ) -> None:
         if parent is None:
             self.items = collections.ChainMap()
             self.impl_registry = opt_util.opt_or_else(impl_registry, ir_traits.ImplRegistry)
-            self.panic_fn = panic_fn
+            self.panic_ref = panic_ref
         else:
             self.items = parent.items.new_child()
             self.impl_registry = parent.impl_registry
-            self.panic_fn = parent.panic_fn
+            self.panic_ref = parent.panic_ref
         self._spans = {}
 
     def new_child(self) -> Env:
@@ -129,14 +131,14 @@ class Env:
 
     @staticmethod
     def _private_item_diag_info(
-        value: Container | ir_values.Value[typs.PtrTyp] | ir_module.FnSpec,
+        value: Container | ir_values.Value[typs.PtrTyp] | ir_module.FnSymbol,
     ) -> Optional[tuple[str, Optional[src.SrcSpan]]]:
         """Return a private item's diagnostic kind and definition span, if applicable.
 
         Only ever called with a :class:`~leech.ir_module.ModItem`'s own
         value, never a local binding - narrower than the general ``Var``.
         """
-        if isinstance(value, ir_module.FnSpec):
+        if isinstance(value, ir_module.FnSymbol):
             return "function", value.span
         if isinstance(value, ir_module.ModVar):
             return "variable", value.span

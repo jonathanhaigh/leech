@@ -50,13 +50,13 @@ def test_generic_impl_lookup_does_not_instantiate_method(tmp_path):
     box = asserts.checked_cast(box_item.value, typs.StructTyp)
     concrete_box = box.instance((typs.I32,))
     (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_box)
-    fn = opt_util.opt_unwrap(impl.get_fn("get"))
+    fn = opt_util.opt_unwrap(impl.get_fn_symbol("get"))
     instances_before = tuple(fn.instances)
 
     selection = mod.loader.impl_registry.lookup_member(concrete_box, "get", None)
 
     assert tuple(fn.instances) == instances_before
-    selection = asserts.checked_cast(selection, ir_traits.FnSelection)
+    selection = asserts.checked_cast(selection, ir_traits.ImplFnSelection)
     assert selection.fn is fn
     assert selection.impl_args == (typs.I32,)
 
@@ -283,7 +283,7 @@ def test_generic_impl_instance_args_follow_declaration_order(tmp_path):
     pair = asserts.checked_cast(pair_item.value, typs.StructTyp)
     concrete_pair = pair.instance((typs.I32, typs.BOOL))
     (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_pair)
-    fn = opt_util.opt_unwrap(impl.get_fn("first"))
+    fn = opt_util.opt_unwrap(impl.get_fn_symbol("first"))
 
     inst = fn.instantiate((typs.I32, typs.BOOL))
     assert inst.args == (typs.I32, typs.BOOL)
@@ -373,12 +373,12 @@ def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(tmp_path):
     impl = ir_traits.Impl(impl_ast, None, typs.I32, (), ir_env.Env(), "main")
 
     first, second = (
-        ir_module.Fn(fn_ast, impl.env, "main", recv_typ=typs.I32, impl=impl)
-        for fn_ast in impl_ast.fns
+        ir_module.SrcFnSymbol(fn_ast, impl.env, "main", recv_typ=typs.I32, impl=impl)
+        for fn_ast in impl_ast.fn_defns
     )
-    impl.add_fn(first)
+    impl.add_fn_symbol(first)
     with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
-        impl.add_fn(second)
+        impl.add_fn_symbol(second)
 
     span = exc_info.value.message.span
     assert span is not None

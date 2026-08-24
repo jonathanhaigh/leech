@@ -5,21 +5,21 @@
 import pytest
 import util
 
-from leech import asserts, ast, errors, ir_env, ir_module, ir_values, typs
+from leech import asserts, errors, ir_env, ir_module, ir_values, typs
 
 
-def _get_fn(mod, name: str) -> ir_module.Fn:
+def _get_fn(mod, name: str) -> ir_module.SrcFnSymbol:
     """Get the plain (non-generic) function ``name`` declares in ``mod``."""
     item = mod.get_item(ir_env.Env.Namespace.VARS, name)
     assert item is not None
-    return asserts.checked_cast(item.value, ir_module.Fn)
+    return asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
 
 
-def _get_generic_fn(mod, name: str) -> ir_module.Fn:
+def _get_generic_fn(mod, name: str) -> ir_module.SrcFnSymbol:
     """Get the generic function ``name`` declares in ``mod``."""
     item = mod.get_item(ir_env.Env.Namespace.VARS, name)
     assert item is not None
-    return asserts.checked_cast(item.value, ir_module.Fn)
+    return asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
 
 
 def _lower_main(tmp_path, src):
@@ -36,68 +36,19 @@ def _lower_main(tmp_path, src):
     return _get_fn(mod, "main").instantiate(()).cfg
 
 
-def _function_shapes(tmp_path):
-    """Build representative source, extern, builtin, and instance functions."""
+def _get_extern_decl(tmp_path) -> ir_module.ExternFnSymbol:
+    """Build and return a representative extern declaration."""
     mod = util.build_ir_mod(
         tmp_path,
         "extern fn exit(code: i32);\nfn f(x: i32) i32 { x }\npub fn main() i32 { f(1) }",
     )
-    fn = _get_fn(mod, "f")
     decl_item = mod.get_item(ir_env.Env.Namespace.VARS, "exit")
     assert decl_item is not None
-    decl = asserts.checked_cast(decl_item.value, ir_module.FnDecl)
-    builtin = mod.env.get(ir_env.Env.Namespace.VARS, "__size_of")
-    builtin = asserts.checked_cast(builtin, ir_module.GenericBuiltinFn)
-    return fn, decl, builtin, fn.instantiate(())
-
-
-def test_only_fn_ref_is_a_function_value(tmp_path):
-    fn, decl, builtin, inst = _function_shapes(tmp_path)
-
-    assert not isinstance(fn, ir_values.Value)
-    assert not isinstance(decl, ir_values.Value)
-    assert not isinstance(builtin, ir_values.Value)
-    assert not isinstance(inst, ir_values.Value)
-    assert isinstance(inst.ref, ir_values.Value)
-
-
-def test_function_symbols_and_instances_have_no_pointer_facade(tmp_path):
-    fn, decl, builtin, inst = _function_shapes(tmp_path)
-
-    for value in (fn, decl, builtin, inst):
-        assert not hasattr(value, "load")
-        assert not hasattr(value, "store")
-        assert not hasattr(value, "is_temporary")
-        assert not hasattr(value, "body_cfg")
-
-
-def test_fn_spec_requires_a_function_signature() -> None:
-    class MissingFnTyp(ir_module.FnSpec[ast.FnDefn]):
-        @property
-        def name(self) -> str:
-            return "missing_fn_typ"
-
-        def calculate_params(self) -> tuple[ir_values.Param, ...]:
-            return ()
-
-    with pytest.raises(TypeError):
-        MissingFnTyp(None)  # pyright: ignore[reportAbstractUsage]
-
-
-def test_body_spec_classification_and_instance_parameters(tmp_path):
-    fn, decl, builtin, inst = _function_shapes(tmp_path)
-
-    assert isinstance(fn, ir_module.BodyFnSpec)
-    assert isinstance(builtin, ir_module.BodyFnSpec)
-    assert not isinstance(decl, ir_module.BodyFnSpec)
-    assert inst.has_body
-    assert not decl.instantiate(()).has_body
-    assert fn.params[0].fn is fn
-    assert inst.params[0].fn is inst
+    return asserts.checked_cast(decl_item.value, ir_module.ExternFnSymbol)
 
 
 def test_extern_instance_cfg_is_rejected(tmp_path):
-    _, decl, _, _ = _function_shapes(tmp_path)
+    decl = _get_extern_decl(tmp_path)
 
     with pytest.raises(AssertionError, match="extern instances have no body"):
         _ = decl.instantiate(()).cfg

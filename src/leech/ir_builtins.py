@@ -4,7 +4,7 @@
 
 """Compiler intrinsics and names ambiently available in every module.
 
-Import this module lazily because its builtin classes require ``ir_module`` to be loaded.
+Import this module lazily because its intrinsic classes require ``ir_module`` to be loaded.
 """
 
 from typing import override
@@ -12,7 +12,7 @@ from typing import override
 from leech import ir_builder, ir_env, ir_loader, ir_module, typs
 
 
-class SizeOfBuiltinFn(ir_module.GenericBuiltinFn):
+class SizeOfIntrinsicFn(ir_module.IntrinsicFnSymbol):
     """``__size_of[T]() usize``."""
 
     def __init__(self, e: ir_env.Env) -> None:
@@ -28,7 +28,7 @@ class SizeOfBuiltinFn(ir_module.GenericBuiltinFn):
         builder._curr_bb.ret(size, None)
 
 
-class PtrCastMutBuiltinFn(ir_module.GenericBuiltinFn):
+class PtrCastMutIntrinsicFn(ir_module.IntrinsicFnSymbol):
     """``__ptr_cast_mut[From, To](p: *mut From) *mut To``."""
 
     def __init__(self, e: ir_env.Env) -> None:
@@ -51,7 +51,7 @@ class PtrCastMutBuiltinFn(ir_module.GenericBuiltinFn):
         builder._curr_bb.ret(casted, None)
 
 
-class IsNullBuiltinFn(ir_module.GenericBuiltinFn):
+class IsNullIntrinsicFn(ir_module.IntrinsicFnSymbol):
     """``__is_null[T](p: *mut T) bool``."""
 
     def __init__(self, e: ir_env.Env) -> None:
@@ -71,7 +71,7 @@ class IsNullBuiltinFn(ir_module.GenericBuiltinFn):
         builder._curr_bb.ret(result, None)
 
 
-class EnumToIntBuiltinFn(ir_module.GenericBuiltinFn):
+class EnumToIntIntrinsicFn(ir_module.IntrinsicFnSymbol):
     """``__enum_to_int[E](v: E) <E's backing type>``."""
 
     def __init__(self, e: ir_env.Env) -> None:
@@ -97,7 +97,7 @@ def register(builtin_env: ir_env.Env, loader: ir_loader.ModLoader) -> None:
     builtin_env.add_container("isize", typs.ISIZE)
     builtin_env.add_container("bool", typs.BOOL)
 
-    builtin_env.add_var("__size_of", loader.size_of_builtin)
-    builtin_env.add_var("__ptr_cast_mut", loader.ptr_cast_mut_builtin)
-    builtin_env.add_var("__is_null", loader.is_null_builtin)
-    builtin_env.add_var("__enum_to_int", loader.enum_to_int_builtin)
+    builtin_env.add_var("__size_of", loader.size_of_intrinsic)
+    builtin_env.add_var("__ptr_cast_mut", loader.ptr_cast_mut_intrinsic)
+    builtin_env.add_var("__is_null", loader.is_null_intrinsic)
+    builtin_env.add_var("__enum_to_int", loader.enum_to_int_intrinsic)

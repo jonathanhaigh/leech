@@ -61,7 +61,7 @@ def test_struct_lowering_uses_typechecked_field_indices(tmp_path):
     mod = util.build_ir_mod(tmp_path, src)
     item = mod.get_item(ir_env.Env.Namespace.VARS, "main")
     assert item is not None
-    fn = asserts.checked_cast(item.value, ir_module.Fn)
+    fn = asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
     fn_ast = asserts.checked_cast(fn.ast, ast.FnDefn)
     let_stmt = asserts.checked_cast(fn_ast.block.stmts[0], ast.LetStmt)
     struct_expr = asserts.checked_cast(let_stmt.expr, ast.StructExpr)

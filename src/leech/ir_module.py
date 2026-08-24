@@ -36,13 +36,13 @@ class ModItem:
     mod: Final[Mod]
     name: Final[str]
     access: Final[visibility.Access]
-    value: Final[ir_values.Value[typs.PtrTyp] | ir_env.Container | FnSpec]
+    value: Final[ir_values.Value[typs.PtrTyp] | ir_env.Container | FnSymbol]
     qualify_name: Final[bool] = True
 
     @property
     def _ns(self) -> ir_env.Env.Namespace:
         """Return the namespace in which this item is bound."""
-        if isinstance(self.value, (ir_values.Value, FnSpec)):
+        if isinstance(self.value, (ir_values.Value, FnSymbol)):
             return ir_env.Env.Namespace.VARS
         return ir_env.Env.Namespace.CONTAINERS
 
@@ -57,7 +57,7 @@ class ModItem:
         return self.name
 
 
-class FnSpec[FnAstT_co: ast.FnSpec](abc.ABC):
+class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
     """Base class for a function declaration."""
 
     ast: Final[Optional[FnAstT_co]]
@@ -117,7 +117,7 @@ class FnSpec[FnAstT_co: ast.FnSpec](abc.ABC):
         """
 
 
-class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
+class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
     """A source-declared function resolved in its own child scope."""
 
     env: Final[ir_env.Env]
@@ -191,8 +191,8 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         return self.ast.name.name
 
 
-class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
-    """A function declared without a body (e.g. an external/builtin function)."""
+class ExternFnSymbol(ParsedFnSymbol[ast.ExternFnDecl]):
+    """A source-level external function declaration without a body."""
 
     @property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
@@ -220,7 +220,7 @@ class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
         return ""
 
 
-class BodyFnSpec(abc.ABC):
+class LowerableFn(abc.ABC):
     """A function declaration that owns a lowerable body."""
 
     env: ir_env.Env
@@ -235,7 +235,7 @@ class BodyFnSpec(abc.ABC):
         """Lower one instance's body into ``builder.cfg``."""
 
 
-class Fn(NonBuiltinFnSpec[ast.FnDefn], BodyFnSpec):
+class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
     """A source-defined function that may serve as a generic template.
 
     :param impl: The ``impl`` block this function is declared in;
@@ -353,24 +353,24 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn], BodyFnSpec):
 class FnInstance:
     """One concrete instantiation of a function declaration.
 
-    The declaration may own a checked source or builtin body, or it may
+    The declaration may own a checked source or intrinsic body, or it may
     be a bodyless extern declaration.
 
     :param fn: The declaration this is an instantiation of.
     :param args: The impl's type arguments followed by the function's own.
     """
 
-    _fn: Final[FnSpec]
+    _fn: Final[FnSymbol]
     _args: Final[tuple[typs.Typ, ...]]
     _impl_arity: Final[int]
     _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
-    ast: Final[Optional[ast.FnSpec]]
+    ast: Final[Optional[ast.FnDecl]]
 
-    def __init__(self, fn: FnSpec, args: tuple[typs.Typ, ...]) -> None:
+    def __init__(self, fn: FnSymbol, args: tuple[typs.Typ, ...]) -> None:
         self.ast = fn.ast
         self._fn = fn
         self._args = args
-        impl = fn.impl if isinstance(fn, Fn) else None
+        impl = fn.impl if isinstance(fn, SrcFnSymbol) else None
         self._impl_arity = len(impl.typ_params) if impl is not None else 0
         all_params = (*impl.typ_params, *fn.typ_params) if impl is not None else fn.typ_params
         self._mapping = dict(zip(all_params, args, strict=True))
@@ -392,7 +392,7 @@ class FnInstance:
 
     @property
     def _receiver_typ(self) -> Optional[typs.Typ]:
-        if not isinstance(self._fn, Fn) or self._fn.impl is None:
+        if not isinstance(self._fn, SrcFnSymbol) or self._fn.impl is None:
             return None
         return self._fn.impl.self_typ.substitute_typ_params(self._mapping)
 
@@ -432,7 +432,7 @@ class FnInstance:
     def qualified_name(self) -> str:
         """This instance's mangled symbol name, e.g. ``mod::id[i32]``,
         ``main::Box[i32]::get``, ``<main::Box[i32] as main::Show>::show``,
-        or ``__size_of[i32]`` (no module prefix) for a builtin.
+        or ``__size_of[i32]`` (no module prefix) for an intrinsic.
 
         A trait impl's method takes the trait as well as the self type,
         because two traits may declare a method of the same name and the
@@ -449,39 +449,39 @@ class FnInstance:
         name = self._render_name(qualified=True)
         if self._receiver_typ is not None:
             prefix = self._receiver_typ.qualified_name
-            impl = asserts.checked_cast(self._fn, Fn).impl
+            impl = asserts.checked_cast(self._fn, SrcFnSymbol).impl
             trait = None if impl is None else impl.trait
             if trait is not None:
                 prefix = f"<{prefix} as {trait.mod_name}::{trait.name}>"
             return f"{prefix}::{name}"
         # A root module can contain a function named main without itself
         # being the executable module. Only main::main is the linker entry.
-        if isinstance(self._fn, Fn) and not self._fn.is_generic and self._fn.is_main:
+        if isinstance(self._fn, SrcFnSymbol) and not self._fn.is_generic and self._fn.is_main:
             return name
         prefix = self._fn._qualified_name_prefix
         return f"{prefix}::{name}" if prefix else name
 
     def is_accessible_from(self, file: src.SrcFile) -> bool:
-        return asserts.checked_cast(self._fn, Fn).is_accessible_from(file)
+        return asserts.checked_cast(self._fn, SrcFnSymbol).is_accessible_from(file)
 
     @property
     def uses_generic_linkage(self) -> bool:
         """Whether this is a generic specialization that may be emitted in many modules."""
-        if isinstance(self._fn, FnDecl):
+        if isinstance(self._fn, ExternFnSymbol):
             return False
-        if not isinstance(self._fn, Fn):
+        if not isinstance(self._fn, SrcFnSymbol):
             return True
         return self._fn.is_generic
 
     @property
     def has_body(self) -> bool:
         """Whether this instance owns a body that can be lowered."""
-        return isinstance(self._fn, BodyFnSpec)
+        return isinstance(self._fn, LowerableFn)
 
     @property
-    def source_fn(self) -> Optional[Fn]:
+    def src_fn(self) -> Optional[SrcFnSymbol]:
         """The source declaration behind this instance, if it has one."""
-        return self._fn if isinstance(self._fn, Fn) else None
+        return self._fn if isinstance(self._fn, SrcFnSymbol) else None
 
     def is_concrete(self) -> bool:
         """Return whether every type this instance's signature mentions is concrete."""
@@ -501,15 +501,15 @@ class FnInstance:
         return FnRef(self)
 
     @functools.cached_property
-    def _siblings(self) -> frozenset[Fn]:
+    def _siblings(self) -> frozenset[SrcFnSymbol]:
         """Return functions from this instance's declaring ``impl`` block.
 
         A free function has no parent ``impl`` and therefore no siblings.
         """
-        impl = self._fn.impl if isinstance(self._fn, Fn) else None
-        return frozenset() if impl is None else frozenset(impl.fns)
+        impl = self._fn.impl if isinstance(self._fn, SrcFnSymbol) else None
+        return frozenset() if impl is None else frozenset(impl.fn_symbols)
 
-    def sibling_instance(self, target: Fn) -> Optional[FnInstance]:
+    def sibling_instance(self, target: SrcFnSymbol) -> Optional[FnInstance]:
         """Instantiate ``target`` if it belongs to this instance's impl.
 
         Resolved one at a time rather than as a map of the whole block,
@@ -529,11 +529,11 @@ class FnInstance:
     def cfg(self) -> ir_values.Cfg:
         """This instance's body, lowered to a control-flow graph. Built
         lazily, on first access."""
-        assert isinstance(self._fn, BodyFnSpec), "extern instances have no body"
+        assert isinstance(self._fn, LowerableFn), "extern instances have no body"
         builder = ir_builder.CfgBuilder(
             self._fn.typ_check_results,
             self._fn.env.impl_registry,
-            self._fn.env.panic_fn,
+            self._fn.env.panic_ref,
             self,
             self._mapping,
         )
@@ -541,7 +541,7 @@ class FnInstance:
         return builder.cfg
 
 
-class FnRef(ir_values.ComptimeValue[typs.PtrTyp, ast.FnSpec]):
+class FnRef(ir_values.ComptimeValue[typs.PtrTyp, ast.FnDecl]):
     """An immutable function-address value for one concrete instance."""
 
     instance: Final[FnInstance]
@@ -555,8 +555,8 @@ class FnRef(ir_values.ComptimeValue[typs.PtrTyp, ast.FnSpec]):
         return self.instance.ptr_typ
 
 
-class GenericBuiltinFn(FnSpec[ast.FnDefn], BodyFnSpec):
-    """A compiler-intrinsic generic function with a Python-authored body."""
+class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
+    """A compiler intrinsic with a Python-authored body."""
 
     _fn_name: Final[str]
     _typ_param_names: Final[tuple[str, ...]]
@@ -588,12 +588,12 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn], BodyFnSpec):
 
     @property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """This builtin's interned type parameters in declaration order."""
+        """This intrinsic's interned type parameters in declaration order."""
         return self._typ_params
 
     @functools.cached_property
     def _typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """This builtin's interned type parameters in declaration order."""
+        """This intrinsic's interned type parameters in declaration order."""
         return tuple(
             typs.TypParamTyp.get_or_create(self, i, name)
             for i, name in enumerate(self._typ_param_names)
@@ -610,7 +610,7 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn], BodyFnSpec):
 
     @abc.abstractmethod
     def fn_typ_for_typ_args(self, typ_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
-        """Compute this builtin's function type from opaque type parameters."""
+        """Compute this intrinsic's function type from opaque type parameters."""
 
     @override
     def calculate_params(self) -> tuple[ir_values.Param, ...]:
@@ -623,24 +623,24 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn], BodyFnSpec):
 
     @property
     def typ_check_results(self) -> typcheck.TypCheckResults:
-        """The builtin's empty type-checking results."""
+        """The intrinsic's empty type-checking results."""
         return self._typ_check_results
 
     @functools.cached_property
     def _typ_check_results(self) -> typcheck.TypCheckResults:
-        # Builtins emit directly and therefore need no type-checking facts.
+        # Intrinsics emit directly and therefore need no type-checking facts.
         return typcheck.TypCheckResults()
 
     @property
     def _qualified_name_prefix(self) -> str:
-        # A builtin isn't declared in any particular module - it's shared,
+        # An intrinsic isn't declared in any particular module - it's shared,
         # global, and bound identically into every module's builtin_env -
         # so its mangled symbol name has no module prefix at all.
         return ""
 
     @abc.abstractmethod
     def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
-        """Emit this builtin's body directly into ``builder`` (ending in a
+        """Emit this intrinsic's body directly into ``builder`` (ending in a
         ``ret``), given this instantiation's concrete type arguments."""
 
 
@@ -701,7 +701,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
 
         ModVar._resolving.append(self)
         try:
-            return comptime.Interpreter(self.cfg, (), (), self.env.panic_fn).eval()
+            return comptime.Interpreter(self.cfg, (), (), self.env.panic_ref).eval()
         finally:
             ModVar._resolving.pop()
 
@@ -723,7 +723,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
         builder = ir_builder.CfgBuilder(
             self.typ_check_results,
             self.env.impl_registry,
-            self.env.panic_fn,
+            self.env.panic_ref,
         )
         builder.build_var_initializer(opt_util.opt_unwrap(self.ast))
         return builder.cfg
@@ -745,21 +745,21 @@ class Mod:
     _items: Final[dict[tuple[ir_env.Env.Namespace, str], ModItem]]
     env: Final[ir_env.Env]
     loader: Final[ir_loader.ModLoader]
-    _fns: tuple[Fn, ...]
+    _src_fn_symbols: tuple[SrcFnSymbol, ...]
 
     def __init__(self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader) -> None:
-        # Deferred because builtin classes subclass GenericBuiltinFn.
+        # Deferred because intrinsic classes subclass IntrinsicFnSymbol.
         from leech import ir_builtins  # noqa: PLC0415
 
         builtin_env = ir_env.Env(
-            impl_registry=loader.impl_registry, panic_fn=loader.prelude_panic_fn
+            impl_registry=loader.impl_registry, panic_ref=loader.prelude_panic_ref
         )
         self._name = name
         self.ast = mod_ast
         self._items = {}
         self.env = builtin_env.new_child()
         self.loader = loader
-        self._fns = ()
+        self._src_fn_symbols = ()
 
         ir_builtins.register(builtin_env, loader)
 
@@ -779,21 +779,21 @@ class Mod:
     def build(self) -> None:
         """Build definitions and impls, then eagerly check every declared body."""
         impl_defns = []
-        fns: list[Fn] = []
+        src_fn_symbols: list[SrcFnSymbol] = []
         for defn_ast in self.ast.defns:
             if isinstance(defn_ast, ast.ImplDefn):
                 impl_defns.append(defn_ast)
             else:
-                self._build_defn(defn_ast, fns)
+                self._build_defn(defn_ast, src_fn_symbols)
 
         for impl_ast in impl_defns:
-            self._build_impl_defn(impl_ast, fns)
+            self._build_impl_defn(impl_ast, src_fn_symbols)
 
-        self._fns = tuple(fns)
+        self._src_fn_symbols = tuple(src_fn_symbols)
 
     def check_declarations(self) -> None:
         """Type-check every body after the complete import graph has been built."""
-        for fn in self._fns:
+        for fn in self._src_fn_symbols:
             _ = fn.typ_check_results
 
     @property
@@ -807,15 +807,15 @@ class Mod:
         return self._items.values()
 
     @property
-    def fns(self) -> Collection[Fn]:
-        """Every source function declaration, including impl functions."""
-        return self._fns
+    def src_fn_symbols(self) -> Collection[SrcFnSymbol]:
+        """Every source function symbol, including impl functions."""
+        return self._src_fn_symbols
 
     def get_item(self, ns: ir_env.Env.Namespace, name: str) -> Optional[ModItem]:
         """Return the item named ``name`` in ``ns``, if declared."""
         return self._items.get((ns, name))
 
-    def _build_defn(self, defn_ast: ast.Defn, fns: list[Fn]) -> None:
+    def _build_defn(self, defn_ast: ast.Defn, src_fn_symbols: list[SrcFnSymbol]) -> None:
         match defn_ast:
             case ast.VarDefn():
                 self._add_item(
@@ -823,21 +823,21 @@ class Mod:
                     visibility.Access.from_ast(defn_ast.access),
                     ModVar(defn_ast, self.env),
                 )
-            case ast.FnDecl():
+            case ast.ExternFnDecl():
                 if defn_ast.receiver is not None:
                     raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
                 self._add_item(
                     defn_ast.name.name,
                     visibility.PUBLIC,
-                    FnDecl(defn_ast, self.env, self.name),
+                    ExternFnSymbol(defn_ast, self.env, self.name),
                     False,
                 )
             case ast.FnDefn():
                 if defn_ast.receiver is not None:
                     raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
                 qualify_name = self.name != "main" or defn_ast.name.name != "main"
-                fn = Fn(defn_ast, self.env, self.name)
-                fns.append(fn)
+                fn = SrcFnSymbol(defn_ast, self.env, self.name)
+                src_fn_symbols.append(fn)
                 self._add_item(
                     defn_ast.name.name,
                     visibility.Access.from_ast(defn_ast.access),
@@ -874,11 +874,11 @@ class Mod:
                 # Impl blocks are handled separately.
                 raise AssertionError(f"unhandled definition {defn_ast}")
 
-    def _build_impl_defn(self, impl_ast: ast.ImplDefn, fns: list[Fn]) -> None:
+    def _build_impl_defn(self, impl_ast: ast.ImplDefn, src_fn_symbols: list[SrcFnSymbol]) -> None:
         """Build one inherent or trait ``impl`` block.
 
         :param impl_ast: The parsed ``impl`` block.
-        :param fns: Accumulates every source function declaration.
+        :param src_fn_symbols: Accumulates every source function symbol.
         """
         # The impl's own type parameters, if any, are bound here - before
         # either the inherent or trait branch resolves its target type(s)
@@ -891,16 +891,16 @@ class Mod:
             impl_env.add_container(typ_param.name, typ_param)
 
         if impl_ast.for_typ is None:
-            self._build_inherent_impl_defn(impl_ast, impl_typ_params, impl_env, fns)
+            self._build_inherent_impl_defn(impl_ast, impl_typ_params, impl_env, src_fn_symbols)
         else:
-            self._build_trait_impl_defn(impl_ast, impl_typ_params, impl_env, fns)
+            self._build_trait_impl_defn(impl_ast, impl_typ_params, impl_env, src_fn_symbols)
 
     def _build_inherent_impl_defn(
         self,
         impl_ast: ast.ImplDefn,
         impl_typ_params: tuple[typs.TypParamTyp, ...],
         impl_env: ir_env.Env,
-        fns: list[Fn],
+        src_fn_symbols: list[SrcFnSymbol],
     ) -> None:
         """Build one inherent ``impl SomeStruct { ... }`` block's associated functions.
 
@@ -908,7 +908,7 @@ class Mod:
             None``).
         :param impl_env: The impl's own scope, with its type parameters
             (if any) already bound.
-        :param fns: Accumulates every source function declaration.
+        :param src_fn_symbols: Accumulates every source function symbol.
         :raises ImplForNonStructTypError: If ``impl_ast.typ`` doesn't name
             a struct type.
         :raises ImplForNonLocalStructTypError: If ``impl_ast.typ`` names a
@@ -928,14 +928,14 @@ class Mod:
         impl = ir_traits.Impl(impl_ast, None, typ, impl_typ_params, impl_env, self.name)
         impl.check_typ_params_constrained()
         self.loader.impl_registry.add_impl(impl)
-        self._build_impl_fns(impl_ast, impl, fns)
+        self._build_impl_fn_symbols(impl_ast, impl, src_fn_symbols)
 
     def _build_trait_impl_defn(
         self,
         impl_ast: ast.ImplDefn,
         impl_typ_params: tuple[typs.TypParamTyp, ...],
         impl_env: ir_env.Env,
-        fns: list[Fn],
+        src_fn_symbols: list[SrcFnSymbol],
     ) -> None:
         """Build one ``impl Trait for SelfTyp { ... }`` block's methods.
 
@@ -948,7 +948,7 @@ class Mod:
             not None``).
         :param impl_env: The impl's own scope, with its type parameters
             (if any) already bound.
-        :param fns: Accumulates every source function declaration.
+        :param src_fn_symbols: Accumulates every source function symbol.
         :raises ImplForNonTraitError: If ``impl_ast.typ`` doesn't name a
             trait.
         :raises OrphanImplError: If neither the trait nor the self type is
@@ -987,32 +987,32 @@ class Mod:
         # `ir_traits.Impl.check_orphan_rule`).
         self.loader.impl_registry.add_impl(impl)
 
-        self._build_impl_fns(impl_ast, impl, fns)
+        self._build_impl_fn_symbols(impl_ast, impl, src_fn_symbols)
         impl.check_complete()
 
-    def _build_impl_fns(
+    def _build_impl_fn_symbols(
         self,
         impl_ast: ast.ImplDefn,
         impl: ir_traits.Impl,
-        fns: list[Fn],
+        src_fn_symbols: list[SrcFnSymbol],
     ) -> None:
         """Build and register every function in an ``impl`` block.
 
         :param impl_ast: The parsed ``impl`` block.
         :param impl: The block's reified form, which every built function
             is registered on and points back at.
-        :param fns: Accumulates every source function declaration.
+        :param src_fn_symbols: Accumulates every source function symbol.
         """
-        for fn_ast in impl_ast.fns:
+        for fn_ast in impl_ast.fn_defns:
             # Generic associated functions/methods aren't supported yet -
             # nothing upstream rejects the syntax, so fail loudly here
             # rather than silently mistreat the function's one literal
             # FnTyp as real.
             if fn_ast.generic_params:
                 raise NotImplementedError("generic associated functions aren't supported yet")
-            fn = Fn(fn_ast, impl.env, self.name, recv_typ=impl.self_typ, impl=impl)
-            fns.append(fn)
-            impl.add_fn(fn)
+            fn = SrcFnSymbol(fn_ast, impl.env, self.name, recv_typ=impl.self_typ, impl=impl)
+            src_fn_symbols.append(fn)
+            impl.add_fn_symbol(fn)
             if impl.trait is None:
                 impl.env.add_var(fn.name, fn)
 
@@ -1020,7 +1020,7 @@ class Mod:
         self,
         name: str,
         access: visibility.Access,
-        value: ir_values.Value[typs.PtrTyp] | ir_env.Container | FnSpec,
+        value: ir_values.Value[typs.PtrTyp] | ir_env.Container | FnSymbol,
         qualify_name: bool = True,
         span: Optional[src.SrcSpan] = None,
     ) -> None:

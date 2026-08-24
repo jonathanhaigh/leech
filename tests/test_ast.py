@@ -21,8 +21,8 @@ def test_impl_defn_basic_typ(tmp_path):
     assert isinstance(impl.typ, ast.BasicTyp)
     assert impl.typ.path.str() == "Foo"
 
-    assert len(impl.fns) == 1
-    fn = impl.fns[0]
+    assert len(impl.fn_defns) == 1
+    fn = impl.fn_defns[0]
     assert fn.name.name == "new"
     assert fn.access is not None
     assert fn.access.value == "pub"
@@ -43,8 +43,8 @@ def test_impl_defn_ptr_typ(tmp_path):
     assert isinstance(impl.typ.pointee_typ, ast.BasicTyp)
     assert impl.typ.pointee_typ.path.str() == "Foo"
 
-    assert len(impl.fns) == 1
-    assert impl.fns[0].name.name == "helper"
+    assert len(impl.fn_defns) == 1
+    assert impl.fn_defns[0].name.name == "helper"
 
 
 def test_impl_defn_array_typ(tmp_path):
@@ -72,7 +72,7 @@ def test_impl_defn_empty(tmp_path):
     mod = util.parse_mod(tmp_path, src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
-    assert impl.fns == ()
+    assert impl.fn_defns == ()
 
 
 def test_fn_defn_generic_params(tmp_path):
@@ -164,7 +164,7 @@ def test_impl_defn_multiple_fns(tmp_path):
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
-    names_and_access = [(fn.name.name, fn.access) for fn in impl.fns]
+    names_and_access = [(fn.name.name, fn.access) for fn in impl.fn_defns]
     assert [name for name, _access in names_and_access] == ["new", "helper"]
 
     new_access, helper_access = (access for _name, access in names_and_access)

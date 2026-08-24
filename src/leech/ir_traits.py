@@ -15,13 +15,13 @@ from leech import asserts, ast, errors, ir_env, ir_module, opt_util, reserved, s
 
 
 @dataclasses.dataclass(frozen=True)
-class FnSelection:
+class ImplFnSelection:
     """An impl function and the impl arguments obtained by matching its receiver.
 
     The arguments may remain abstract when lookup occurs inside a generic body.
     """
 
-    fn: ir_module.Fn
+    fn: ir_module.SrcFnSymbol
     impl_args: tuple[typs.Typ, ...]
 
     @property
@@ -40,10 +40,10 @@ class FnSelection:
 class TraitMethod:
     """A trait method prototype and its type-resolution context."""
 
-    ast: Final[ast.TraitFn]
+    ast: Final[ast.TraitFnDecl]
     _trait: Final[Trait]
 
-    def __init__(self, fn_ast: ast.TraitFn, trait: Trait) -> None:
+    def __init__(self, fn_ast: ast.TraitFnDecl, trait: Trait) -> None:
         if fn_ast.receiver is None:
             raise errors.TraitMethodMissingReceiverError(fn_ast.name.name, fn_ast.span)
         reserved.check_fn_params(fn_ast)
@@ -101,7 +101,7 @@ class Trait:
         for typ_param in self.typ_params:
             self._env.add_container(typ_param.name, typ_param)
         self._methods = {}
-        for method_ast in trait_ast.methods:
+        for method_ast in trait_ast.fn_decls:
             method = TraitMethod(method_ast, self)
             if reserved.is_reserved(method.name):
                 raise errors.ReservedNameError(method.name, method_ast.name.span)
@@ -127,12 +127,12 @@ class Trait:
         """The source location of this trait's declaration."""
         return self.ast.span
 
-    def get_method(self, name: str) -> Optional[TraitMethod]:
+    def get_trait_method(self, name: str) -> Optional[TraitMethod]:
         """Return the method prototype called ``name``, if present."""
         return self._methods.get(name)
 
     @property
-    def methods(self) -> Collection[TraitMethod]:
+    def trait_methods(self) -> Collection[TraitMethod]:
         """This trait's method prototypes, in declaration order."""
         return self._methods.values()
 
@@ -157,8 +157,8 @@ class Impl:
     typ_params: Final[tuple[typs.TypParamTyp, ...]]
     env: Final[ir_env.Env]
     _mod_name: Final[str]
-    _trait_methods: Final[dict[TraitMethod, ir_module.Fn]]
-    _fns: Final[dict[str, ir_module.Fn]]
+    _trait_methods: Final[dict[TraitMethod, ir_module.SrcFnSymbol]]
+    _fn_symbols: Final[dict[str, ir_module.SrcFnSymbol]]
 
     def __init__(
         self,
@@ -177,7 +177,7 @@ class Impl:
         self.env = e.new_child()
         self.env.add_container(reserved.SELF_TYP_NAME, self_typ)
         self._trait_methods = {}
-        self._fns = {}
+        self._fn_symbols = {}
 
     @property
     def name(self) -> str:
@@ -192,17 +192,17 @@ class Impl:
         return self.ast.span
 
     @property
-    def fns(self) -> Collection[ir_module.Fn]:
+    def fn_symbols(self) -> Collection[ir_module.SrcFnSymbol]:
         """Every function declared in this block, in declaration order.
 
         Read live, so a function registered after a caller takes this
         still counts.
         """
-        return self._fns.values()
+        return self._fn_symbols.values()
 
-    def get_fn(self, name: str) -> Optional[ir_module.Fn]:
+    def get_fn_symbol(self, name: str) -> Optional[ir_module.SrcFnSymbol]:
         """Return the function called ``name``, if this block declares one."""
-        return self._fns.get(name)
+        return self._fn_symbols.get(name)
 
     def check_orphan_rule(self) -> None:
         """Raise unless this impl's trait or self type is defined in its own module.
@@ -234,7 +234,7 @@ class Impl:
         assert bindings is not None
         return tuple(bindings[typ_param] for typ_param in self.typ_params)
 
-    def add_fn(self, fn: ir_module.Fn) -> None:
+    def add_fn_symbol(self, fn: ir_module.SrcFnSymbol) -> None:
         """Register ``fn`` as one of this block's functions.
 
         For a trait impl this also checks ``fn`` against the prototype
@@ -252,13 +252,13 @@ class Impl:
         trait = self.trait
         trait_method = None
         if trait is not None:
-            trait_method = trait.get_method(fn.name)
+            trait_method = trait.get_trait_method(fn.name)
             if trait_method is None:
                 raise errors.ExtraMethodInImplError(trait.name, fn.name, fn.span)
         elif reserved.is_reserved(fn.name):
             assert fn.ast is not None
             raise errors.ReservedNameError(fn.name, fn.ast.name.span)
-        existing = self._fns.get(fn.name)
+        existing = self._fn_symbols.get(fn.name)
         if existing is not None:
             kind = "associated function" if trait is None else "method"
             assert fn.ast is not None
@@ -273,11 +273,11 @@ class Impl:
                 raise errors.TraitMethodSignatureMismatchError(
                     trait.name, fn.name, fn.fn_typ.name, expected_typ.name, fn.span
                 )
-        self._fns[fn.name] = fn
+        self._fn_symbols[fn.name] = fn
         if trait_method is not None:
             self._trait_methods[trait_method] = fn
 
-    def get_trait_method(self, trait_method: TraitMethod) -> Optional[ir_module.Fn]:
+    def get_trait_method(self, trait_method: TraitMethod) -> Optional[ir_module.SrcFnSymbol]:
         """Find this impl's implementation of ``trait_method``."""
         return self._trait_methods.get(trait_method)
 
@@ -291,7 +291,7 @@ class Impl:
         """
         if self.trait is None:
             return
-        for trait_method in self.trait.methods:
+        for trait_method in self.trait.trait_methods:
             if trait_method not in self._trait_methods:
                 raise errors.TraitMethodNotImplementedError(
                     self.trait.name, trait_method.name, self.self_typ.name, self.span
@@ -406,9 +406,9 @@ class ImplRegistry:
             if not typs.typs_overlap(inherent_impl.self_typ, existing_inherent_impl.self_typ):
                 continue
             existing_name_spans = {
-                fn_ast.name.name: fn_ast.name.span for fn_ast in existing_inherent_impl.ast.fns
+                fn_ast.name.name: fn_ast.name.span for fn_ast in existing_inherent_impl.ast.fn_defns
             }
-            for fn_ast in inherent_impl.ast.fns:
+            for fn_ast in inherent_impl.ast.fn_defns:
                 existing_span = existing_name_spans.get(fn_ast.name.name)
                 if existing_span is not None:
                     raise errors.DuplicateItemDefnError(
@@ -514,11 +514,11 @@ class ImplRegistry:
                     trait_impls.append(trait_impl)
         return trait_impls
 
-    def lookup_assoc_fn(self, typ: typs.Typ, name: str) -> Optional[FnSelection]:
+    def lookup_assoc_fn(self, typ: typs.Typ, name: str) -> Optional[ImplFnSelection]:
         """Find ``typ``'s inherent associated function called ``name``."""
         matches = []
         for inherent_impl in self.find_inherent_impls(typ):
-            fn = inherent_impl.get_fn(name)
+            fn = inherent_impl.get_fn_symbol(name)
             if fn is not None:
                 matches.append(fn)
         # If two matches applied to this concrete type, their impl self types
@@ -532,11 +532,11 @@ class ImplRegistry:
         # abstract receiver, so inherent and trait matches need specialization.
         impl = opt_util.opt_unwrap(found.impl)
         args = impl.instantiation_args(typ)
-        return FnSelection(found, args)
+        return ImplFnSelection(found, args)
 
     def lookup_member(
         self, typ: typs.Typ, name: str, span: Optional[src.SrcSpan]
-    ) -> Optional[FnSelection]:
+    ) -> Optional[ImplFnSelection]:
         """Find ``typ``'s member (inherent or via a trait impl) called ``name``.
 
         Only ever meaningful for a *concrete* type - a call through an
@@ -558,7 +558,7 @@ class ImplRegistry:
 
         matches = []
         for trait_impl in self._find_trait_impls_for_typ(typ):
-            trait_method = opt_util.opt_unwrap(trait_impl.trait).get_method(name)
+            trait_method = opt_util.opt_unwrap(trait_impl.trait).get_trait_method(name)
             if trait_method is None:
                 continue
             method = trait_impl.get_trait_method(trait_method)
@@ -572,7 +572,7 @@ class ImplRegistry:
         # abstract receiver, so inherent and trait matches need specialization.
         impl = opt_util.opt_unwrap(method.impl)
         args = impl.instantiation_args(typ)
-        return FnSelection(method, args)
+        return ImplFnSelection(method, args)
 
 
 def disambiguate[T](

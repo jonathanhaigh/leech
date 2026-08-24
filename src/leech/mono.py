@@ -5,7 +5,7 @@
 """Monomorphization: discovering every concrete generic instance a program reaches.
 
 Generic function/method and struct instances are created on demand — see
-ir_module.Fn.instantiate and typs.StructTyp.instance — whenever
+ir_module.SrcFnSymbol.instantiate and typs.StructTyp.instance — whenever
 type checking, or a previously discovered instance's own body, references
 them. This module forces that on-demand machinery to a fixpoint and
 collects whatever it produces.
@@ -57,19 +57,17 @@ def _fixpoint[T](newly_requested: Callable[[], list[T]], resolve: Callable[[T], 
     return instances
 
 
-def _fn_templates(mod: ir_module.Mod) -> Iterator[ir_module.FnSpec]:
+def _fn_symbols(mod: ir_module.Mod) -> Iterator[ir_module.FnSymbol]:
     """Yield every source and compiler-intrinsic function declaration."""
     for loaded_mod in mod.loader.mods:
-        yield from loaded_mod.fns
-    yield from mod.loader.builtins
+        yield from loaded_mod.src_fn_symbols
+    yield from mod.loader.intrinsic_fns
 
 
 def _is_external_fn_instance(inst: ir_module.FnInstance, mod: ir_module.Mod) -> bool:
     """Return whether ``inst`` is a non-generic body owned by another module."""
-    source_fn = inst.source_fn
-    return (
-        source_fn is not None and not inst.uses_generic_linkage and source_fn.mod_name != mod.name
-    )
+    src_fn = inst.src_fn
+    return src_fn is not None and not inst.uses_generic_linkage and src_fn.mod_name != mod.name
 
 
 def _discover_fn_instances(
@@ -87,8 +85,8 @@ def _discover_fn_instances(
 
     def newly_requested() -> list[ir_module.FnInstance]:
         new = []
-        for template in _fn_templates(mod):
-            for inst in template.instances:
+        for fn_symbol in _fn_symbols(mod):
+            for inst in fn_symbol.instances:
                 if inst.is_concrete() and inst not in seen:
                     seen.add(inst)
                     new.append(inst)
@@ -98,7 +96,7 @@ def _discover_fn_instances(
         if not _is_external_fn_instance(inst, mod):
             _ = inst.cfg
 
-    for fn in mod.fns:
+    for fn in mod.src_fn_symbols:
         if not fn.is_generic and (fn.is_main or fn.access == visibility.PUBLIC):
             fn.instantiate(())
 

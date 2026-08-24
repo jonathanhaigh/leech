@@ -139,7 +139,7 @@ def test_extern_fn_has_cached_bodyless_instance(tmp_path):
     )
     item = mod.get_item(ir_env.Env.Namespace.VARS, "puts")
     assert item is not None
-    decl = asserts.checked_cast(item.value, ir_module.FnDecl)
+    decl = asserts.checked_cast(item.value, ir_module.ExternFnSymbol)
 
     inst = decl.instantiate(())
 

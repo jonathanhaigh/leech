@@ -8,18 +8,10 @@ import util
 from leech import asserts, errors, ir_env, ir_module, target, typs
 
 
-def _get_builtin(mod, name: str) -> ir_module.GenericBuiltinFn:
-    """Get the compiler-intrinsic builtin ambiently bound as ``name``."""
+def _get_intrinsic(mod, name: str) -> ir_module.IntrinsicFnSymbol:
+    """Get the compiler intrinsic ambiently bound as ``name``."""
     var = mod.env.get(ir_env.Env.Namespace.VARS, name)
-    return asserts.checked_cast(var, ir_module.GenericBuiltinFn)
-
-
-def test_generic_builtin_is_bound_as_declaration(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "pub fn main() i32 { 0 }")
-
-    builtin = mod.env.get(ir_env.Env.Namespace.VARS, "__size_of")
-
-    assert isinstance(builtin, ir_module.GenericBuiltinFn)
+    return asserts.checked_cast(var, ir_module.IntrinsicFnSymbol)
 
 
 def test_bare_generic_builtin_reference_requires_typ_args(tmp_path):
@@ -284,15 +276,15 @@ def test_is_null_true_for_genuine_null_pointer(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_size_of_builtin_instance_caches_by_typ_args(tmp_path):
+def test_size_of_intrinsic_instance_caches_by_typ_args(tmp_path):
     mod = util.build_ir_mod(tmp_path, "pub fn main() i32 { return 0; }")
-    size_of = _get_builtin(mod, "__size_of")
+    size_of = _get_intrinsic(mod, "__size_of")
 
     assert size_of.instantiate((typs.I32,)) is size_of.instantiate((typs.I32,))
     assert size_of.instantiate((typs.I32,)) is not size_of.instantiate((typs.BOOL,))
 
 
-def test_size_of_builtin_compiled_once_across_multiple_calls(tmp_path):
+def test_size_of_intrinsic_compiled_once_across_multiple_calls(tmp_path):
     src = """
     pub fn main() i32 {
         let a = __size_of[i32]();

@@ -32,13 +32,13 @@ class ModLoader:
     impl_registry: Final[ir_traits.ImplRegistry]
     _extra_search_roots: Final[Sequence[pathlib.Path]]
     _prelude: Optional[ir_module.Mod]
-    size_of_builtin: Final[ir_module.GenericBuiltinFn]
-    ptr_cast_mut_builtin: Final[ir_module.GenericBuiltinFn]
-    is_null_builtin: Final[ir_module.GenericBuiltinFn]
-    enum_to_int_builtin: Final[ir_module.GenericBuiltinFn]
+    size_of_intrinsic: Final[ir_module.IntrinsicFnSymbol]
+    ptr_cast_mut_intrinsic: Final[ir_module.IntrinsicFnSymbol]
+    is_null_intrinsic: Final[ir_module.IntrinsicFnSymbol]
+    enum_to_int_intrinsic: Final[ir_module.IntrinsicFnSymbol]
 
     def __init__(self, extra_search_roots: Sequence[pathlib.Path] = ()) -> None:
-        # Deferred because builtin classes subclass ir_module.GenericBuiltinFn.
+        # Deferred because intrinsic classes subclass ir_module.IntrinsicFnSymbol.
         from leech import ir_builtins  # noqa: PLC0415
 
         self._mods = {}
@@ -49,10 +49,10 @@ class ModLoader:
         # every module's builtin_env, the prelude module's own included,
         # so they must already exist by the time it's loaded.
         builtin_env = ir_env.Env(impl_registry=self.impl_registry)
-        self.size_of_builtin = ir_builtins.SizeOfBuiltinFn(builtin_env)
-        self.ptr_cast_mut_builtin = ir_builtins.PtrCastMutBuiltinFn(builtin_env)
-        self.is_null_builtin = ir_builtins.IsNullBuiltinFn(builtin_env)
-        self.enum_to_int_builtin = ir_builtins.EnumToIntBuiltinFn(builtin_env)
+        self.size_of_intrinsic = ir_builtins.SizeOfIntrinsicFn(builtin_env)
+        self.ptr_cast_mut_intrinsic = ir_builtins.PtrCastMutIntrinsicFn(builtin_env)
+        self.is_null_intrinsic = ir_builtins.IsNullIntrinsicFn(builtin_env)
+        self.enum_to_int_intrinsic = ir_builtins.EnumToIntIntrinsicFn(builtin_env)
 
         # Set to None first, so building the prelude module itself (below)
         # sees `self.prelude is None` and skips injecting the prelude into
@@ -68,7 +68,7 @@ class ModLoader:
         return self._prelude
 
     @property
-    def prelude_panic_fn(self) -> Optional[ir_module.FnRef]:
+    def prelude_panic_ref(self) -> Optional[ir_module.FnRef]:
         """Return the prelude's unshadowable ``panic`` function when available.
 
         This property must not cache the temporary ``None`` observed during prelude loading.
@@ -78,17 +78,17 @@ class ModLoader:
         item = self._prelude.get_item(ir_env.Env.Namespace.VARS, "panic")
         if item is None:
             return None
-        panic_fn = asserts.checked_cast(item.value, ir_module.Fn)
-        return panic_fn.instantiate(()).ref
+        panic_symbol = asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
+        return panic_symbol.instantiate(()).ref
 
     @property
-    def builtins(self) -> tuple[ir_module.GenericBuiltinFn, ...]:
-        """Return the compiler-intrinsic generic functions owned by this loader."""
+    def intrinsic_fns(self) -> tuple[ir_module.IntrinsicFnSymbol, ...]:
+        """Return the compiler intrinsics owned by this loader."""
         return (
-            self.size_of_builtin,
-            self.ptr_cast_mut_builtin,
-            self.is_null_builtin,
-            self.enum_to_int_builtin,
+            self.size_of_intrinsic,
+            self.ptr_cast_mut_intrinsic,
+            self.is_null_intrinsic,
+            self.enum_to_int_intrinsic,
         )
 
     def resolve_import(

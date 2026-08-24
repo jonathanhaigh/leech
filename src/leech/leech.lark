@@ -5,7 +5,7 @@
 mod: defn*
 
 defn: fn_defn
-  | fn_decl
+  | extern_fn_decl
   | var_defn
   | struct_defn
   | enum_defn
@@ -14,7 +14,7 @@ defn: fn_defn
   | import
 
 fn_defn: access "fn" ident [generic_params] "(" param_list ")" [typ] block_expr
-_fn_prototype: "fn" ident "(" param_list ")" [typ]
+_fn_signature: "fn" ident "(" param_list ")" [typ]
 !access: ["pub"]
 param_list: _param_list?
 _param_list: receiver ("," param)* ","?
@@ -22,7 +22,7 @@ _param_list: receiver ("," param)* ","?
 receiver: "*" mut "self"
 param: ident ":" typ
 
-fn_decl: "extern" _fn_prototype ";"
+extern_fn_decl: "extern" _fn_signature ";"
 
 var_defn: access let_stmt
 
@@ -37,8 +37,8 @@ _enum_variant_list: enum_variant ("," enum_variant)* ","?
 enum_variant: ident ["=" enum_variant_value]
 !enum_variant_value: ["-"] int_lit
 
-trait_defn: access "trait" ident [generic_params] "{" trait_fn* "}"
-trait_fn: _fn_prototype ";"
+trait_defn: access "trait" ident [generic_params] "{" trait_fn_decl* "}"
+trait_fn_decl: _fn_signature ";"
 
 impl_defn: "impl" [generic_params] typ ["for" typ] "{" fn_defn* "}"
 

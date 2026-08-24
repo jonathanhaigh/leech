@@ -1038,7 +1038,7 @@ COMMENTED_INTS = [
                 T("access", Tok(None)),
                 T("ident", Tok("Show")),
                 None,
-                T("trait_fn").cs(
+                T("trait_fn_decl").cs(
                     T("ident", Tok("show")),
                     T("param_list", "receiver", "mut", Tok(None)),
                     T("ptr_typ").cs(
@@ -1054,7 +1054,7 @@ COMMENTED_INTS = [
                 T("access", Tok("pub")),
                 T("ident", Tok("Eq")),
                 T("generic_params", "generic_param", "ident", Tok("T")),
-                T("trait_fn").cs(
+                T("trait_fn_decl").cs(
                     T("ident", Tok("eq")),
                     T("param_list").cs(
                         T("receiver", "mut", Tok(None)),

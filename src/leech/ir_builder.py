@@ -51,7 +51,7 @@ class CfgBuilder:
     _fn: Final[Optional[ir_module.FnInstance]]
     _typ_check_results: Final[typcheck.TypCheckResults]
     _impl_registry: Final[ir_traits.ImplRegistry]
-    _panic_fn: Final[Optional[ir_module.FnRef]]
+    _panic_ref: Final[Optional[ir_module.FnRef]]
     _typ_arg_mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
     cfg: Final[ir_values.Cfg]
     _curr_bb: ir_values.BasicBlock
@@ -67,14 +67,14 @@ class CfgBuilder:
         self,
         typ_check_results: typcheck.TypCheckResults,
         impl_registry: ir_traits.ImplRegistry,
-        panic_fn: Optional[ir_module.FnRef],
+        panic_ref: Optional[ir_module.FnRef],
         fn: Optional[ir_module.FnInstance] = None,
         typ_arg_mapping: Optional[Mapping[typs.TypParamTyp, typs.Typ]] = None,
     ) -> None:
         self._fn = fn
         self._typ_check_results = typ_check_results
         self._impl_registry = impl_registry
-        self._panic_fn = panic_fn
+        self._panic_ref = panic_ref
         self._typ_arg_mapping = opt_util.opt_or_default(typ_arg_mapping, {})
         self.cfg = ir_values.Cfg()
         self._generate_bb_name = naming.VarNamer()
@@ -713,7 +713,7 @@ class CfgBuilder:
             case _:
                 raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
-    def _instantiate_source_fn(self, target: ir_module.Fn) -> ir_module.FnRef:
+    def _instantiate_src_fn(self, target: ir_module.SrcFnSymbol) -> ir_module.FnRef:
         """Return a reference to the source function selected by this lowering.
 
         A sibling in a generic impl inherits the current impl arguments;
@@ -727,7 +727,7 @@ class CfgBuilder:
         return target.instantiate(()).ref
 
     def _resolve_fn_ref(
-        self, fn: ir_module.FnSpec, typ_args: tuple[typs.Typ, ...]
+        self, fn: ir_module.FnSymbol, typ_args: tuple[typs.Typ, ...]
     ) -> ir_module.FnRef:
         """Return a reference to the instance identified by ``fn`` and ``typ_args``.
 
@@ -747,7 +747,7 @@ class CfgBuilder:
         )
         return fn.instantiate(concrete_typ_args).ref
 
-    def _selection_ref(self, selection: ir_traits.FnSelection) -> ir_module.FnRef:
+    def _selection_ref(self, selection: ir_traits.ImplFnSelection) -> ir_module.FnRef:
         """Instantiate an impl-function selection for this concrete body."""
         args = tuple(
             arg.substitute_typ_params(self._typ_arg_mapping) for arg in selection.impl_args
@@ -772,11 +772,11 @@ class CfgBuilder:
             return self._resolve_fn_ref(*generic_ref)
 
         target = self._typ_check_results.resolutions.var(var_ast)
-        if isinstance(target, ir_traits.FnSelection):
+        if isinstance(target, ir_traits.ImplFnSelection):
             return self._selection_ref(target)
-        if isinstance(target, ir_module.Fn):
-            return self._instantiate_source_fn(target)
-        if isinstance(target, ir_module.FnDecl):
+        if isinstance(target, ir_module.SrcFnSymbol):
+            return self._instantiate_src_fn(target)
+        if isinstance(target, ir_module.ExternFnSymbol):
             return target.instantiate(()).ref
         if isinstance(target, ir_values.ComptimeEnum):
             # Not a place (see Env._resolve_path_segment's EnumTyp case)
@@ -1296,7 +1296,7 @@ class CfgBuilder:
         array bounds, integer overflow, division by zero - built directly
         out of basic blocks rather than :meth:`_build_if_expr`, since
         there's no ``ast.IfExpr`` to lower. Always calls the real prelude
-        ``panic`` (:attr:`_panic_fn`), never whatever a module's own
+        ``panic`` (:attr:`_panic_ref`), never whatever a module's own
         same-named definition might shadow it with locally - these checks
         exist to enforce the language's own safety guarantees, which user
         code shouldn't be able to opt out of by happening to define a
@@ -1331,7 +1331,7 @@ class CfgBuilder:
             ok_bb = self._add_bb("ok")
         self._cbranch(cond, fail_bb, ok_bb, ast_node)
         self._set_position(fail_bb)
-        panic_fn = opt_util.opt_unwrap(self._panic_fn)
-        self._curr_bb.call(panic_fn, (ir_values.ComptimeCStr(message, None),), None)
+        panic_ref = opt_util.opt_unwrap(self._panic_ref)
+        self._curr_bb.call(panic_ref, (ir_values.ComptimeCStr(message, None),), None)
         self._curr_bb.unreachable(ast_node)
         self._set_position(ok_bb)

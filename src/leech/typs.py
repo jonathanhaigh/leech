@@ -1065,7 +1065,7 @@ class EnumBackingTyp(Typ):
     ``inner`` becomes once substituted.
 
     Exists only inside a generic builtin's own opaque self-describing
-    signature (see ``__enum_to_int``'s :class:`~leech.ir_builtins.EnumToIntBuiltinFn`,
+    signature (see ``__enum_to_int``'s :class:`~leech.ir_builtins.EnumToIntIntrinsicFn`,
     whose return type can't be spelled as any concrete type until its own
     type argument is known to be a concrete :class:`EnumTyp`) - substituting
     a concrete enum type for ``inner`` collapses this straight to that

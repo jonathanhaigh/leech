@@ -96,7 +96,7 @@ def test_inherent_impl_is_registered(tmp_path):
     assert len(inherent_impls) == 1
     assert inherent_impls[0].trait is None
     assert inherent_impls[0].self_typ is foo
-    assert inherent_impls[0].get_fn("get") is not None
+    assert inherent_impls[0].get_fn_symbol("get") is not None
 
 
 def test_fn_points_at_its_impl_block(tmp_path):
@@ -136,14 +136,14 @@ def test_generic_trait_impl_lookup_does_not_instantiate_method(tmp_path):
     trait = asserts.checked_cast(trait, ir_traits.Trait)
     trait_impl = mod.loader.impl_registry.find_trait_impl(trait, concrete_box)
     assert trait_impl is not None
-    fn = trait_impl.get_fn("show")
+    fn = trait_impl.get_fn_symbol("show")
     assert fn is not None
     instances_before = tuple(fn.instances)
 
     selection = mod.loader.impl_registry.lookup_member(concrete_box, "show", None)
 
     assert tuple(fn.instances) == instances_before
-    selection = asserts.checked_cast(selection, ir_traits.FnSelection)
+    selection = asserts.checked_cast(selection, ir_traits.ImplFnSelection)
     assert selection.fn is fn
     assert selection.impl_args == (typs.I32,)
 
@@ -737,11 +737,11 @@ def test_trait_impl_duplicate_extra_method_is_rejected_atomically(tmp_path):
     trait = ir_traits.Trait(trait_ast, env, "main")
     trait_impl = ir_traits.Impl(impl_ast, trait, typs.I32, (), env, "main")
 
-    for fn_ast in impl_ast.fns:
-        fn = ir_module.Fn(fn_ast, trait_impl.env, "main", recv_typ=typs.I32)
+    for fn_ast in impl_ast.fn_defns:
+        fn = ir_module.SrcFnSymbol(fn_ast, trait_impl.env, "main", recv_typ=typs.I32)
         with pytest.raises(errors.ExtraMethodInImplError):
-            trait_impl.add_fn(fn)
-        assert not trait_impl.fns
+            trait_impl.add_fn_symbol(fn)
+        assert not trait_impl.fn_symbols
 
 
 def test_trait_impl_method_signature_mismatch(tmp_path):
@@ -967,7 +967,7 @@ def test_get_trait_item_from_mod(tmp_path):
     assert item is not None
     assert isinstance(item.value, ir_traits.Trait)
     assert item.value.name == "Show"
-    assert [m.name for m in item.value.methods] == ["show"]
+    assert [m.name for m in item.value.trait_methods] == ["show"]
 
 
 def test_bound_with_generic_args_parses(tmp_path):

@@ -809,7 +809,7 @@ class Defn(Ast):
         (child,) = map(_as_tree, tree.children)
         child_classes = {
             "fn_defn": FnDefn,
-            "fn_decl": FnDecl,
+            "extern_fn_decl": ExternFnDecl,
             "var_defn": VarDefn,
             "struct_defn": StructDefn,
             "enum_defn": EnumDefn,
@@ -820,7 +820,7 @@ class Defn(Ast):
         return child_classes[child.data](file, child)
 
 
-class FnSpec(Defn):
+class FnDecl(Defn):
     """Shared syntax for function declarations, definitions, and trait methods."""
 
     name: Final[Ident]
@@ -859,14 +859,14 @@ class FnSpec(Defn):
         self.params = tuple(Param(file, child) for child in children)
 
 
-class FnDecl(FnSpec):
+class ExternFnDecl(FnDecl):
     """A function declared without a body (e.g. an external/builtin function).
 
     Never generic - an ``extern`` function has no body to monomorphize.
     """
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "fn_decl")
+        asserts.assert_eq(tree.data, "extern_fn_decl")
         ident, param_list, ret_typ = tree.children
         super().__init__(
             file,
@@ -882,11 +882,11 @@ class FnDecl(FnSpec):
         return "function declaration"
 
 
-class TraitFn(FnSpec):
+class TraitFnDecl(FnDecl):
     """A non-generic trait method prototype without a default body."""
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "trait_fn")
+        asserts.assert_eq(tree.data, "trait_fn_decl")
         ident, param_list, ret_typ = tree.children
         super().__init__(
             file,
@@ -902,7 +902,7 @@ class TraitFn(FnSpec):
         return "trait method"
 
 
-class FnDefn(FnSpec):
+class FnDefn(FnDecl):
     """A function defined with a body."""
 
     access: Final[Optional[Access]]
@@ -1064,12 +1064,12 @@ class TraitDefn(Defn):
     ident: Final[Ident]
     #: Empty for a non-generic trait.
     generic_params: Final[tuple[GenericParam, ...]]
-    methods: Final[tuple[TraitFn, ...]]
+    fn_decls: Final[tuple[TraitFnDecl, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "trait_defn")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        access, ident, generic_params, *method_trees = tree.children
+        access, ident, generic_params, *fn_decl_trees = tree.children
         self.access = Access.from_tree(file, _as_tree(access))
         self.ident = Ident.from_tree(file, _as_tree(ident))
         if generic_params is not None:
@@ -1078,7 +1078,9 @@ class TraitDefn(Defn):
             )
         else:
             self.generic_params = ()
-        self.methods = tuple(TraitFn(file, _as_tree(m)) for m in method_trees)
+        self.fn_decls = tuple(
+            TraitFnDecl(file, _as_tree(fn_decl_tree)) for fn_decl_tree in fn_decl_trees
+        )
 
     @override
     def diag_str(self) -> str:
@@ -1092,12 +1094,12 @@ class ImplDefn(Defn):
     generic_params: Final[tuple[GenericParam, ...]]
     typ: Final[Typ]
     for_typ: Final[Optional[Typ]]
-    fns: Final[tuple[FnDefn, ...]]
+    fn_defns: Final[tuple[FnDefn, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "impl_defn")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        generic_params, typ, for_typ, *fn_trees = tree.children
+        generic_params, typ, for_typ, *fn_defn_trees = tree.children
         if generic_params is not None:
             self.generic_params = tuple(
                 GenericParam(file, _as_tree(c)) for c in _as_tree(generic_params).children
@@ -1106,7 +1108,9 @@ class ImplDefn(Defn):
             self.generic_params = ()
         self.typ = Typ.from_tree(file, _as_tree(typ))
         self.for_typ = opt_util.opt_map(for_typ, lambda t: Typ.from_tree(file, _as_tree(t)))
-        self.fns = tuple(FnDefn(file, _as_tree(fn_tree)) for fn_tree in fn_trees)
+        self.fn_defns = tuple(
+            FnDefn(file, _as_tree(fn_defn_tree)) for fn_defn_tree in fn_defn_trees
+        )
 
     @override
     def diag_str(self) -> str:

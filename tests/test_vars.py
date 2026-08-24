@@ -104,8 +104,8 @@ def test_non_generic_fn_mod_var_initializer_is_fn_ref(tmp_path):
     var = asserts.checked_cast(item.value, ir_module.ModVar)
 
     assert isinstance(var.initializer, ir_module.FnRef)
-    assert var.initializer.instance.source_fn is not None
-    assert var.initializer.instance.source_fn.name == "f"
+    assert var.initializer.instance.src_fn is not None
+    assert var.initializer.instance.src_fn.name == "f"
 
 
 def test_fn_local_var(tmp_path):

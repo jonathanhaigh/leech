@@ -66,7 +66,7 @@ def is_reserved(name: str) -> bool:
     return name in KEYWORDS or name in TYP_NAMES or typs.IntTyp.is_name(name)
 
 
-def check_fn_params(fn_ast: ast.FnSpec) -> None:
+def check_fn_params(fn_ast: ast.FnDecl) -> None:
     """Check a function's declared parameters, which exclude any receiver.
 
     :raises ReservedNameError: If a parameter takes a reserved name.

@@ -158,17 +158,30 @@ instances; a generic symbol is structurally not a `Value`.
 
 ## Stage 4 — Renames
 
-Change #5. Mechanical, one commit per rename.
+Change #5. Mechanical, with the related hierarchy renamed together in one commit.
 
 | From | To | Why |
 | --- | --- | --- |
-| `FnSpec` | `Callable` | "Spec" reads as specification *or* specialization |
-| `NonBuiltinFnSpec` | `SourceFn` | negative names say what a thing isn't |
+| `FnSpec` / `Callable` | `FnSymbol` | names the semantic declaration found by resolution |
+| `NonBuiltinFnSpec` | `ParsedFnSymbol` | owns behavior shared by parsed declarations |
+| `FnDecl` | `ExternFnSymbol` | distinguishes an extern symbol from AST declarations |
+| `Fn` | `SrcFnSymbol` | identifies a function whose implementation is Leech source |
+| `BodyFnSpec` | `LowerableFn` | names the body-lowering capability rather than a specification |
+| `GenericBuiltinFn` | `IntrinsicFnSymbol` | genericity is incidental; compiler implementation is fundamental |
+| `FnSelection` | `ImplFnSelection` | records selection from an impl plus matched impl arguments |
+| `*BuiltinFn` | `*IntrinsicFn` | distinguishes compiler intrinsics from other built-in items |
+| `ast.FnSpec` | `ast.FnDecl` | all nodes in this AST hierarchy are declarations |
+| `ast.FnDecl` | `ast.ExternFnDecl` | identifies the bodyless extern syntax specifically |
+| `ast.TraitFn` | `ast.TraitFnDecl` | identifies the trait-method declaration syntax |
 | `FnTemplate` (Protocol) | folded into `FnSymbol` | names a role, not a thing |
 | `instance` / `impl_instance` | `instantiate` | already merged in Stage 2 |
 
-`…Symbol` is preferred over `…Defn` for the IR layer because `ast.FnDefn`
-and `ast.ImplDefn` already own that suffix.
+Related grammar rules, attributes, methods, and locals follow the same declaration,
+symbol, instance, reference, and intrinsic vocabulary in this rename.
+
+`…Symbol` is preferred over `…Defn` for the IR layer because the latter suffix identifies
+AST definitions such as `ast.FnDefn` and `ast.ImplDefn`. An AST definition is also a
+declaration, so `ast.FnDefn` remains a concrete subclass of `ast.FnDecl`.
 
 **Exit criteria:** suite green; diff contains no behaviour change.
 

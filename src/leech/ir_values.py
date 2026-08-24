@@ -445,13 +445,13 @@ class Param(Value[typs.Typ, ast.Param | ast.Receiver]):
         otherwise a :class:`~leech.ast.Param`.
     """
 
-    fn: Final[ir_module.FnSpec | ir_module.FnInstance]
+    fn: Final[ir_module.FnSymbol | ir_module.FnInstance]
     pos: Final[int]
 
     @override
     def __init__(
         self,
-        fn: ir_module.FnSpec | ir_module.FnInstance,
+        fn: ir_module.FnSymbol | ir_module.FnInstance,
         pos: int,
         ast_node: Optional[ast.Param | ast.Receiver],
     ) -> None:
@@ -813,7 +813,7 @@ class SizeOfInstr(Instr[typs.IntTyp]):
     """Computes the size in bytes of a type.
 
     Backs the ``__size_of`` compiler intrinsic (see
-    :class:`~leech.ir_builtins.SizeOfBuiltinFn`). Lowers (see
+    :class:`~leech.ir_builtins.SizeOfIntrinsicFn`). Lowers (see
     :mod:`leech.codegen`) to the portable ``getelementptr``/``ptrtoint``
     idiom, rather than a hand-computed size, so it always agrees with
     LLVM's own (platform-dependent, padding-including) notion of a type's
@@ -840,7 +840,7 @@ class PtrCastInstr(Instr[typs.PtrTyp]):
     """Reinterprets a pointer as a different pointer type.
 
     Backs the ``__ptr_cast_mut`` compiler intrinsic (see
-    :class:`~leech.ir_builtins.PtrCastMutBuiltinFn`). Lowers to a real
+    :class:`~leech.ir_builtins.PtrCastMutIntrinsicFn`). Lowers to a real
     LLVM ``bitcast``, not a no-op - unlike a mut-to-const pointer coercion,
     the source and target LLVM pointer types can genuinely differ here.
 
@@ -876,7 +876,7 @@ class EnumToIntInstr(Instr[typs.IntTyp]):
     """Reads an enum value as its backing integer type.
 
     Backs the ``__enum_to_int`` compiler intrinsic (see
-    :class:`~leech.ir_builtins.EnumToIntBuiltinFn`). A no-op at codegen: an
+    :class:`~leech.ir_builtins.EnumToIntIntrinsicFn`). A no-op at codegen: an
     enum's own LLVM type already *is* its backing type's.
 
     :param bb: The basic block this instruction belongs to.
@@ -902,7 +902,7 @@ class IsNullInstr(Instr[typs.BoolTyp]):
     """Tests whether a pointer is null.
 
     Backs the ``__is_null`` compiler intrinsic (see
-    :class:`~leech.ir_builtins.IsNullBuiltinFn`) - the only way a null
+    :class:`~leech.ir_builtins.IsNullIntrinsicFn`) - the only way a null
     pointer is ever produced or observed in Leech, since there is no
     null-pointer literal or ``==``/``!=`` operator on pointers.
 

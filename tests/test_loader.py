@@ -58,7 +58,7 @@ def test_main_name_outside_main_module_is_not_entry_point(tmp_path):
 
     mod = loader.load(tmp_path / "library.leech", "library")
 
-    fn = next(fn for fn in mod.fns if fn.name == "main")
+    fn = next(fn for fn in mod.src_fn_symbols if fn.name == "main")
     assert not fn.is_main
 
 

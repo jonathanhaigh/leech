@@ -23,11 +23,15 @@ type LocalDecl = ast.Param | ast.Receiver | ast.LetStmt
 """A local binding's declaration-site AST node - its stable cross-phase identity."""
 
 type VarTarget = (
-    LocalDecl | ir_module.ModVar | ir_module.FnSpec | ir_traits.FnSelection | ir_values.ComptimeEnum
+    LocalDecl
+    | ir_module.ModVar
+    | ir_module.FnSymbol
+    | ir_traits.ImplFnSelection
+    | ir_values.ComptimeEnum
 )
 """What a ``VarExpr`` resolves to: a local binding, or a shared module item."""
 
-type Callee = ir_traits.FnSelection
+type Callee = ir_traits.ImplFnSelection
 """A callable a dot-call's member lookup found."""
 
 type CalleeTarget = Callee | ir_traits.TraitMethod
