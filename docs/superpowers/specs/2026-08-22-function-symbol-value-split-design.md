@@ -58,12 +58,11 @@ FnRef                         cached immutable value containing one instance
 ```
 
 The diagram shows ownership, not subclassing, for the bottom two lines:
-`FnInstance` contains an `FnTemplate`, and `FnRef` contains an `FnInstance`.
+`FnInstance` contains an `FnSpec`, and `FnRef` contains an `FnInstance`.
 `FnRef` alone derives from `ir_values.ComptimeValue[typs.PtrTyp]`.
 
-The existing names `FnSpec`, `NonBuiltinFnSpec`, and `FnTemplate` remain in
-this stage even though the staging sketch calls the declaration a `FnSymbol`.
-Renaming and folding them is Stage 4 and should remain a mechanical change.
+The existing names `FnSpec` and `NonBuiltinFnSpec` remain even though the
+staging sketch calls the declaration a `FnSymbol`.
 
 ## Function Declarations
 
@@ -80,20 +79,18 @@ The `load`, `store`, and `is_temporary` methods disappear from function
 declarations. These operations describe compile-time pointer storage, not
 callable declarations.
 
-`FnTemplate` remains the structural interface for an instantiable declaration,
-and its AST type widens from `ast.FnDefn` to the common `ast.FnSpec` base so it
-can include `FnDecl`. The flat argument convention remains established by each
-declaration's `instantiate` implementation and by `FnInstance`: impl arguments
-first, followed by the function's own arguments.
+Every `FnSpec` is instantiable, including `FnDecl`. The flat argument convention
+remains established by each declaration's `instantiate` implementation and by
+`FnInstance`: impl arguments first, followed by the function's own arguments.
 
 Body checking and construction are not part of the total instantiation
-protocol. `FnTemplate` retains only the declaration metadata, parameters,
+interface. `FnSpec` contains the declaration metadata, parameters,
 type-parameter list, instance cache, and `instantiate` operation needed by all
-three declaration kinds. A separate body-owning protocol adds `env`,
+three declaration kinds. A separate abstract `BodyFnSpec` mixin adds `env`,
 `typ_check_results`, and `_build_body` for `Fn` and `GenericBuiltinFn`.
 `FnDecl` supplies the empty `typ_params` required for instantiation but needs no
 meaningless type-checking result or body-building stub. Accessing a body or CFG
-first narrows the instance's declaration to the body-owning protocol. The
+first narrows the instance's declaration to `BodyFnSpec`. The
 obsolete `FnSpec.body_cfg` interface is removed.
 
 ## Instances and References
@@ -340,7 +337,7 @@ sweep or unrelated changes to the general value hierarchy.
 
 ## Out of Scope
 
-- Renaming `FnSpec`, `NonBuiltinFnSpec`, or `FnTemplate`.
+- Renaming `FnSpec` or `NonBuiltinFnSpec`.
 - Centralizing lazy recursion guards and caches; that remains Stage 5.
 - Adding generic associated functions or generic trait methods.
 - Changing function-pointer language features.

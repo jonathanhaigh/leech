@@ -191,7 +191,7 @@ class Env:
                 # specifier - so no extra check is needed here. Unlike
                 # every other VARS-namespace binding, this isn't a place
                 # (a variant has no address) - it's a bare value, handled
-                # as one the same way a `FnSpec` reference is (see
+                # like a function-reference value (see
                 # `TypCheck._check_var_expr`/`CfgBuilder._build_var_expr`).
                 res = (
                     ir_values.ComptimeEnum(scope, scope.variants[ident.name], None)

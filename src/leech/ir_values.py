@@ -436,7 +436,8 @@ class UndefValue(ComptimeValue):
 class Param(Value[typs.Typ, ast.Param | ast.Receiver]):
     """A formal parameter of a function, including a method's receiver.
 
-    :param fn: The function this is a parameter of.
+    :param fn: The declaration for an unsubstituted formal parameter, or
+        the concrete instance for a lowered parameter.
     :param pos: The parameter's zero-based position in the parameter
         list.
     :param ast_node: The AST node this value was built from, if any - a
@@ -444,12 +445,15 @@ class Param(Value[typs.Typ, ast.Param | ast.Receiver]):
         otherwise a :class:`~leech.ast.Param`.
     """
 
-    fn: Final[ir_module.FnSpec]
+    fn: Final[ir_module.FnSpec | ir_module.FnInstance]
     pos: Final[int]
 
     @override
     def __init__(
-        self, fn: ir_module.FnSpec, pos: int, ast_node: Optional[ast.Param | ast.Receiver]
+        self,
+        fn: ir_module.FnSpec | ir_module.FnInstance,
+        pos: int,
+        ast_node: Optional[ast.Param | ast.Receiver],
     ) -> None:
         super().__init__(ast_node)
         self.fn = fn

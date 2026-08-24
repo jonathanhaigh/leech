@@ -308,9 +308,6 @@ class Compiler:
 
     def _declare_fn_instance(self, inst: ir_module.FnInstance) -> ll.Value:
         ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(inst.fn_typ), inst.qualified_name)
-        # Bodies still use the instance as their codegen key until Task 4;
-        # function-valued IR uses the reference introduced in this task.
-        self._ll_mod_items.set(inst, ll_fn)
         self._ll_mod_items.set(inst.ref, ll_fn)
         if inst.uses_generic_linkage:
             # A specialization may be emitted again, identically,
@@ -324,22 +321,7 @@ class Compiler:
         return ll_fn
 
     def _compile_fn_instance(self, inst: ir_module.FnInstance) -> None:
-        self._compile_fn_body(inst, inst.params, inst.cfg)
-
-    def _compile_fn_body(
-        self,
-        fn_value: ir_values.Value,
-        params: tuple[ir_values.Param, ...],
-        cfg: ir_values.Cfg,
-    ) -> None:
-        """Compile an instance's lowered body into its declared LLVM function.
-
-        :param fn_value: The function instance that
-            :meth:`_declare_fn_instance` already declared an LLVM function
-            for.
-        :param params: Its formal parameters, in declaration order.
-        :param cfg: Its lowered control-flow graph.
-        """
+        """Compile an instance's lowered body into its declared LLVM function."""
         ctx = Compiler._FnBuilderContext(
             ll_builder=ll.IRBuilder(),
             ll_values=self._ll_mod_items.new_child(),
@@ -347,8 +329,8 @@ class Compiler:
             overflow_calls={},
         )
 
-        ll_fn = asserts.checked_cast(self._ll_mod_items.get(fn_value), ll.Function)
-        for param, ll_param in zip(params, ll_fn.args, strict=True):
+        ll_fn = asserts.checked_cast(self._ll_mod_items.get(inst.ref), ll.Function)
+        for param, ll_param in zip(inst.params, ll_fn.args, strict=True):
             ctx.ll_values.set(param, ll_param)
 
         # Reverse postorder, not a plain BFS: a phi's block must be
@@ -361,7 +343,7 @@ class Compiler:
         # edge that isn't a loop back-edge, and loop back-edges never
         # carry a phi in this compiler (`while` produces no merged
         # value), so this is safe even though `cfg` can have cycles.
-        bb_order = reversed(list(nx.dfs_postorder_nodes(cfg, cfg.entry)))
+        bb_order = reversed(list(nx.dfs_postorder_nodes(inst.cfg, inst.cfg.entry)))
         bb_order = [bb for bb in bb_order if bb.name != "exit"]
         for bb in bb_order:
             ctx.ll_bbs[bb] = ll_fn.append_basic_block(bb.name)
@@ -570,11 +552,9 @@ class Compiler:
                 assert isinstance(base, (ll.GlobalValue, ll.Constant))
                 return base.gep([zero, ll_index])
             case _:
-                # NeverValue and ComptimeAlloc are the only other
-                # ComptimeValue subclasses: a NeverValue can only exist
-                # in an already-terminated block, so nothing ever reads
-                # it as an operand; a ComptimeAlloc's is_temporary() is
-                # always true, so it can never escape the interpreter as
-                # a value in its own right (see
-                # CannotTakeAddressOfComptimeValueError).
+                # FnRefs are mapped during function declaration, before any
+                # initializer or body can request one, so they never reach this
+                # fallback. Of the remaining subclasses, a NeverValue can only
+                # exist in an already-terminated block, and a ComptimeAlloc
+                # cannot escape the interpreter because it is temporary.
                 raise AssertionError(f"unhandled comptime value {value}")

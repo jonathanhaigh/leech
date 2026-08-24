@@ -8,7 +8,7 @@ import abc
 import dataclasses
 import functools
 from collections.abc import Collection, Mapping
-from typing import ClassVar, Final, Optional, Protocol, override
+from typing import ClassVar, Final, Optional, override
 
 from leech import (
     asserts,
@@ -57,24 +57,18 @@ class ModItem:
         return self.name
 
 
-class FnSpec[FnAstT_co: ast.FnSpec](ir_values.ComptimePtr[FnAstT_co]):
-    """Base class for anything callable that can appear as a module item.
+class FnSpec[FnAstT_co: ast.FnSpec](abc.ABC):
+    """Base class for a function declaration."""
 
-    A function pointer that can never be dereferenced to a plain value -
-    it can only be called.
-    """
+    ast: Final[Optional[FnAstT_co]]
 
-    @override
-    def load(self) -> ir_values.ComptimeValue:
-        raise AssertionError("Can't dereference a function pointer")
+    def __init__(self, fn_ast: Optional[FnAstT_co]) -> None:
+        self.ast = fn_ast
 
-    @override
-    def store(self, value: ir_values.ComptimeValue) -> None:
-        raise AssertionError("Can't dereference a function pointer")
-
-    @override
-    def is_temporary(self) -> bool:
-        return False
+    @property
+    def span(self) -> Optional[src.SrcSpan]:
+        """The source location of this declaration, if it has one."""
+        return opt_util.opt_map(self.ast, lambda node: node.span)
 
     @functools.cached_property
     def params(self) -> tuple[ir_values.Param, ...]:
@@ -91,13 +85,36 @@ class FnSpec[FnAstT_co: ast.FnSpec](ir_values.ComptimePtr[FnAstT_co]):
         """This function's name."""
 
     @property
+    @abc.abstractmethod
     def fn_typ(self) -> typs.FnTyp:
-        """This function's type, i.e. the pointee type of :attr:`typ`."""
-        return asserts.checked_cast(self.typ.pointee_typ, typs.FnTyp)
+        """This declaration's function signature."""
 
-    def body_cfg(self) -> Optional[ir_values.Cfg]:
-        """Return this function's lowered body, or ``None`` for a declaration."""
-        return None
+    @functools.cached_property
+    def ptr_typ(self) -> typs.PtrTyp:
+        """A const function-pointer type for this declaration's signature."""
+        return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
+
+    @property
+    @abc.abstractmethod
+    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+        """This declaration's interned type parameters in declaration order."""
+
+    @property
+    @abc.abstractmethod
+    def _qualified_name_prefix(self) -> str:
+        """The instance symbol prefix, or empty for a global declaration."""
+
+    @property
+    @abc.abstractmethod
+    def instances(self) -> Collection[FnInstance]:
+        """Every instantiation requested so far."""
+
+    @abc.abstractmethod
+    def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
+        """Return the cached instance for ``args``, creating it if needed.
+
+        :post: instantiate(a) is instantiate(a) for equal a [cache]
+        """
 
 
 class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
@@ -124,8 +141,13 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
         for typ_param in typs.typ_params_from_ast(fn_ast, fn_ast.generic_params, self.env):
             self.env.add_container(typ_param.name, typ_param)
 
+    @property
     @override
-    def calculate_typ(self) -> typs.PtrTyp:
+    def fn_typ(self) -> typs.FnTyp:
+        return self._fn_typ
+
+    @functools.cached_property
+    def _fn_typ(self) -> typs.FnTyp:
         assert self.ast is not None
         if self.ast.ret_typ is None:
             ret_typ = typs.VOID
@@ -148,9 +170,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
             )
             param_typs.insert(0, recv_typ)
 
-        return typs.PtrTyp.get_or_create(
-            typs.FnTyp.get_or_create(ret_typ, tuple(param_typs)), typs.CONST
-        )
+        return typs.FnTyp.get_or_create(ret_typ, tuple(param_typs))
 
     @override
     def calculate_params(self) -> tuple[ir_values.Param, ...]:
@@ -174,7 +194,7 @@ class NonBuiltinFnSpec[FnAstT_co: ast.FnSpec](FnSpec[FnAstT_co]):
 class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
     """A function declared without a body (e.g. an external/builtin function)."""
 
-    @functools.cached_property
+    @property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
         """Extern declarations have no type parameters."""
         return ()
@@ -190,67 +210,32 @@ class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
         return self._instance
 
     @property
+    def instances(self) -> Collection[FnInstance]:
+        """This declaration's sole bodyless instance."""
+        return (self._instance,)
+
+    @property
     def _qualified_name_prefix(self) -> str:
         """Keep the bare symbol name required by the external ABI."""
         return ""
 
 
-class FnTemplate(Protocol):
-    """A source or builtin generic function that creates monomorphized instances."""
+class BodyFnSpec(abc.ABC):
+    """A function declaration that owns a lowerable body."""
+
+    env: ir_env.Env
 
     @property
-    def ast(self) -> Optional[ast.FnSpec]: ...
-
-    @property
-    def env(self) -> ir_env.Env: ...
-
-    @property
-    def span(self) -> Optional[src.SrcSpan]: ...
-
-    @property
-    def name(self) -> str: ...
-
-    @property
-    def fn_typ(self) -> typs.FnTyp: ...
-
-    @functools.cached_property
-    def params(self) -> tuple[ir_values.Param, ...]:
-        """This function's formal parameters, in declaration order."""
-        ...
-
-    @functools.cached_property
-    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """This item's interned type parameters in declaration order."""
-        ...
-
-    @functools.cached_property
+    @abc.abstractmethod
     def typ_check_results(self) -> typcheck.TypCheckResults:
         """Unsubstituted lowering facts shared by every instance."""
-        ...
 
-    @property
-    def _qualified_name_prefix(self) -> str:
-        """The instance symbol prefix, or empty for a global builtin."""
-        ...
-
-    @property
-    def instances(self) -> Collection[FnInstance]:
-        """Every instantiation requested so far."""
-        ...
-
-    def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
-        """Return the cached instance for ``args``, creating it if needed.
-
-        :post: instantiate(a) is instantiate(a) for equal a [cache]
-        """
-        ...
-
+    @abc.abstractmethod
     def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
         """Lower one instance's body into ``builder.cfg``."""
-        ...
 
 
-class Fn(NonBuiltinFnSpec[ast.FnDefn]):
+class Fn(NonBuiltinFnSpec[ast.FnDefn], BodyFnSpec):
     """A source-defined function that may serve as a generic template.
 
     :param impl: The ``impl`` block this function is declared in;
@@ -294,14 +279,24 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
             self._instance_cache[args] = inst
         return inst
 
-    @functools.cached_property
+    @property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+        """This function's interned type parameters in declaration order."""
+        return self._typ_params
+
+    @functools.cached_property
+    def _typ_params(self) -> tuple[typs.TypParamTyp, ...]:
         """This function's interned type parameters in declaration order."""
         fn_ast = opt_util.opt_unwrap(self.ast)
         return typs.typ_params_from_ast(fn_ast, fn_ast.generic_params, self.env)
 
-    @functools.cached_property
+    @property
     def typ_check_results(self) -> typcheck.TypCheckResults:
+        """The unsubstituted lowering facts shared by all instances."""
+        return self._typ_check_results
+
+    @functools.cached_property
+    def _typ_check_results(self) -> typcheck.TypCheckResults:
         """Lazily compute the unsubstituted lowering facts shared by all instances."""
         return typcheck.TypCheck().check_fn(
             opt_util.opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
@@ -314,19 +309,6 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
     def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
         del typ_args
         builder.build_fn(opt_util.opt_unwrap(self.ast))
-
-    @functools.cached_property
-    def cfg(self) -> ir_values.Cfg:
-        """Lazily lower this function's body to a control-flow graph."""
-        builder = ir_builder.CfgBuilder(
-            self.typ_check_results, self.env.impl_registry, self.env.panic_fn, self
-        )
-        self._build_body(builder, ())
-        return builder.cfg
-
-    @override
-    def body_cfg(self) -> Optional[ir_values.Cfg]:
-        return self.cfg
 
     def is_accessible_from(self, file: src.SrcFile) -> bool:
         """Whether this function can be called from code in ``file``.
@@ -368,7 +350,7 @@ class Fn(NonBuiltinFnSpec[ast.FnDefn]):
         return self._mod_name
 
 
-class FnInstance(FnSpec[ast.FnSpec]):
+class FnInstance:
     """One concrete instantiation of a function declaration.
 
     The declaration may own a checked source or builtin body, or it may
@@ -378,13 +360,14 @@ class FnInstance(FnSpec[ast.FnSpec]):
     :param args: The impl's type arguments followed by the function's own.
     """
 
-    _fn: Final[FnTemplate | FnDecl]
+    _fn: Final[FnSpec]
     _args: Final[tuple[typs.Typ, ...]]
     _impl_arity: Final[int]
     _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
+    ast: Final[Optional[ast.FnSpec]]
 
-    def __init__(self, fn: FnTemplate | FnDecl, args: tuple[typs.Typ, ...]) -> None:
-        super().__init__(fn.ast)
+    def __init__(self, fn: FnSpec, args: tuple[typs.Typ, ...]) -> None:
+        self.ast = fn.ast
         self._fn = fn
         self._args = args
         impl = fn.impl if isinstance(fn, Fn) else None
@@ -413,19 +396,24 @@ class FnInstance(FnSpec[ast.FnSpec]):
             return None
         return self._fn.impl.self_typ.substitute_typ_params(self._mapping)
 
-    @override
-    def calculate_typ(self) -> typs.PtrTyp:
-        substituted = asserts.checked_cast(
+    @functools.cached_property
+    def fn_typ(self) -> typs.FnTyp:
+        """This instance's concrete function signature."""
+        return asserts.checked_cast(
             self._fn.fn_typ.substitute_typ_params(self._mapping), typs.FnTyp
         )
-        return typs.PtrTyp.get_or_create(substituted, typs.CONST)
 
-    @override
-    def calculate_params(self) -> tuple[ir_values.Param, ...]:
+    @functools.cached_property
+    def ptr_typ(self) -> typs.PtrTyp:
+        """This instance's concrete function-pointer type."""
+        return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
+
+    @functools.cached_property
+    def params(self) -> tuple[ir_values.Param, ...]:
+        """This instance's concrete formal parameters."""
         return tuple(ir_values.Param(self, param.pos, param.ast) for param in self._fn.params)
 
     @property
-    @override
     def name(self) -> str:
         return self._render_name(qualified=False)
 
@@ -488,7 +476,7 @@ class FnInstance(FnSpec[ast.FnSpec]):
     @property
     def has_body(self) -> bool:
         """Whether this instance owns a body that can be lowered."""
-        return not isinstance(self._fn, FnDecl)
+        return isinstance(self._fn, BodyFnSpec)
 
     @property
     def source_fn(self) -> Optional[Fn]:
@@ -541,7 +529,7 @@ class FnInstance(FnSpec[ast.FnSpec]):
     def cfg(self) -> ir_values.Cfg:
         """This instance's body, lowered to a control-flow graph. Built
         lazily, on first access."""
-        assert not isinstance(self._fn, FnDecl), "extern instances have no body"
+        assert isinstance(self._fn, BodyFnSpec), "extern instances have no body"
         builder = ir_builder.CfgBuilder(
             self._fn.typ_check_results,
             self._fn.env.impl_registry,
@@ -551,10 +539,6 @@ class FnInstance(FnSpec[ast.FnSpec]):
         )
         self._fn._build_body(builder, self.fn_args)
         return builder.cfg
-
-    @override
-    def body_cfg(self) -> Optional[ir_values.Cfg]:
-        return self.cfg if self.has_body else None
 
 
 class FnRef(ir_values.ComptimeValue[typs.PtrTyp, ast.FnSpec]):
@@ -568,10 +552,10 @@ class FnRef(ir_values.ComptimeValue[typs.PtrTyp, ast.FnSpec]):
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
-        return self.instance.typ
+        return self.instance.ptr_typ
 
 
-class GenericBuiltinFn(FnSpec[ast.FnDefn]):
+class GenericBuiltinFn(FnSpec[ast.FnDefn], BodyFnSpec):
     """A compiler-intrinsic generic function with a Python-authored body."""
 
     _fn_name: Final[str]
@@ -602,17 +586,27 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn]):
             self._instance_cache[args] = inst
         return inst
 
-    @functools.cached_property
+    @property
     def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+        """This builtin's interned type parameters in declaration order."""
+        return self._typ_params
+
+    @functools.cached_property
+    def _typ_params(self) -> tuple[typs.TypParamTyp, ...]:
         """This builtin's interned type parameters in declaration order."""
         return tuple(
             typs.TypParamTyp.get_or_create(self, i, name)
             for i, name in enumerate(self._typ_param_names)
         )
 
+    @property
     @override
-    def calculate_typ(self) -> typs.PtrTyp:
-        return typs.PtrTyp.get_or_create(self.fn_typ_for_typ_args(self.typ_params), typs.CONST)
+    def fn_typ(self) -> typs.FnTyp:
+        return self._fn_typ
+
+    @functools.cached_property
+    def _fn_typ(self) -> typs.FnTyp:
+        return self.fn_typ_for_typ_args(self.typ_params)
 
     @abc.abstractmethod
     def fn_typ_for_typ_args(self, typ_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
@@ -627,8 +621,13 @@ class GenericBuiltinFn(FnSpec[ast.FnDefn]):
     def name(self) -> str:
         return self._fn_name
 
-    @functools.cached_property
+    @property
     def typ_check_results(self) -> typcheck.TypCheckResults:
+        """The builtin's empty type-checking results."""
+        return self._typ_check_results
+
+    @functools.cached_property
+    def _typ_check_results(self) -> typcheck.TypCheckResults:
         # Builtins emit directly and therefore need no type-checking facts.
         return typcheck.TypCheckResults()
 

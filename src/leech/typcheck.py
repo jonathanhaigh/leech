@@ -104,8 +104,8 @@ class TypCheckResults:
     resolutions: Final[resolve.Resolutions]
     _int_lit_typs: Final[dict[ast.IntLit, typs.IntTyp]]
     _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
-    _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]]
-    _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]]
+    _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnSpec, tuple[typs.Typ, ...]]]]
+    _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnSpec, tuple[typs.Typ, ...]]]]
     _struct_expr_typs: Final[dict[ast.StructExpr, typs.StructTyp]]
     _struct_field_indices: Final[dict[ast.FieldAccessExpr | ast.StructFieldExpr, int]]
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
@@ -136,23 +136,23 @@ class TypCheckResults:
 
     def generic_call(
         self, node: ast.CallExpr
-    ) -> Optional[tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]:
+    ) -> Optional[tuple[ir_module.FnSpec, tuple[typs.Typ, ...]]]:
         """Return a generic call's resolved function and type arguments, if any."""
         return self._generic_calls.get(node)
 
     def _set_generic_call(
-        self, node: ast.CallExpr, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
+        self, node: ast.CallExpr, fn: ir_module.FnSpec, typ_args: tuple[typs.Typ, ...]
     ) -> None:
         self._generic_calls[node] = (fn, typ_args)
 
     def generic_var_ref(
         self, node: ast.VarExpr
-    ) -> Optional[tuple[ir_module.FnTemplate, tuple[typs.Typ, ...]]]:
+    ) -> Optional[tuple[ir_module.FnSpec, tuple[typs.Typ, ...]]]:
         """Return an applied generic function reference and its arguments, if any."""
         return self._generic_var_refs.get(node)
 
     def _set_generic_var_ref(
-        self, node: ast.VarExpr, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
+        self, node: ast.VarExpr, fn: ir_module.FnSpec, typ_args: tuple[typs.Typ, ...]
     ) -> None:
         self._generic_var_refs[node] = (fn, typ_args)
 
@@ -518,7 +518,7 @@ class TypCheck:
         return ir_traits.disambiguate(matches, name, typ_param.name, span)
 
     def _resolve_generic_call(
-        self, fn: ir_module.FnTemplate, call_ast: ast.CallExpr, e: ir_env.Env
+        self, fn: ir_module.FnSpec, call_ast: ast.CallExpr, e: ir_env.Env
     ) -> typs.FnTyp:
         """Resolve and record a generic call's concrete function type."""
         callee_ast = asserts.checked_cast(call_ast.callee, ast.VarExpr)
@@ -536,13 +536,13 @@ class TypCheck:
         self.results._set_generic_call(call_ast, fn, typ_args)
         return asserts.checked_cast(fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
 
-    def _typ_params_of(self, fn: ir_module.FnTemplate) -> list[typs.TypParamTyp]:
+    def _typ_params_of(self, fn: ir_module.FnSpec) -> list[typs.TypParamTyp]:
         """Return ``fn``'s interned type parameters in declaration order."""
         return list(fn.typ_params)
 
     def _resolve_explicit_typ_args(
         self,
-        fn: ir_module.FnTemplate,
+        fn: ir_module.FnSpec,
         typ_params: list[typs.TypParamTyp],
         generic_args: Sequence[ast.Typ],
         span: Optional[src.SrcSpan],
@@ -560,7 +560,7 @@ class TypCheck:
 
     def _infer_typ_args(
         self,
-        fn: ir_module.FnTemplate,
+        fn: ir_module.FnSpec,
         call_ast: ast.CallExpr,
         e: ir_env.Env,
         typ_params: list[typs.TypParamTyp],
@@ -733,20 +733,18 @@ class TypCheck:
             return self._generic_var_ref_typ(var_ast, var, e)
         if var_ast.generic_args:
             raise errors.TypArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
-        if isinstance(var, ir_traits.FnSelection):
+        if isinstance(var, (ir_traits.FnSelection, ir_module.FnSpec)):
             return var.ptr_typ
-        if isinstance(var, (ir_module.FnSpec, ir_values.ComptimeEnum)):
-            # Neither has a place to unwrap: a function reference's own
-            # type already is its pointer type, and an enum variant has
-            # no address at all - see `Env._resolve_path_segment`'s
-            # `EnumTyp` case.
+        if isinstance(var, ir_values.ComptimeEnum):
+            # An enum variant has no address - see
+            # `Env._resolve_path_segment`'s `EnumTyp` case.
             return var.typ
         if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
             return self._local_typs[var].pointee_typ
         return var.typ.pointee_typ
 
     def _generic_var_ref_typ(
-        self, var_ast: ast.VarExpr, var: ir_module.FnTemplate, e: ir_env.Env
+        self, var_ast: ast.VarExpr, var: ir_module.FnSpec, e: ir_env.Env
     ) -> typs.PtrTyp:
         """Return an explicitly applied generic function reference's pointer type."""
         if not var_ast.generic_args:
@@ -904,13 +902,10 @@ class TypCheck:
             # Local to avoid the ir_module import cycle.
             from leech import ir_module, ir_traits  # noqa: PLC0415
 
-            # A variable's own type already *is* its place's pointer type -
-            # a function reference doubly so, since taking its address is
-            # a no-op rather than an extra indirection (see
-            # CfgBuilder._build_var_expr's PLACE case) - true of an
-            # explicitly-applied generic one too, so delegate to
-            # _generic_var_ref_typ for that case (including its
-            # MissingTypArgsError if it's named bare instead).
+            # Function symbols produce their function-pointer type directly:
+            # taking their address is a no-op rather than another indirection.
+            # Explicitly applied generic symbols delegate to
+            # _generic_var_ref_typ, including its MissingTypArgsError.
             var = self._resolve_var(expr_ast, e)
             if isinstance(var, (ir_module.Fn, ir_module.GenericBuiltinFn)) and var.typ_params:
                 return self._generic_var_ref_typ(expr_ast, var, e)
@@ -920,7 +915,7 @@ class TypCheck:
             # case) isn't a place either - it falls through to the
             # general, value-copying case below, same as any other
             # non-place expression.
-            if isinstance(var, ir_traits.FnSelection):
+            if isinstance(var, (ir_traits.FnSelection, ir_module.FnSpec)):
                 return var.ptr_typ
             if not isinstance(var, ir_values.ComptimeEnum):
                 return var.typ

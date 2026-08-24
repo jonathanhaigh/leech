@@ -77,7 +77,7 @@ def test_struct_lowering_uses_typechecked_field_indices(tmp_path):
     for field_access in field_accesses:
         object.__setattr__(field_access.field, "name", "changed_after_type_check")
 
-    _ = fn.cfg
+    _ = fn.instantiate(()).cfg
 
 
 def test_generic_struct_distinct_typ_args_produce_distinct_fields(tmp_path):

@@ -94,14 +94,12 @@ def test_source_and_synthesized_panic_calls_share_reference(tmp_path):
     )
     main = next(fn for fn in mod.fns if fn.is_main)
     panic_calls = []
-    for bb in main.cfg.nodes:
+    for bb in main.instantiate(()).cfg.nodes:
         for instr in bb.instrs:
             if not isinstance(instr, ir_values.CallInstr):
                 continue
             callee = instr.callee
-            if (isinstance(callee, ir_module.FnRef) and callee.instance.name == "panic") or (
-                isinstance(callee, ir_module.FnInstance) and callee.name == "panic"
-            ):
+            if isinstance(callee, ir_module.FnRef) and callee.instance.name == "panic":
                 panic_calls.append(instr)
 
     # There may be multiple synthesized arithmetic checks; require both the

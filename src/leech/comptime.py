@@ -221,9 +221,7 @@ class Interpreter:
                 fn = callee.instance
                 if not fn.has_body:
                     raise errors.CallExternFnAtComptimeError(callee.span)
-                cfg = fn.body_cfg()
-                assert cfg is not None
-                self._registers[instr] = Interpreter(cfg, fn.params, args, self._panic_fn).eval()
+                self._registers[instr] = Interpreter(fn.cfg, fn.params, args, self._panic_fn).eval()
             case ir_values.PhiInstr():
                 assert self._prev_bb is not None
                 self._registers[instr] = self._get_comptime_value(instr.incoming[self._prev_bb])
@@ -277,7 +275,7 @@ class Interpreter:
             case ir_values.IsNullInstr():
                 # No Comptime* pointer value the interpreter can ever
                 # produce represents "null" - ComptimeAlloc/ComptimeGep/
-                # FnSpec/ModVar all refer to something real; the only way
+                # FnRef/ModVar all refer to something real; the only way
                 # to observe an actual null pointer is via malloc, which is
                 # extern and already blocked at comptime above.
                 self._registers[instr] = ir_values.ComptimeBool(False, instr.ast)

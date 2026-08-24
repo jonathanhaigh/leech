@@ -57,7 +57,7 @@ def _fixpoint[T](newly_requested: Callable[[], list[T]], resolve: Callable[[T], 
     return instances
 
 
-def _fn_templates(mod: ir_module.Mod) -> Iterator[ir_module.FnTemplate]:
+def _fn_templates(mod: ir_module.Mod) -> Iterator[ir_module.FnSpec]:
     """Yield every source and compiler-intrinsic function declaration."""
     for loaded_mod in mod.loader.mods:
         yield from loaded_mod.fns

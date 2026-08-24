@@ -128,7 +128,7 @@ Change function-valued lowering helpers to return `.ref`:
 
 ```python
 def _resolve_fn_ref(
-    self, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
+    self, fn: ir_module.FnSpec, typ_args: tuple[typs.Typ, ...]
 ) -> ir_module.FnRef:
     concrete_typ_args = tuple(
         typ_arg.substitute_typ_params(self._typ_arg_mapping) for typ_arg in typ_args
@@ -238,7 +238,7 @@ Expected: FAIL because `FnDecl` has no instance cache and extern lowering still 
 
 - [x] **Step 3: Widen instance AST and add the extern cache**
 
-Widen `FnTemplate.ast` and `FnInstance` AST annotations to `Optional[ast.FnSpec]`. Add an empty-argument cache to `FnDecl`:
+Widen the instance AST annotation to `Optional[ast.FnSpec]`. Add an empty-argument cache to `FnDecl`:
 
 ```python
 class FnDecl(NonBuiltinFnSpec[ast.FnDecl]):
@@ -455,7 +455,7 @@ git diff --check
 
 Expected: all pass; `rg -n "GenericFn" src tests` returns no matches.
 
-- [ ] **Step 8: Stop for review and request commit authorization**
+- [x] **Step 8: Stop for review and request commit authorization**
 
 After explicit authorization only:
 
@@ -472,23 +472,20 @@ git commit -m "Bind function declarations as symbols"
 - Modify: `src/leech/ir_module.py`
 - Modify: `src/leech/ir_values.py`
 - Modify: `src/leech/ir_builder.py`
-- Modify: `src/leech/ir_builtins.py`
-- Modify: `src/leech/ir_env.py`
 - Modify: `src/leech/comptime.py`
-- Modify: `src/leech/resolve.py`
 - Modify: `src/leech/codegen.py`
+- Modify: `src/leech/typcheck.py`
 - Test: `tests/test_generic_fns.py`
-- Test: `tests/test_call.py`
 
 **Interfaces:**
 - Consumes: direct declaration bindings and `FnSelection` from Task 3.
 - Produces: `FnSpec` as a non-value declaration base.
-- Produces: `BodyFnTemplate(FnTemplate, Protocol)` for body-owning declarations.
+- Produces: `BodyFnSpec` as an abstract mixin for body-owning declarations.
 - Produces: `FnInstance` as a non-value concrete instance.
 - Produces: `Param.fn: FnSpec | FnInstance` and `CfgBuilder._fn: Optional[FnInstance]`.
 - Deletes: function-specific `load`, `store`, `is_temporary`, and `body_cfg`.
 
-- [ ] **Step 1: Add failing hierarchy tests**
+- [x] **Step 1: Add failing hierarchy tests**
 
 Add structural assertions:
 
@@ -510,7 +507,7 @@ def test_only_fn_ref_is_a_function_value(tmp_path):
 
 Add assertions that declarations and instances expose none of `load`, `store`, `is_temporary`, or `body_cfg`.
 
-- [ ] **Step 2: Run the hierarchy tests and verify failure**
+- [x] **Step 2: Run the hierarchy tests and verify failure**
 
 Run:
 
@@ -520,7 +517,7 @@ uv run pytest tests/test_generic_fns.py -k "only_fn_ref or obsolete_function_poi
 
 Expected: FAIL because `FnSpec` and `FnInstance` still inherit `ComptimePtr`.
 
-- [ ] **Step 3: Make `FnSpec` a declaration base**
+- [x] **Step 3: Make `FnSpec` a declaration base**
 
 Remove the `ComptimePtr` base and give `FnSpec` its own AST/span and signature interface:
 
@@ -543,29 +540,32 @@ class FnSpec[FnAstT_co: ast.FnSpec](abc.ABC):
 
 Move any cached pointer-type calculation needed by references onto declarations or instances without making either a `Value`.
 
-- [ ] **Step 4: Split the body-owning protocol**
+- [x] **Step 4: Split the body-owning interface**
 
-Keep `FnTemplate` limited to metadata, type parameters, instances, and `instantiate`. Add:
+Put metadata, type parameters, instances, and `instantiate` on `FnSpec`. Add:
 
 ```python
-class BodyFnTemplate(FnTemplate, Protocol):
-    @property
-    def env(self) -> ir_env.Env:
-        raise NotImplementedError
+class BodyFnSpec(abc.ABC):
+    env: ir_env.Env
 
-    @functools.cached_property
+    @property
+    @abc.abstractmethod
     def typ_check_results(self) -> typcheck.TypCheckResults:
         raise NotImplementedError
 
+    @abc.abstractmethod
     def _build_body(
         self, builder: ir_builder.CfgBuilder, args: tuple[typs.Typ, ...]
     ) -> None:
         raise NotImplementedError
 ```
 
-`Fn` and `GenericBuiltinFn` satisfy `BodyFnTemplate`; `FnDecl` does not. `FnInstance.cfg` narrows to `BodyFnTemplate` and asserts that bodyless instances never request a CFG. Delete `FnSpec.body_cfg` and the `Fn` override, but retain `Fn.cfg` because existing tests and declaration checking use it.
+`Fn` and `GenericBuiltinFn` inherit `BodyFnSpec`; `FnDecl` does not.
+`FnInstance.cfg` narrows to `BodyFnSpec` and asserts that bodyless instances
+never request a CFG. Delete `FnSpec.body_cfg` and the `Fn` override. Tests that
+need a CFG request it from an instance, matching production lowering.
 
-- [ ] **Step 5: Make `FnInstance` a plain instance object**
+- [x] **Step 5: Make `FnInstance` a plain instance object**
 
 Remove its `FnSpec` base. Give it declaration-derived `ast`, `span`, `fn_typ`, concrete `params`, and cached `ref` properties directly. `FnRef.calculate_typ` returns the instance's concrete pointer type.
 
@@ -585,7 +585,7 @@ panic_fn: Final[Optional[ir_module.FnRef]]
 
 Update built-in body builders to read the concrete `builder._fn` instance. Update resolution unions so symbols, selections, instances, and references occupy only the phases specified by the design.
 
-- [ ] **Step 6: Remove obsolete pointer and body branches**
+- [x] **Step 6: Remove obsolete pointer and body branches**
 
 Delete `FnSpec.load`, `store`, `is_temporary`, and `body_cfg`, plus function cases that existed only because declarations or instances were `Value`s. Update the compile-time-value exhaustiveness comment from `FnSpec` to `FnRef`.
 
@@ -600,19 +600,22 @@ if not inst.has_body:
     raise errors.CallExternFnAtComptimeError(callee.span)
 ```
 
-- [ ] **Step 7: Run the structural sweep**
+- [x] **Step 7: Run the structural sweep**
 
 Run:
 
 ```bash
-rg -n "GenericFn|\.body_cfg\(|def (load|store|is_temporary)\(" src/leech tests
+rg -n "GenericFn|\.body_cfg\(|def (load|store|is_temporary)\(" src/leech
 rg -n "isinstance\([^\n]*FnSpec|FnSpec.*Value|FnInstance.*Value|ComptimePtr.*Fn" src/leech tests
 rg -n "FnSpec/|FnSpec,|FnSpec\)" src/leech
 ```
 
 Expected: no `GenericFn`, `body_cfg`, function-specific pointer-method definitions, or declaration/instance-as-value checks. Every remaining `FnSpec` occurrence denotes a declaration. For an annotation or comment reported by the search, replace the stale type with its final phase type: `FnSpec` for declarations, `FnInstance` for specializations, or `FnRef` for values. Re-run all three searches until they meet these expectations.
 
-- [ ] **Step 8: Run focused and full verification**
+The first sweep is limited to `src/leech` because the hierarchy regression test
+intentionally names each deleted method in `hasattr` assertions.
+
+- [x] **Step 8: Run focused and full verification**
 
 Run:
 
@@ -628,22 +631,22 @@ git diff --check
 
 Expected: all pass, with no function declaration or instance satisfying `Value`.
 
-- [ ] **Step 9: Confirm final hierarchy invariants**
+- [x] **Step 9: Confirm final hierarchy invariants**
 
 Run:
 
 ```bash
 uv run python -c 'from leech import ir_module, ir_values; assert not issubclass(ir_module.FnSpec, ir_values.Value); assert not issubclass(ir_module.FnInstance, ir_values.Value); assert issubclass(ir_module.FnRef, ir_values.Value)'
-rg -n "class GenericFn|body_cfg|Can't dereference a function pointer" src/leech tests
+rg -n "class GenericFn|body_cfg|Can't dereference a function pointer" src/leech
 ```
 
 Expected: the Python assertion succeeds and the search returns no matches.
 
-- [ ] **Step 10: Stop for review and request commit authorization**
+- [x] **Step 10: Stop for review and request commit authorization**
 
 After explicit authorization only:
 
 ```bash
-git add src/leech/ir_module.py src/leech/ir_values.py src/leech/ir_builder.py src/leech/ir_builtins.py src/leech/ir_env.py src/leech/comptime.py src/leech/resolve.py src/leech/codegen.py tests/test_generic_fns.py tests/test_call.py
+git add docs/superpowers/plans/2026-08-22-function-symbol-value-split.md src/leech/ir_module.py src/leech/ir_values.py src/leech/ir_builder.py src/leech/ir_env.py src/leech/comptime.py src/leech/codegen.py src/leech/typcheck.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_prelude.py
 git commit -m "Separate function symbols from values"
 ```

@@ -48,7 +48,7 @@ class CfgBuilder:
         cond_bb: ir_values.BasicBlock
         end_bb: ir_values.BasicBlock
 
-    _fn: Final[Optional[ir_module.FnSpec]]
+    _fn: Final[Optional[ir_module.FnInstance]]
     _typ_check_results: Final[typcheck.TypCheckResults]
     _impl_registry: Final[ir_traits.ImplRegistry]
     _panic_fn: Final[Optional[ir_module.FnRef]]
@@ -68,7 +68,7 @@ class CfgBuilder:
         typ_check_results: typcheck.TypCheckResults,
         impl_registry: ir_traits.ImplRegistry,
         panic_fn: Optional[ir_module.FnRef],
-        fn: Optional[ir_module.FnSpec] = None,
+        fn: Optional[ir_module.FnInstance] = None,
         typ_arg_mapping: Optional[Mapping[typs.TypParamTyp, typs.Typ]] = None,
     ) -> None:
         self._fn = fn
@@ -720,14 +720,14 @@ class CfgBuilder:
         every other non-generic source function has an empty argument tuple.
         Emission ownership is decided later by monomorphization.
         """
-        if isinstance(self._fn, ir_module.FnInstance):
+        if self._fn is not None:
             sibling = self._fn.sibling_instance(target)
             if sibling is not None:
                 return sibling.ref
         return target.instantiate(()).ref
 
     def _resolve_fn_ref(
-        self, fn: ir_module.FnTemplate, typ_args: tuple[typs.Typ, ...]
+        self, fn: ir_module.FnSpec, typ_args: tuple[typs.Typ, ...]
     ) -> ir_module.FnRef:
         """Return a reference to the instance identified by ``fn`` and ``typ_args``.
 
