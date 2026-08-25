@@ -9,10 +9,56 @@ from leech import asserts, ast, errors, ir_env, ir_module, mono, typs
 
 
 def _get_struct_typ(mod, name: str) -> typs.StructTyp:
-    """Get the (template) struct type ``name`` declares in ``mod``."""
+    """Get the non-generic struct type ``name`` declares in ``mod``."""
     item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, name)
     assert item is not None
     return asserts.checked_cast(item.value, typs.StructTyp)
+
+
+def _get_struct_template(mod, name: str) -> typs.StructTypTemplate:
+    """Get the generic struct template ``name`` declares in ``mod``."""
+    item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, name)
+    assert item is not None
+    return asserts.checked_cast(item.value, typs.StructTypTemplate)
+
+
+def test_generic_and_non_generic_struct_module_items_have_distinct_types(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        "struct Box[T] { val: T }\nstruct Plain { val: i32 }",
+    )
+
+    template = _get_struct_template(mod, "Box")
+    plain = _get_struct_typ(mod, "Plain")
+
+    assert not isinstance(template, typs.Typ)
+    assert isinstance(plain, typs.Typ)
+    assert plain.typ_args == ()
+    assert plain.template.name == "Plain"
+
+
+def test_duplicate_struct_typ_param_precedes_body_error(tmp_path):
+    src = """
+    struct Box[T, T] { val: T }
+    pub fn main() i32 { let x: NoSuchTyp = 0; return 0; }
+    """
+
+    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert '"T"' in str(exc_info.value)
+
+
+def test_reserved_struct_typ_param_precedes_body_error(tmp_path):
+    src = """
+    struct Box[i32] { val: i32 }
+    pub fn main() i32 { let x: NoSuchTyp = 0; return 0; }
+    """
+
+    with pytest.raises(errors.ReservedNameError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert '"i32"' in str(exc_info.value)
 
 
 def test_generic_struct_single_typ_param(tmp_path):
@@ -239,6 +285,27 @@ def test_bare_reference_to_generic_struct_requires_typ_args(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "Box = ")
 
 
+def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    impl[T] Box[T] {
+        fn make(v: T) Box[T] { Box[T] { val: v } }
+    }
+    pub fn main() i32 {
+        let box = Box::make(7);
+        return box.val;
+    }
+    """
+
+    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert '"Box"' in str(exc_info.value)
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "Box::make")
+
+
 def test_wrong_number_of_typ_args_on_generic_struct(tmp_path):
     src = """
     struct Pair[A, B] { first: A, second: B }
@@ -348,6 +415,21 @@ def test_mutual_growing_generic_struct_declaration_cycle(tmp_path):
     assert [note.message for note in exc_info.value.extra] == [
         'Field "x" of struct "A" contains "B[T]" by value',
         'Field "y" of struct "B[T]" contains "A[[T; 1]]" by value',
+    ]
+
+
+def test_generic_struct_nested_cycle_keeps_nested_root_name(tmp_path):
+    src = """
+    struct A[T] { x: B[T] }
+    struct B[T] { y: B[T] }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert exc_info.value.message.message == 'Struct "B[T]" has infinite size'
+    assert [note.message for note in exc_info.value.extra] == [
+        'Field "y" of struct "B[T]" contains "B[T]" by value'
     ]
 
 
@@ -785,12 +867,12 @@ def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(tmp_path):
 
 def test_generic_struct_instance_caches_by_typ_args(tmp_path):
     mod = util.build_ir_mod(tmp_path, "struct Box[T] { val: T }")
-    box = _get_struct_typ(mod, "Box")
+    box = _get_struct_template(mod, "Box")
 
-    i32_inst = box.instance((typs.I32,))
+    i32_inst = box.instantiate((typs.I32,))
 
-    assert i32_inst is box.instance((typs.I32,))
-    assert i32_inst is not box.instance((typs.BOOL,))
+    assert i32_inst is box.instantiate((typs.I32,))
+    assert i32_inst is not box.instantiate((typs.BOOL,))
     assert tuple(mod.loader.ctx.requested_struct_instances()).count(i32_inst) == 1
 
 
@@ -802,8 +884,8 @@ def test_mono_discovers_struct_requested_while_resolving_fields(tmp_path):
         struct Outer[T] { inner: Inner[T] }
         """,
     )
-    outer = _get_struct_typ(mod, "Outer")
-    outer.instance((typs.I32,))
+    outer = _get_struct_template(mod, "Outer")
+    outer.instantiate((typs.I32,))
 
     result = mono.discover(mod)
     names = {inst.qualified_name for inst in result.struct_instances}
@@ -826,18 +908,18 @@ def test_codegen_accepts_forward_reference_to_nested_generic_struct(tmp_path):
 
 def test_generic_struct_instance_qualified_name(tmp_path):
     mod = util.build_ir_mod(tmp_path, "struct Pair[A, B] { first: A, second: B }")
-    pair = _get_struct_typ(mod, "Pair")
+    pair = _get_struct_template(mod, "Pair")
 
-    inst = pair.instance((typs.I32, typs.BOOL))
+    inst = pair.instantiate((typs.I32, typs.BOOL))
     assert inst.name == "Pair[i32, bool]"
     assert inst.qualified_name == "main::Pair[i32, bool]"
 
 
 def test_generic_struct_field_typs_are_substituted(tmp_path):
     mod = util.build_ir_mod(tmp_path, "struct Box[T] { val: T }")
-    box = _get_struct_typ(mod, "Box")
+    box = _get_struct_template(mod, "Box")
 
-    inst = box.instance((typs.I32,))
+    inst = box.instantiate((typs.I32,))
     assert inst.fields["val"].typ is typs.I32
 
 
@@ -846,7 +928,7 @@ def test_struct_fields_mapping_is_live(tmp_path):
     box = _get_struct_typ(mod, "Box")
 
     fields = box.fields
-    box._members.clear()
+    box._fields.clear()
 
     assert fields == {}
 

@@ -47,8 +47,8 @@ def test_generic_impl_lookup_does_not_instantiate_method(tmp_path):
     mod = util.build_ir_mod(tmp_path, src)
     box_item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Box")
     assert box_item is not None
-    box = asserts.checked_cast(box_item.value, typs.StructTyp)
-    concrete_box = box.instance((typs.I32,))
+    box = asserts.checked_cast(box_item.value, typs.StructTypTemplate)
+    concrete_box = box.instantiate((typs.I32,))
     (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_box)
     fn = opt_util.opt_unwrap(impl.get_fn_symbol("get"))
     instances_before = tuple(fn.env.ctx.requested_fn_instances())
@@ -280,8 +280,8 @@ def test_generic_impl_instance_args_follow_declaration_order(tmp_path):
     mod = util.build_ir_mod(tmp_path, src)
     pair_item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Pair")
     assert pair_item is not None
-    pair = asserts.checked_cast(pair_item.value, typs.StructTyp)
-    concrete_pair = pair.instance((typs.I32, typs.BOOL))
+    pair = asserts.checked_cast(pair_item.value, typs.StructTypTemplate)
+    concrete_pair = pair.instantiate((typs.I32, typs.BOOL))
     (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_pair)
     fn = opt_util.opt_unwrap(impl.get_fn_symbol("first"))
 

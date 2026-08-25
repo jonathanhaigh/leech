@@ -22,7 +22,7 @@ from leech import (
     visibility,
 )
 
-type Container = typs.Typ | ir_module.Mod | ir_traits.Trait
+type Container = typs.Typ | typs.StructTypTemplate | ir_module.Mod | ir_traits.Trait
 """A type, module, or trait bound in the shared container namespace."""
 
 type Var = (
@@ -143,7 +143,7 @@ class Env:
             return "function", value.span
         if isinstance(value, ir_module.ModVar):
             return "variable", value.span
-        if isinstance(value, (typs.StructTyp, typs.EnumTyp)):
+        if isinstance(value, (typs.StructTypTemplate, typs.StructTyp, typs.EnumTyp)):
             return "type", value.span
         if isinstance(value, ir_traits.Trait):
             return "trait", value.span
@@ -152,8 +152,9 @@ class Env:
     def _resolve_path_segment(
         self,
         ns: Env.Namespace,
-        scope: Env | ir_module.Mod | typs.StructTyp | typs.EnumTyp,
+        scope: Env | ir_module.Mod | typs.StructTypTemplate | typs.StructTyp | typs.EnumTyp,
         ident: ast.Ident,
+        scope_span: Optional[src.SrcSpan],
     ) -> Any:
         match scope:
             case Env():
@@ -171,6 +172,8 @@ class Env:
                         raise errors.PrivateItemAccessError(
                             item_kind, ident.name, ident.span, defn_span
                         )
+            case typs.StructTypTemplate():
+                raise errors.MissingTypArgsError(scope.name, opt_util.opt_unwrap(scope_span))
             case typs.StructTyp():
                 # Only associated functions are reachable by path:
                 # `SomeStruct::x` is not a way to name a field.
@@ -207,21 +210,24 @@ class Env:
 
         return res
 
-    def resolve_typ(self, path: ast.Path) -> typs.Typ:
+    def resolve_typ(self, path: ast.Path) -> typs.Typ | typs.StructTypTemplate:
         """Resolve a qualified path whose final segment must be a type."""
         item = self.resolve_path(Env.Namespace.CONTAINERS, path)
         if isinstance(item, ir_module.Mod):
             raise errors.ModUsedAsTypError(item.name, path.idents[-1].span)
         if isinstance(item, ir_traits.Trait):
             raise errors.TraitUsedAsTypError(item.name, path.idents[-1].span)
-        return asserts.checked_cast(item, typs.Typ)
+        assert isinstance(item, (typs.Typ, typs.StructTypTemplate))
+        return item
 
     def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:
         """Resolve container path segments, then look up the final segment in ``ns``."""
         asserts.assert_ge(len(path.idents), 1)
 
-        scope = self
+        scope: Env | ir_module.Mod | typs.StructTypTemplate | typs.StructTyp | typs.EnumTyp = self
+        scope_span: Optional[src.SrcSpan] = None
         for ident in path.idents[:-1]:
-            scope = self._resolve_path_segment(Env.Namespace.CONTAINERS, scope, ident)
+            scope = self._resolve_path_segment(Env.Namespace.CONTAINERS, scope, ident, scope_span)
+            scope_span = ident.span
 
-        return self._resolve_path_segment(ns, scope, path.idents[-1])
+        return self._resolve_path_segment(ns, scope, path.idents[-1], scope_span)

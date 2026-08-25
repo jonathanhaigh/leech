@@ -130,8 +130,8 @@ def test_generic_trait_impl_lookup_does_not_instantiate_method(tmp_path):
     """
     mod = util.build_ir_mod(tmp_path, src)
     box = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Box")
-    box = asserts.checked_cast(box, typs.StructTyp)
-    concrete_box = box.instance((typs.I32,))
+    box = asserts.checked_cast(box, typs.StructTypTemplate)
+    concrete_box = box.instantiate((typs.I32,))
     trait = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Show")
     trait = asserts.checked_cast(trait, ir_traits.Trait)
     trait_impl = mod.loader.impl_registry.find_trait_impl(trait, concrete_box)

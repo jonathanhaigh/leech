@@ -71,10 +71,9 @@ needs to reconstruct template ownership from AST and environment identity.
 
 `compilation.Ctx` owns struct instances by
 `(StructTypTemplate, tuple[Typ, ...])`, just as it currently owns instances by
-the template-shaped `StructTyp`. There is exactly one template for a given
-struct declaration in one compilation. `StructTypTemplate.create` enforces
-that invariant with a compilation-local cache keyed by the context token and
-declaration AST identity.
+the template-shaped `StructTyp`. Module construction creates one template for
+each struct declaration and stores either that template or its non-generic
+module instance as the module item. Templates need no separate interning cache.
 
 `StructTypTemplate.instantiate(args)` checks the argument count explicitly,
 before consulting the instance cache, then delegates to
@@ -84,7 +83,7 @@ the source span is available.
 
 `Ctx` becomes the only cache for `StructTyp` instances; the redundant weak
 `Typ` cache entry is removed. Instance identity is compilation-local and nominal through
-the unique template plus argument tuple. Repeated requests for equal arguments
+the owning template plus argument tuple. Repeated requests for equal arguments
 return the same object, separate compilation contexts remain distinct, and
 distinct declarations remain distinct.
 
@@ -240,7 +239,6 @@ The structural invariants are:
 
 - `StructTypTemplate` is never a `Typ` and never has an LLVM representation;
 - every `StructTyp` is an instance and has one owning template;
-- each declaration has exactly one template per compilation;
 - non-generic structs are zero-argument instances;
 - only templates instantiate structs;
 - callers receiving a `StructTyp` never branch on whether it is a template;
@@ -258,7 +256,7 @@ associated-function scopes produce `MissingTypArgsError` rather than an
 internal exception.
 
 The existing compilation-isolation test in `tests/test_typs.py` is rewritten
-to create templates through `StructTypTemplate.create`, instantiate each
+to construct templates directly, instantiate each
 template, assert template and instance isolation across contexts, and verify
 the clarified request-log policy. Existing helpers and structural assertions
 that intentionally retrieve a generic declaration are updated to expect

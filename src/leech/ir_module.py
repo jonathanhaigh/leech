@@ -799,10 +799,12 @@ class Mod:
                     defn_ast.span,
                 )
             case ast.StructDefn():
+                template = typs.StructTypTemplate(defn_ast, self.env, self.name)
+                value = template if template.typ_params else template.module_instance
                 self._add_item(
                     defn_ast.ident.name,
                     visibility.Access.from_ast(defn_ast.access),
-                    typs.StructTyp.create(defn_ast, self.env, (), self.name),
+                    value,
                 )
             case ast.EnumDefn():
                 self._add_item(

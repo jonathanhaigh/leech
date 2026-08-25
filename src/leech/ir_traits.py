@@ -319,7 +319,7 @@ def _head_shape(typ: typs.Typ) -> Hashable:
     :return: The head shape.
     """
     if isinstance(typ, typs.StructTyp):
-        return typ.ast
+        return typ.template
     return type(typ)
 
 

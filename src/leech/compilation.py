@@ -45,19 +45,20 @@ class _CycleFrame:
     detail: object
 
 
+type _InstanceCache[OwnerT, InstanceT] = dict[OwnerT, dict[tuple[typs.Typ, ...], InstanceT]]
+"""Instances of ``InstanceT``, keyed by their owning ``OwnerT`` and then by argument tuple."""
+
+
 class Ctx:
     """Own compilation-wide lazy requests and active semantic computations."""
 
-    #: Identity used in weak type-cache keys without retaining this context through them.
-    typ_cache_token: Final[object]
-    _fn_instances: Final[dict[ir_module.FnSymbol, dict[tuple[typs.Typ, ...], ir_module.FnInstance]]]
+    _fn_instances: Final[_InstanceCache[ir_module.FnSymbol, ir_module.FnInstance]]
     _requested_fn_instances: Final[list[ir_module.FnInstance]]
-    _struct_instances: Final[dict[typs.StructTyp, dict[tuple[typs.Typ, ...], typs.StructTyp]]]
+    _struct_instances: Final[_InstanceCache[typs.StructTypTemplate, typs.StructTyp]]
     _requested_struct_instances: Final[list[typs.StructTyp]]
     _cycle_stacks: Final[dict[CycleDomain, list[_CycleFrame]]]
 
     def __init__(self) -> None:
-        self.typ_cache_token = object()
         self._fn_instances = {}
         self._requested_fn_instances = []
         self._struct_instances = {}
@@ -125,20 +126,35 @@ class Ctx:
 
     def instantiate_struct(
         self,
-        template: typs.StructTyp,
+        template: typs.StructTypTemplate,
         args: tuple[typs.Typ, ...],
+        *,
+        record_request: bool,
     ) -> typs.StructTyp:
-        """Return the cached struct instance for ``template`` and ``args``."""
+        """Return the cached struct instance for ``template`` and ``args``.
+
+        :param record_request: Whether a newly created instance is appended to
+            :meth:`requested_struct_instances`. Pass ``True`` for an instance a source
+            reference requests, which :func:`~leech.mono.discover` must find and code
+            generation must emit. Pass ``False`` for an instance code generation already
+            reaches another way, so it must not be discovered as a separate emission
+            request: a non-generic declaration's zero-argument module instance, and a
+            generic template's opaque validation instance. Ignored on a cache hit, since
+            only the request that first creates ``args`` can be recorded.
+        """
         cached = self._cached_instance(self._struct_instances, template, args)
         if cached is not None:
             return cached
 
+        # Local because typs imports this module while its classes are initializing.
+        from leech import typs  # noqa: PLC0415
+
         return self._record_instance(
             self._struct_instances,
-            self._requested_struct_instances,
+            self._requested_struct_instances if record_request else None,
             template,
             args,
-            template._create_instance(args),
+            typs.StructTyp(template, args),
         )
 
     def requested_struct_instances(self) -> Sequence[typs.StructTyp]:
@@ -151,7 +167,7 @@ class Ctx:
 
     @staticmethod
     def _cached_instance[OwnerT, InstanceT](
-        cache: dict[OwnerT, dict[tuple[typs.Typ, ...], InstanceT]],
+        cache: _InstanceCache[OwnerT, InstanceT],
         owner: OwnerT,
         args: tuple[typs.Typ, ...],
     ) -> InstanceT | None:
@@ -161,8 +177,8 @@ class Ctx:
 
     @staticmethod
     def _record_instance[OwnerT, InstanceT](
-        cache: dict[OwnerT, dict[tuple[typs.Typ, ...], InstanceT]],
-        log: list[InstanceT],
+        cache: _InstanceCache[OwnerT, InstanceT],
+        log: Optional[list[InstanceT]],
         owner: OwnerT,
         args: tuple[typs.Typ, ...],
         instance: InstanceT,
@@ -174,5 +190,6 @@ class Ctx:
             cache[owner] = instances
         assert args not in instances, "instance creation re-entered the same request"
         instances[args] = instance
-        log.append(instance)
+        if log is not None:
+            log.append(instance)
         return instance

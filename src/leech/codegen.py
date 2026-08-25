@@ -123,15 +123,15 @@ class Compiler:
         self.ll_mod.triple = "x86_64-linux-gnu"
 
         for item in self._program_items():
-            if isinstance(item.value, typs.StructTyp) and not item.value.is_generic_template:
+            if isinstance(item.value, typs.StructTyp):
                 self._declare_mod_item(item)
 
         for item in self._program_items():
-            if not isinstance(item.value, typs.StructTyp):
+            if not isinstance(item.value, (typs.StructTyp, typs.StructTypTemplate)):
                 self._declare_mod_item(item)
 
         for item in self._program_items():
-            if isinstance(item.value, typs.StructTyp) and not item.value.is_generic_template:
+            if isinstance(item.value, typs.StructTyp):
                 self._compile_mod_struct(item, item.value)
 
         # A generic struct's own fields are never lowered - only an
@@ -148,8 +148,8 @@ class Compiler:
         # forcing it alone already forces (and catches duplicates in)
         # variants too.
         for item in self._program_items():
-            if isinstance(item.value, typs.StructTyp) and item.value.is_generic_template:
-                _ = item.value.fields
+            if isinstance(item.value, typs.StructTypTemplate):
+                item.value.validate_declaration()
             elif isinstance(item.value, typs.EnumTyp):
                 _ = item.value.backing_typ
 
@@ -246,6 +246,8 @@ class Compiler:
             case typs.StructTyp():
                 ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
                 self._ll_mod_items.set(item.value, ll_item)
+            case typs.StructTypTemplate():
+                pass
             case typs.EnumTyp():
                 # No LLVM symbol of its own - it lowers directly to its
                 # backing integer type's, declared (if a builtin) already.
@@ -270,6 +272,8 @@ class Compiler:
             case typs.StructTyp():
                 # Already compiled, along with every other module's, by
                 # the struct-body phase of compile().
+                return None
+            case typs.StructTypTemplate():
                 return None
             case typs.EnumTyp():
                 return None

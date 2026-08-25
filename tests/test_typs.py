@@ -301,7 +301,7 @@ def test_typ_param_typ_distinct_across_owners(tmp_path):
     assert t_f.name == t_g.name == "T"
 
 
-def test_struct_templates_are_isolated_by_compilation_ctx(tmp_path):
+def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(tmp_path):
     parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
     (struct_ast,) = parsed_mod.defns
     assert isinstance(struct_ast, ast.StructDefn)
@@ -310,15 +310,46 @@ def test_struct_templates_are_isolated_by_compilation_ctx(tmp_path):
     first_env = ir_env.Env(first_ctx, ir_traits.ImplRegistry(first_ctx), None)
     second_env = ir_env.Env(second_ctx, ir_traits.ImplRegistry(second_ctx), None)
 
-    first = typs.StructTyp.get_or_create(struct_ast, first_env, (), "main")
-    second = typs.StructTyp.get_or_create(struct_ast, second_env, (), "main")
-    first_instance = first.instance((typs.I32,))
-    second_instance = second.instance((typs.I32,))
+    first = typs.StructTypTemplate(struct_ast, first_env, "main")
+    second = typs.StructTypTemplate(struct_ast, second_env, "main")
+    first_instance = first.instantiate((typs.I32,))
+    second_instance = second.instantiate((typs.I32,))
 
     assert first is not second
+    assert first_instance is first.instantiate((typs.I32,))
     assert first_instance is not second_instance
+    assert first_instance.template is first
+    assert first_instance.typ_args == (typs.I32,)
     assert tuple(first_ctx.requested_struct_instances()) == (first_instance,)
     assert tuple(second_ctx.requested_struct_instances()) == (second_instance,)
+
+
+def test_struct_validation_instance_is_cached_without_request(tmp_path):
+    parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
+    (struct_ast,) = parsed_mod.defns
+    assert isinstance(struct_ast, ast.StructDefn)
+    ctx = compilation.Ctx()
+    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    template = typs.StructTypTemplate(struct_ast, env, "main")
+
+    validation = template._validation_instance
+
+    assert validation is template._validation_instance
+    assert validation.template is template
+    assert validation.typ_args == template.typ_params
+    assert tuple(ctx.requested_struct_instances()) == ()
+
+
+def test_struct_typ_rejects_global_typ_cache_construction(tmp_path):
+    parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
+    (struct_ast,) = parsed_mod.defns
+    assert isinstance(struct_ast, ast.StructDefn)
+    ctx = compilation.Ctx()
+    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    template = typs.StructTypTemplate(struct_ast, env, "main")
+
+    with pytest.raises(AssertionError, match="owned by the compilation context"):
+        typs.StructTyp.get_or_create(template, (typs.I32,))
 
 
 def test_substitute_typ_params_replaces_mapped_typ_param(tmp_path):
@@ -416,12 +447,24 @@ def test_typs_overlap_array_typs_symmetrically_and_distinguishes_length(tmp_path
     _assert_typs_overlap_symmetric(generic, typs.ArrayTyp.get_or_create(typs.I32, 4), False)
 
 
-def test_typs_overlap_struct_typ_arity_mismatch_is_false(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "struct Pair[A, B] {}")
+def test_typs_overlap_struct_typs_symmetrically_and_distinguishes_declaration(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "struct Pair[A, B] {}\nstruct Other[A, B] {}")
     pair = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Pair")
-    assert isinstance(pair, typs.StructTyp)
+    other = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Other")
+    assert isinstance(pair, typs.StructTypTemplate)
+    assert isinstance(other, typs.StructTypTemplate)
+    t = pair.typ_params[0]
 
-    _assert_typs_overlap_symmetric(pair, pair.instance((typs.I32, typs.BOOL)), False)
+    _assert_typs_overlap_symmetric(
+        pair.instantiate((t, typs.I32)),
+        pair.instantiate((typs.BOOL, typs.I32)),
+        True,
+    )
+    _assert_typs_overlap_symmetric(
+        pair.instantiate((typs.I32, typs.I32)),
+        other.instantiate((typs.I32, typs.I32)),
+        False,
+    )
 
 
 def test_typs_overlap_enum_backing_typs_symmetrically(tmp_path):

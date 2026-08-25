@@ -38,7 +38,7 @@ SPDX-License-Identifier: MPL-2.0
 - Test: `tests/test_generic_structs.py`
 
 **Interfaces:**
-- Produces: `StructTypTemplate.create(ast, env, mod_name) -> StructTypTemplate`, unique per compilation and declaration.
+- Produces: `StructTypTemplate(ast, env, mod_name)` as the declaration object built by its module.
 - Produces: `StructTypTemplate.instantiate(args) -> StructTyp`, recording a public generic request.
 - Produces: private `StructTypTemplate._validation_instance -> StructTyp`, cached without a monomorphization request.
 - Produces: `StructTypTemplate.module_instance -> StructTyp` for a non-generic module item.
@@ -59,8 +59,8 @@ def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(tmp_path
     first_env = ir_env.Env(first_ctx, ir_traits.ImplRegistry(first_ctx), None)
     second_env = ir_env.Env(second_ctx, ir_traits.ImplRegistry(second_ctx), None)
 
-    first = typs.StructTypTemplate.create(struct_ast, first_env, "main")
-    second = typs.StructTypTemplate.create(struct_ast, second_env, "main")
+    first = typs.StructTypTemplate(struct_ast, first_env, "main")
+    second = typs.StructTypTemplate(struct_ast, second_env, "main")
     first_instance = first.instantiate((typs.I32,))
     second_instance = second.instantiate((typs.I32,))
 
@@ -73,28 +73,13 @@ def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(tmp_path
     assert tuple(second_ctx.requested_struct_instances()) == (second_instance,)
 
 
-def test_struct_template_is_unique_within_compilation(tmp_path):
-    parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
-    (struct_ast,) = parsed_mod.defns
-    assert isinstance(struct_ast, ast.StructDefn)
-    ctx = compilation.Ctx()
-    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
-
-    first = typs.StructTypTemplate.create(struct_ast, env, "main")
-
-    with pytest.raises(AssertionError):
-        typs.StructTypTemplate.create(struct_ast, env, "main")
-
-    assert first.name == "Box"
-
-
 def test_struct_validation_instance_is_cached_without_request(tmp_path):
     parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
     (struct_ast,) = parsed_mod.defns
     assert isinstance(struct_ast, ast.StructDefn)
     ctx = compilation.Ctx()
     env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
-    template = typs.StructTypTemplate.create(struct_ast, env, "main")
+    template = typs.StructTypTemplate(struct_ast, env, "main")
 
     validation = template._validation_instance
 
@@ -114,53 +99,38 @@ uv run pytest tests/test_typs.py -k "struct_template" -q
 
 Expected: FAIL because `StructTypTemplate`, `StructTyp.template`, and `StructTyp.typ_args` do not exist.
 
-- [ ] **Step 3: Add the unique declaration template**
+- [ ] **Step 3: Add the declaration template**
 
-In `src/leech/typs.py`, add `StructTypTemplate` before `StructTyp`. Keep the template outside the `Typ` hierarchy and use a weak compilation-local cache:
+In `src/leech/typs.py`, add `StructTypTemplate` before `StructTyp`. Keep the
+template outside the `Typ` hierarchy and construct it directly during module
+building; it needs no interning cache:
 
 ```python
 class StructTypTemplate:
     """A struct declaration that owns its usable type instances."""
 
-    _cache: ClassVar[
-        weakref.WeakValueDictionary[tuple[object, ast.StructDefn], StructTypTemplate]
-    ] = weakref.WeakValueDictionary()
-
     ast: Final[ast.StructDefn]
     _decl_env: Final[ir_env.Env]
     mod_name: Final[str]
-    _field_asts: Final[types.MappingProxyType[str, tuple[int, ast.StructFieldDefn]]]
-
-    @classmethod
-    def create(
-        cls, struct_ast: ast.StructDefn, e: ir_env.Env, mod_name: str
-    ) -> StructTypTemplate:
-        """Create the unique live template for this declaration and compilation."""
-        key = (e.ctx.typ_cache_token, struct_ast)
-        asserts.assert_not_in(key, cls._cache)
-        template = cls(struct_ast, e, mod_name)
-        cls._cache[key] = template
-        return template
 
     def __init__(self, struct_ast: ast.StructDefn, e: ir_env.Env, mod_name: str) -> None:
         self.ast = struct_ast
         self._decl_env = e
         self.mod_name = mod_name
-        # Preserve current diagnostic priority: parameter names before fields.
-        _ = self.typ_params
-        members: dict[str, tuple[int, ast.StructFieldDefn]] = {}
-        for index, field_ast in enumerate(struct_ast.fields):
+        param_env = e.new_child()
+        for typ_param in self.typ_params:
+            param_env.add_container(typ_param.name, typ_param)
+        field_asts: dict[str, ast.StructFieldDefn] = {}
+        for field_ast in struct_ast.fields:
             name = field_ast.ident.name
             if reserved.is_reserved(name):
                 raise errors.ReservedNameError(name, field_ast.ident.span)
-            existing = members.get(name)
+            existing = field_asts.get(name)
             if existing is not None:
-                _, existing_ast = existing
                 raise errors.DuplicateFieldInStructDefnError(
-                    name, field_ast.ident.span, existing_ast.ident.span
+                    name, field_ast.ident.span, existing.ident.span
                 )
-            members[name] = (index, field_ast)
-        self._field_asts = types.MappingProxyType(members)
+            field_asts[name] = field_ast
 
     @property
     def name(self) -> str:
@@ -202,10 +172,9 @@ class StructTypTemplate:
         return self._decl_env.ctx.instantiate_struct(self, (), record_request=False)
 ```
 
-Forward-reference annotations are valid under Python 3.14. Keep `StructTypTemplate`'s public surface limited to declaration behavior; do not add `qualified_name`, field type resolution, substitution, or LLVM behavior.
-The weak uniqueness cache enforces one template while the first remains live;
-module items retain production templates strongly, and the test deliberately
-retains `first` for the same reason.
+Forward-reference annotations are valid under Python 3.14. Keep
+`StructTypTemplate`'s public surface limited to declaration behavior; do not
+add `qualified_name`, field type resolution, substitution, or LLVM behavior.
 
 Update `Typ`'s class docstring to say that most types are weakly interned while
 struct instances are owned by `compilation.Ctx`; its existing global
@@ -232,8 +201,8 @@ class StructTyp(Typ):
         for typ_param, typ_arg in zip(template.typ_params, typ_args, strict=True):
             self._env.add_container(typ_param.name, typ_arg)
         self._members = {
-            name: StructField(index, field_ast, self._env)
-            for name, (index, field_ast) in template._field_asts.items()
+            field_ast.ident.name: StructField(index, field_ast, self._env)
+            for index, field_ast in enumerate(template.ast.fields)
         }
 
     @property
@@ -296,7 +265,8 @@ def instantiate_struct(
     return instance
 ```
 
-Do not put `StructTyp` instances in `Typ._cache`. The template cache holds the declaration weakly, while the compilation context owns live instances for the compilation.
+Do not put `StructTyp` instances in `Typ._cache`. Module items own templates,
+while the compilation context owns live instances for the compilation.
 
 - [ ] **Step 6: Preserve layout-cycle diagnostics through declaration validation**
 
@@ -489,7 +459,7 @@ Change `Mod._build_defn`'s struct arm in `src/leech/ir_module.py`:
 
 ```python
 case ast.StructDefn():
-    template = typs.StructTypTemplate.create(defn_ast, self.env, self.name)
+    template = typs.StructTypTemplate(defn_ast, self.env, self.name)
     value: typs.StructTypTemplate | typs.StructTyp
     if template.typ_params:
         value = template

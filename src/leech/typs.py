@@ -115,7 +115,7 @@ def _contains_typ(typ: Typ, contained: Typ, resolve: Callable[[Typ], Typ]) -> bo
     if isinstance(typ, ArrayTyp):
         return _contains_typ(typ.element_typ, contained, resolve)
     if isinstance(typ, StructTyp):
-        return any(_contains_typ(typ_arg, contained, resolve) for typ_arg in typ._typ_args)
+        return any(_contains_typ(typ_arg, contained, resolve) for typ_arg in typ.typ_args)
     if isinstance(typ, EnumBackingTyp):
         return _contains_typ(typ.inner, contained, resolve)
     return False
@@ -173,13 +173,9 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
         if isinstance(left, ArrayTyp) and isinstance(right, ArrayTyp):
             return left.length == right.length and unify(left.element_typ, right.element_typ)
         if isinstance(left, StructTyp) and isinstance(right, StructTyp):
-            return (
-                left.ast is right.ast
-                and len(left._typ_args) == len(right._typ_args)
-                and all(
-                    unify(left_arg, right_arg)
-                    for left_arg, right_arg in zip(left._typ_args, right._typ_args, strict=True)
-                )
+            return left.template is right.template and all(
+                unify(left_arg, right_arg)
+                for left_arg, right_arg in zip(left.typ_args, right.typ_args, strict=True)
             )
         if isinstance(left, EnumBackingTyp) and isinstance(right, EnumBackingTyp):
             return unify(left.inner, right.inner)
@@ -262,7 +258,10 @@ def check_typ_arg_bounds(
 
 
 class Typ(abc.ABC):
-    """Base class for weakly interned Leech types, which compare by identity.
+    """Base class for identity-compared Leech types.
+
+    Most types are weakly interned here. Struct instances are instead owned by
+    their compilation context.
 
     :invariant: get_or_create(*a) is get_or_create(*a) [assert_not_in @ create]
     """
@@ -367,20 +366,20 @@ class Typ(abc.ABC):
     def _basic_typ_from_ast(typ_ast: ast.BasicTyp, e: ir_env.Env) -> Typ:
         """Resolve a named type, applying arguments only to a bare generic template."""
         item = e.resolve_typ(typ_ast.path)
-        if not isinstance(item, StructTyp) or not item.ast.generic_params or item._typ_args:
+        if not isinstance(item, StructTypTemplate):
             if typ_ast.generic_args:
                 raise errors.TypArgsOnNonGenericItemError(typ_ast.path.str(), typ_ast.span)
             return item
 
         if not typ_ast.generic_args:
             raise errors.MissingTypArgsError(item.name, typ_ast.span)
-        if len(typ_ast.generic_args) != len(item.ast.generic_params):
+        if len(typ_ast.generic_args) != len(item.typ_params):
             raise errors.WrongNumberOfTypArgsError(
-                item.name, len(typ_ast.generic_args), len(item.ast.generic_params), typ_ast.span
+                item.name, len(typ_ast.generic_args), len(item.typ_params), typ_ast.span
             )
         typ_args = tuple(Typ.from_ast(arg, e) for arg in typ_ast.generic_args)
         check_typ_arg_bounds(item.typ_params, typ_args, e, typ_ast.span)
-        return item.instance(typ_args)
+        return item.instantiate(typ_args)
 
 
 class IntTyp(Typ):
@@ -762,62 +761,108 @@ class StructField:
         return self.access == visibility.PUBLIC or self.ast.span.file.path == file.path
 
 
-class StructTyp(Typ):
-    """A nominal struct type identified by its declaration and type arguments.
-
-    A generic declaration owns an unusable template with opaque parameters. Its compilation
-    context caches one identity-distinct instance per argument tuple.
-    """
+class StructTypTemplate:
+    """A struct declaration that owns its usable type instances."""
 
     ast: Final[ast.StructDefn]
     _decl_env: Final[ir_env.Env]
-    _typ_args: Final[tuple[Typ, ...]]
     mod_name: Final[str]
-    _env: Final[ir_env.Env]
-    _members: Final[dict[str, StructField]]
 
-    def __init__(
-        self,
-        struct_ast: ast.StructDefn,
-        e: ir_env.Env,
-        typ_args: tuple[Typ, ...] = (),
-        mod_name: str = "",
-    ) -> None:
+    def __init__(self, struct_ast: ast.StructDefn, e: ir_env.Env, mod_name: str) -> None:
         self.ast = struct_ast
         self._decl_env = e
-        self._typ_args = typ_args
         self.mod_name = mod_name
-        self._env = e.new_child()
-        # Binding parameters here lets field types resolve them like named types.
-        if typ_args:
-            for param_ast, typ_arg in zip(struct_ast.generic_params, typ_args, strict=True):
-                self._env.add_container(param_ast.ident.name, typ_arg)
-        else:
-            for typ_param in self.typ_params:
-                self._env.add_container(typ_param.name, typ_param)
-        self._members = {}
-        # Registration does not resolve field types, which may name later declarations.
-        for i, field_ast in enumerate(struct_ast.fields):
-            self._add_field(StructField(i, field_ast, self._env))
+        # Bind parameters before fields so parameter-name errors take priority.
+        param_env = e.new_child()
+        for typ_param in self.typ_params:
+            param_env.add_container(typ_param.name, typ_param)
+        field_asts: dict[str, ast.StructFieldDefn] = {}
+        for field_ast in struct_ast.fields:
+            name = field_ast.ident.name
+            if reserved.is_reserved(name):
+                raise errors.ReservedNameError(name, field_ast.ident.span)
+            existing = field_asts.get(name)
+            if existing is not None:
+                raise errors.DuplicateFieldInStructDefnError(
+                    name, field_ast.ident.span, existing.ident.span
+                )
+            field_asts[name] = field_ast
+
+    @property
+    def name(self) -> str:
+        """The declaration's bare source name."""
+        return self.ast.ident.name
+
+    @property
+    def span(self) -> src.SrcSpan:
+        """The source location of the struct declaration."""
+        return self.ast.span
 
     @functools.cached_property
     def typ_params(self) -> tuple[TypParamTyp, ...]:
-        """Return this template's interned parameters, or empty for an instance."""
-        if self._typ_args:
-            return ()
+        """The declaration's interned formal type parameters."""
         return typ_params_from_ast(self.ast, self.ast.generic_params, self._decl_env)
 
-    def instance(self, typ_args: tuple[Typ, ...]) -> StructTyp:
-        """Return the cached instantiation for ``typ_args``, creating it if needed.
+    def instantiate(self, typ_args: tuple[Typ, ...]) -> StructTyp:
+        """Return the cached instance for ``typ_args`` and record its request.
 
-        :post: instance(a) is instance(a) for equal a [cache]
+        :post: instantiate(a) is instantiate(a) for equal a [cache]
         """
-        assert self.is_generic_template, "only generic struct templates own instances"
-        return self._decl_env.ctx.instantiate_struct(self, typ_args)
+        asserts.assert_eq(len(typ_args), len(self.typ_params))
+        return self._decl_env.ctx.instantiate_struct(self, typ_args, record_request=True)
 
-    def _create_instance(self, typ_args: tuple[Typ, ...]) -> StructTyp:
-        """Return this template's process-interned instance for ``typ_args``."""
-        return StructTyp.get_or_create(self.ast, self._decl_env, typ_args, self.mod_name)
+    @functools.cached_property
+    def _validation_instance(self) -> StructTyp:
+        """Return the cached opaque instance used only for declaration validation."""
+        asserts.assert_gt(len(self.typ_params), 0)
+        return self._decl_env.ctx.instantiate_struct(self, self.typ_params, record_request=False)
+
+    def validate_declaration(self) -> None:
+        """Validate this declaration's layout with its bare root name."""
+        self._validation_instance._check_finite_size(None, self.name)
+
+    @functools.cached_property
+    def module_instance(self) -> StructTyp:
+        """Return the zero-argument instance bound for a non-generic declaration."""
+        asserts.assert_eq(len(self.typ_params), 0)
+        return self._decl_env.ctx.instantiate_struct(self, (), record_request=False)
+
+
+class StructTyp(Typ):
+    """A usable nominal struct instance owned by one declaration template."""
+
+    template: Final[StructTypTemplate]
+    typ_args: Final[tuple[Typ, ...]]
+    _env: Final[ir_env.Env]
+    _fields: Final[dict[str, StructField]]
+
+    def __init__(self, template: StructTypTemplate, typ_args: tuple[Typ, ...]) -> None:
+        asserts.assert_eq(len(typ_args), len(template.typ_params))
+        self.template = template
+        self.typ_args = typ_args
+        self._env = template._decl_env.new_child()
+        for typ_param, typ_arg in zip(template.typ_params, typ_args, strict=True):
+            self._env.add_container(typ_param.name, typ_arg)
+        self._fields = {
+            field_ast.ident.name: StructField(index, field_ast, self._env)
+            for index, field_ast in enumerate(template.ast.fields)
+        }
+
+    @override
+    @classmethod
+    def cache_key(cls, *args: Hashable) -> Hashable:
+        """Reject the global cache because compilation contexts own instances."""
+        raise AssertionError("struct instances are owned by the compilation context")
+
+    @property
+    def ast(self) -> ast.StructDefn:
+        """The declaration AST shared by this template's instances."""
+        return self.template.ast
+
+    @property
+    def mod_name(self) -> str:
+        """The name of the module that declares this struct."""
+        return self.template.mod_name
 
     @property
     @override
@@ -829,74 +874,42 @@ class StructTyp(Typ):
         different modules are different types, so ``Box[a::Foo]`` and
         ``Box[b::Foo]`` must not arrive at one symbol.
         """
-        qualified = f"{self.mod_name}::{self.ast.ident.name}"
-        if not self._typ_args:
+        qualified = f"{self.mod_name}::{self.template.name}"
+        if not self.typ_args:
             return qualified
-        arg_names = ", ".join(typ_arg.qualified_name for typ_arg in self._typ_args)
+        arg_names = ", ".join(typ_arg.qualified_name for typ_arg in self.typ_args)
         return f"{qualified}[{arg_names}]"
 
     @override
     def is_concrete(self) -> bool:
-        return all(typ_arg.is_concrete() for typ_arg in self._typ_args)
-
-    @property
-    def is_generic_template(self) -> bool:
-        """Return whether this is the declaration's uninstantiated generic template."""
-        return bool(self.ast.generic_params) and not self._typ_args
+        return all(typ_arg.is_concrete() for typ_arg in self.typ_args)
 
     @override
     def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
-        if not self._typ_args:
+        substituted = tuple(typ_arg.substitute_typ_params(mapping) for typ_arg in self.typ_args)
+        if substituted == self.typ_args:
             return self
-        substituted = tuple(typ_arg.substitute_typ_params(mapping) for typ_arg in self._typ_args)
-        if substituted == self._typ_args:
-            return self
-        template = StructTyp.get(self.ast, self._decl_env)
-        return template.instance(substituted)
+        return self.template.instantiate(substituted)
 
     @override
     def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
-        if isinstance(actual, StructTyp) and actual.ast is self.ast:
-            for declared_arg, actual_arg in zip(self._typ_args, actual._typ_args, strict=True):
+        if isinstance(actual, StructTyp) and actual.template is self.template:
+            for declared_arg, actual_arg in zip(self.typ_args, actual.typ_args, strict=True):
                 declared_arg.infer_typ_args(actual_arg, bindings)
-
-    @override
-    @classmethod
-    def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key struct types by compilation, declaration identity, and type arguments."""
-        asserts.assert_gt(len(args), 1)
-        struct_ast = asserts.checked_cast(args[0], ast.StructDefn)
-        decl_env = asserts.checked_cast(args[1], ir_env.Env)
-        typ_args = asserts.checked_cast(args[2], tuple) if len(args) > 2 else ()
-        return (cls, decl_env.ctx.typ_cache_token, struct_ast, typ_args)
 
     @property
     @override
     def name(self) -> str:
-        if not self._typ_args:
-            return self.ast.ident.name
-        arg_names = ", ".join(typ_arg.name for typ_arg in self._typ_args)
-        return f"{self.ast.ident.name}[{arg_names}]"
-
-    def _add_field(self, field: StructField) -> None:
-        """Register ``field`` in this struct's field namespace.
-
-        :raises ReservedNameError: If ``field`` takes a reserved name.
-        """
-        if reserved.is_reserved(field.name):
-            raise errors.ReservedNameError(field.name, field.ast.ident.span)
-        existing = self._members.get(field.name)
-        if existing is not None:
-            raise errors.DuplicateFieldInStructDefnError(
-                field.name, field.ast.ident.span, existing.ast.ident.span
-            )
-        self._members[field.name] = field
+        if not self.typ_args:
+            return self.template.name
+        arg_names = ", ".join(typ_arg.name for typ_arg in self.typ_args)
+        return f"{self.template.name}[{arg_names}]"
 
     @functools.cached_property
     def fields(self) -> types.MappingProxyType[str, StructField]:
         """Return fields by declaration order after rejecting infinite-size layouts."""
-        self._check_finite_size(None)
-        return types.MappingProxyType(self._members)
+        self._check_finite_size(None, None)
+        return types.MappingProxyType(self._fields)
 
     def field_at(self, index: int) -> StructField:
         """Return the field at declaration-order ``index``."""
@@ -905,25 +918,27 @@ class StructTyp(Typ):
     def _check_finite_size(
         self,
         incoming_hop: Optional[errors.StructLayoutHop],
+        root_name: Optional[str],
     ) -> None:
         """Reject exact or structurally growing by-value layout cycles."""
         detail: tuple[
             StructTyp,
             Optional[errors.StructLayoutHop],
         ] = (self, incoming_hop)
-        with self._decl_env.ctx.detect_cycle(
+        with self._env.ctx.detect_cycle(
             compilation.CycleDomain.STRUCT_LAYOUT,
             self,
             detail,
             same_identity=StructTyp._layout_repeats,
         ) as cycle:
             if cycle is not None:
-                repeated, _ = cycle.details[0]
+                repeated, repeated_hop = cycle.details[0]
                 hops = []
                 for _, hop in cycle.details[1:]:
                     assert hop is not None, "only the root layout frame may omit its field hop"
                     hops.append(hop)
-                raise errors.InfiniteSizeStructError(repeated.name, repeated.span, hops)
+                repeated_name = StructTyp._display_name(repeated, repeated_hop, root_name)
+                raise errors.InfiniteSizeStructError(repeated_name, repeated.span, hops)
 
             for field_ast in self.ast.fields:
                 typ = Typ.from_ast(field_ast.typ, self._env)
@@ -931,26 +946,29 @@ class StructTyp(Typ):
                     typ = typ.element_typ
                 if isinstance(typ, StructTyp):
                     hop = errors.StructLayoutHop(
-                        self.name,
+                        StructTyp._display_name(self, incoming_hop, root_name),
                         field_ast.ident.name,
                         field_ast.span,
                         typ.name,
                     )
-                    typ._check_finite_size(hop)
+                    typ._check_finite_size(hop, root_name)
+
+    @staticmethod
+    def _display_name(
+        typ: StructTyp, hop: Optional[errors.StructLayoutHop], root_name: Optional[str]
+    ) -> str:
+        """Return ``root_name`` for an un-hopped root frame, else ``typ``'s ordinary name."""
+        return root_name if hop is None and root_name is not None else typ.name
 
     @staticmethod
     def _layout_repeats(earlier: StructTyp, current: StructTyp) -> bool:
         """Return whether ``current`` repeats or grows ``earlier``'s layout."""
         if earlier is current:
             return True
-        if earlier.ast is not current.ast:
+        if earlier.template is not current.template:
             return False
 
-        earlier_args = earlier.typ_params if earlier.is_generic_template else earlier._typ_args
-        current_args = current.typ_params if current.is_generic_template else current._typ_args
-        if len(earlier_args) != len(current_args):
-            return False
-        for earlier_arg, current_arg in zip(earlier_args, current_args, strict=True):
+        for earlier_arg, current_arg in zip(earlier.typ_args, current.typ_args, strict=True):
             if not contains_typ(current_arg, earlier_arg):
                 return False
         return True
@@ -958,7 +976,7 @@ class StructTyp(Typ):
     @property
     def span(self) -> src.SrcSpan:
         """The source location of this struct's declaration."""
-        return self.ast.span
+        return self.template.span
 
 
 class EnumTyp(Typ):
