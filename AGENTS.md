@@ -65,7 +65,8 @@ and include sample diagnostics or generated IR when compiler output changes. Upd
 headers for new files and avoid committing generated `.ll` files unless they are fixtures.
 
 Every commit references the GitHub issue it belongs to, unless the repository owner says
-otherwise for that change. File an issue first if none covers the work.
+otherwise for that change. Include both its `#` reference and title text, preferably in a
+commit-body line formatted `For: #N: Issue title`. File an issue first if none covers the work.
 
 ## Issue Tracking
 
