@@ -190,6 +190,8 @@ declaration, so `ast.FnDefn` remains a concrete subclass of `ast.FnDecl`.
 Change #6. Design: [Compilation-wide lazy state](../specs/2026-08-24-compilation-lazy-state-design.md).
 Plan: [Compilation-wide lazy state](2026-08-24-compilation-lazy-state.md).
 
+**Status:** Complete.
+
 One compilation context owns function/struct instance request caches and request logs, so
 monomorphization drains new work directly instead of polling every declaration. The same
 context owns typed active-computation frames replacing independent recursion guards for:
@@ -209,8 +211,10 @@ This deliberately stops well short of a rustc-style query engine, which a
 not a dependency graph. Ordinary immutable `cached_property` values and process-wide type
 interning stay where they are.
 
-**Exit criteria:** suite green; a cycle reports as a cycle rather than as a
-depth-limit `NotImplementedError`.
+**Exit criteria:** met. Monomorphization drains compilation-owned request logs; each
+semantic recursion domain reports a cycle rather than a depth-limit
+`NotImplementedError`; terminating impl-selection chains are no longer rejected by an
+arbitrary depth cap; and the full 1191-test repository verification gate passes.
 
 ## Relationship to the generics/traits roadmap
 
@@ -240,9 +244,10 @@ must match, and the impl's bounds must be a subset of the trait's
 
 ## Risk
 
-The suite is the safety net: 1112 tests in 42 seconds, covering the language
-end to end including generated-program execution. Every stage is a
-refactor with no intended language change, so a red suite is the signal.
+The suite is the safety net: 1191 tests in about a minute, covering the language end to end
+including generated-program execution. Every stage is a refactor with no intended language
+change except Stage 5's removal of the impl-selection depth cap, which deliberately admits
+deeper terminating selections. A red suite is the signal.
 
 The riskiest single change is Stage 3's move of `ir_env` from binding values
 to binding symbols, which touches name resolution, type checking and

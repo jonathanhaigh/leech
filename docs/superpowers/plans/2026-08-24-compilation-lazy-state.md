@@ -18,14 +18,18 @@ SPDX-License-Identifier: MPL-2.0
 
 ## Global Constraints
 
-- Preserve accepted language behavior, symbol spelling, and linkage.
+- Preserve symbol spelling and linkage. Preserve accepted language behavior except where
+  removing an arbitrary recursion cap permits a terminating computation that the cap
+  previously rejected; cover each such correction with a focused test.
 - The three intentional diagnostic corrections—growing struct recursion, recursive trait
   bounds, and recursive impl selection—must each land with focused tests and in a separate
   commit from mechanical state migration.
 - Keep imports module-qualified and avoid runtime import cycles with `TYPE_CHECKING` or local imports where needed.
 - Do not use comprehensions containing more than one `for`; use ordinary nested loops.
 - Do not build a general query engine, dependency graph, invalidation system, or parallel executor.
-- Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run basedpyright --pythonpath /home/jonathan/work/leech/.venv/bin/python`, `uv run reuse --no-multiprocessing lint`, and `git diff --check` before completion.
+- Run `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`,
+  `uv run basedpyright`,
+  `uv run reuse --no-multiprocessing lint`, and `git diff --check` before completion.
 - Ask the user before every commit.
 
 ---
@@ -105,7 +109,7 @@ uv run pytest tests/test_loader.py -q
 uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
-uv run basedpyright --pythonpath /home/jonathan/work/leech/.venv/bin/python
+uv run basedpyright
 ```
 
 Expected: all pass with no diagnostic or emitted-IR changes.
@@ -513,14 +517,14 @@ rg 'in_progress' src/leech tests
 uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
-uv run basedpyright --pythonpath /home/jonathan/work/leech/.venv/bin/python
+uv run basedpyright
 uv run reuse --no-multiprocessing lint
 git diff --check
 ```
 
 Expected: tests and checks pass; `rg` has no hits for the removed threaded state.
 
-- [ ] **Step 7: Ask for review and permission to commit**
+- [x] **Step 7: Ask for review and permission to commit**
 
 Proposed commit subject: `Report recursive trait bounds as cycles`
 
@@ -591,14 +595,14 @@ rg 'MAX_BOUND_DEPTH|_selection_depth' src/leech tests
 uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
-uv run basedpyright --pythonpath /home/jonathan/work/leech/.venv/bin/python
+uv run basedpyright
 uv run reuse --no-multiprocessing lint
 git diff --check
 ```
 
 Expected: all checks pass and `rg` finds no remaining depth guard.
 
-- [ ] **Step 7: Ask for review and permission to commit**
+- [x] **Step 7: Ask for review and permission to commit**
 
 Proposed commit subject: `Report recursive impl selection as a cycle`
 
@@ -615,22 +619,23 @@ Proposed commit subject: `Report recursive impl selection as a cycle`
 - Consumes: all preceding tasks
 - Produces: completed Stage 5 checklist and accurate staging summary
 
-- [ ] **Step 1: Reconcile the design and staging summary with implementation**
+- [x] **Step 1: Reconcile the design and staging summary with implementation**
 
 Confirm the documents still describe the implemented boundary: per-compilation instance
 request caches, monomorphization request logs, and the shared active-computation tracker.
 Record any review-approved deviations explicitly. Mark Stage 5 complete only after its exit
 criteria hold.
 
-- [ ] **Step 2: Mark completed plan checkboxes**
+- [x] **Step 2: Mark completed plan checkboxes**
 
 Mark only steps actually completed. Update commands or file lists if implementation review
 proved the written plan inaccurate; do not silently broaden scope.
 
-- [ ] **Step 3: Run final repository verification**
+- [x] **Step 3: Run final repository verification**
 
-Run every global verification command and record the current pytest count in the handoff.
+Run every global verification command and record the current pytest count in the staging
+summary and handoff.
 
-- [ ] **Step 4: Ask for final review and permission to commit**
+- [x] **Step 4: Ask for final review and permission to commit**
 
 Proposed commit subject: `Complete lazy state centralization plan`

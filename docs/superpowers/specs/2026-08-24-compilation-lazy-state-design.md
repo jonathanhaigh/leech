@@ -43,7 +43,7 @@ The context owns only state that must be shared across declarations or semantic 
 - cached `FnInstance` objects, keyed by function-symbol identity and flat type arguments;
 - cached generic `StructTyp` instances, keyed by template identity and type arguments;
 - the insertion-ordered lists of requested function and struct instances; and
-- one stack of active semantic computations.
+- one active-computation stack per semantic cycle domain.
 
 Process-wide type interning in `Typ._cache`, parsed bundled-module caching, and ordinary
 derived properties such as a function signature remain where they are. They are canonical
@@ -87,12 +87,11 @@ environment and send a later compilation's requests to the wrong context. Primit
 composite type interning otherwise remains process-wide.
 
 Extern functions use the same function-instance cache even though only `()` is valid.
-This removes their separate cached `_instance` field. Their `instances` property no longer
-creates that instance merely by being inspected; it reports requests like every other
-symbol. Source and intrinsic symbols also lose their per-symbol `_instance_cache`
-properties. The declaration-level `FnSymbol.instances` and `StructTyp.instances` accessors
-delegate during the cache-migration commit, then are removed when monomorphization stops
-polling declarations; validated `FnSymbol.instantiate` and `StructTyp.instance` remain.
+This removes their separate cached `_instance` field. Source and intrinsic symbols also
+lose their per-symbol `_instance_cache` properties. The declaration-level
+`FnSymbol.instances` and `StructTyp.instances` accessors are removed when monomorphization
+stops polling declarations; validated `FnSymbol.instantiate` and `StructTyp.instance`
+remain.
 
 ### Monomorphization drains request logs
 
@@ -118,7 +117,6 @@ disappear.
 
 The context owns a separate stack of frames for each cycle domain. A frame contains:
 
-- a domain identifying the semantic operation;
 - an identity used to decide whether the operation has recurred; and
 - domain-specific display data used by diagnostics.
 
@@ -181,7 +179,8 @@ obligation `(impl, matched self type)` before checking the impl's bounds. Repeat
 obligation identifies direct or mutual blanket-impl recursion. Selection may recurse on a
 strict subterm and terminate; those different obligations remain legal. This replaces
 `ImplRegistry._selection_depth` without conflating a trait declaration's bounds with an
-impl whose applicability is recursively conditional.
+impl whose applicability is recursively conditional. Removing that arbitrary depth cap
+also admits terminating selection chains deeper than the former limit.
 
 `RecursiveTraitBoundError(UserError)` reports that a declaration-site trait bound is
 recursive and adds notes for the cycle. `RecursiveImplSelectionError(UserError)` reports a
@@ -209,7 +208,7 @@ request log for the compilation's lifetime.
 
 The context asserts stack discipline: exiting a frame must remove the same frame from the
 top. A cycle object is internal compiler plumbing; it never escapes to users without being
-translated by the struct, trait-bound, or module-variable layer.
+translated by the struct, trait-bound, impl-selection, or module-variable layer.
 
 Layout checks do not force another `StructTyp.fields` property while a layout walk is
 active; recursion stays within the one explicit walk. This prevents an unrelated nested
@@ -217,7 +216,7 @@ property evaluation from inheriting layout frames accidentally.
 
 ## Testing
 
-Tests will establish:
+Tests establish:
 
 - function, intrinsic, extern, and struct instantiation identity is stable within one
   compilation, and bundled struct templates are context-isolated;
@@ -231,6 +230,8 @@ Tests will establish:
   `RecursiveTraitBoundError` rather than `NotImplementedError`;
 - direct and mutual recursive blanket-impl selection report
   `RecursiveImplSelectionError`;
+- a terminating impl-selection chain deeper than the former depth cap remains legal, and
+  entry paths leading into a cycle are excluded from its diagnostic notes;
 - a finite nested trait-bound chain and sequential uses of one trait at different arguments
   are not mistaken for cycles;
 - direct, mutual, three-way, and cross-module module-variable cycles retain their existing
@@ -247,4 +248,4 @@ The full pytest, Ruff, basedpyright, REUSE, and diff-check gates remain mandator
 - Moving process-wide type interning or harmless immutable derived-property caches.
 - Accepting recursive trait bounds through coinduction.
 - Generic traits and matching a bound's own type arguments against an impl.
-- Changing reachability roots, symbol spelling, linkage, or accepted programs.
+- Changing reachability roots, symbol spelling, or linkage.
