@@ -691,6 +691,38 @@ class RecursiveTraitBoundError(UserError):
             self._add_extra(NOTE, f'Trait bound "{name}" participates in this cycle', span)
 
 
+@dataclasses.dataclass(frozen=True)
+class ImplSelectionHop:
+    """One implementation obligation participating in a selection cycle."""
+
+    impl_name: str
+    impl_span: Optional[src.SrcSpan]
+
+
+class RecursiveImplSelectionError(UserError):
+    """Raised because recursively conditional implementations are unsupported."""
+
+    def __init__(
+        self,
+        trait_name: str,
+        typ_name: str,
+        impl_span: Optional[src.SrcSpan],
+        cycle: Sequence[ImplSelectionHop],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Selecting an implementation of trait "{trait_name}" for type '
+            f'"{typ_name}" is recursive',
+            impl_span,
+        )
+        for hop in cycle:
+            self._add_extra(
+                NOTE,
+                f'Implementation "{hop.impl_name}" participates in this cycle',
+                hop.impl_span,
+            )
+
+
 class UnsatisfiedBoundError(UserError):
     """Raised when a generic instantiation's type argument doesn't
     implement a bound its type parameter declares."""

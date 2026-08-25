@@ -542,44 +542,46 @@ Proposed commit subject: `Report recursive trait bounds as cycles`
 - Deletes: `ImplRegistry._selection_depth`
 - Deletes: `typs.MAX_BOUND_DEPTH`
 
-- [ ] **Step 1: Add direct and mutual blanket-impl recursion tests**
+- [x] **Step 1: Add direct and mutual blanket-impl recursion tests**
 
 Add one program with `impl[T: Show] Show for T` and one with mutually conditional blanket
 impls `impl[T: B] A for T` / `impl[T: A] B for T`. Both currently reach the selection-depth
 `NotImplementedError`; change their intended result to `RecursiveImplSelectionError` and
 assert impl names/spans in the notes. Keep a terminating nested selection test where the
-matched self type becomes a strict subterm. Update the Task 6 regression proving that an
-impl-selection cycle passing through a trait-owned bound is not diagnosed as a recursive
-trait declaration.
+matched self type becomes a strict subterm, including a nesting deeper than the removed
+depth cap. Add a cycle reached through a non-cycle impl to verify that only the cycle suffix
+is reported. Update the Task 6 regression proving that an impl-selection cycle passing
+through a trait-owned bound is not diagnosed as a recursive trait declaration.
 
-- [ ] **Step 2: Run the tests and verify the intended error type fails**
+- [x] **Step 2: Run the tests and verify the intended error type fails**
 
 Run: `uv run pytest tests/test_traits.py -k 'recursive_impl_selection' -q`
 
 Expected: FAIL because selection still ends at the depth-limit `NotImplementedError`.
 
-- [ ] **Step 3: Add the selection-cycle domain and diagnostic**
+- [x] **Step 3: Add the selection-cycle domain and diagnostic**
 
 Add `CycleDomain.IMPL_SELECTION`. Add `RecursiveImplSelectionError`, whose primary message
 states that selecting an implementation for the concrete type is recursive and whose notes
 identify the participating impl declarations. Follow the `CircularVarInitializerError`
 shape and describe the unsupported user construct in the class docstring.
 
-- [ ] **Step 4: Guard concrete impl obligations**
+- [x] **Step 4: Guard concrete impl obligations**
 
-In `_impl_bounds_hold`, reconstruct the matched self type with
-`impl.self_typ.substitute_typ_params(bindings)`. Enter an `IMPL_SELECTION` frame keyed by
-`(impl, matched_self_typ)` and carrying `(impl, matched_self_typ)` as detail before
-calling `typs.unsatisfied_bound`. A repeated exact obligation raises
-`RecursiveImplSelectionError`; selection on a different strict subterm continues.
+Pass the selected type from the matching call sites into `_impl_bounds_hold`; the successful
+`match_typ_args` already guarantees that substituting its bindings into the impl self type
+produces that exact type. Enter an `IMPL_SELECTION` frame keyed by `(impl, matched_self_typ)`
+and carrying `(impl, matched_self_typ)` as detail before calling `typs.unsatisfied_bound`.
+A repeated exact obligation raises `RecursiveImplSelectionError`; selection on a different
+strict subterm continues.
 
-- [ ] **Step 5: Remove the depth counter and cap**
+- [x] **Step 5: Remove the depth counter and cap**
 
 Delete `ImplRegistry._selection_depth`, its initialization and increment/decrement logic,
 and `typs.MAX_BOUND_DEPTH`. Update stale docstrings and comments. The precise obligation
 cycle now handles direct and mutual recursion without an arbitrary numeric limit.
 
-- [ ] **Step 6: Verify the focused tests, removal sweep, and full suite**
+- [x] **Step 6: Verify the focused tests, removal sweep, and full suite**
 
 Run:
 

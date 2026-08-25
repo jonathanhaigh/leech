@@ -50,10 +50,6 @@ class Mutability(enum.Enum):
 CONST = Mutability.CONST
 MUT = Mutability.MUT
 
-#: Maximum nesting depth for recursively conditional impl selection.
-#: Declaration-site trait-bound recursion uses the compilation cycle tracker.
-MAX_BOUND_DEPTH = 32
-
 
 def resolve_bound(
     bound: ast.BasicTyp,

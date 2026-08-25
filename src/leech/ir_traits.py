@@ -343,16 +343,11 @@ class ImplRegistry:
     #: :attr:`_impls` so :meth:`_find_trait_impls_for_typ` doesn't have to scan
     #: every trait/shape pair ever registered in the program.
     _traits_by_shape: Final[dict[Hashable, list[Trait]]]
-    #: How many impl selections are checking their own bounds further up
-    #: the stack, bounding the mutual recursion between selection and
-    #: bound checking. See :meth:`_impl_bounds_hold`.
-    _selection_depth: int
 
     def __init__(self, ctx: compilation.Ctx) -> None:
         self.ctx = ctx
         self._impls = {}
         self._traits_by_shape = {}
-        self._selection_depth = 0
 
     def add_impl(self, impl: Impl) -> None:
         """Register ``impl``, rejecting it if it's incoherent or conflicts with one
@@ -444,7 +439,7 @@ class ImplRegistry:
         inherent_impls = []
         for inherent_impl in self._impls.get((None, _head_shape(typ)), ()):
             bindings = typs.match_typ_args(inherent_impl.self_typ, typ)
-            if bindings is not None and self._impl_bounds_hold(inherent_impl, bindings):
+            if bindings is not None and self._impl_bounds_hold(inherent_impl, typ, bindings):
                 inherent_impls.append(inherent_impl)
         return inherent_impls
 
@@ -458,7 +453,7 @@ class ImplRegistry:
         for shape in _selection_shapes(typ):
             for trait_impl in self._impls.get((trait, shape), ()):
                 bindings = typs.match_typ_args(trait_impl.self_typ, typ)
-                if bindings is not None and self._impl_bounds_hold(trait_impl, bindings):
+                if bindings is not None and self._impl_bounds_hold(trait_impl, typ, bindings):
                     return trait_impl
         return None
 
@@ -480,8 +475,13 @@ class ImplRegistry:
             return True
         return self.find_trait_impl(trait, typ) is not None
 
-    def _impl_bounds_hold(self, impl: Impl, bindings: Mapping[typs.TypParamTyp, typs.Typ]) -> bool:
-        """Whether ``impl``'s own bounds hold for the arguments matching it to ``typ``.
+    def _impl_bounds_hold(
+        self,
+        impl: Impl,
+        matched_self_typ: typs.Typ,
+        bindings: Mapping[typs.TypParamTyp, typs.Typ],
+    ) -> bool:
+        """Whether ``impl``'s bounds hold when matched to ``matched_self_typ``.
 
         An impl whose bounds don't hold doesn't apply, rather than making
         the program ill-formed: ``Box[bool]`` simply doesn't implement
@@ -495,19 +495,32 @@ class ImplRegistry:
         ``Box[T]`` binds ``T`` to itself, and the impl's ``T: Show`` is
         exactly the assumption that discharges it.
 
-        :raises NotImplementedError: If checking a bound needs more than
-            :data:`~leech.typs.MAX_BOUND_DEPTH` nested selections.
+        :raises RecursiveImplSelectionError: If checking the bounds repeats
+            the same concrete implementation obligation.
         """
-        if self._selection_depth >= typs.MAX_BOUND_DEPTH:
-            raise NotImplementedError(
-                f"exceeded {typs.MAX_BOUND_DEPTH} levels of impl selection at {impl.name};"
-                " recursive trait bounds aren't supported yet"
-            )
-        self._selection_depth += 1
-        try:
+        with self.ctx.detect_cycle(
+            compilation.CycleDomain.IMPL_SELECTION,
+            (impl, matched_self_typ),
+            (impl, matched_self_typ),
+        ) as cycle:
+            if cycle is not None:
+                repeated_impl, repeated_self_typ = cycle.details[0]
+                trait = repeated_impl.trait
+                assert trait is not None, "recursive selection must repeat a trait impl"
+                hops = [
+                    errors.ImplSelectionHop(
+                        cycle_impl.name,
+                        cycle_impl.span,
+                    )
+                    for cycle_impl, _ in cycle.details[:-1]
+                ]
+                raise errors.RecursiveImplSelectionError(
+                    trait.name,
+                    repeated_self_typ.name,
+                    repeated_impl.span,
+                    hops,
+                )
             return typs.unsatisfied_bound(bindings, impl.env) is None
-        finally:
-            self._selection_depth -= 1
 
     def _find_trait_impls_for_typ(self, typ: typs.Typ) -> list[Impl]:
         """Find every trait impl that applies to ``typ``.

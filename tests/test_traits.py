@@ -559,6 +559,28 @@ def test_generic_impl_bound_satisfied_through_another_generic_impl(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_impl_selection_descends_beyond_old_depth_limit(tmp_path):
+    nested_typ = "i32"
+    nested_value = "1"
+    for _ in range(40):
+        nested_value = f"Box[{nested_typ}] {{ val: {nested_value} }}"
+        nested_typ = f"Box[{nested_typ}]"
+
+    src = f"""
+    trait Show {{ fn show(*self) i32; }}
+    impl Show for i32 {{ fn show(*self) i32 {{ self.* }} }}
+    struct Box[T] {{ mut val: T }}
+    impl[T: Show] Show for Box[T] {{
+        fn show(*self) i32 {{ self.*.val.show() }}
+    }}
+    pub fn main() i32 {{
+        let nested = {nested_value};
+        return nested.show() - 1;
+    }}
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_unsatisfied_bound_on_generic_fn_call(tmp_path):
     src = """
     trait Show { fn show(*self) i32; }
@@ -1237,15 +1259,79 @@ def test_growing_mutually_recursive_trait_bounds(tmp_path):
     _assert_recursive_trait_bound_error(exc_info, "Q", ["Q", "P"])
 
 
-def test_recursive_impl_selection_is_not_a_trait_bound_cycle(tmp_path):
+def _assert_recursive_impl_selection_error(
+    exc, trait_name: str, typ_name: str, impl_names: list[str]
+) -> None:
+    assert (
+        exc.value.message.message
+        == f'Selecting an implementation of trait "{trait_name}" for type "{typ_name}" is recursive'
+    )
+    assert [note.message for note in exc.value.extra] == [
+        f'Implementation "{name}" participates in this cycle' for name in impl_names
+    ]
+
+
+def test_direct_recursive_impl_selection(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl[T: Show] Show for T { fn show(*self) i32 { 0 } }
+    pub fn main() i32 { let x: i32 = 1; return x.show(); }
+    """
+    with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
+        util.compile_str(tmp_path, src)
+    _assert_recursive_impl_selection_error(exc_info, "Show", "i32", ["<T as Show>"])
+
+
+def test_mutual_recursive_impl_selection(tmp_path):
+    src = """
+    trait A { fn a(*self) i32; }
+    trait B { fn b(*self) i32; }
+    impl[T: B] A for T { fn a(*self) i32 { 0 } }
+    impl[T: A] B for T { fn b(*self) i32 { 0 } }
+    pub fn main() i32 { let x: i32 = 1; return x.a(); }
+    """
+    with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
+        util.compile_str(tmp_path, src)
+    _assert_recursive_impl_selection_error(
+        exc_info,
+        "A",
+        "i32",
+        ["<T as A>", "<T as B>"],
+    )
+
+
+def test_recursive_impl_selection_excludes_path_into_cycle(tmp_path):
+    src = """
+    trait A { fn a(*self) i32; }
+    trait B { fn b(*self) i32; }
+    trait C { fn c(*self) i32; }
+    trait D { fn d(*self) i32; }
+    impl[T: B] A for T { fn a(*self) i32 { 0 } }
+    impl[T: C] B for T { fn b(*self) i32 { 0 } }
+    impl[T: A] C for T { fn c(*self) i32 { 0 } }
+    impl[T: A] D for T { fn d(*self) i32 { 0 } }
+    pub fn main() i32 { let x: i32 = 1; return x.d(); }
+    """
+    with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
+        util.compile_str(tmp_path, src)
+    _assert_recursive_impl_selection_error(
+        exc_info,
+        "A",
+        "i32",
+        ["<T as A>", "<T as B>", "<T as C>"],
+    )
+
+
+def test_recursive_impl_selection_through_trait_owned_bound(tmp_path):
     src = """
     trait S { fn s(*self) i32; }
     trait G[T: S] { fn g(*self) T; }
     impl[T: G[i32]] S for T { fn s(*self) i32 { 0 } }
     pub fn main() i32 { let x: i32 = 1; return x.s(); }
     """
-    with pytest.raises(NotImplementedError, match="exceeded 32 levels of impl selection"):
+    with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
         util.compile_str(tmp_path, src)
+    _assert_recursive_impl_selection_error(exc_info, "S", "i32", ["<T as S>"])
 
 
 def test_calling_method_through_bound_with_generic_args_not_supported_yet(tmp_path):
