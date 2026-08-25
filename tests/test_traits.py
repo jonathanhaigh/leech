@@ -1151,7 +1151,16 @@ def test_bound_referencing_sibling_typ_param_satisfied(tmp_path):
         util.compile_str(tmp_path, src)
 
 
-def test_self_referential_trait_bound_not_supported_yet(tmp_path):
+def _assert_recursive_trait_bound_error(exc, primary: str, cycle: list[str]) -> None:
+    assert (
+        exc.value.message.message == f'Trait bound "{primary}" is part of a recursive bound cycle'
+    )
+    assert [note.message for note in exc.value.extra] == [
+        f'Trait bound "{name}" participates in this cycle' for name in cycle
+    ]
+
+
+def test_self_referential_trait_bound(tmp_path):
     src = """
     trait Foo[T: Foo[T]] { fn get(*self) T; }
     fn f[U: Foo[i32]](x: U) i32 { return 0; }
@@ -1160,11 +1169,16 @@ def test_self_referential_trait_bound_not_supported_yet(tmp_path):
         return f(n);
     }
     """
-    with pytest.raises(NotImplementedError, match="recursive trait bound"):
+    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
+    _assert_recursive_trait_bound_error(exc_info, "Foo", ["Foo"])
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "Foo[T]")
 
 
-def test_mutually_recursive_trait_bounds_not_supported_yet(tmp_path):
+def test_mutually_recursive_trait_bounds(tmp_path):
     src = """
     trait A[T: B[T]] { fn a(*self) T; }
     trait B[T: A[T]] { fn b(*self) T; }
@@ -1174,13 +1188,13 @@ def test_mutually_recursive_trait_bounds_not_supported_yet(tmp_path):
         return f(n);
     }
     """
-    with pytest.raises(NotImplementedError, match="recursive trait bound"):
+    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
+    _assert_recursive_trait_bound_error(exc_info, "B", ["B", "A"])
 
 
 def test_growing_recursive_trait_bound_via_pointer(tmp_path):
-    # The type argument grows each step, so no (trait, args) key ever
-    # repeats and only the depth limit stops it.
+    # The type argument grows each step, so no resolved (trait, args) key repeats.
     src = """
     trait Foo[T: Foo[*T]] { fn get(*self) T; }
     fn f[U: Foo[i32]](x: U) i32 { return 0; }
@@ -1189,8 +1203,9 @@ def test_growing_recursive_trait_bound_via_pointer(tmp_path):
         return f(n);
     }
     """
-    with pytest.raises(NotImplementedError, match="levels of bound resolution"):
+    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
+    _assert_recursive_trait_bound_error(exc_info, "Foo", ["Foo"])
 
 
 def test_growing_recursive_trait_bound_via_array(tmp_path):
@@ -1202,8 +1217,9 @@ def test_growing_recursive_trait_bound_via_array(tmp_path):
         return f(n);
     }
     """
-    with pytest.raises(NotImplementedError, match="levels of bound resolution"):
+    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
+    _assert_recursive_trait_bound_error(exc_info, "Bar", ["Bar"])
 
 
 def test_growing_mutually_recursive_trait_bounds(tmp_path):
@@ -1216,7 +1232,19 @@ def test_growing_mutually_recursive_trait_bounds(tmp_path):
         return f(n);
     }
     """
-    with pytest.raises(NotImplementedError, match="levels of bound resolution"):
+    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    _assert_recursive_trait_bound_error(exc_info, "Q", ["Q", "P"])
+
+
+def test_recursive_impl_selection_is_not_a_trait_bound_cycle(tmp_path):
+    src = """
+    trait S { fn s(*self) i32; }
+    trait G[T: S] { fn g(*self) T; }
+    impl[T: G[i32]] S for T { fn s(*self) i32 { 0 } }
+    pub fn main() i32 { let x: i32 = 1; return x.s(); }
+    """
+    with pytest.raises(NotImplementedError, match="exceeded 32 levels of impl selection"):
         util.compile_str(tmp_path, src)
 
 
@@ -1264,8 +1292,7 @@ def test_bound_with_generic_args_combined_with_plain_bound_parses(tmp_path):
 
 
 def test_legal_nested_bound_chain_is_not_treated_as_recursive(tmp_path):
-    # Three levels of distinct traits terminate on their own, well under the
-    # depth limit, so neither recursion guard should fire.
+    # Three distinct declaration-site bounds terminate without recurrence.
     src = """
     trait C[T] { fn c(*self) T; }
     trait B[T: C[T]] { fn b(*self) T; }

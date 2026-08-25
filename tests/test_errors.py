@@ -399,6 +399,41 @@ def test_circular_var_initializer_message(tmp_path):
     assert (second.span.start_line, second.span.start_col) == util.find_pos(src, "let a")
 
 
+def test_recursive_trait_bound_message(tmp_path):
+    src = """
+    trait W[T: X[T]] { fn w(*self) T; }
+    trait X[T: Y[T]] { fn x(*self) T; }
+    trait Y[T: Z[T]] { fn y(*self) T; }
+    trait Z[T: X[T]] { fn z(*self) T; }
+    fn f[U: W[i32]](x: U) i32 { return 0; }
+    pub fn main() i32 {
+        let n: i32 = 1;
+        return f(n);
+    }
+    """
+    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert exc_info.value.message.message == 'Trait bound "Y" is part of a recursive bound cycle'
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "Y[T]] { fn x")
+
+    assert [note.message for note in exc_info.value.extra] == [
+        'Trait bound "Y" participates in this cycle',
+        'Trait bound "Z" participates in this cycle',
+        'Trait bound "X" participates in this cycle',
+    ]
+    expected_spans = [
+        util.find_pos(src, text) for text in ("Y[T]] { fn x", "Z[T]] { fn y", "X[T]] { fn z")
+    ]
+    actual_spans = []
+    for note in exc_info.value.extra:
+        assert note.span is not None
+        actual_spans.append((note.span.start_line, note.span.start_col))
+    assert actual_spans == expected_spans
+
+
 def test_if_cond_not_bool_message(tmp_path):
     src = """pub fn main() i32 {
     return if (1 + 2) {

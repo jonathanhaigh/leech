@@ -445,14 +445,14 @@ Proposed commit subject: `Report growing struct layouts as cycles`
 - Produces: `errors.RecursiveTraitBoundError`
 - Deletes: `resolve_bound(..., in_progress=...)` and corresponding threaded parameters
 
-- [ ] **Step 1: Rewrite recursive-bound tests for the user diagnostic**
+- [x] **Step 1: Rewrite recursive-bound tests for the user diagnostic**
 
 Change direct, mutual, pointer-growing, array-growing, and mutually-growing recursive bound
-tests to expect `errors.RecursiveTraitBoundError`. Assert the primary trait name and ordered
-cycle notes. Retain tests proving that a finite distinct-trait chain and sequential uses of
-one trait at different arguments are not cycles.
+tests to expect `errors.RecursiveTraitBoundError`. Assert the primary bound, ordered cycle
+notes, and their spans. Retain tests proving that a finite distinct-trait chain and sequential
+uses of one trait at different arguments are not cycles.
 
-- [ ] **Step 2: Run the focused tests and verify they fail on error type**
+- [x] **Step 2: Run the focused tests and verify they fail on error type**
 
 Run:
 
@@ -462,9 +462,9 @@ uv run pytest tests/test_traits.py -k 'recursive_trait_bound or recursive_bounds
 
 Expected: FAIL because recursive bounds still raise `NotImplementedError`.
 
-- [ ] **Step 3: Add the user-facing error**
+- [x] **Step 3: Add the user-facing error**
 
-Add an error accepting a primary trait name/span and ordered `(name, span)` cycle entries:
+Add an error accepting a primary bound name/span and ordered `(name, span)` cycle entries:
 
 ```python
 class RecursiveTraitBoundError(UserError):
@@ -472,32 +472,38 @@ class RecursiveTraitBoundError(UserError):
 
     def __init__(
         self,
-        trait_name: str,
-        trait_span: Optional[src.SrcSpan],
+        bound_name: str,
+        bound_span: Optional[src.SrcSpan],
         cycle: Sequence[tuple[str, Optional[src.SrcSpan]]],
     ) -> None:
-        super().__init__(ERROR, f'Trait "{trait_name}" has a recursive bound', trait_span)
+        super().__init__(
+            ERROR,
+            f'Trait bound "{bound_name}" is part of a recursive bound cycle',
+            bound_span,
+        )
         for name, span in cycle:
-            self._add_extra(NOTE, f'Trait "{name}" participates in this bound cycle', span)
+            self._add_extra(NOTE, f'Trait bound "{name}" participates in this cycle', span)
 ```
 
-- [ ] **Step 4: Keep one bound frame active through resolution and proof**
+- [x] **Step 4: Keep one bound frame active through bound resolution**
 
-In `unsatisfied_bound`, enter `TRAIT_BOUND` before resolving each declaration-site bound.
-Use the bound AST object as identity and detail, and keep the frame active across both
-`resolve_bound(...)` and `impl_registry.implements(...)`. Translate a yielded cycle into
-`RecursiveTraitBoundError` using the paths and spans in the bound AST details. This catches
-direct, mutual, and argument-growing declared bounds, including through non-generic traits,
-without conflating separate declarations mentioning one trait. Remove `in_progress` from
-`resolve_bound`, `unsatisfied_bound`, and `check_typ_arg_bounds` and from every call site.
+In `unsatisfied_bound`, enter `TRAIT_BOUND` before resolving each bound owned by a trait
+parameter. Use the bound AST object as identity and detail, and keep the frame active across
+`resolve_bound(...)`, which recursively validates the referenced trait's own parameter
+bounds. Close the frame before `impl_registry.implements(...)`: recursion during that proof
+is impl selection and Task 7 diagnoses it using concrete impl obligations. Translate a
+yielded cycle into `RecursiveTraitBoundError` using the paths and spans in the bound AST
+details. Impl parameter bounds are excluded because one may recur legally while selection
+descends through a smaller type. Remove `in_progress` from `resolve_bound`,
+`unsatisfied_bound`, and `check_typ_arg_bounds` and from every call site.
 
-- [ ] **Step 5: Preserve impl selection's independent guard**
+- [x] **Step 5: Preserve impl selection's independent guard**
 
 Leave `MAX_BOUND_DEPTH` and `ImplRegistry._selection_depth` in place for Task 7. They guard
 a distinct recursion in conditional impl applicability, and removing them in this task
 would permit an unhandled Python `RecursionError`.
 
-- [ ] **Step 6: Verify focused tests, structural removal, and full suite**
+- [x] **Step 6: Verify focused tests, structural removal, and full suite**
 
 Run:
 
@@ -542,7 +548,9 @@ Add one program with `impl[T: Show] Show for T` and one with mutually conditiona
 impls `impl[T: B] A for T` / `impl[T: A] B for T`. Both currently reach the selection-depth
 `NotImplementedError`; change their intended result to `RecursiveImplSelectionError` and
 assert impl names/spans in the notes. Keep a terminating nested selection test where the
-matched self type becomes a strict subterm.
+matched self type becomes a strict subterm. Update the Task 6 regression proving that an
+impl-selection cycle passing through a trait-owned bound is not diagnosed as a recursive
+trait declaration.
 
 - [ ] **Step 2: Run the tests and verify the intended error type fails**
 

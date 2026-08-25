@@ -50,17 +50,14 @@ class Mutability(enum.Enum):
 CONST = Mutability.CONST
 MUT = Mutability.MUT
 
-#: Maximum nesting depth when checking a bound's type arguments against the
-#: bounds its trait declares. Legitimate bounds nest a few levels deep; a
-#: bound whose type argument grows each step never repeats and would
-#: otherwise recurse until the stack runs out.
+#: Maximum nesting depth for recursively conditional impl selection.
+#: Declaration-site trait-bound recursion uses the compilation cycle tracker.
 MAX_BOUND_DEPTH = 32
 
 
 def resolve_bound(
     bound: ast.BasicTyp,
     e: ir_env.Env,
-    in_progress: frozenset[tuple[ir_traits.Trait, tuple[Typ, ...]]] = frozenset(),
 ) -> tuple[ir_traits.Trait, tuple[Typ, ...]]:
     """Resolve a bound to its trait and its resolved type arguments.
 
@@ -68,9 +65,6 @@ def resolve_bound(
     :meth:`Typ._basic_typ_from_ast` applies to a type reference, and checks the
     resolved arguments against the trait's own parameter bounds. Whether any
     particular type *satisfies* the bound is left to callers.
-
-    :param in_progress: The trait/type-argument pairs whose own bounds are
-        already being checked further up the recursion.
     """
     # This must be local because ir_traits imports this module.
     from leech import ir_traits  # noqa: PLC0415
@@ -90,20 +84,7 @@ def resolve_bound(
         )
     typ_args = tuple(Typ.from_ast(arg, e) for arg in bound.generic_args)
 
-    # A trait bounding its own parameter by itself, directly or through a
-    # cycle of traits, would otherwise recurse until the stack runs out.
-    key = (trait, typ_args)
-    if key in in_progress:
-        raise NotImplementedError(f"recursive trait bound on {trait.name} isn't supported yet")
-    # A bound whose type argument grows each step never repeats a key, so
-    # depth is what bounds it. Each level adds exactly one key.
-    if len(in_progress) >= MAX_BOUND_DEPTH:
-        raise NotImplementedError(
-            f"exceeded {MAX_BOUND_DEPTH} levels of bound resolution at {trait.name};"
-            " recursive trait bounds aren't supported yet"
-        )
-
-    check_typ_arg_bounds(trait.typ_params, typ_args, e, bound.span, in_progress | {key})
+    check_typ_arg_bounds(trait.typ_params, typ_args, e, bound.span)
     return trait, typ_args
 
 
@@ -219,14 +200,12 @@ def contains_typ(container: Typ, contained: Typ) -> bool:
 def unsatisfied_bound(
     bindings: Mapping[TypParamTyp, Typ],
     e: ir_env.Env,
-    in_progress: frozenset[tuple[ir_traits.Trait, tuple[Typ, ...]]] = frozenset(),
 ) -> Optional[tuple[TypParamTyp, Typ, ir_traits.Trait]]:
     """Find a type argument that doesn't satisfy its parameter's bounds.
 
     :param bindings: Each type parameter mapped to the type argument
         standing in for it.
     :param e: The scope each bound's trait name resolves in.
-    :param in_progress: Threaded through to :func:`resolve_bound`.
     :return: The first parameter, argument and trait for which the
         argument doesn't implement the trait, or ``None`` if every bound
         holds.
@@ -239,11 +218,29 @@ def unsatisfied_bound(
 
     for typ_param, typ_arg in bindings.items():
         for bound in typ_param.bounds:
-            trait, bound_typ_args = resolve_bound(bound, sub_env, in_progress)
+            if typ_param.is_declared_by_trait:
+                with e.ctx.detect_cycle(
+                    compilation.CycleDomain.TRAIT_BOUND,
+                    bound,
+                    bound,
+                ) as cycle:
+                    if cycle is not None:
+                        repeated_bound = cycle.details[0]
+                        entries = [
+                            (entry.path.str(), entry.path.span) for entry in cycle.details[:-1]
+                        ]
+                        raise errors.RecursiveTraitBoundError(
+                            repeated_bound.path.str(),
+                            repeated_bound.path.span,
+                            entries,
+                        )
+                    trait, bound_typ_args = resolve_bound(bound, sub_env)
+            else:
+                trait, bound_typ_args = resolve_bound(bound, sub_env)
             if bound_typ_args:
-                # Matching these against an impl's own trait arguments needs
-                # generic traits. Nothing upstream rejects the bound, so fail
-                # loudly rather than silently ignore the arguments.
+                # Matching these against an impl's own trait arguments needs generic
+                # traits. Nothing upstream rejects the bound, so fail loudly rather
+                # than silently ignore the arguments.
                 raise NotImplementedError(
                     "checking bounds with generic arguments isn't supported yet"
                 )
@@ -257,14 +254,12 @@ def check_typ_arg_bounds(
     typ_args: tuple[Typ, ...],
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
-    in_progress: frozenset[tuple[ir_traits.Trait, tuple[Typ, ...]]] = frozenset(),
 ) -> None:
     """Raise if a type argument violates its corresponding parameter's bounds.
 
-    :param in_progress: Threaded through to :func:`resolve_bound`.
     :raises UnsatisfiedBoundError: If a bound doesn't hold.
     """
-    violated = unsatisfied_bound(dict(zip(typ_params, typ_args, strict=True)), e, in_progress)
+    violated = unsatisfied_bound(dict(zip(typ_params, typ_args, strict=True)), e)
     if violated is not None:
         typ_param, typ_arg, trait = violated
         raise errors.UnsatisfiedBoundError(typ_arg.name, trait.name, typ_param.name, span)
@@ -671,6 +666,18 @@ class TypParamTyp(Typ):
             resolve_bound(bound, opt_util.opt_unwrap(self.decl_env))[0] is trait
             for bound in self.bounds
         )
+
+    @property
+    def is_declared_by_trait(self) -> bool:
+        """Whether this parameter belongs to a trait declaration.
+
+        Only trait-owned bounds can recursively validate other declaration
+        bounds. Impl bounds may recur legally while selection descends through
+        a smaller type, and impl-obligation recursion is guarded separately.
+        Function, struct, and intrinsic bounds are one-shot entry points whose
+        recursive paths must pass through a trait-owned bound to close a cycle.
+        """
+        return isinstance(self._owner, ast.TraitDefn)
 
     @override
     @classmethod

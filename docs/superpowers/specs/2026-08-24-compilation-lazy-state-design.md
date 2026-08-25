@@ -134,14 +134,15 @@ the guarded computation. This obligation is explicit in `detect_cycle`'s docstri
 Cycle identity intentionally differs from cache identity:
 
 - struct layout uses the instantiated `StructTyp`, augmented by a structural-growth test;
-- trait-bound resolution uses the bound's declaration-site AST identity;
+- trait-bound resolution uses a trait parameter bound's declaration-site AST identity;
 - impl selection uses the `(Impl, Typ)` candidate-obligation identity;
 - module-variable evaluation uses the `ModVar` identity.
 
-A bound's AST identity ignores substituted type arguments deliberately. Re-entering one
-bound declaration means its fixed syntax is driving the recursion, even when substitution
-grows an argument (`Foo[T] -> Foo[*T]`). Separate bound declarations involving the same
-trait, and sequential uses of one declaration, remain distinct.
+A trait parameter bound's AST identity ignores substituted type arguments deliberately.
+Re-entering one such declaration means its fixed syntax is driving the recursion, even when
+substitution grows an argument (`Foo[T] -> Foo[*T]`). Impl parameter bounds are excluded:
+the same impl bound may recur legally while selection descends through a smaller type, and
+the impl-selection domain separately guards repeated concrete obligations.
 
 The tracker is shared infrastructure, not a shared diagnostic. Each domain converts its
 cycle frames into the appropriate user error.
@@ -168,12 +169,12 @@ by-value declaration cycle, not merely a deeply nested valid type.
 
 ## Trait-bound and impl-selection cycles
 
-`unsatisfied_bound` enters a trait-bound frame for each declaration-site bound and keeps it
-active across both `resolve_bound` and the subsequent proof that the argument implements
-the resolved trait. This scope matters: impl selection happens after `resolve_bound`
-returns. The context is reached through the environment, so `in_progress` parameters no
-longer need to be threaded through `resolve_bound`, `unsatisfied_bound`, and
-`check_typ_arg_bounds`.
+`unsatisfied_bound` enters a trait-bound frame for each bound declared on a trait parameter
+and keeps it active while `resolve_bound` validates the referenced trait's own parameter
+bounds. The frame closes before proving that the argument implements the resolved trait;
+recursion during that proof is impl selection and belongs to its separate domain. The
+context is reached through the environment, so `in_progress` parameters no longer need to
+be threaded through `resolve_bound`, `unsatisfied_bound`, and `check_typ_arg_bounds`.
 
 Impl selection has a separate active domain. `_impl_bounds_hold` guards the concrete
 obligation `(impl, matched self type)` before checking the impl's bounds. Repeating an

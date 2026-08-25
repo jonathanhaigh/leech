@@ -673,6 +673,24 @@ class BoundNotATraitError(UserError):
         super().__init__(ERROR, f'"{name}" is not a trait, so it cannot be used as a bound', span)
 
 
+class RecursiveTraitBoundError(UserError):
+    """Raised because recursive trait bounds are not supported."""
+
+    def __init__(
+        self,
+        bound_name: str,
+        bound_span: Optional[src.SrcSpan],
+        cycle: Sequence[tuple[str, Optional[src.SrcSpan]]],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Trait bound "{bound_name}" is part of a recursive bound cycle',
+            bound_span,
+        )
+        for name, span in cycle:
+            self._add_extra(NOTE, f'Trait bound "{name}" participates in this cycle', span)
+
+
 class UnsatisfiedBoundError(UserError):
     """Raised when a generic instantiation's type argument doesn't
     implement a bound its type parameter declares."""
