@@ -63,3 +63,15 @@ Recent commits use concise, imperative subjects such as `Add std::mem...` and
 should explain behavior and impact, link issues, list validation commands,
 and include sample diagnostics or generated IR when compiler output changes. Update SPDX
 headers for new files and avoid committing generated `.ll` files unless they are fixtures.
+
+Every commit references the GitHub issue it belongs to, unless the repository owner says
+otherwise for that change. File an issue first if none covers the work.
+
+## Issue Tracking
+
+- **Closing is the owner's call.** When work appears to finish an issue, say so and ask
+  whether to close it. Never close one unprompted.
+- **Keep the dependency graph current.** Creating or closing an issue means updating the
+  dependency graph issue (#55) in the same session: add the new node and its `A --> B`
+  edges, or delete the closed issue's node line and every line mentioning it. An issue
+  with no blockers and nothing blocked by it needs no entry.
