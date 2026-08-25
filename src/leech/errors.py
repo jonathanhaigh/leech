@@ -957,39 +957,40 @@ class EnumDiscriminantOverflowError(UserError):
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class StructLayoutHop:
+    """One by-value field edge followed while checking a struct layout."""
+
+    containing_struct: str
+    field_name: str
+    field_span: Optional[src.SrcSpan]
+    contained_struct: str
+
+
 class InfiniteSizeStructError(UserError):
-    """Raised when a struct contains itself by value - directly, through
-    other structs, or through arrays of any length (including zero: LLVM
-    rejects a recursive identified struct type outright, regardless of
-    whether an array within it is empty) - giving it unbounded size. A
-    field behind a pointer doesn't count, since a pointer's size doesn't
-    depend on its pointee.
+    """Raised when struct layout follows a recursive by-value declaration cycle.
+
+    The recursion may be direct, pass through other structs or arrays, or recur through
+    structurally growing arguments of one generic declaration. A field behind a pointer
+    does not count because a pointer's size does not depend on its pointee. Arrays of any
+    length do count, including zero-length arrays, because LLVM rejects recursive identified
+    struct layouts even when an intervening array has no elements.
     """
 
     def __init__(
         self,
         struct_name: str,
         struct_span: Optional[src.SrcSpan],
-        cycle: Sequence[tuple[str, str, Optional[src.SrcSpan], str]],
+        cycle: Sequence[StructLayoutHop],
     ) -> None:
         super().__init__(ERROR, f'Struct "{struct_name}" has infinite size', struct_span)
-        for containing, field_name, field_span, contained in cycle:
+        for hop in cycle:
             self._add_extra(
                 NOTE,
-                f'Field "{field_name}" of struct "{containing}" contains "{contained}" by value',
-                field_span,
+                f'Field "{hop.field_name}" of struct "{hop.containing_struct}" contains '
+                f'"{hop.contained_struct}" by value',
+                hop.field_span,
             )
-
-
-class TypInstantiationDepthExceededError(UserError):
-    """Raised when generic struct fields require unboundedly nested instantiations."""
-
-    def __init__(self, struct_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'Instantiating struct "{struct_name}" nests generic arguments too deeply',
-            span,
-        )
 
 
 class FieldAccessIntoInvalidTypError(UserError):

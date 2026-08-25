@@ -370,6 +370,16 @@ def _assert_typs_overlap_symmetric(left: typs.Typ, right: typs.Typ, expected: bo
     assert typs.typs_overlap(right, left) is expected
 
 
+def test_contains_typ_finds_structural_occurrences() -> None:
+    ptr = typs.PtrTyp.get_or_create(typs.I32, typs.CONST)
+    array = typs.ArrayTyp.get_or_create(ptr, 2)
+
+    assert typs.contains_typ(array, array)
+    assert typs.contains_typ(array, ptr)
+    assert typs.contains_typ(array, typs.I32)
+    assert not typs.contains_typ(array, typs.BOOL)
+
+
 def test_typs_overlap_fn_typs_symmetrically(tmp_path):
     mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
     (fn,) = mod.defns

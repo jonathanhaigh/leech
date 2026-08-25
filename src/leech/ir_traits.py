@@ -236,7 +236,7 @@ class Impl:
     def check_typ_params_constrained(self) -> None:
         """Raise if the self type does not determine every impl type parameter."""
         for typ_param, param_ast in zip(self.typ_params, self.ast.generic_params, strict=True):
-            if not typs.contains_typ_param(self.self_typ, typ_param):
+            if not typs.contains_typ(self.self_typ, typ_param):
                 raise errors.UnconstrainedImplTypParamError(typ_param.name, param_ast.ident.span)
 
     def instantiation_args(self, concrete_self_typ: typs.Typ) -> tuple[typs.Typ, ...]:

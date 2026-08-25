@@ -368,9 +368,11 @@ Proposed commit subject: `Centralize module variable cycle tracking`
 - Modify: `src/leech/typs.py`
 - Modify: `src/leech/errors.py`
 - Modify: `src/leech/codegen.py`
+- Modify: `src/leech/ir_traits.py`
 - Test: `tests/test_structs.py`
 - Test: `tests/test_generic_structs.py`
 - Test: `tests/test_errors.py`
+- Test: `tests/test_typs.py`
 
 **Interfaces:**
 - Consumes: `compilation.Ctx.detect_cycle(CycleDomain.STRUCT_LAYOUT, ...)`
@@ -379,7 +381,7 @@ Proposed commit subject: `Centralize module variable cycle tracking`
 - Deletes: `TypInstantiationDepthExceededError`
 - Preserves and broadens: `InfiniteSizeStructError`
 
-- [ ] **Step 1: Change the growing-generic-cycle test to the intended diagnostic**
+- [x] **Step 1: Change the growing-generic-cycle test to the intended diagnostic**
 
 Replace the `TypInstantiationDepthExceededError` expectation with
 `InfiniteSizeStructError`, and assert that its notes identify the recursive `x` field.
@@ -388,7 +390,7 @@ array, pointer-broken, and diamond layout tests. The existing
 `struct L[T] { x: L[T] }` case may produce fewer duplicate field notes once detected at its
 first growing declaration recurrence; pin meaningful edge names rather than the old count.
 
-- [ ] **Step 2: Run the focused test and verify the diagnostic mismatch**
+- [x] **Step 2: Run the focused test and verify the diagnostic mismatch**
 
 Run:
 
@@ -398,7 +400,7 @@ uv run pytest tests/test_generic_structs.py::test_growing_generic_struct_declara
 
 Expected: FAIL because the compiler still raises `TypInstantiationDepthExceededError`.
 
-- [ ] **Step 3: Replace explicit recursion parameters with context frames**
+- [x] **Step 3: Replace explicit recursion parameters with context frames**
 
 Generalize the existing structural occurrence traversal into
 `contains_typ(container, contained)`. Refactor `_check_finite_size` so each recursive
@@ -410,21 +412,21 @@ later argument. This rejects `L[i32] -> L[[i32; 1]]` but permits
 `Box[Box[i32]] -> Box[i32]`. Translate the yielded frame suffix into
 `InfiniteSizeStructError`. Continue to unwrap arrays and stop at pointers exactly as today.
 
-- [ ] **Step 4: Remove the depth-limit diagnostic**
+- [x] **Step 4: Remove the depth-limit diagnostic**
 
 Delete `_MAX_STRUCT_INSTANTIATION_DEPTH`, `TypInstantiationDepthExceededError`, and all
 references. Update the codegen compilation-order comment and tests that claim growing
 instances require a depth cap. Keep the walk explicit: it must not force a separate
 `StructTyp.fields` property while layout frames are active.
 
-- [ ] **Step 5: Verify focused and full suites**
+- [x] **Step 5: Verify focused and full suites**
 
 Run the focused command from Step 2 and every global verification command.
 
 Expected: all pass; accepted programs are unchanged, but growing recursion now has a cycle
 diagnostic.
 
-- [ ] **Step 6: Ask for review and permission to commit**
+- [x] **Step 6: Ask for review and permission to commit**
 
 Proposed commit subject: `Report growing struct layouts as cycles`
 

@@ -115,6 +115,27 @@ def test_nested_generic_struct_instantiation(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_nested_same_declaration_struct_field_is_finite(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    struct Outer[U] { nested: Box[Box[U]] }
+    pub fn main() i32 {
+        let outer = Outer[i32] { nested: Box[Box[i32]] { val: Box[i32] { val: 5 } } };
+        return outer.nested.val.val - 5;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_multi_param_nested_struct_does_not_count_as_growth(tmp_path):
+    src = """
+    struct Pair[A, B] { a: A, b: B }
+    struct Holder[U] { h: Pair[U, Pair[U, U]] }
+    pub fn main() i32 { return 0; }
+    """
+    util.compile_str(tmp_path, src)
+
+
 def test_generic_struct_array_element(tmp_path):
     src = """
     struct Box[T] { mut val: T }
@@ -266,8 +287,11 @@ def test_generic_struct_infinite_size_via_own_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeStructError):
+    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
         util.compile_str(tmp_path, src)
+
+    assert len(exc_info.value.extra) == 1
+    assert exc_info.value.extra[0].message == 'Field "x" of struct "L" contains "L[T]" by value'
 
 
 def test_generic_struct_ptr_to_self_is_finite(tmp_path):
@@ -280,19 +304,51 @@ def test_generic_struct_ptr_to_self_is_finite(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_generic_struct_instantiation_depth_exceeded(tmp_path):
-    # Each field access wraps another array layer around T, so every
-    # nesting level is a genuinely distinct instantiation - never a
-    # repeat - so this can only be caught by a depth cap, not the
-    # infinite-size cycle check above.
+def test_growing_generic_struct_declaration_cycle(tmp_path):
+    # Every field adds an array layer, so exact type identity never repeats.
+    # The declaration still recurs with a structurally growing argument.
     src = """
     struct L[T] {
         x: L[[T; 1]],
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.TypInstantiationDepthExceededError):
+    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
         util.compile_str(tmp_path, src)
+
+    assert exc_info.value.message.message == 'Struct "L" has infinite size'
+    assert len(exc_info.value.extra) == 1
+    assert exc_info.value.extra[0].message == (
+        'Field "x" of struct "L" contains "L[[T; 1]]" by value'
+    )
+
+
+def test_growing_generic_struct_declaration_cycle_through_pointer_arg(tmp_path):
+    src = """
+    struct L[T] { x: L[*T] }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert [note.message for note in exc_info.value.extra] == [
+        'Field "x" of struct "L" contains "L[*T]" by value'
+    ]
+
+
+def test_mutual_growing_generic_struct_declaration_cycle(tmp_path):
+    src = """
+    struct A[T] { x: B[T] }
+    struct B[T] { y: A[[T; 1]] }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert [note.message for note in exc_info.value.extra] == [
+        'Field "x" of struct "A" contains "B[T]" by value',
+        'Field "y" of struct "B[T]" contains "A[[T; 1]]" by value',
+    ]
 
 
 def test_generic_impl_block_body_typechecks(tmp_path):

@@ -137,9 +137,8 @@ class Compiler:
         # A generic struct's own fields are never lowered - only an
         # instantiation's are, below - but they're still validated here,
         # against the struct's own (opaque) type parameters, the same as
-        # every other declared struct's: an infinite-size or
-        # runaway-instantiation-depth struct is rejected whether or not
-        # anything in the program ever instantiates it.
+        # every other declared struct's: an infinite-size struct is
+        # rejected whether or not anything in the program instantiates it.
         #
         # An enum has nothing to declare or compile (see _ll_typ's EnumTyp
         # case), so it's forced here purely to validate it (duplicate

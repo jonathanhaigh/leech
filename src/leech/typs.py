@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
 from leech import (
     asserts,
     ast,
+    compilation,
     errors,
     ir_env,
     opt_util,
@@ -123,23 +124,23 @@ def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[TypParamTyp, Typ
     return bindings if declared.substitute_typ_params(bindings) is actual else None
 
 
-def _contains_typ_param(typ: Typ, typ_param: TypParamTyp, resolve: Callable[[Typ], Typ]) -> bool:
+def _contains_typ(typ: Typ, contained: Typ, resolve: Callable[[Typ], Typ]) -> bool:
     """Check occurrence after resolving each type reached by the traversal."""
     typ = resolve(typ)
-    if typ is typ_param:
+    if typ is contained:
         return True
     if isinstance(typ, FnTyp):
-        return _contains_typ_param(typ.ret_typ, typ_param, resolve) or any(
-            _contains_typ_param(param_typ, typ_param, resolve) for param_typ in typ.param_typs
+        return _contains_typ(typ.ret_typ, contained, resolve) or any(
+            _contains_typ(param_typ, contained, resolve) for param_typ in typ.param_typs
         )
     if isinstance(typ, PtrTyp):
-        return _contains_typ_param(typ.pointee_typ, typ_param, resolve)
+        return _contains_typ(typ.pointee_typ, contained, resolve)
     if isinstance(typ, ArrayTyp):
-        return _contains_typ_param(typ.element_typ, typ_param, resolve)
+        return _contains_typ(typ.element_typ, contained, resolve)
     if isinstance(typ, StructTyp):
-        return any(_contains_typ_param(typ_arg, typ_param, resolve) for typ_arg in typ._typ_args)
+        return any(_contains_typ(typ_arg, contained, resolve) for typ_arg in typ._typ_args)
     if isinstance(typ, EnumBackingTyp):
-        return _contains_typ_param(typ.inner, typ_param, resolve)
+        return _contains_typ(typ.inner, contained, resolve)
     return False
 
 
@@ -159,7 +160,7 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
         return typ
 
     def occurs(typ_param: TypParamTyp, typ: Typ) -> bool:
-        return _contains_typ_param(typ, typ_param, resolve)
+        return _contains_typ(typ, typ_param, resolve)
 
     def bind(typ_param: TypParamTyp, typ: Typ) -> bool:
         typ = resolve(typ)
@@ -210,9 +211,9 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
     return unify(a, b)
 
 
-def contains_typ_param(typ: Typ, typ_param: TypParamTyp) -> bool:
-    """Return whether ``typ_param`` occurs structurally within ``typ``."""
-    return _contains_typ_param(typ, typ_param, lambda candidate: candidate)
+def contains_typ(container: Typ, contained: Typ) -> bool:
+    """Return whether ``contained`` occurs structurally within ``container``."""
+    return _contains_typ(container, contained, lambda candidate: candidate)
 
 
 def unsatisfied_bound(
@@ -758,10 +759,6 @@ class StructField:
         return self.access == visibility.PUBLIC or self.ast.span.file.path == file.path
 
 
-#: Maximum nesting allowed while resolving generic struct fields.
-_MAX_STRUCT_INSTANTIATION_DEPTH = 64
-
-
 class StructTyp(Typ):
     """A nominal struct type identified by its declaration and type arguments.
 
@@ -895,7 +892,7 @@ class StructTyp(Typ):
     @functools.cached_property
     def fields(self) -> types.MappingProxyType[str, StructField]:
         """Return fields by declaration order after rejecting infinite-size layouts."""
-        self._check_finite_size([], [])
+        self._check_finite_size(None)
         return types.MappingProxyType(self._members)
 
     def field_at(self, index: int) -> StructField:
@@ -904,25 +901,56 @@ class StructTyp(Typ):
 
     def _check_finite_size(
         self,
-        visiting: list[StructTyp],
-        hops: list[tuple[str, str, Optional[src.SrcSpan], str]],
+        incoming_hop: Optional[errors.StructLayoutHop],
     ) -> None:
-        """Reject by-value cycles and runaway generic nesting while resolving fields."""
-        if self in visiting:
-            cycle_start = visiting.index(self)
-            raise errors.InfiniteSizeStructError(self.name, self.span, hops[cycle_start:])
-        if len(visiting) >= _MAX_STRUCT_INSTANTIATION_DEPTH:
-            outermost = visiting[0] if visiting else self
-            raise errors.TypInstantiationDepthExceededError(outermost.name, outermost.span)
+        """Reject exact or structurally growing by-value layout cycles."""
+        detail: tuple[
+            StructTyp,
+            Optional[errors.StructLayoutHop],
+        ] = (self, incoming_hop)
+        with self._decl_env.ctx.detect_cycle(
+            compilation.CycleDomain.STRUCT_LAYOUT,
+            self,
+            detail,
+            same_identity=StructTyp._layout_repeats,
+        ) as cycle:
+            if cycle is not None:
+                repeated, _ = cycle.details[0]
+                hops = []
+                for _, hop in cycle.details[1:]:
+                    assert hop is not None, "only the root layout frame may omit its field hop"
+                    hops.append(hop)
+                raise errors.InfiniteSizeStructError(repeated.name, repeated.span, hops)
 
-        visiting = [*visiting, self]
-        for field_ast in self.ast.fields:
-            typ = Typ.from_ast(field_ast.typ, self._env)
-            while isinstance(typ, ArrayTyp):
-                typ = typ.element_typ
-            if isinstance(typ, StructTyp):
-                hop = (self.name, field_ast.ident.name, field_ast.span, typ.name)
-                typ._check_finite_size(visiting, [*hops, hop])
+            for field_ast in self.ast.fields:
+                typ = Typ.from_ast(field_ast.typ, self._env)
+                while isinstance(typ, ArrayTyp):
+                    typ = typ.element_typ
+                if isinstance(typ, StructTyp):
+                    hop = errors.StructLayoutHop(
+                        self.name,
+                        field_ast.ident.name,
+                        field_ast.span,
+                        typ.name,
+                    )
+                    typ._check_finite_size(hop)
+
+    @staticmethod
+    def _layout_repeats(earlier: StructTyp, current: StructTyp) -> bool:
+        """Return whether ``current`` repeats or grows ``earlier``'s layout."""
+        if earlier is current:
+            return True
+        if earlier.ast is not current.ast:
+            return False
+
+        earlier_args = earlier.typ_params if earlier.is_generic_template else earlier._typ_args
+        current_args = current.typ_params if current.is_generic_template else current._typ_args
+        if len(earlier_args) != len(current_args):
+            return False
+        for earlier_arg, current_arg in zip(earlier_args, current_args, strict=True):
+            if not contains_typ(current_arg, earlier_arg):
+                return False
+        return True
 
     @property
     def span(self) -> src.SrcSpan:
