@@ -283,22 +283,50 @@ class IntLit(Expr):
         return f'int literal "{self.token}"'
 
 
-class ArrayLength(Expr):
-    """An array type's length, e.g. the ``4`` in ``[i32; 4]``."""
+class ArrayLength(Ast):
+    """Base class for a parsed array type's length: a literal, e.g. the
+    ``4`` in ``[i32; 4]``, or a reference to an in-scope value parameter,
+    e.g. the ``N`` in ``[i32; N]``.
+    """
 
-    token: Final[lark.Token]
+    @staticmethod
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> ArrayLength:
+        """Build the array length selected by a parse tree's grammar rule."""
+        asserts.assert_eq(tree.data, "array_length")
+        (child,) = tree.children
+        if isinstance(child, lark.Token):
+            return LiteralArrayLength(file, tree)
+        return PathArrayLength(file, tree)
+
+
+class LiteralArrayLength(ArrayLength):
+    """An array length given as an integer literal, e.g. the ``4`` in ``[i32; 4]``."""
+
     value: Final[int]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "array_length")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         (token,) = tree.children
-        self.token = _as_token(token)
-        self.value = int(self.token)
+        self.value = int(_as_token(token))
 
     @override
     def diag_str(self) -> str:
-        return f'array length "{self.token}"'
+        return f'array length "{self.value}"'
+
+
+class PathArrayLength(ArrayLength):
+    """An array length given as a value parameter reference, e.g. the ``N`` in ``[i32; N]``."""
+
+    path: Final[Path]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        (child,) = tree.children
+        self.path = Path(file, _as_tree(child))
+
+    @override
+    def diag_str(self) -> str:
+        return f'array length "{self.path.str()}"'
 
 
 class BoolLit(Expr):
@@ -323,24 +351,24 @@ class BoolLit(Expr):
 class VarExpr(PlaceExpr):
     """A (possibly qualified) variable or function reference, e.g. ``some_mod::x``.
 
-    ``generic_args`` holds an explicit type application, e.g. the ``[i32]``
-    in ``f[i32](x)``; empty when the callee's type parameters (if any) are
-    left to be inferred.
+    ``comptime_args`` holds an explicit comptime application, e.g. the
+    ``[i32]`` in ``f[i32](x)`` or the ``[4]`` in ``f[4](x)``; empty when
+    the callee's comptime parameters (if any) are left to be inferred.
     """
 
     path: Final[Path]
-    generic_args: Final[tuple[Typ, ...]]
+    comptime_args: Final[tuple[ComptimeArg, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        path, generic_args = tree.children
+        path, comptime_args = tree.children
         self.path = Path(file, _as_tree(path))
-        if generic_args is not None:
-            self.generic_args = tuple(
-                Typ.from_tree(file, _as_tree(c)) for c in _as_tree(generic_args).children
+        if comptime_args is not None:
+            self.comptime_args = tuple(
+                _comptime_arg_from_tree(file, _as_tree(c)) for c in _as_tree(comptime_args).children
             )
         else:
-            self.generic_args = ()
+            self.comptime_args = ()
 
     @override
     def diag_str(self) -> str:
@@ -679,26 +707,39 @@ class Typ(Ast):
         return child_classes[tree.data](file, tree)
 
 
+type ComptimeArg = Typ | IntLit | BoolLit
+"""A parsed comptime argument: a type, or a literal value."""
+
+
+def _comptime_arg_from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> ComptimeArg:
+    """Build a comptime argument - a type or a value literal - from its parse tree."""
+    if tree.data == "int_lit":
+        return IntLit(file, tree)
+    if tree.data == "bool_lit":
+        return BoolLit(file, tree)
+    return Typ.from_tree(file, tree)
+
+
 class BasicTyp(Typ):
     """A named type, e.g. ``i32`` or ``some_mod::Foo``, optionally applied to
-    generic arguments, e.g. ``Vec[i32]``. ``generic_args`` is empty for a
+    generic arguments, e.g. ``Vec[i32]``. ``comptime_args`` is empty for a
     non-generic type.
     """
 
     path: Final[Path]
-    generic_args: Final[tuple[Typ, ...]]
+    comptime_args: Final[tuple[ComptimeArg, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "basic_typ")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        path, generic_args = tree.children
+        path, comptime_args = tree.children
         self.path = Path(file, _as_tree(path))
-        if generic_args is not None:
-            self.generic_args = tuple(
-                Typ.from_tree(file, _as_tree(c)) for c in _as_tree(generic_args).children
+        if comptime_args is not None:
+            self.comptime_args = tuple(
+                _comptime_arg_from_tree(file, _as_tree(c)) for c in _as_tree(comptime_args).children
             )
         else:
-            self.generic_args = ()
+            self.comptime_args = ()
 
     @override
     def diag_str(self) -> str:
@@ -734,7 +775,7 @@ class ArrayTyp(Typ):
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         typ, length = tree.children
         self.element_typ = Typ.from_tree(file, _as_tree(typ))
-        self.length = ArrayLength(file, _as_tree(length))
+        self.length = ArrayLength.from_tree(file, _as_tree(length))
 
     @override
     def diag_str(self) -> str:
@@ -777,14 +818,22 @@ class Receiver(Ast):
         return '"self" receiver'
 
 
-class GenericParam(Ast):
-    """A generic type parameter and its trait bounds."""
+class ComptimeParam(Ast):
+    """A generic comptime parameter and its bounds.
+
+    ``bounds`` is parsed the same way regardless of which kind of
+    parameter this turns out to be: a type parameter's bounds are trait
+    references (``T: Trait1 + Trait2``); a value parameter instead has
+    exactly one bound naming its value type (``N: usize``). Which one
+    ``bounds`` actually names is only resolved later, once the referenced
+    names are in scope - see :func:`leech.typs.comptime_params_from_ast`.
+    """
 
     ident: Final[Ident]
     bounds: Final[tuple[BasicTyp, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "generic_param")
+        asserts.assert_eq(tree.data, "comptime_param")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         ident, *rest = list(map(_as_tree, tree.children))
         self.ident = Ident.from_tree(file, ident)
@@ -825,7 +874,7 @@ class FnDecl(Defn):
 
     name: Final[Ident]
     #: Empty for a non-generic function.
-    generic_params: Final[tuple[GenericParam, ...]]
+    comptime_params: Final[tuple[ComptimeParam, ...]]
     receiver: Final[Optional[Receiver]]
     params: Final[tuple[Param, ...]]
     ret_typ: Final[Optional[Typ]]
@@ -835,18 +884,18 @@ class FnDecl(Defn):
         file,
         tree: lark.tree.ParseTree,
         ident: lark.tree.ParseTree,
-        generic_params: Optional[lark.tree.ParseTree],
+        comptime_params: Optional[lark.tree.ParseTree],
         param_list: lark.tree.ParseTree,
         ret_typ: Optional[lark.tree.ParseTree],
     ) -> None:
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         self.name = Ident.from_tree(file, ident)
-        if generic_params is not None:
-            self.generic_params = tuple(
-                GenericParam(file, _as_tree(c)) for c in generic_params.children
+        if comptime_params is not None:
+            self.comptime_params = tuple(
+                ComptimeParam(file, _as_tree(c)) for c in comptime_params.children
             )
         else:
-            self.generic_params = ()
+            self.comptime_params = ()
         self.ret_typ = opt_util.opt_map(ret_typ, lambda x: Typ.from_tree(file, x))
 
         asserts.assert_eq(param_list.data, "param_list")
@@ -910,12 +959,12 @@ class FnDefn(FnDecl):
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "fn_defn")
-        access, ident, generic_params, param_list, ret_typ, block = tree.children
+        access, ident, comptime_params, param_list, ret_typ, block = tree.children
         super().__init__(
             file,
             tree,
             _as_tree(ident),
-            opt_util.opt_map(generic_params, _as_tree),
+            opt_util.opt_map(comptime_params, _as_tree),
             _as_tree(param_list),
             opt_util.opt_map(ret_typ, _as_tree),
         )
@@ -951,21 +1000,21 @@ class StructDefn(Defn):
     access: Final[Optional[Access]]
     ident: Final[Ident]
     #: Empty for a non-generic struct.
-    generic_params: Final[tuple[GenericParam, ...]]
+    comptime_params: Final[tuple[ComptimeParam, ...]]
     fields: Final[tuple[StructFieldDefn, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "struct_defn")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        access, ident, generic_params, field_defn_list = tree.children
+        access, ident, comptime_params, field_defn_list = tree.children
         self.access = Access.from_tree(file, _as_tree(access))
         self.ident = Ident.from_tree(file, _as_tree(ident))
-        if generic_params is not None:
-            self.generic_params = tuple(
-                GenericParam(file, _as_tree(c)) for c in _as_tree(generic_params).children
+        if comptime_params is not None:
+            self.comptime_params = tuple(
+                ComptimeParam(file, _as_tree(c)) for c in _as_tree(comptime_params).children
             )
         else:
-            self.generic_params = ()
+            self.comptime_params = ()
 
         field_defn_list = _as_tree(field_defn_list)
         asserts.assert_eq(field_defn_list.data, "struct_field_defn_list")
@@ -1063,21 +1112,21 @@ class TraitDefn(Defn):
     access: Final[Optional[Access]]
     ident: Final[Ident]
     #: Empty for a non-generic trait.
-    generic_params: Final[tuple[GenericParam, ...]]
+    comptime_params: Final[tuple[ComptimeParam, ...]]
     fn_decls: Final[tuple[TraitFnDecl, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "trait_defn")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        access, ident, generic_params, *fn_decl_trees = tree.children
+        access, ident, comptime_params, *fn_decl_trees = tree.children
         self.access = Access.from_tree(file, _as_tree(access))
         self.ident = Ident.from_tree(file, _as_tree(ident))
-        if generic_params is not None:
-            self.generic_params = tuple(
-                GenericParam(file, _as_tree(c)) for c in _as_tree(generic_params).children
+        if comptime_params is not None:
+            self.comptime_params = tuple(
+                ComptimeParam(file, _as_tree(c)) for c in _as_tree(comptime_params).children
             )
         else:
-            self.generic_params = ()
+            self.comptime_params = ()
         self.fn_decls = tuple(
             TraitFnDecl(file, _as_tree(fn_decl_tree)) for fn_decl_tree in fn_decl_trees
         )
@@ -1091,7 +1140,7 @@ class ImplDefn(Defn):
     """An inherent impl or trait impl, distinguished by ``for_typ``."""
 
     #: Empty for a non-generic impl block.
-    generic_params: Final[tuple[GenericParam, ...]]
+    comptime_params: Final[tuple[ComptimeParam, ...]]
     typ: Final[Typ]
     for_typ: Final[Optional[Typ]]
     fn_defns: Final[tuple[FnDefn, ...]]
@@ -1099,13 +1148,13 @@ class ImplDefn(Defn):
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "impl_defn")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        generic_params, typ, for_typ, *fn_defn_trees = tree.children
-        if generic_params is not None:
-            self.generic_params = tuple(
-                GenericParam(file, _as_tree(c)) for c in _as_tree(generic_params).children
+        comptime_params, typ, for_typ, *fn_defn_trees = tree.children
+        if comptime_params is not None:
+            self.comptime_params = tuple(
+                ComptimeParam(file, _as_tree(c)) for c in _as_tree(comptime_params).children
             )
         else:
-            self.generic_params = ()
+            self.comptime_params = ()
         self.typ = Typ.from_tree(file, _as_tree(typ))
         self.for_typ = opt_util.opt_map(for_typ, lambda t: Typ.from_tree(file, _as_tree(t)))
         self.fn_defns = tuple(

@@ -97,8 +97,8 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
 
     @property
     @abc.abstractmethod
-    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """This declaration's interned type parameters in declaration order."""
+    def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
+        """This declaration's interned comptime parameters in declaration order."""
 
     @property
     @abc.abstractmethod
@@ -134,8 +134,12 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
         self.recv_typ = recv_typ
         reserved.check_fn_params(fn_ast)
         # Eager binding lets signatures and bodies resolve parameters like named types.
-        for typ_param in typs.typ_params_from_ast(fn_ast, fn_ast.generic_params, self.env):
-            self.env.add_container(typ_param.name, typ_param)
+        for comptime_param in typs.comptime_params_from_ast(
+            fn_ast, fn_ast.comptime_params, self.env
+        ):
+            self.env.add_container(comptime_param.name, comptime_param)
+            if isinstance(comptime_param, typs.ValueParamTyp):
+                self.env.add_var(comptime_param.name, comptime_param)
 
     @property
     @override
@@ -191,13 +195,13 @@ class ExternFnSymbol(ParsedFnSymbol[ast.ExternFnDecl]):
     """A source-level ``extern`` function declaration without a body."""
 
     @property
-    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """Extern declarations have no type parameters."""
+    def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
+        """Extern declarations have no comptime parameters."""
         return ()
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return this declaration's cached bodyless instance."""
-        assert not args, f"{self.name}: extern declarations take no type arguments"
+        assert not args, f"{self.name}: extern declarations take no comptime arguments"
         return self.env.ctx.instantiate_fn(self, args)
 
     @property
@@ -217,7 +221,9 @@ class LowerableFn(abc.ABC):
         """Unsubstituted lowering facts shared by every instance."""
 
     @abc.abstractmethod
-    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, comptime_args: tuple[typs.Typ, ...]
+    ) -> None:
         """Lower one instance's body into ``builder.cfg``."""
 
 
@@ -244,24 +250,24 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance identified by all impl and function arguments."""
-        impl_arity = len(self.impl.typ_params) if self.impl is not None else 0
-        fn_arity = len(self.typ_params)
+        impl_arity = len(self.impl.comptime_params) if self.impl is not None else 0
+        fn_arity = len(self.comptime_params)
         assert len(args) == impl_arity + fn_arity, (
-            f"{self.name}: expected {impl_arity} impl and {fn_arity} function type arguments; "
+            f"{self.name}: expected {impl_arity} impl and {fn_arity} function comptime arguments; "
             f"got {len(args)} total"
         )
         return self.env.ctx.instantiate_fn(self, args)
 
     @property
-    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """This function's interned type parameters in declaration order."""
-        return self._typ_params
+    def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
+        """This function's interned comptime parameters in declaration order."""
+        return self._comptime_params
 
     @functools.cached_property
-    def _typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """This function's interned type parameters in declaration order."""
+    def _comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
+        """This function's interned comptime parameters in declaration order."""
         fn_ast = opt_util.opt_unwrap(self.ast)
-        return typs.typ_params_from_ast(fn_ast, fn_ast.generic_params, self.env)
+        return typs.comptime_params_from_ast(fn_ast, fn_ast.comptime_params, self.env)
 
     @property
     def typ_check_results(self) -> typcheck.TypCheckResults:
@@ -279,8 +285,10 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
     def _qualified_name_prefix(self) -> str:
         return self._mod_name
 
-    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
-        del typ_args
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, comptime_args: tuple[typs.Typ, ...]
+    ) -> None:
+        del comptime_args
         builder.build_fn(opt_util.opt_unwrap(self.ast))
 
     def is_accessible_from(self, file: src.SrcFile) -> bool:
@@ -309,8 +317,10 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
 
     @property
     def is_generic(self) -> bool:
-        """Whether this function has impl-level or function-level type parameters."""
-        return (self.impl is not None and bool(self.impl.typ_params)) or bool(self.typ_params)
+        """Whether this function has impl-level or function-level comptime parameters."""
+        return (self.impl is not None and bool(self.impl.comptime_params)) or bool(
+            self.comptime_params
+        )
 
     @property
     def is_main(self) -> bool:
@@ -330,13 +340,13 @@ class FnInstance:
     be a bodyless extern declaration.
 
     :param fn: The declaration this is an instantiation of.
-    :param args: The impl's type arguments followed by the function's own.
+    :param args: The impl's comptime arguments followed by the function's own.
     """
 
     _fn: Final[FnSymbol]
     _args: Final[tuple[typs.Typ, ...]]
     _impl_arity: Final[int]
-    _mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
+    _mapping: Final[Mapping[typs.ComptimeParamTyp, typs.Typ]]
     ast: Final[Optional[ast.FnDecl]]
 
     def __init__(self, fn: FnSymbol, args: tuple[typs.Typ, ...]) -> None:
@@ -344,8 +354,10 @@ class FnInstance:
         self._fn = fn
         self._args = args
         impl = fn.impl if isinstance(fn, SrcFnSymbol) else None
-        self._impl_arity = len(impl.typ_params) if impl is not None else 0
-        all_params = (*impl.typ_params, *fn.typ_params) if impl is not None else fn.typ_params
+        self._impl_arity = len(impl.comptime_params) if impl is not None else 0
+        all_params = (
+            (*impl.comptime_params, *fn.comptime_params) if impl is not None else fn.comptime_params
+        )
         self._mapping = dict(zip(all_params, args, strict=True))
 
     @property
@@ -391,9 +403,9 @@ class FnInstance:
         return self._render_name(qualified=False)
 
     def _render_name(self, qualified: bool) -> str:
-        """Render this instance's own name and type arguments.
+        """Render this instance's own name and comptime arguments.
 
-        :param qualified: Whether to render the type arguments as they
+        :param qualified: Whether to render the comptime arguments as they
             appear in a symbol name rather than in a diagnostic.
         """
         arg_names = ", ".join(
@@ -414,7 +426,7 @@ class FnInstance:
         is rebuilt here per instance from that instance's own concrete
         self type rather than from the impl's abstract one.
 
-        The type arguments are qualified too, for the same reason
+        The comptime arguments are qualified too, for the same reason
         :attr:`~leech.typs.StructTyp.qualified_name` qualifies its own:
         two same-named types from different modules are distinct and
         must not reach one symbol.
@@ -460,9 +472,11 @@ class FnInstance:
         """Return whether every type this instance's signature mentions is concrete."""
         return self.fn_typ.is_concrete()
 
-    def substitute_typ_params(self, mapping: Mapping[typs.TypParamTyp, typs.Typ]) -> FnInstance:
+    def substitute_typ_params(
+        self, mapping: Mapping[typs.ComptimeParamTyp, typs.Typ]
+    ) -> FnInstance:
         """Return this instance re-derived against ``mapping``, substituting
-        into its own type arguments and (for a method) its receiver type.
+        into its own comptime arguments and (for a method) its receiver type.
         A no-op when already concrete.
         """
         new_args = tuple(arg.substitute_typ_params(mapping) for arg in self._args)
@@ -532,6 +546,7 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
     """A compiler intrinsic with a Python-authored body."""
 
     _fn_name: Final[str]
+    # Intrinsics take only type parameters in this issue - see #39.
     _typ_param_names: Final[tuple[str, ...]]
     env: ir_env.Env
 
@@ -543,11 +558,11 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance for ``args``, creating it if needed."""
-        assert len(args) == len(self.typ_params)
+        assert len(args) == len(self.comptime_params)
         return self.env.ctx.instantiate_fn(self, args)
 
     @property
-    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+    def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
         """This intrinsic's interned type parameters in declaration order."""
         return self._typ_params
 
@@ -566,10 +581,10 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
 
     @functools.cached_property
     def _fn_typ(self) -> typs.FnTyp:
-        return self.fn_typ_for_typ_args(self.typ_params)
+        return self.fn_typ_for_comptime_args(self.comptime_params)
 
     @abc.abstractmethod
-    def fn_typ_for_typ_args(self, typ_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
+    def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
         """Compute this intrinsic's function type from opaque type parameters."""
 
     @override
@@ -599,7 +614,9 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
         return ""
 
     @abc.abstractmethod
-    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, comptime_args: tuple[typs.Typ, ...]
+    ) -> None:
         """Emit this intrinsic's body directly into ``builder`` (ending in a
         ``ret``), given this instantiation's concrete type arguments."""
 
@@ -800,7 +817,7 @@ class Mod:
                 )
             case ast.StructDefn():
                 template = typs.StructTypTemplate(defn_ast, self.env, self.name)
-                value = template if template.typ_params else template.module_instance
+                value = template if template.comptime_params else template.module_instance
                 self._add_item(
                     defn_ast.ident.name,
                     visibility.Access.from_ast(defn_ast.access),
@@ -835,25 +852,29 @@ class Mod:
         :param impl_ast: The parsed ``impl`` block.
         :param src_fn_symbols: Accumulates every source function symbol.
         """
-        # The impl's own type parameters, if any, are bound here - before
+        # The impl's own comptime parameters, if any, are bound here - before
         # either the inherent or trait branch resolves its target type(s)
         # - so a generic impl's target (e.g. `Pair[T, T]`, or a trait
         # impl's self type) can name them, and each associated function's
         # or method's own signature and body can too (see `Impl.__init__`).
         impl_env = self.env.new_child()
-        impl_typ_params = typs.typ_params_from_ast(impl_ast, impl_ast.generic_params, self.env)
-        for typ_param in impl_typ_params:
-            impl_env.add_container(typ_param.name, typ_param)
+        impl_comptime_params = typs.comptime_params_from_ast(
+            impl_ast, impl_ast.comptime_params, self.env
+        )
+        for comptime_param in impl_comptime_params:
+            impl_env.add_container(comptime_param.name, comptime_param)
+            if isinstance(comptime_param, typs.ValueParamTyp):
+                impl_env.add_var(comptime_param.name, comptime_param)
 
         if impl_ast.for_typ is None:
-            self._build_inherent_impl_defn(impl_ast, impl_typ_params, impl_env, src_fn_symbols)
+            self._build_inherent_impl_defn(impl_ast, impl_comptime_params, impl_env, src_fn_symbols)
         else:
-            self._build_trait_impl_defn(impl_ast, impl_typ_params, impl_env, src_fn_symbols)
+            self._build_trait_impl_defn(impl_ast, impl_comptime_params, impl_env, src_fn_symbols)
 
     def _build_inherent_impl_defn(
         self,
         impl_ast: ast.ImplDefn,
-        impl_typ_params: tuple[typs.TypParamTyp, ...],
+        impl_comptime_params: tuple[typs.ComptimeParamTyp, ...],
         impl_env: ir_env.Env,
         src_fn_symbols: list[SrcFnSymbol],
     ) -> None:
@@ -861,7 +882,7 @@ class Mod:
 
         :param impl_ast: The parsed ``impl`` block (``impl_ast.for_typ is
             None``).
-        :param impl_env: The impl's own scope, with its type parameters
+        :param impl_env: The impl's own scope, with its comptime parameters
             (if any) already bound.
         :param src_fn_symbols: Accumulates every source function symbol.
         :raises ImplForNonStructTypError: If ``impl_ast.typ`` doesn't name
@@ -880,15 +901,15 @@ class Mod:
         if len(impl_typ_ast.path.idents) > 1:
             raise errors.ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
-        impl = ir_traits.Impl(impl_ast, None, typ, impl_typ_params, impl_env, self.name)
-        impl.check_typ_params_constrained()
+        impl = ir_traits.Impl(impl_ast, None, typ, impl_comptime_params, impl_env, self.name)
+        impl.check_comptime_params_constrained()
         self.loader.impl_registry.add_impl(impl)
         self._build_impl_fn_symbols(impl_ast, impl, src_fn_symbols)
 
     def _build_trait_impl_defn(
         self,
         impl_ast: ast.ImplDefn,
-        impl_typ_params: tuple[typs.TypParamTyp, ...],
+        impl_comptime_params: tuple[typs.ComptimeParamTyp, ...],
         impl_env: ir_env.Env,
         src_fn_symbols: list[SrcFnSymbol],
     ) -> None:
@@ -901,11 +922,23 @@ class Mod:
 
         :param impl_ast: The parsed ``impl`` block (``impl_ast.for_typ is
             not None``).
-        :param impl_env: The impl's own scope, with its type parameters
+        :param impl_env: The impl's own scope, with its comptime parameters
             (if any) already bound.
         :param src_fn_symbols: Accumulates every source function symbol.
         :raises ImplForNonTraitError: If ``impl_ast.typ`` doesn't name a
             trait.
+        :raises MissingComptimeArgsError: If the trait declares comptime
+            parameters and this impl gives it none.
+        :raises WrongNumberOfComptimeArgsError: If the number of arguments
+            given to the trait doesn't match its declared parameters.
+        :raises ComptimeArgsOnNonGenericItemError: If the trait declares
+            no comptime parameters but this impl gives it arguments.
+        :raises WrongKindOfComptimeArgError: If an argument given to the
+            trait is a type where a value was declared, or vice versa.
+        :raises WrongComptimeValueTypError: If a value argument given to
+            the trait doesn't match its parameter's declared type.
+        :raises UnsatisfiedBoundError: If a type argument given to the
+            trait doesn't satisfy its parameter's trait bound.
         :raises OrphanImplError: If neither the trait nor the self type is
             defined in this module.
         :raises ExtraMethodInImplError: If a method here isn't declared by
@@ -924,16 +957,25 @@ class Mod:
         trait = impl_env.resolve_path(ir_env.Env.Namespace.CONTAINERS, trait_typ_ast.path)
         if not isinstance(trait, ir_traits.Trait):
             raise errors.ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
-        # A generic trait's own type parameters aren't supported yet -
-        # nothing upstream rejects `impl Eq[i32] for i32` syntactically,
-        # so fail loudly here rather than silently ignore the arguments.
-        if trait_typ_ast.generic_args:
-            raise NotImplementedError("generic traits aren't supported yet")
+        # Resolved the same way a bound's own trait reference is (e.g.
+        # `T: Container[i32]`): the impl supplies concrete arguments for
+        # the trait's own comptime parameters, if it declares any.
+        trait_args = typs.resolve_trait_comptime_args(
+            trait, trait_typ_ast.comptime_args, impl_env, trait_typ_ast.span
+        )
 
         self_typ = typs.Typ.from_ast(opt_util.opt_unwrap(impl_ast.for_typ), impl_env)
 
-        impl = ir_traits.Impl(impl_ast, trait, self_typ, impl_typ_params, impl_env, self.name)
-        impl.check_typ_params_constrained()
+        impl = ir_traits.Impl(
+            impl_ast,
+            trait,
+            self_typ,
+            impl_comptime_params,
+            impl_env,
+            self.name,
+            trait_args=trait_args,
+        )
+        impl.check_comptime_params_constrained()
         # Registered before building any method: two impls of the same
         # trait for the same (or overlapping) self type would otherwise
         # collide on method naming first (DuplicateItemDefnError), a less
@@ -963,7 +1005,7 @@ class Mod:
             # nothing upstream rejects the syntax, so fail loudly here
             # rather than silently mistreat the function's one literal
             # FnTyp as real.
-            if fn_ast.generic_params:
+            if fn_ast.comptime_params:
                 raise NotImplementedError("generic associated functions aren't supported yet")
             fn = SrcFnSymbol(fn_ast, impl.env, self.name, recv_typ=impl.self_typ, impl=impl)
             src_fn_symbols.append(fn)

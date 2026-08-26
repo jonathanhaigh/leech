@@ -79,27 +79,27 @@ class ItemNotFoundError(UserError):
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
 
 
-class MissingTypArgsError(UserError):
-    """Raised when a generic item is used as a value without type arguments."""
+class MissingComptimeArgsError(UserError):
+    """Raised when a generic item is used as a value without required comptime arguments."""
 
     def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
-            f'Generic item "{item_name}" used without required type arguments',
+            f'Generic item "{item_name}" used without required comptime arguments',
             span,
         )
 
 
-class CannotInferTypArgError(UserError):
+class CannotInferComptimeArgError(UserError):
     """Raised when a generic function call can't determine one of its
-    type parameters from its arguments' types, and no explicit type
-    argument was given for it either."""
+    comptime parameters from its arguments' types, and no explicit
+    comptime argument was given for it either."""
 
     def __init__(self, fn_name: str, typ_param_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             (
-                f'Cannot infer type argument for parameter "{typ_param_name}"'
+                f'Cannot infer argument for parameter "{typ_param_name}"'
                 f' of generic function "{fn_name}"'
             ),
             span,
@@ -107,9 +107,9 @@ class CannotInferTypArgError(UserError):
         self._add_extra(NOTE, f'Give it explicitly, e.g. "{fn_name}[...]"', None)
 
 
-class WrongNumberOfTypArgsError(UserError):
+class WrongNumberOfComptimeArgsError(UserError):
     """Raised when a generic item is given the wrong number of explicit
-    type arguments."""
+    comptime arguments."""
 
     def __init__(
         self, item_name: str, given: int, expected: int, span: Optional[src.SrcSpan]
@@ -117,20 +117,44 @@ class WrongNumberOfTypArgsError(UserError):
         super().__init__(
             ERROR,
             (
-                f'Wrong number of type arguments for generic item "{item_name}":'
+                f'Wrong number of comptime arguments for generic item "{item_name}":'
                 f" got {given}, expected {expected}"
             ),
             span,
         )
 
 
-class TypArgsOnNonGenericItemError(UserError):
-    """Raised when type arguments are given for an item that isn't generic."""
+class ComptimeArgsOnNonGenericItemError(UserError):
+    """Raised when comptime arguments are given for an item that isn't generic."""
 
     def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
-            f'"{item_name}" is not generic and cannot take type arguments',
+            f'"{item_name}" is not generic and cannot take arguments',
+            span,
+        )
+
+
+class WrongKindOfComptimeArgError(UserError):
+    """Raised when a type argument is given for a value parameter, or a
+    value argument is given for a type parameter."""
+
+    def __init__(self, param_name: str, arg_desc: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'{arg_desc} does not match the kind of parameter "{param_name}" expects',
+            span,
+        )
+
+
+class WrongComptimeValueTypError(UserError):
+    """Raised when a value argument's type doesn't match its parameter's
+    declared type."""
+
+    def __init__(self, arg_name: str, expected_typ_name: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'Value "{arg_name}" does not have the expected type "{expected_typ_name}"',
             span,
         )
 
@@ -531,6 +555,17 @@ class TraitUsedAsTypError(UserError):
         super().__init__(ERROR, f'Trait "{trait_name}" cannot be used as a type', span)
 
 
+class ValueUsedAsTypError(UserError):
+    """Raised when a comptime value or value parameter is used where a type is required.
+
+    A value parameter's type constrains it, but the parameter itself - or
+    a concrete value substituted for it - is never itself a type.
+    """
+
+    def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(ERROR, f'Value "{name}" cannot be used as a type', span)
+
+
 class TraitMethodMissingReceiverError(UserError):
     """Raised when a trait method prototype has no ``self``/``mut self``
     receiver. Every trait method dispatches on its receiver's type, so an
@@ -561,13 +596,13 @@ class OrphanImplError(UserError):
         )
 
 
-class UnconstrainedImplTypParamError(UserError):
-    """Raised when impl selection cannot determine one of its type parameters."""
+class UnconstrainedImplComptimeParamError(UserError):
+    """Raised when impl selection cannot determine one of its comptime parameters."""
 
     def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
-            f'Impl type parameter "{name}" is not constrained by the impl self type',
+            f'Impl parameter "{name}" is not constrained by the impl self type',
             span,
         )
 
@@ -666,11 +701,16 @@ class ReservedNameError(UserError):
         super().__init__(ERROR, f'"{name}" is reserved and cannot be used as a name', span)
 
 
-class BoundNotATraitError(UserError):
-    """Raised when a generic parameter's declared bound doesn't name a trait."""
+class InvalidComptimeBoundError(UserError):
+    """Raised when a comptime parameter's declared bound names neither a
+    trait nor a supported value parameter type."""
 
     def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'"{name}" is not a trait, so it cannot be used as a bound', span)
+        super().__init__(
+            ERROR,
+            f'"{name}" is not a trait or a supported value type, so it cannot be used as a bound',
+            span,
+        )
 
 
 class RecursiveTraitBoundError(UserError):

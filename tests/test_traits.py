@@ -229,6 +229,23 @@ def test_generic_trait_impl_method_calls_sibling(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_trait_declares_value_param(tmp_path):
+    src = """
+    trait Sized[N: i32] {
+        fn size(*self) i32;
+    }
+    struct Buf[N: i32] {}
+    impl[N: i32] Sized[N] for Buf[N] {
+        fn size(*self) i32 { return N; }
+    }
+    pub fn main() i32 {
+        let b = Buf[4] {};
+        return b.size() - 4;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_bounded_generic_trait_impl_method_calls_sibling(tmp_path):
     # `twice` resolves `self.*.show()` against the impl's own abstract
     # `Box[T]`, where the impl's `T: Show` is a premise rather than
@@ -666,7 +683,7 @@ def test_bound_names_non_trait_via_method_call(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.BoundNotATraitError) as exc_info:
+    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"NotATrait"' in str(exc_info.value)
 
@@ -674,7 +691,7 @@ def test_bound_names_non_trait_via_method_call(tmp_path):
 def test_bound_names_non_trait_on_generic_fn_call(tmp_path):
     # Here the generic body never uses the bound, so nothing catches the
     # non-trait bound until the function is actually instantiated -
-    # exercising check_typ_arg_bounds rather than _resolve_bound_method.
+    # exercising check_comptime_arg_bounds rather than _resolve_bound_method.
     src = """
     struct NotATrait { a: i32 }
     fn f[T: NotATrait](x: T) i32 { return 0; }
@@ -682,7 +699,7 @@ def test_bound_names_non_trait_on_generic_fn_call(tmp_path):
         return f(1i32);
     }
     """
-    with pytest.raises(errors.BoundNotATraitError) as exc_info:
+    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"NotATrait"' in str(exc_info.value)
 
@@ -696,7 +713,7 @@ def test_bound_names_non_trait_on_generic_struct_instantiation(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.BoundNotATraitError) as exc_info:
+    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"NotATrait"' in str(exc_info.value)
 
@@ -1009,7 +1026,7 @@ def test_generic_trait_exposes_typ_params(tmp_path):
     item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Container")
     assert item is not None
     assert isinstance(item.value, ir_traits.Trait)
-    assert [p.name for p in item.value.typ_params] == ["T"]
+    assert [p.name for p in item.value.comptime_params] == ["T"]
 
 
 def test_non_generic_trait_has_no_typ_params(tmp_path):
@@ -1017,7 +1034,7 @@ def test_non_generic_trait_has_no_typ_params(tmp_path):
     item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Show")
     assert item is not None
     assert isinstance(item.value, ir_traits.Trait)
-    assert item.value.typ_params == ()
+    assert item.value.comptime_params == ()
 
 
 def test_bound_with_generic_args_on_non_generic_trait(tmp_path):
@@ -1030,7 +1047,7 @@ def test_bound_with_generic_args_on_non_generic_trait(tmp_path):
         return f(n);
     }
     """
-    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Show"' in str(exc_info.value)
 
@@ -1044,7 +1061,7 @@ def test_bound_on_generic_trait_without_typ_args(tmp_path):
         return f(n);
     }
     """
-    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Container"' in str(exc_info.value)
 
@@ -1058,7 +1075,7 @@ def test_bound_with_wrong_number_of_typ_args(tmp_path):
         return f(n);
     }
     """
-    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Container"' in str(exc_info.value)
 

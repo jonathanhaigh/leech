@@ -19,10 +19,13 @@ SPDX-License-Identifier: MPL-2.0
 ## Global Constraints
 
 - Every renamed identifier is renamed exactly as the spec's Terminology Rename table states; `is_generic`, `substitute_typ_params`, `infer_typ_args`, `match_typ_args`, and other general `Typ`-tree method names are **not** renamed.
-- Value parameters support exactly `IntTyp` and `BoolTyp` in this issue (per spec's `UnsupportedValueParamTypError`).
+- Value parameters support exactly `IntTyp` and `BoolTyp` in this issue; any other single-bound type raises `InvalidComptimeBoundError` (renamed/broadened from the pre-existing `BoundNotATraitError` during Task 4 - see that task's Step 3).
 - Value arguments are literals or bare identifiers only - no arithmetic (`f[i32, N * 2]` is out of scope).
 - After every task: `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run basedpyright` must all pass before committing.
 - Follow `AGENTS.md`: four-space indent, Ruff's 100-column limit, Sphinx-style docstrings, `asserts` helpers over bare `assert` where one fits, commit messages end with `For: #39: Non-type generic parameters`.
+- No multi-line conditional (`if`/`else`) *expressions* anywhere in this feature's code - use an `if` statement, or a `match` statement when dispatching on a small closed set of cases. See `AGENTS.md`.
+- By the time the feature is complete (Task 7's final check), zero `# type: ignore` comments and zero unchecked `typing.cast(...)` calls introduced *by this feature* may remain - pre-existing, unrelated ones that predate this feature and that no task here touches (`codegen.py`'s several `# type: ignore` for `llvmlite`'s missing type stubs; `compilation.py:84`/`86` and `ir_builder.py`'s existing `cast(ir_values.Value[typs.PtrTyp], value)` for other reasons) are out of scope and untouched, not something this feature needs to clean up. The two `# type: ignore[override]` comments Task 2 adds, and every `cast(...)` Task 4 adds for the `Mapping`/`dict`-invariance fallout of widening `TypParamTyp` to `ComptimeParamTyp`, are temporary and must be removed by Task 5's base-class widening (`Typ.substitute_typ_params`/`infer_typ_args` and every override, `match_typ_args`, `typs_overlap`) - if any survive Task 5, that is a Task 5 defect, not an acceptable residue.
+- All six tasks' commits are squashed into one commit at the very end (Task 7) - a clean, reviewable history is desired for the final artifact, not preserved as a record of the multi-agent process that built it.
 
 ---
 
@@ -559,7 +562,7 @@ Adds `int_lit`/`bool_lit` as `comptime_arg` alternatives and a bare identifier a
 
 **Interfaces:**
 - Consumes: `ast.IntLit`, `ast.BoolLit`, `ast.Typ`, `ast.Path` (all pre-existing).
-- Produces: `ast.ComptimeArg` (`type ComptimeArg = Typ | IntLit | BoolLit`), `ast.Typ.comptime_arg_from_tree(file, tree) -> ComptimeArg` (dispatch used by `BasicTyp.comptime_args`/`VarExpr.comptime_args`), `ast.ArrayLength` reshaped to `value: Optional[int]` / `path: Optional[Path]`.
+- Produces: `ast.ComptimeArg` (`type ComptimeArg = Typ | IntLit | BoolLit`), `ast.Typ.comptime_arg_from_tree(file, tree) -> ComptimeArg` (dispatch used by `BasicTyp.comptime_args`/`VarExpr.comptime_args`), `ast.ArrayLength` split into a base class plus `ast.LiteralArrayLength(value: int)` / `ast.PathArrayLength(path: Path)` leaf subclasses.
 
 - [ ] **Step 1: Write the failing parser tests**
 
@@ -729,38 +732,58 @@ and its construction:
 
 (replacing the `Typ.from_tree(file, _as_tree(c))` call with `_comptime_arg_from_tree(file, _as_tree(c))`). Apply the identical change to `VarExpr`'s `comptime_args` field and construction.
 
-Replace the `ArrayLength` class body with:
+Replace the `ArrayLength` class with a base plus two leaf subclasses, mirroring the `Typ`/`BasicTyp`/`PtrTyp`/`ArrayTyp` dispatch pattern already established in this same file, rather than one class with two optional fields:
 
 ```python
 class ArrayLength(Ast):
-    """An array type's length: a literal, e.g. the ``4`` in ``[i32; 4]``,
-    or a reference to an in-scope value parameter, e.g. the ``N`` in
-    ``[i32; N]``.
+    """Base class for a parsed array type's length: a literal, e.g. the
+    ``4`` in ``[i32; 4]``, or a reference to an in-scope value parameter,
+    e.g. the ``N`` in ``[i32; N]``.
     """
 
-    value: Final[Optional[int]]
-    path: Final[Optional[Path]]
-
-    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+    @staticmethod
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> ArrayLength:
+        """Build the array length selected by a parse tree's grammar rule."""
         asserts.assert_eq(tree.data, "array_length")
-        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         (child,) = tree.children
         if isinstance(child, lark.Token):
-            self.value = int(child)
-            self.path = None
-        else:
-            self.value = None
-            self.path = Path(file, _as_tree(child))
+            return LiteralArrayLength(file, tree)
+        return PathArrayLength(file, tree)
+
+
+class LiteralArrayLength(ArrayLength):
+    """An array length given as an integer literal, e.g. the ``4`` in ``[i32; 4]``."""
+
+    value: Final[int]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        (token,) = tree.children
+        self.value = int(_as_token(token))
 
     @override
     def diag_str(self) -> str:
-        if self.value is not None:
-            return f'array length "{self.value}"'
-        assert self.path is not None
+        return f'array length "{self.value}"'
+
+
+class PathArrayLength(ArrayLength):
+    """An array length given as a value parameter reference, e.g. the ``N`` in ``[i32; N]``."""
+
+    path: Final[Path]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        (child,) = tree.children
+        self.path = Path(file, _as_tree(child))
+
+    @override
+    def diag_str(self) -> str:
         return f'array length "{self.path.str()}"'
 ```
 
-(This drops `ArrayLength`'s previous `Expr` base in favor of `Ast` directly, since it was never reachable through `Expr.from_tree`'s dispatch table and isn't really an expression - and drops the unused `token` field. Confirm nothing outside `ast.py` reads `ArrayLength.token` before removing it: `grep -rn 'length\.token' src/leech tests`.)
+`ArrayTyp.__init__` constructs it via `ArrayLength.from_tree(file, _as_tree(length))` instead of calling `ArrayLength(...)` directly. This drops `ArrayLength`'s previous `Expr` base in favor of `Ast` directly, since it was never reachable through `Expr.from_tree`'s dispatch table and isn't really an expression - and drops the unused `token` field. Confirm nothing outside `ast.py` reads `ArrayLength.token` before removing it: `grep -rn 'length\.token' src/leech tests`.
+
+This also means `Typ.from_ast`'s existing `ArrayTyp` case (`ArrayTyp.get_or_create(Typ.from_ast(typ_ast.element_typ, e), typ_ast.length.value)`, which predates this task and today only handles the literal form) needs a matching, self-contained fix in the same step: nothing yet resolves a `PathArrayLength` to a concrete value (that's Task 5's job), so change it to `ArrayTyp.get_or_create(Typ.from_ast(typ_ast.element_typ, e), asserts.checked_cast(typ_ast.length, LiteralArrayLength).value)` - an explicit, checked assertion that fails loudly if a `PathArrayLength` reaches this not-yet-ready code path, replacing what would otherwise be a silent `None` swallowed through `get_or_create`'s loose `*args: Hashable` signature.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -878,7 +901,7 @@ def test_value_param_with_unsupported_typ_is_rejected(tmp_path):
     fn f[N: Foo]() {}
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.UnsupportedValueParamTypError) as exc_info:
+    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Foo"' in str(exc_info.value)
 
@@ -942,25 +965,30 @@ def test_impl_value_param_used_in_method_body(tmp_path):
 uv run pytest tests/test_generic_fns.py tests/test_impl.py -k "value" -v
 ```
 
-Expected: FAIL - a value-parameter declaration like `N: usize` today resolves through `resolve_bound`, hits `BoundNotATraitError` (since `usize` isn't a trait), or an unhandled-AST-node `AssertionError` inside `typs.resolve_comptime_arg` calls that don't exist yet.
+Expected: FAIL - a value-parameter declaration like `N: usize` today resolves through `resolve_bound`, hits the pre-existing `BoundNotATraitError` (since `usize` isn't a trait), or an unhandled-AST-node `AssertionError` inside `typs.resolve_comptime_arg` calls that don't exist yet.
 
-- [ ] **Step 3: Add the two new errors**
+- [ ] **Step 3: Broaden `BoundNotATraitError` and add two new errors**
 
-In `src/leech/errors.py`, add (near the other `Comptime*Args*`/`*Param*` errors):
+A single-entry bound that names neither a trait nor a supported value type (a struct, an enum, anything else) is one failure mode, not two - broadening one existing error's scope reads more honestly than adding a sibling error for the "or a value type" half of the same sentence, and avoids special-casing any one non-trait `Typ` kind (e.g. enums) over another (e.g. structs) for no principled reason. In `src/leech/errors.py`, rename `BoundNotATraitError` to `InvalidComptimeBoundError` and broaden its docstring/message:
 
 ```python
-class UnsupportedValueParamTypError(UserError):
-    """Raised when a value parameter's declared type isn't one this
-    compiler can represent as a comptime value."""
+class InvalidComptimeBoundError(UserError):
+    """Raised when a comptime parameter's declared bound names neither a
+    trait nor a supported value parameter type."""
 
-    def __init__(self, typ_name: str, span: Optional[src.SrcSpan]) -> None:
+    def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
-            f'"{typ_name}" cannot be used as a value parameter\'s type',
+            f'"{name}" is not a trait or a supported value type, so it cannot be used as a bound',
             span,
         )
+```
 
+Update its two pre-existing call sites (`typs.resolve_bound`, `typcheck._resolve_bound_method`) and the three pre-existing `tests/test_traits.py` assertions that reference it by name to the new class name - these predate this task and their behavior is otherwise unchanged, only the class/message wording is broader now.
 
+Then add two new errors (near the other `Comptime*Args*`/`*Param*` errors):
+
+```python
 class WrongKindOfComptimeArgError(UserError):
     """Raised when a type argument is given for a value parameter, or a
     value argument is given for a type parameter."""
@@ -999,15 +1027,17 @@ def comptime_params_from_ast(
     denotes a ``Trait`` declares a type parameter with that bound (as a
     multi-entry bound list always does); a name that denotes an
     :class:`IntTyp` or :data:`BOOL` declares a value parameter of that
-    type instead.
+    type instead. A single bound that doesn't yet resolve (e.g. a trait
+    declared later in the same module, as in mutually recursive trait
+    bounds) is left unresolved here and always yields a type parameter;
+    the deferred :meth:`resolve_bound` call that checks it later (after
+    the whole module is loaded) raises if it still doesn't name a trait.
 
     :param e: The scope enclosing the declaration, in which parameters'
         bounds are resolved. See :attr:`TypParamTyp.decl_env`.
     :raises ReservedNameError: If a parameter takes a reserved name.
-    :raises UnsupportedValueParamTypError: If a single bound names a type
-        that can't be a value parameter's type.
-    :raises BoundNotATraitError: If a single bound names neither a trait
-        nor a usable value type.
+    :raises InvalidComptimeBoundError: If a single bound resolves now and
+        names neither a trait nor a usable value type.
     """
     # Local to avoid the ir_traits import cycle.
     from leech import ir_traits  # noqa: PLC0415
@@ -1021,13 +1051,14 @@ def comptime_params_from_ast(
         value_typ: Optional[Typ] = None
         if len(param_ast.bounds) == 1:
             (bound,) = param_ast.bounds
-            item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
+            try:
+                item: Optional[Any] = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
+            except errors.ItemNotFoundError:
+                item = None
             if isinstance(item, (IntTyp, BoolTyp)):
                 value_typ = item
-            elif isinstance(item, Typ) and not isinstance(item, ir_traits.Trait):
-                raise errors.UnsupportedValueParamTypError(item.name, bound.span)
-            elif not isinstance(item, ir_traits.Trait):
-                raise errors.BoundNotATraitError(bound.path.str(), bound.path.span)
+            elif item is not None and not isinstance(item, ir_traits.Trait):
+                raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
         if value_typ is not None:
             result.append(
                 ValueParamTyp.get_or_create(owner, index, param_ast.ident.name, value_typ)
@@ -1041,7 +1072,7 @@ def comptime_params_from_ast(
     return tuple(result)
 ```
 
-(`ir_traits.Trait` is never an instance of `Typ`, so the `isinstance(item, Typ) and not isinstance(item, ir_traits.Trait)` branch is really just "is a `Typ` that isn't `IntTyp`/`BoolTyp`" - written this way to read clearly next to the `Trait` branch below it.)
+A single non-trait, non-`IntTyp`/`BoolTyp` bound - a struct, an enum, anything else - raises the same `InvalidComptimeBoundError` regardless of which kind of `Typ` it is: whether the author meant a trait bound that doesn't exist, or a value-parameter type this compiler doesn't support, isn't decidable from the syntax alone, so there is no principled reason to give one non-trait `Typ` kind a different diagnostic from another.
 
 - [ ] **Step 5: Add `resolve_comptime_arg` and rewire bound/argument checking**
 
@@ -1189,26 +1220,63 @@ In `src/leech/typcheck.py`'s `_check_var_expr`, add a branch right after the exi
             return var.value_typ
 ```
 
+The "concrete value to runtime value" conversion is its own responsibility, not inline logic in a var-expression lowering method that has plenty else going on - give `ComptimeValueTyp` a method for it in `src/leech/typs.py`, using a `match` statement (not a multi-line conditional expression) with explicit cases and an asserting wildcard for exhaustiveness:
+
+```python
+    def to_comptime_value(self, ast_node: Optional[ast.Ast] = None) -> ir_values.ComptimeValue:
+        """Build the :class:`~leech.ir_values.ComptimeValue` this value denotes."""
+        # Local to avoid the ir_values import cycle (ir_values imports this module).
+        from leech import ir_values  # noqa: PLC0415
+
+        match self.value_typ:
+            case BoolTyp():
+                return ir_values.ComptimeBool(asserts.checked_cast(self.value, bool), ast_node)
+            case IntTyp():
+                return ir_values.ComptimeInt(
+                    self.value_typ, asserts.checked_cast(self.value, int), ast_node
+                )
+            case _:
+                raise AssertionError(f"unsupported comptime value typ {self.value_typ.name}")
+```
+
+Add `ir_values` to the file's existing `if TYPE_CHECKING: from leech import ir_traits` block (`from leech import ir_traits, ir_values`) so the method's return-type annotation resolves - the same import-cycle-avoidance shape `ir_traits` already uses there, since `ir_values.py` imports `typs`.
+
 In `src/leech/ir_builder.py`'s `_build_var_expr`, add a branch right after the existing `ComptimeEnum` check:
 
 ```python
         if isinstance(target, typs.ValueParamTyp):
+            # _comptime_arg_mapping is typed Mapping[TypParamTyp, Typ] until
+            # Task 5 widens it - narrower than substitute_typ_params's own
+            # Mapping[ComptimeParamTyp, Typ] parameter. Temporary; Task 5 removes this cast.
+            wider_mapping = cast(
+                "Mapping[typs.ComptimeParamTyp, typs.Typ]", self._comptime_arg_mapping
+            )
             concrete = asserts.checked_cast(
-                target.substitute_typ_params(self._comptime_arg_mapping), typs.ComptimeValueTyp
+                target.substitute_typ_params(wider_mapping), typs.ComptimeValueTyp
             )
-            value: ir_values.ComptimeValue = (
-                ir_values.ComptimeBool(asserts.checked_cast(concrete.value, bool), var_ast)
-                if concrete.value_typ is typs.BOOL
-                else ir_values.ComptimeInt(
-                    asserts.checked_cast(concrete.value_typ, typs.IntTyp),
-                    asserts.checked_cast(concrete.value, int),
-                    var_ast,
-                )
-            )
-            return self._in_context(value, ctx)
+            return self._in_context(concrete.to_comptime_value(var_ast), ctx)
 ```
 
 - [ ] **Step 8: Bind value parameters into the declaration environment's `VARS` namespace**
+
+`ir_env.Env.add_var` takes `ir_env.Var`, which doesn't include `typs.ValueParamTyp` - widen it first so the four `add_var` calls below need no cast:
+
+```python
+type Var = (
+    ir_values.Value[typs.PtrTyp]
+    | ir_module.FnSymbol
+    | ast.Param
+    | ast.Receiver
+    | ast.LetStmt
+    | typs.ValueParamTyp
+)
+"""A value, function symbol, local declaration-site AST node, or value parameter.
+
+:invariant: every bound Value is PtrTyp-typed [unchecked: hot path]
+"""
+```
+
+(`ir_env.py` already imports `typs`, so this needs no new import.)
 
 In `src/leech/ir_module.py`, at the fn declaration site (`for comptime_param in typs.comptime_params_from_ast(fn_ast, fn_ast.comptime_params, self.env): self.env.add_container(...)`), add:
 
@@ -1284,11 +1352,12 @@ Changes `ArrayTyp.length` from `int` to `Typ`, so `[T; N]` can carry a value par
 - Modify: `src/leech/ir_values.py`
 - Modify: `src/leech/codegen.py`
 - Modify: `src/leech/typcheck.py`
+- Modify: `src/leech/ir_module.py`, `src/leech/ir_traits.py` (Step 4's cast/ignore removal only)
 - Test: `tests/test_generic_structs.py`, `tests/test_generic_fns.py`, `tests/test_arrays.py`, `tests/test_typs.py`
 
 **Interfaces:**
-- Consumes: `typs.ComptimeValueTyp`, `typs.ValueParamTyp` (Task 2/4), `ast.ArrayLength.value`/`.path` (Task 3).
-- Produces: `typs.ArrayTyp.length: Typ`; `typs.ArrayTyp.of_length` now genuinely wraps `ComptimeValueTyp.get_or_create(USIZE, length)`; array-typed fields/parameters can reference a value parameter.
+- Consumes: `typs.ComptimeValueTyp`, `typs.ValueParamTyp` (Task 2/4), `ast.LiteralArrayLength`/`ast.PathArrayLength` (Task 3).
+- Produces: `typs.ArrayTyp.length: Typ`; `typs.ArrayTyp.of_length` now genuinely wraps `ComptimeValueTyp.get_or_create(USIZE, length)`; array-typed fields/parameters can reference a value parameter; `Typ.substitute_typ_params`/`infer_typ_args` (base and every override) uniformly typed against `ComptimeParamTyp`, with every temporary cast/ignore this feature added for that mismatch removed.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1408,7 +1477,7 @@ def test_typs_overlap_treats_array_length_as_unifiable(tmp_path):
 uv run pytest tests/test_generic_structs.py tests/test_generic_fns.py tests/test_arrays.py tests/test_typs.py -k "value_param or array_typ" -v
 ```
 
-Expected: FAIL - `[T; N]` with `N` a bare identifier currently hits `typs.py`'s `Typ.from_ast`'s `ArrayTyp` case, which reads `typ_ast.length.value` (now `None` for an identifier per Task 3), producing a `TypeError` from `ArrayTyp.get_or_create(elt, None)`'s implicit assumptions, or an assertion failure.
+Expected: FAIL - `[T; N]` with `N` a bare identifier currently hits `typs.py`'s `Typ.from_ast`'s `ArrayTyp` case, which (per Task 3's fix) asserts `typ_ast.length` is a `LiteralArrayLength` and fails that assertion for a `PathArrayLength`.
 
 - [ ] **Step 3: Change `ArrayTyp.length` to `Typ`**
 
@@ -1464,10 +1533,12 @@ Add a helper next to `Typ.from_ast` (or as a private static method on `Typ`) and
     @staticmethod
     def _array_length_from_ast(length_ast: ast.ArrayLength, e: ir_env.Env) -> Typ:
         """Resolve a parsed array length: a literal, or a value parameter reference."""
-        if length_ast.value is not None:
+        if isinstance(length_ast, ast.LiteralArrayLength):
             return ComptimeValueTyp.get_or_create(USIZE, length_ast.value)
-        assert length_ast.path is not None
-        item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, length_ast.path)
+        item = e.resolve_path(
+            ir_env.Env.Namespace.CONTAINERS,
+            asserts.checked_cast(length_ast, ast.PathArrayLength).path,
+        )
         if isinstance(item, (ValueParamTyp, ComptimeValueTyp)) and item.value_typ is USIZE:
             return item
         raise errors.WrongComptimeValueTypError(
@@ -1477,12 +1548,15 @@ Add a helper next to `Typ.from_ast` (or as a private static method on `Typ`) and
         )
 ```
 
+(`ast.ArrayLength` has exactly two subclasses, `LiteralArrayLength`/`PathArrayLength` per Task 3 - the `isinstance` check on the first is exhaustive against the second, so the `checked_cast` below it is a same-branch narrowing, not a real fork.)
+
 and change the `Typ.from_ast` `ArrayTyp` case from:
 
 ```python
             case ast.ArrayTyp():
                 return ArrayTyp.get_or_create(
-                    Typ.from_ast(typ_ast.element_typ, e), typ_ast.length.value
+                    Typ.from_ast(typ_ast.element_typ, e),
+                    asserts.checked_cast(typ_ast.length, ast.LiteralArrayLength).value,
                 )
 ```
 
@@ -1564,7 +1638,17 @@ def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[ComptimeParamTyp
     return bindings if declared.substitute_typ_params(bindings) is actual else None
 ```
 
-- [ ] **Step 4: Fix every other reader of `.length`**
+- [ ] **Step 4: Widen `Typ`'s own substitution/inference signatures, and remove every temporary cast/ignore this feature has accumulated for that reason**
+
+Task 2 left `ComptimeParamTyp.substitute_typ_params`/`infer_typ_args` with two `# type: ignore[override]` comments because the base `Typ.substitute_typ_params`/`Typ.infer_typ_args` (and every other concrete override: `PtrTyp`, `ArrayTyp`, `StructTyp`, `FnTyp`, `EnumBackingTyp`) were still typed against `Mapping[TypParamTyp, Typ]`/`dict[TypParamTyp, Typ]`. Task 4 then had to add several `cast(...)` calls at call sites across `typcheck.py`, `ir_module.py`, `ir_traits.py`, and `ir_builder.py` for the same reason, each deliberately deferred to this step. Do this now:
+
+1. Widen the base `Typ.substitute_typ_params`/`Typ.infer_typ_args` to `Mapping[ComptimeParamTyp, Typ]`/`dict[ComptimeParamTyp, Typ]`, and every concrete override in the same file (`PtrTyp`, `ArrayTyp` - already done in Step 3 above, `StructTyp`, `FnTyp`, `EnumBackingTyp`) to match.
+2. Remove both `# type: ignore[override]` comments on `ComptimeParamTyp.substitute_typ_params`/`infer_typ_args` - they should now be genuine, matching overrides, needing no suppression.
+3. Find and remove every `cast(...)` the earlier tasks added specifically for this mismatch: `grep -rn "type: ignore\|Task 5" src/leech/*.py` surfaces each one via its explanatory comment. This includes at minimum `ir_builder.py`'s `wider_mapping` cast in `_build_var_expr` and any analogous one around `concrete_comptime_args`/`FnInstance.instantiate`-adjacent code; `ir_module.py`'s `FnInstance._mapping` construction cast; `ir_traits.py`'s `ImplFnSelection.fn_typ`/`Impl.instantiation_args` casts; `typcheck.py`'s casts around `fn_typ.substitute_typ_params(mapping)`-shaped calls. Where a cast stands in for a field's own narrow type (`FnInstance._mapping`, `CfgBuilder._comptime_arg_mapping`), widen the field's declared type instead of casting at each read site - try this first; only keep a cast if widening the field itself breaks some other, unrelated call site that genuinely needs to stay `TypParamTyp`-only, and if so say precisely which one and why in the final report.
+4. `ir_traits.py`'s `unsatisfied_bound`/`_impl_bounds_hold` path (guarded in Task 4 with an `isinstance(typ_param, TypParamTyp)` check, because `ValueParamTyp` has no `.bounds`) can likely keep that guard permanently rather than needing further widening - it's correct on its own terms (a value parameter has no bounds to violate), not a temporary workaround. Confirm this still reads correctly once the surrounding types are widened, and drop any comment there that referred to this task as future work.
+5. Run `uv run basedpyright` and confirm 0 errors, then `grep -rn "type: ignore" src/leech/*.py` and confirm zero hits anywhere in this feature's files, and `grep -rn "\bcast(" src/leech/*.py` and confirm every remaining hit is either `asserts.checked_cast` or one of the pre-existing, unrelated `typing.cast` uses that predate this feature (`compilation.py:84`, `ir_builder.py:1220`) - not a new one introduced by this feature. Report any survivor explicitly in the task report rather than silently leaving it, per this plan's Global Constraints.
+
+- [ ] **Step 5: Fix every other reader of `.length`**
 
 In `src/leech/typcheck.py`'s `_check_array_expr`, change `typs.ArrayTyp.get_or_create(elt_typ, len(arr_expr.elements))` to `typs.ArrayTyp.of_length(elt_typ, len(arr_expr.elements))`.
 
@@ -1580,7 +1664,7 @@ In `src/leech/codegen.py`, change `return ll.ArrayType(self._ll_mod_items.get(ty
 
 In `tests/test_typs.py`, replace every remaining `typs.ArrayTyp.get_or_create(<typ>, <int literal>)` call with `typs.ArrayTyp.of_length(<typ>, <int literal>)` (find them with `grep -n 'ArrayTyp.get_or_create' tests/test_typs.py` - as of Task 2 there are six such call sites left over from before this task).
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 6: Run tests to verify they pass**
 
 ```bash
 uv run pytest tests/test_generic_structs.py tests/test_generic_fns.py tests/test_arrays.py tests/test_typs.py -v
@@ -1590,7 +1674,7 @@ uv run ruff check . && uv run ruff format --check . && uv run basedpyright
 
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -1712,3 +1796,76 @@ Claude-Session: https://claude.ai/code/session_01BT5ZiidLkMUuBCwAQ2sp3a
 EOF
 )"
 ```
+
+---
+
+## Task 7: Squash into one commit and final sign-off
+
+No code changes - this task only reshapes history and does a last, whole-feature check, per this plan's Global Constraints (one final commit; zero `# type: ignore`/unchecked `cast` survives; no multi-line `if` expressions).
+
+**Files:** none modified; git history only.
+
+- [ ] **Step 1: Verify the tree is clean**
+
+```bash
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run basedpyright
+uv run reuse lint
+```
+
+Expected: every command passes cleanly, exactly as each task already confirmed individually.
+
+- [ ] **Step 2: Confirm zero suppressions/unchecked casts, and zero multi-line `if` expressions**
+
+```bash
+grep -rn "type: ignore" src/leech/*.py
+```
+
+Expected: only pre-existing, unrelated hits in `codegen.py` (suppressing `llvmlite`'s missing type stubs, present before this feature started and untouched by any task here) - confirm each one predates this feature (`git blame`/`git diff` against the pre-Task-1 base) rather than assuming. Zero hits anywhere else, in particular `typs.py`.
+
+```bash
+grep -rn "\bcast(" src/leech/*.py
+```
+
+Expected: only `asserts.checked_cast` occurrences, plus the pre-existing, unrelated `typing.cast` uses that predate this feature (`compilation.py:84`, `ir_builder.py:1220`, and any other call site untouched by this feature's diff - cross-check each hit against `git diff main~7..HEAD` or the equivalent range if some tasks landed multiple commits, confirming it isn't one this feature introduced). If any survive that this feature *did* introduce, stop and report them - do not squash over an unresolved Task 5 gap.
+
+Read through this feature's full diff (`git diff <first-task-commit>~1..HEAD -- src/leech tests`) once for any multi-line conditional *expression* (an `if`/`else` spanning more than one line used as a value, not a statement) - none should remain; `CfgBuilder._build_var_expr`'s `ValueParamTyp` branch and `typs.ComptimeValueTyp.to_comptime_value`'s `match` statement (Task 4) are the two places this was a risk, and both should already be statement-shaped.
+
+- [ ] **Step 3: Squash**
+
+`git rebase -i` is unavailable in this environment; use `reset --soft` instead. Find the commit immediately before Task 1's (the plan's true base), then:
+
+```bash
+git reset --soft <base-commit>
+git commit -m "Add comptime generic parameters
+
+Task 6 also makes partial progress on #2 (Support generic traits):
+declaring, implementing, and calling a method on a comptime-parameterized
+trait now works (typs.resolve_trait_comptime_args, shared with the
+pre-existing bound-resolution path; a trait's own comptime parameters
+substitute correctly into a method's signature for a given impl). This
+does not fully resolve #2: impl-registry coherence/overlap is still keyed
+only on (Trait, self-type), not the trait's own arguments, and calling a
+method through a bound with generic arguments still raises
+NotImplementedError. #2 should stay open.
+
+For: #39: Non-type generic parameters
+For: #2: Support generic traits" -m "$(cat <<'EOF'
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01BT5ZiidLkMUuBCwAQ2sp3a
+EOF
+)"
+```
+
+- [ ] **Step 4: Re-verify after the squash**
+
+```bash
+uv run pytest -q
+uv run ruff check . && uv run ruff format --check . && uv run basedpyright
+git log --oneline -3
+git status --short
+```
+
+Expected: everything still passes, `git log` shows exactly one new commit on top of the pre-Task-1 base, and the working tree is clean.

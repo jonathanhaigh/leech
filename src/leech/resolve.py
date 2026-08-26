@@ -12,7 +12,7 @@ never needs to re-resolve it.
 import enum
 from typing import TYPE_CHECKING, Final, Optional
 
-from leech import ast, ir_values
+from leech import ast, ir_values, typs
 
 if TYPE_CHECKING:
     # Runtime import is local because ir_module imports typcheck, which
@@ -28,8 +28,10 @@ type VarTarget = (
     | ir_module.FnSymbol
     | ir_traits.ImplFnSelection
     | ir_values.ComptimeEnum
+    | typs.ValueParamTyp
 )
-"""What a ``VarExpr`` resolves to: a local binding, or a shared module item."""
+"""What a ``VarExpr`` resolves to: a local binding, a shared module item, or
+a comptime value parameter."""
 
 type Callee = ir_traits.ImplFnSelection
 """A callable a dot-call's member lookup found."""

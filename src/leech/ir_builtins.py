@@ -19,12 +19,14 @@ class SizeOfIntrinsicFn(ir_module.IntrinsicFnSymbol):
         super().__init__("__size_of", ("T",), e)
 
     @override
-    def fn_typ_for_typ_args(self, typ_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
+    def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
         return typs.FnTyp.get_or_create(typs.USIZE, ())
 
     @override
-    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
-        size = builder._curr_bb.size_of(typ_args[0], None)
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, comptime_args: tuple[typs.Typ, ...]
+    ) -> None:
+        size = builder._curr_bb.size_of(comptime_args[0], None)
         builder._curr_bb.ret(size, None)
 
 
@@ -35,18 +37,20 @@ class PtrCastMutIntrinsicFn(ir_module.IntrinsicFnSymbol):
         super().__init__("__ptr_cast_mut", ("From", "To"), e)
 
     @override
-    def fn_typ_for_typ_args(self, typ_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
-        from_typ, to_typ = typ_params
+    def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
+        from_typ, to_typ = comptime_params
         return typs.FnTyp.get_or_create(
             typs.PtrTyp.get_or_create(to_typ, typs.MUT),
             (typs.PtrTyp.get_or_create(from_typ, typs.MUT),),
         )
 
     @override
-    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, comptime_args: tuple[typs.Typ, ...]
+    ) -> None:
         assert builder._fn is not None
         param = builder._fn.params[0]
-        target_typ = typs.PtrTyp.get_or_create(typ_args[1], typs.MUT)
+        target_typ = typs.PtrTyp.get_or_create(comptime_args[1], typs.MUT)
         casted = builder._curr_bb.ptr_cast(param, target_typ, None)
         builder._curr_bb.ret(casted, None)
 
@@ -58,13 +62,15 @@ class IsNullIntrinsicFn(ir_module.IntrinsicFnSymbol):
         super().__init__("__is_null", ("T",), e)
 
     @override
-    def fn_typ_for_typ_args(self, typ_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
-        (t,) = typ_params
+    def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
+        (t,) = comptime_params
         return typs.FnTyp.get_or_create(typs.BOOL, (typs.PtrTyp.get_or_create(t, typs.MUT),))
 
     @override
-    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
-        del typ_args
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, comptime_args: tuple[typs.Typ, ...]
+    ) -> None:
+        del comptime_args
         assert builder._fn is not None
         param = builder._fn.params[0]
         result = builder._curr_bb.is_null(param, None)
@@ -78,13 +84,15 @@ class EnumToIntIntrinsicFn(ir_module.IntrinsicFnSymbol):
         super().__init__("__enum_to_int", ("E",), e)
 
     @override
-    def fn_typ_for_typ_args(self, typ_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
-        (e_typ,) = typ_params
+    def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
+        (e_typ,) = comptime_params
         return typs.FnTyp.get_or_create(typs.EnumBackingTyp.get_or_create(e_typ), (e_typ,))
 
     @override
-    def _build_body(self, builder: ir_builder.CfgBuilder, typ_args: tuple[typs.Typ, ...]) -> None:
-        del typ_args
+    def _build_body(
+        self, builder: ir_builder.CfgBuilder, comptime_args: tuple[typs.Typ, ...]
+    ) -> None:
+        del comptime_args
         assert builder._fn is not None
         param = builder._fn.params[0]
         result = builder._curr_bb.enum_to_int(param, None)

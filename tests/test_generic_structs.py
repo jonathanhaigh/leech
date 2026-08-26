@@ -33,7 +33,7 @@ def test_generic_and_non_generic_struct_module_items_have_distinct_types(tmp_pat
 
     assert not isinstance(template, typs.Typ)
     assert isinstance(plain, typs.Typ)
-    assert plain.typ_args == ()
+    assert plain.comptime_args == ()
     assert plain.template.name == "Plain"
 
 
@@ -277,7 +277,7 @@ def test_bare_reference_to_generic_struct_requires_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Box"' in str(exc_info.value)
     span = exc_info.value.message.span
@@ -297,7 +297,7 @@ def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(tmp_path):
     }
     """
 
-    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
 
     assert '"Box"' in str(exc_info.value)
@@ -314,7 +314,7 @@ def test_wrong_number_of_typ_args_on_generic_struct(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Pair"' in str(exc_info.value)
 
@@ -327,7 +327,7 @@ def test_explicit_typ_args_on_non_generic_struct(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Foo"' in str(exc_info.value)
 
@@ -341,6 +341,15 @@ def test_generic_struct_duplicate_field(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateFieldInStructDefnError):
+        util.compile_str(tmp_path, src)
+
+
+def test_value_param_used_as_struct_field_typ_is_rejected(tmp_path):
+    src = """
+    struct S[N: usize] { f: N }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ValueUsedAsTypError):
         util.compile_str(tmp_path, src)
 
 
@@ -946,3 +955,28 @@ def test_impl_on_generic_struct_target_qualified_path(tmp_path):
     """
     with pytest.raises(errors.ImplForNonLocalStructTypError):
         util.compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+def test_struct_value_param_used_in_array_field(tmp_path):
+    src = """
+    struct Buf[T, N: usize] {
+        data: [T; N],
+    }
+    pub fn main() i32 {
+        let buf = Buf[i32, 3] { data: [1, 2, 3] };
+        return buf.data.[0] + buf.data.[1] + buf.data.[2] - 6;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_struct_value_param_mangled_name(tmp_path):
+    src = """
+    struct Buf[T, N: usize] { data: [T; N] }
+    pub fn main() i32 {
+        let buf = Buf[i32, 4] { data: [1, 2, 3, 4] };
+        return buf.data.[0] - 1;
+    }
+    """
+    ir_text = util.compile_str(tmp_path, src).read_text()
+    assert '%"main::Buf[i32, 4]"' in ir_text

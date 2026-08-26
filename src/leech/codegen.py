@@ -136,7 +136,7 @@ class Compiler:
 
         # A generic struct's own fields are never lowered - only an
         # instantiation's are, below - but they're still validated here,
-        # against the struct's own (opaque) type parameters, the same as
+        # against the struct's own (opaque) comptime parameters, the same as
         # every other declared struct's: an infinite-size struct is
         # rejected whether or not anything in the program instantiates it.
         #
@@ -216,7 +216,10 @@ class Compiler:
                 # work around, so just use typed pointers for now.
                 return ll.PointerType(pointee=self._ll_mod_items.get(typ.pointee_typ))
             case typs.ArrayTyp():
-                return ll.ArrayType(self._ll_mod_items.get(typ.element_typ), typ.length)
+                return ll.ArrayType(
+                    self._ll_mod_items.get(typ.element_typ),
+                    asserts.checked_cast(typ.length, typs.ComptimeValueTyp).value,
+                )
             case typs.VoidTyp():
                 return ll.VoidType()
             case typs.EnumTyp():

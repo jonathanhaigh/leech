@@ -253,7 +253,7 @@ def test_unconstrained_impl_typ_param_rejected(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.UnconstrainedImplTypParamError):
+    with pytest.raises(errors.UnconstrainedImplComptimeParamError):
         util.compile_str(tmp_path, src)
 
 
@@ -300,7 +300,7 @@ def test_impl_typ_param_used_only_by_method_is_unconstrained(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.UnconstrainedImplTypParamError):
+    with pytest.raises(errors.UnconstrainedImplComptimeParamError):
         util.compile_str(tmp_path, src)
 
 
@@ -573,3 +573,17 @@ def test_comptime_cross_module_private_assoc_fn_call(tmp_path):
     """
     with pytest.raises(errors.PrivateItemAccessError):
         util.compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+def test_impl_value_param_used_in_method_body(tmp_path):
+    src = """
+    struct Box[N: i32] {}
+    impl[N: i32] Box[N] {
+        fn get(*self) i32 { return N; }
+    }
+    pub fn main() i32 {
+        let b = Box[4] {};
+        return b.get() - 4;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)

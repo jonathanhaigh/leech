@@ -40,7 +40,9 @@ cross-references. Public items generally have concise docstrings; non-public ite
 only for surprising behavior or non-obvious contracts. Put `:pre:`, `:post:`, and
 `:invariant:` fields last. Use comments sparingly to explain non-obvious reasons and
 constraints, not visible code. Use assertions liberally—prefer helpers from the `asserts`
-module—and use `opt_util.py` helpers where applicable.
+module—and use `opt_util.py` helpers where applicable. Avoid multi-line conditional
+(`if`/`else`) *expressions*; use an `if` statement instead, or a `match` statement when
+dispatching on a small closed set of cases.
 
 ## Testing Guidelines
 

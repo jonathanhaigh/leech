@@ -11,7 +11,7 @@ import re
 import types
 import weakref
 from collections.abc import Callable, Hashable, Mapping, Sequence
-from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Optional, Self, override
 
 from leech import (
     asserts,
@@ -28,8 +28,8 @@ from leech import (
 )
 
 if TYPE_CHECKING:
-    # Runtime imports are local because ir_traits imports this module.
-    from leech import ir_traits
+    # Runtime imports are local because ir_traits/ir_values import this module.
+    from leech import ir_traits, ir_values
 
 
 class Mutability(enum.Enum):
@@ -55,7 +55,7 @@ def resolve_bound(
     bound: ast.BasicTyp,
     e: ir_env.Env,
 ) -> tuple[ir_traits.Trait, tuple[Typ, ...]]:
-    """Resolve a bound to its trait and its resolved type arguments.
+    """Resolve a bound to its trait and its resolved comptime arguments.
 
     Applies the same arity rules to a bound's trait reference that
     :meth:`Typ._basic_typ_from_ast` applies to a type reference, and checks the
@@ -67,36 +67,55 @@ def resolve_bound(
 
     trait = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
     if not isinstance(trait, ir_traits.Trait):
-        raise errors.BoundNotATraitError(bound.path.str(), bound.path.span)
-    if not trait.typ_params:
-        if bound.generic_args:
-            raise errors.TypArgsOnNonGenericItemError(bound.path.str(), bound.span)
-        return trait, ()
-    if not bound.generic_args:
-        raise errors.MissingTypArgsError(trait.name, bound.span)
-    if len(bound.generic_args) != len(trait.typ_params):
-        raise errors.WrongNumberOfTypArgsError(
-            trait.name, len(bound.generic_args), len(trait.typ_params), bound.span
+        raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
+    return trait, resolve_trait_comptime_args(trait, bound.comptime_args, e, bound.span)
+
+
+def resolve_trait_comptime_args(
+    trait: ir_traits.Trait,
+    args_ast: tuple[ast.ComptimeArg, ...],
+    e: ir_env.Env,
+    span: src.SrcSpan,
+) -> tuple[Typ, ...]:
+    """Resolve and bounds-check comptime arguments applied to ``trait``.
+
+    Applies the same arity rules :meth:`Typ._basic_typ_from_ast` applies to
+    a generic struct reference, and checks the resolved arguments against
+    the trait's own parameter bounds. Shared by a bound's own trait
+    reference (``T: Container[i32]``) and a trait impl's (``impl
+    Sized[N] for Buf[N]``).
+    """
+    if not trait.comptime_params:
+        if args_ast:
+            raise errors.ComptimeArgsOnNonGenericItemError(trait.name, span)
+        return ()
+    if not args_ast:
+        raise errors.MissingComptimeArgsError(trait.name, span)
+    if len(args_ast) != len(trait.comptime_params):
+        raise errors.WrongNumberOfComptimeArgsError(
+            trait.name, len(args_ast), len(trait.comptime_params), span
         )
-    typ_args = tuple(Typ.from_ast(arg, e) for arg in bound.generic_args)
+    comptime_args = tuple(
+        resolve_comptime_arg(param, arg_ast, e)
+        for param, arg_ast in zip(trait.comptime_params, args_ast, strict=True)
+    )
+    check_comptime_arg_bounds(trait.comptime_params, comptime_args, e, span)
+    return comptime_args
 
-    check_typ_arg_bounds(trait.typ_params, typ_args, e, bound.span)
-    return trait, typ_args
 
-
-def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[TypParamTyp, Typ]]:
+def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[ComptimeParamTyp, Typ]]:
     """Match a possibly generic ``declared`` type against a specific ``actual`` one.
 
-    The match succeeds when some substitution for ``declared``'s own type
+    The match succeeds when some substitution for ``declared``'s own comptime
     parameters turns it into exactly ``actual`` - so ``Pair[A, A]``
     matches ``Pair[i32, i32]`` but not ``Pair[i32, bool]``.
 
-    :param declared: The type as written, possibly naming type parameters.
+    :param declared: The type as written, possibly naming comptime parameters.
     :param actual: The type to match it against.
     :return: The substitution that makes them equal, or ``None`` if no
         substitution does. An empty mapping means they were already equal.
     """
-    bindings: dict[TypParamTyp, Typ] = {}
+    bindings: dict[ComptimeParamTyp, Typ] = {}
     declared.infer_typ_args(actual, bindings)
     return bindings if declared.substitute_typ_params(bindings) is actual else None
 
@@ -115,7 +134,7 @@ def _contains_typ(typ: Typ, contained: Typ, resolve: Callable[[Typ], Typ]) -> bo
     if isinstance(typ, ArrayTyp):
         return _contains_typ(typ.element_typ, contained, resolve)
     if isinstance(typ, StructTyp):
-        return any(_contains_typ(typ_arg, contained, resolve) for typ_arg in typ.typ_args)
+        return any(_contains_typ(typ_arg, contained, resolve) for typ_arg in typ.comptime_args)
     if isinstance(typ, EnumBackingTyp):
         return _contains_typ(typ.inner, contained, resolve)
     return False
@@ -124,22 +143,22 @@ def _contains_typ(typ: Typ, contained: Typ, resolve: Callable[[Typ], Typ]) -> bo
 def typs_overlap(a: Typ, b: Typ) -> bool:
     """Return whether substitutions can make ``a`` and ``b`` the same type.
 
-    Type parameters in either argument are unification variables. This differs
+    Comptime parameters in either argument are unification variables. This differs
     from :func:`match_typ_args`, whose parameters are only variables on its
     ``declared`` side. Bindings must remain finite, so an equation such as
     ``T = Box[T]`` does not establish an overlap.
     """
-    bindings: dict[TypParamTyp, Typ] = {}
+    bindings: dict[ComptimeParamTyp, Typ] = {}
 
     def resolve(typ: Typ) -> Typ:
-        while isinstance(typ, TypParamTyp) and typ in bindings:
+        while isinstance(typ, ComptimeParamTyp) and typ in bindings:
             typ = bindings[typ]
         return typ
 
-    def occurs(typ_param: TypParamTyp, typ: Typ) -> bool:
+    def occurs(typ_param: ComptimeParamTyp, typ: Typ) -> bool:
         return _contains_typ(typ, typ_param, resolve)
 
-    def bind(typ_param: TypParamTyp, typ: Typ) -> bool:
+    def bind(typ_param: ComptimeParamTyp, typ: Typ) -> bool:
         typ = resolve(typ)
         if typ is typ_param:
             return True
@@ -153,9 +172,9 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
         right = resolve(right)
         if left is right:
             return True
-        if isinstance(left, TypParamTyp):
+        if isinstance(left, ComptimeParamTyp):
             return bind(left, right)
-        if isinstance(right, TypParamTyp):
+        if isinstance(right, ComptimeParamTyp):
             return bind(right, left)
         if isinstance(left, FnTyp) and isinstance(right, FnTyp):
             return (
@@ -171,11 +190,11 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
         if isinstance(left, PtrTyp) and isinstance(right, PtrTyp):
             return left.mut == right.mut and unify(left.pointee_typ, right.pointee_typ)
         if isinstance(left, ArrayTyp) and isinstance(right, ArrayTyp):
-            return left.length == right.length and unify(left.element_typ, right.element_typ)
+            return unify(left.length, right.length) and unify(left.element_typ, right.element_typ)
         if isinstance(left, StructTyp) and isinstance(right, StructTyp):
             return left.template is right.template and all(
                 unify(left_arg, right_arg)
-                for left_arg, right_arg in zip(left.typ_args, right.typ_args, strict=True)
+                for left_arg, right_arg in zip(left.comptime_args, right.comptime_args, strict=True)
             )
         if isinstance(left, EnumBackingTyp) and isinstance(right, EnumBackingTyp):
             return unify(left.inner, right.inner)
@@ -190,15 +209,16 @@ def contains_typ(container: Typ, contained: Typ) -> bool:
 
 
 def unsatisfied_bound(
-    bindings: Mapping[TypParamTyp, Typ],
+    bindings: Mapping[ComptimeParamTyp, Typ],
     e: ir_env.Env,
 ) -> Optional[tuple[TypParamTyp, Typ, ir_traits.Trait]]:
-    """Find a type argument that doesn't satisfy its parameter's bounds.
+    """Find a type argument that doesn't satisfy its type parameter's bounds.
 
-    :param bindings: Each type parameter mapped to the type argument
-        standing in for it.
+    :param bindings: Each comptime parameter mapped to the comptime
+        argument standing in for it. A value parameter's binding is
+        skipped - it has no bounds of its own to violate.
     :param e: The scope each bound's trait name resolves in.
-    :return: The first parameter, argument and trait for which the
+    :return: The first type parameter, argument and trait for which the
         argument doesn't implement the trait, or ``None`` if every bound
         holds.
     """
@@ -209,6 +229,10 @@ def unsatisfied_bound(
         sub_env.add_container(typ_param.name, typ_arg)
 
     for typ_param, typ_arg in bindings.items():
+        if not isinstance(typ_param, TypParamTyp):
+            # A value parameter has no bounds of its own to violate; only
+            # its (already-checked) declared value type constrains it.
+            continue
         for bound in typ_param.bounds:
             if typ_param.is_declared_by_trait:
                 with e.ctx.detect_cycle(
@@ -226,10 +250,10 @@ def unsatisfied_bound(
                             repeated_bound.path.span,
                             entries,
                         )
-                    trait, bound_typ_args = resolve_bound(bound, sub_env)
+                    trait, bound_comptime_args = resolve_bound(bound, sub_env)
             else:
-                trait, bound_typ_args = resolve_bound(bound, sub_env)
-            if bound_typ_args:
+                trait, bound_comptime_args = resolve_bound(bound, sub_env)
+            if bound_comptime_args:
                 # Matching these against an impl's own trait arguments needs generic
                 # traits. Nothing upstream rejects the bound, so fail loudly rather
                 # than silently ignore the arguments.
@@ -241,17 +265,73 @@ def unsatisfied_bound(
     return None
 
 
-def check_typ_arg_bounds(
-    typ_params: Sequence[TypParamTyp],
-    typ_args: tuple[Typ, ...],
+def resolve_comptime_arg(param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: ir_env.Env) -> Typ:
+    """Resolve one parsed comptime argument against its declared parameter.
+
+    An unsuffixed integer literal takes ``param``'s declared value type
+    when ``param`` is a :class:`ValueParamTyp`; an explicitly suffixed one
+    resolves to its own suffix, exactly like an ordinary integer literal
+    elsewhere.
+
+    :raises WrongKindOfComptimeArgError: If a bare integer literal is
+        given for a type parameter.
+    """
+    if isinstance(arg_ast, ast.IntLit):
+        if arg_ast.explicit_width is not None:
+            assert arg_ast.explicit_signage is not None
+            lit_typ: IntTyp = IntTyp.get_or_create(arg_ast.explicit_width, arg_ast.explicit_signage)
+        elif isinstance(param, ValueParamTyp) and isinstance(param.value_typ, IntTyp):
+            lit_typ = param.value_typ
+        else:
+            raise errors.WrongKindOfComptimeArgError(param.name, arg_ast.diag_str(), arg_ast.span)
+        if not lit_typ.fits(arg_ast.value):
+            raise errors.IntLitOverflowError(arg_ast.value, lit_typ.name, arg_ast.span)
+        return ComptimeValueTyp.get_or_create(lit_typ, arg_ast.value)
+    if isinstance(arg_ast, ast.BoolLit):
+        return ComptimeValueTyp.get_or_create(BOOL, arg_ast.value)
+    if isinstance(arg_ast, ast.BasicTyp) and not arg_ast.comptime_args:
+        # A bare name here may forward a value parameter, or the concrete
+        # value substituted for one (e.g. `Sized[N]`, forwarding an
+        # enclosing impl's own value parameter as a trait argument) -
+        # resolved directly, since `Typ.from_ast`'s `resolve_typ` rejects
+        # exactly that as a type.
+        item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, arg_ast.path)
+        if isinstance(item, (ValueParamTyp, ComptimeValueTyp)):
+            return item
+    return Typ.from_ast(arg_ast, e)
+
+
+def check_comptime_arg_bounds(
+    comptime_params: Sequence[ComptimeParamTyp],
+    comptime_args: tuple[Typ, ...],
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
 ) -> None:
-    """Raise if a type argument violates its corresponding parameter's bounds.
+    """Raise if a comptime argument violates its corresponding parameter's bounds.
 
-    :raises UnsatisfiedBoundError: If a bound doesn't hold.
+    :raises WrongKindOfComptimeArgError: If a type argument was given for a
+        value parameter, or vice versa.
+    :raises WrongComptimeValueTypError: If a value argument's type doesn't
+        match its parameter's declared type.
+    :raises UnsatisfiedBoundError: If a type argument doesn't satisfy a
+        trait bound.
     """
-    violated = unsatisfied_bound(dict(zip(typ_params, typ_args, strict=True)), e)
+    typ_param_bindings: dict[ComptimeParamTyp, Typ] = {}
+    for param, arg in zip(comptime_params, comptime_args, strict=True):
+        arg_value_typ = None
+        if isinstance(arg, (ValueParamTyp, ComptimeValueTyp)):
+            arg_value_typ = arg.value_typ
+        if isinstance(param, ValueParamTyp):
+            if arg_value_typ is None:
+                raise errors.WrongKindOfComptimeArgError(param.name, arg.name, span)
+            if arg_value_typ is not param.value_typ:
+                raise errors.WrongComptimeValueTypError(arg.name, param.value_typ.name, span)
+        else:
+            if arg_value_typ is not None:
+                raise errors.WrongKindOfComptimeArgError(param.name, arg.name, span)
+            typ_param_bindings[asserts.checked_cast(param, TypParamTyp)] = arg
+
+    violated = unsatisfied_bound(typ_param_bindings, e)
     if violated is not None:
         typ_param, typ_arg, trait = violated
         raise errors.UnsatisfiedBoundError(typ_arg.name, trait.name, typ_param.name, span)
@@ -304,15 +384,15 @@ class Typ(abc.ABC):
         """
         return self == target_typ
 
-    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
-        """Replace mapped type parameters while preserving canonical interning.
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
+        """Replace mapped comptime parameters while preserving canonical interning.
 
         The base implementation returns ``self`` because it contains no parameters.
         """
         return self
 
     def infer_typ_args(  # noqa: B027 - intentionally empty default, not abstract
-        self, actual: Typ, bindings: dict[TypParamTyp, Typ]
+        self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]
     ) -> None:
         """Infer parameter bindings structurally from ``actual``.
 
@@ -321,7 +401,7 @@ class Typ(abc.ABC):
         """
 
     def is_concrete(self) -> bool:
-        """Return whether this type contains no type parameters.
+        """Return whether this type contains no comptime parameters.
 
         The base implementation is unconditionally true.
         """
@@ -357,29 +437,48 @@ class Typ(abc.ABC):
                 )
             case ast.ArrayTyp():
                 return ArrayTyp.get_or_create(
-                    Typ.from_ast(typ_ast.element_typ, e), typ_ast.length.value
+                    Typ.from_ast(typ_ast.element_typ, e),
+                    Typ._array_length_from_ast(typ_ast.length, e),
                 )
             case _:
                 raise AssertionError(f"unhandled type ast node {typ_ast}")
+
+    @staticmethod
+    def _array_length_from_ast(length_ast: ast.ArrayLength, e: ir_env.Env) -> Typ:
+        """Resolve a parsed array length: a literal, or a value parameter reference."""
+        if isinstance(length_ast, ast.LiteralArrayLength):
+            return ComptimeValueTyp.get_or_create(USIZE, length_ast.value)
+        path_length = asserts.checked_cast(length_ast, ast.PathArrayLength)
+        item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, path_length.path)
+        if isinstance(item, (ValueParamTyp, ComptimeValueTyp)) and item.value_typ is USIZE:
+            return item
+        raise errors.WrongComptimeValueTypError(
+            item.name if isinstance(item, Typ) else path_length.path.str(),
+            USIZE.name,
+            path_length.path.span,
+        )
 
     @staticmethod
     def _basic_typ_from_ast(typ_ast: ast.BasicTyp, e: ir_env.Env) -> Typ:
         """Resolve a named type, applying arguments only to a bare generic template."""
         item = e.resolve_typ(typ_ast.path)
         if not isinstance(item, StructTypTemplate):
-            if typ_ast.generic_args:
-                raise errors.TypArgsOnNonGenericItemError(typ_ast.path.str(), typ_ast.span)
+            if typ_ast.comptime_args:
+                raise errors.ComptimeArgsOnNonGenericItemError(typ_ast.path.str(), typ_ast.span)
             return item
 
-        if not typ_ast.generic_args:
-            raise errors.MissingTypArgsError(item.name, typ_ast.span)
-        if len(typ_ast.generic_args) != len(item.typ_params):
-            raise errors.WrongNumberOfTypArgsError(
-                item.name, len(typ_ast.generic_args), len(item.typ_params), typ_ast.span
+        if not typ_ast.comptime_args:
+            raise errors.MissingComptimeArgsError(item.name, typ_ast.span)
+        if len(typ_ast.comptime_args) != len(item.comptime_params):
+            raise errors.WrongNumberOfComptimeArgsError(
+                item.name, len(typ_ast.comptime_args), len(item.comptime_params), typ_ast.span
             )
-        typ_args = tuple(Typ.from_ast(arg, e) for arg in typ_ast.generic_args)
-        check_typ_arg_bounds(item.typ_params, typ_args, e, typ_ast.span)
-        return item.instantiate(typ_args)
+        comptime_args = tuple(
+            resolve_comptime_arg(param, arg_ast, e)
+            for param, arg_ast in zip(item.comptime_params, typ_ast.comptime_args, strict=True)
+        )
+        check_comptime_arg_bounds(item.comptime_params, comptime_args, e, typ_ast.span)
+        return item.instantiate(comptime_args)
 
 
 class IntTyp(Typ):
@@ -502,14 +601,14 @@ class FnTyp(CallableTyp):
         return f"fn({param_strs}) {self.ret_typ.name}"
 
     @override
-    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
         return FnTyp.get_or_create(
             self.ret_typ.substitute_typ_params(mapping),
             tuple(param_typ.substitute_typ_params(mapping) for param_typ in self.param_typs),
         )
 
     @override
-    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+    def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
         if not isinstance(actual, FnTyp):
             return
         self.ret_typ.infer_typ_args(actual.ret_typ, bindings)
@@ -564,11 +663,11 @@ class PtrTyp(Typ):
         )
 
     @override
-    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
         return PtrTyp.get_or_create(self.pointee_typ.substitute_typ_params(mapping), self.mut)
 
     @override
-    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+    def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
         if isinstance(actual, PtrTyp):
             self.pointee_typ.infer_typ_args(actual.pointee_typ, bindings)
 
@@ -585,37 +684,91 @@ class ArrayTyp(Typ):
     """A fixed-length array type, e.g. ``[i32; 4]``."""
 
     element_typ: Final[Typ]
-    length: Final[int]
+    length: Final[Typ]
 
-    def __init__(self, element_typ: Typ, length: int) -> None:
+    def __init__(self, element_typ: Typ, length: Typ) -> None:
         self.element_typ = element_typ
         self.length = length
+
+    @staticmethod
+    def of_length(element_typ: Typ, length: int) -> ArrayTyp:
+        """Return the cached instance for a concrete literal ``length``."""
+        return ArrayTyp.get_or_create(element_typ, ComptimeValueTyp.get_or_create(USIZE, length))
 
     @property
     @override
     def name(self) -> str:
-        return f"[{self.element_typ.name}; {self.length}]"
+        return f"[{self.element_typ.name}; {self.length.name}]"
 
     @property
     @override
     def qualified_name(self) -> str:
-        return f"[{self.element_typ.qualified_name}; {self.length}]"
+        return f"[{self.element_typ.qualified_name}; {self.length.qualified_name}]"
 
     @override
-    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
-        return ArrayTyp.get_or_create(self.element_typ.substitute_typ_params(mapping), self.length)
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
+        return ArrayTyp.get_or_create(
+            self.element_typ.substitute_typ_params(mapping),
+            self.length.substitute_typ_params(mapping),
+        )
 
     @override
-    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+    def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
         if isinstance(actual, ArrayTyp):
             self.element_typ.infer_typ_args(actual.element_typ, bindings)
+            self.length.infer_typ_args(actual.length, bindings)
 
     @override
     def is_concrete(self) -> bool:
-        return self.element_typ.is_concrete()
+        return self.element_typ.is_concrete() and self.length.is_concrete()
 
 
-class TypParamTyp(Typ):
+class ComptimeParamTyp(Typ):
+    """Shared identity, caching, and substitution for a comptime parameter.
+
+    Interned by its owner and position - a parameter is declared in exactly
+    one place, so the first interning fixes it. Never instantiated
+    directly; use :class:`TypParamTyp` or :class:`ValueParamTyp`.
+    """
+
+    _owner: Final[Hashable]
+    _index: Final[int]
+    _name: Final[str]
+
+    def __init__(self, owner: Hashable, index: int, name: str) -> None:
+        self._owner = owner
+        self._index = index
+        self._name = name
+
+    @override
+    @classmethod
+    def cache_key(cls, *args: Hashable) -> Hashable:
+        """Key a comptime parameter by its declaring item and position.
+
+        :pre: len(args) > 1 [assert_gt]
+        """
+        asserts.assert_gt(len(args), 1)
+        return (cls, args[0], args[1])
+
+    @property
+    @override
+    def name(self) -> str:
+        return self._name
+
+    @override
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
+        return mapping.get(self, self)
+
+    @override
+    def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
+        bindings.setdefault(self, actual)
+
+    @override
+    def is_concrete(self) -> bool:
+        return False
+
+
+class TypParamTyp(ComptimeParamTyp):
     """An opaque generic type parameter interned by its owner and position.
 
     It has no LLVM representation and stores only its display name, trait
@@ -627,9 +780,6 @@ class TypParamTyp(Typ):
         in exactly one place, so the first interning fixes it.
     """
 
-    _owner: Final[Hashable]
-    _index: Final[int]
-    _name: Final[str]
     bounds: Final[tuple[ast.BasicTyp, ...]]
     decl_env: Final[Optional[ir_env.Env]]
 
@@ -641,9 +791,7 @@ class TypParamTyp(Typ):
         bounds: tuple[ast.BasicTyp, ...] = (),
         decl_env: Optional[ir_env.Env] = None,
     ) -> None:
-        self._owner = owner
-        self._index = index
-        self._name = name
+        super().__init__(owner, index, name)
         self.bounds = bounds
         self.decl_env = decl_env
 
@@ -674,50 +822,140 @@ class TypParamTyp(Typ):
         """
         return isinstance(self._owner, ast.TraitDefn)
 
+
+class ValueParamTyp(ComptimeParamTyp):
+    """An opaque comptime value parameter interned by its owner and position.
+
+    It has no LLVM representation of its own; a concrete argument
+    substitutes to a :class:`ComptimeValueTyp` of the same ``value_typ``.
+
+    :param value_typ: This parameter's declared type - an :class:`IntTyp`
+        or :data:`BOOL`.
+    """
+
+    value_typ: Final[Typ]
+
+    def __init__(self, owner: Hashable, index: int, name: str, value_typ: Typ) -> None:
+        super().__init__(owner, index, name)
+        self.value_typ = value_typ
+
+
+class ComptimeValueTyp(Typ):
+    """A concrete compile-time value used as a comptime argument.
+
+    The type-level counterpart to :class:`~leech.ir_values.ComptimeValue`:
+    a ``Typ`` node whose entire content is one concrete compile-time value,
+    interned the same way every other ``Typ`` is - equal values are
+    therefore always the same instance.
+
+    :param value_typ: This value's type - an :class:`IntTyp` or :data:`BOOL`.
+
+    :pre: (value_typ is BOOL) == isinstance(value, bool) [assert]
+    """
+
+    value_typ: Final[Typ]
+    value: Final[int | bool]
+
+    def __init__(self, value_typ: Typ, value: int | bool) -> None:
+        assert (value_typ is BOOL) == isinstance(value, bool), (
+            f"{value!r} does not match declared type {value_typ.name}"
+        )
+        self.value_typ = value_typ
+        self.value = value
+
     @override
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key type parameters by their declaring item and position.
+        """Key a comptime value by its type and its own value.
 
-        :pre: len(args) > 1 [assert_gt]
+        :pre: len(args) == 2 [assert_eq]
         """
-        asserts.assert_gt(len(args), 1)
+        asserts.assert_eq(len(args), 2)
         return (cls, args[0], args[1])
 
     @property
     @override
     def name(self) -> str:
-        return self._name
+        return str(self.value).lower()
 
     @override
-    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
-        return mapping.get(self, self)
-
-    @override
-    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
-        bindings.setdefault(self, actual)
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
+        return self
 
     @override
     def is_concrete(self) -> bool:
-        return False
+        return True
+
+    def to_comptime_value(self, ast_node: Optional[ast.Ast] = None) -> ir_values.ComptimeValue:
+        """Build the :class:`~leech.ir_values.ComptimeValue` this value denotes."""
+        # Local to avoid the ir_values import cycle (ir_values imports this module).
+        from leech import ir_values  # noqa: PLC0415
+
+        match self.value_typ:
+            case BoolTyp():
+                return ir_values.ComptimeBool(asserts.checked_cast(self.value, bool), ast_node)
+            case IntTyp():
+                return ir_values.ComptimeInt(
+                    self.value_typ, asserts.checked_cast(self.value, int), ast_node
+                )
+            case _:
+                raise AssertionError(f"unsupported comptime value typ {self.value_typ.name}")
 
 
-def typ_params_from_ast(
-    owner: Hashable, generic_params: Sequence[ast.GenericParam], e: ir_env.Env
-) -> tuple[TypParamTyp, ...]:
-    """Intern parsed type parameters under ``owner``, preserving declaration order.
+def comptime_params_from_ast(
+    owner: Hashable, comptime_params: Sequence[ast.ComptimeParam], e: ir_env.Env
+) -> tuple[ComptimeParamTyp, ...]:
+    """Intern parsed comptime parameters under ``owner``, preserving declaration order.
 
-    :param e: The scope enclosing the declaration, which its parameters'
-        bounds are resolved in. See :attr:`TypParamTyp.decl_env`.
+    A single-entry bound list is resolved against ``e``: a name that
+    denotes a ``Trait`` declares a type parameter with that bound (as a
+    multi-entry bound list always does); a name that denotes an
+    :class:`IntTyp` or :data:`BOOL` declares a value parameter of that
+    type instead. This declaration is called eagerly (e.g. from a
+    function's or trait's own ``__init__``), so a single bound that
+    doesn't yet resolve - e.g. a trait declared later in the same module,
+    as in mutually recursive trait bounds - is left unresolved here and
+    always yields a type parameter; the deferred :meth:`resolve_bound`
+    call that checks it later (after the whole module is loaded) raises
+    if it still doesn't name a trait.
+
+    :param e: The scope enclosing the declaration, in which parameters'
+        bounds are resolved. See :attr:`TypParamTyp.decl_env`.
     :raises ReservedNameError: If a parameter takes a reserved name.
+    :raises InvalidComptimeBoundError: If a single bound resolves now and
+        names neither a trait nor a usable value type.
     """
-    for param_ast in generic_params:
+    # Local to avoid the ir_traits import cycle.
+    from leech import ir_traits  # noqa: PLC0415
+
+    for param_ast in comptime_params:
         if reserved.is_reserved(param_ast.ident.name):
             raise errors.ReservedNameError(param_ast.ident.name, param_ast.ident.span)
-    return tuple(
-        TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds, e)
-        for index, param_ast in enumerate(generic_params)
-    )
+
+    result: list[ComptimeParamTyp] = []
+    for index, param_ast in enumerate(comptime_params):
+        value_typ: Optional[Typ] = None
+        if len(param_ast.bounds) == 1:
+            (bound,) = param_ast.bounds
+            try:
+                item: Optional[Any] = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
+            except errors.ItemNotFoundError:
+                # Not yet declared in this module - defer to a type parameter;
+                # resolve_bound raises later if it never resolves to a trait.
+                item = None
+            if isinstance(item, (IntTyp, BoolTyp)):
+                value_typ = item
+            elif item is not None and not isinstance(item, ir_traits.Trait):
+                raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
+        if value_typ is not None:
+            result.append(
+                ValueParamTyp.get_or_create(owner, index, param_ast.ident.name, value_typ)
+            )
+        else:
+            result.append(
+                TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds, e)
+            )
+    return tuple(result)
 
 
 class StructField:
@@ -774,8 +1012,10 @@ class StructTypTemplate:
         self.mod_name = mod_name
         # Bind parameters before fields so parameter-name errors take priority.
         param_env = e.new_child()
-        for typ_param in self.typ_params:
-            param_env.add_container(typ_param.name, typ_param)
+        for comptime_param in self.comptime_params:
+            param_env.add_container(comptime_param.name, comptime_param)
+            if isinstance(comptime_param, ValueParamTyp):
+                param_env.add_var(comptime_param.name, comptime_param)
         field_asts: dict[str, ast.StructFieldDefn] = {}
         for field_ast in struct_ast.fields:
             name = field_ast.ident.name
@@ -799,23 +1039,25 @@ class StructTypTemplate:
         return self.ast.span
 
     @functools.cached_property
-    def typ_params(self) -> tuple[TypParamTyp, ...]:
-        """The declaration's interned formal type parameters."""
-        return typ_params_from_ast(self.ast, self.ast.generic_params, self._decl_env)
+    def comptime_params(self) -> tuple[ComptimeParamTyp, ...]:
+        """The declaration's interned formal comptime parameters."""
+        return comptime_params_from_ast(self.ast, self.ast.comptime_params, self._decl_env)
 
-    def instantiate(self, typ_args: tuple[Typ, ...]) -> StructTyp:
-        """Return the cached instance for ``typ_args`` and record its request.
+    def instantiate(self, comptime_args: tuple[Typ, ...]) -> StructTyp:
+        """Return the cached instance for ``comptime_args`` and record its request.
 
         :post: instantiate(a) is instantiate(a) for equal a [cache]
         """
-        asserts.assert_eq(len(typ_args), len(self.typ_params))
-        return self._decl_env.ctx.instantiate_struct(self, typ_args, record_request=True)
+        asserts.assert_eq(len(comptime_args), len(self.comptime_params))
+        return self._decl_env.ctx.instantiate_struct(self, comptime_args, record_request=True)
 
     @functools.cached_property
     def _validation_instance(self) -> StructTyp:
         """Return the cached opaque instance used only for declaration validation."""
-        asserts.assert_gt(len(self.typ_params), 0)
-        return self._decl_env.ctx.instantiate_struct(self, self.typ_params, record_request=False)
+        asserts.assert_gt(len(self.comptime_params), 0)
+        return self._decl_env.ctx.instantiate_struct(
+            self, self.comptime_params, record_request=False
+        )
 
     def validate_declaration(self) -> None:
         """Validate this declaration's layout with its bare root name."""
@@ -824,7 +1066,7 @@ class StructTypTemplate:
     @functools.cached_property
     def module_instance(self) -> StructTyp:
         """Return the zero-argument instance bound for a non-generic declaration."""
-        asserts.assert_eq(len(self.typ_params), 0)
+        asserts.assert_eq(len(self.comptime_params), 0)
         return self._decl_env.ctx.instantiate_struct(self, (), record_request=False)
 
 
@@ -832,16 +1074,16 @@ class StructTyp(Typ):
     """A usable nominal struct instance owned by one declaration template."""
 
     template: Final[StructTypTemplate]
-    typ_args: Final[tuple[Typ, ...]]
+    comptime_args: Final[tuple[Typ, ...]]
     _env: Final[ir_env.Env]
     _fields: Final[dict[str, StructField]]
 
-    def __init__(self, template: StructTypTemplate, typ_args: tuple[Typ, ...]) -> None:
-        asserts.assert_eq(len(typ_args), len(template.typ_params))
+    def __init__(self, template: StructTypTemplate, comptime_args: tuple[Typ, ...]) -> None:
+        asserts.assert_eq(len(comptime_args), len(template.comptime_params))
         self.template = template
-        self.typ_args = typ_args
+        self.comptime_args = comptime_args
         self._env = template._decl_env.new_child()
-        for typ_param, typ_arg in zip(template.typ_params, typ_args, strict=True):
+        for typ_param, typ_arg in zip(template.comptime_params, comptime_args, strict=True):
             self._env.add_container(typ_param.name, typ_arg)
         self._fields = {
             field_ast.ident.name: StructField(index, field_ast, self._env)
@@ -869,40 +1111,44 @@ class StructTyp(Typ):
     def qualified_name(self) -> str:
         """This instantiation's mangled symbol name, e.g. ``mod::Pair[i32, i32]``.
 
-        The type arguments are qualified too, rather than rendered as
+        The comptime arguments are qualified too, rather than rendered as
         :attr:`name` renders them: two same-named structs declared in
         different modules are different types, so ``Box[a::Foo]`` and
         ``Box[b::Foo]`` must not arrive at one symbol.
         """
         qualified = f"{self.mod_name}::{self.template.name}"
-        if not self.typ_args:
+        if not self.comptime_args:
             return qualified
-        arg_names = ", ".join(typ_arg.qualified_name for typ_arg in self.typ_args)
+        arg_names = ", ".join(typ_arg.qualified_name for typ_arg in self.comptime_args)
         return f"{qualified}[{arg_names}]"
 
     @override
     def is_concrete(self) -> bool:
-        return all(typ_arg.is_concrete() for typ_arg in self.typ_args)
+        return all(typ_arg.is_concrete() for typ_arg in self.comptime_args)
 
     @override
-    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
-        substituted = tuple(typ_arg.substitute_typ_params(mapping) for typ_arg in self.typ_args)
-        if substituted == self.typ_args:
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
+        substituted = tuple(
+            typ_arg.substitute_typ_params(mapping) for typ_arg in self.comptime_args
+        )
+        if substituted == self.comptime_args:
             return self
         return self.template.instantiate(substituted)
 
     @override
-    def infer_typ_args(self, actual: Typ, bindings: dict[TypParamTyp, Typ]) -> None:
+    def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
         if isinstance(actual, StructTyp) and actual.template is self.template:
-            for declared_arg, actual_arg in zip(self.typ_args, actual.typ_args, strict=True):
+            for declared_arg, actual_arg in zip(
+                self.comptime_args, actual.comptime_args, strict=True
+            ):
                 declared_arg.infer_typ_args(actual_arg, bindings)
 
     @property
     @override
     def name(self) -> str:
-        if not self.typ_args:
+        if not self.comptime_args:
             return self.template.name
-        arg_names = ", ".join(typ_arg.name for typ_arg in self.typ_args)
+        arg_names = ", ".join(typ_arg.name for typ_arg in self.comptime_args)
         return f"{self.template.name}[{arg_names}]"
 
     @functools.cached_property
@@ -968,7 +1214,9 @@ class StructTyp(Typ):
         if earlier.template is not current.template:
             return False
 
-        for earlier_arg, current_arg in zip(earlier.typ_args, current.typ_args, strict=True):
+        for earlier_arg, current_arg in zip(
+            earlier.comptime_args, current.comptime_args, strict=True
+        ):
             if not contains_typ(current_arg, earlier_arg):
                 return False
         return True
@@ -1130,7 +1378,7 @@ class EnumBackingTyp(Typ):
         return f"<backing type of {self.inner.name}>"
 
     @override
-    def substitute_typ_params(self, mapping: Mapping[TypParamTyp, Typ]) -> Typ:
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
         substituted_inner = self.inner.substitute_typ_params(mapping)
         if isinstance(substituted_inner, EnumTyp):
             return substituted_inner.backing_typ

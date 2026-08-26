@@ -356,3 +356,13 @@ def test_void_array_element_from_later_element(tmp_path):
     """
     with pytest.raises(errors.VoidArrayElementError):
         util.compile_str(tmp_path, src)
+
+
+def test_generic_fn_body_uses_array_typ_with_value_param(tmp_path):
+    src = """
+    fn sum3[N: usize](x: [i32; N]) i32 { return x.[0] + x.[1] + x.[2]; }
+    pub fn main() i32 {
+        return sum3[3]([4, 5, 6]) - 15;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)

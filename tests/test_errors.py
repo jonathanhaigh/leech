@@ -628,12 +628,12 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"id"' in msg
-    assert "without required type arguments" in msg
+    assert "without required comptime arguments" in msg
 
     span = exc_info.value.message.span
     assert span is not None
@@ -647,13 +647,13 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(errors.CannotInferTypArgError) as exc_info:
+    with pytest.raises(errors.CannotInferComptimeArgError) as exc_info:
         util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
     assert '"T"' in msg
     assert '"id"' in msg
-    assert "Cannot infer type argument" in msg
+    assert "Cannot infer argument" in msg
 
     span = exc_info.value.message.span
     assert span is not None
@@ -671,7 +671,7 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
@@ -691,7 +691,7 @@ pub fn main() i32 {
     return 0;
 }
 """
-    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
         util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
@@ -710,11 +710,11 @@ impl[T, U] Box[T] {
 }
 pub fn main() i32 { return 0; }
 """
-    with pytest.raises(errors.UnconstrainedImplTypParamError) as exc_info:
+    with pytest.raises(errors.UnconstrainedImplComptimeParamError) as exc_info:
         util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)
-    assert 'Impl type parameter "U"' in msg
+    assert 'Impl parameter "U"' in msg
     assert "not constrained by the impl self type" in msg
 
     span = exc_info.value.message.span

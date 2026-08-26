@@ -869,6 +869,22 @@ COMMENTED_INTS = [
             ),
         ),
         (
+            "typ",
+            "[i32; N]",
+            T("array_typ").cs(
+                T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                T("array_length").cs(T("path", "ident", Tok("N"))),
+            ),
+        ),
+        (
+            "typ",
+            "[i32; 4]",
+            T("array_typ").cs(
+                T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                T("array_length", Tok("4")),
+            ),
+        ),
+        (
             "param",
             "x: i32",
             T("param").cs(
@@ -1011,9 +1027,9 @@ COMMENTED_INTS = [
             T("defn", "struct_defn").cs(
                 T("access", Tok(None)),
                 T("ident", Tok("Pair")),
-                T("generic_params").cs(
-                    T("generic_param", "ident", Tok("A")),
-                    T("generic_param", "ident", Tok("B")),
+                T("comptime_params").cs(
+                    T("comptime_param", "ident", Tok("A")),
+                    T("comptime_param", "ident", Tok("B")),
                 ),
                 T("struct_field_defn_list").cs(
                     T("struct_field_defn").cs(
@@ -1053,7 +1069,7 @@ COMMENTED_INTS = [
             T("defn", "trait_defn").cs(
                 T("access", Tok("pub")),
                 T("ident", Tok("Eq")),
-                T("generic_params", "generic_param", "ident", Tok("T")),
+                T("comptime_params", "comptime_param", "ident", Tok("T")),
                 T("trait_fn_decl").cs(
                     T("ident", Tok("eq")),
                     T("param_list").cs(
@@ -1083,10 +1099,10 @@ COMMENTED_INTS = [
             "defn",
             "impl[T] Pair[T, T] {}",
             T("defn", "impl_defn").cs(
-                T("generic_params", "generic_param", "ident", Tok("T")),
+                T("comptime_params", "comptime_param", "ident", Tok("T")),
                 T("basic_typ").cs(
                     T("path", "ident", Tok("Pair")),
-                    T("generic_args").cs(
+                    T("comptime_args").cs(
                         T("basic_typ").cs(T("path", "ident", Tok("T")), None),
                         T("basic_typ").cs(T("path", "ident", Tok("T")), None),
                     ),
@@ -1132,7 +1148,7 @@ COMMENTED_INTS = [
             T("defn", "fn_defn").cs(
                 T("access", Tok(None)),
                 T("ident", Tok("id")),
-                T("generic_params", "generic_param", "ident", Tok("T")),
+                T("comptime_params", "comptime_param", "ident", Tok("T")),
                 T("param_list").cs(
                     T("param").cs(
                         T("ident", Tok("x")), T("basic_typ").cs(T("path", "ident", Tok("T")), None)
@@ -1150,8 +1166,8 @@ COMMENTED_INTS = [
             T("defn", "fn_defn").cs(
                 T("access", Tok(None)),
                 T("ident", Tok("show_it")),
-                T("generic_params").cs(
-                    T("generic_param").cs(
+                T("comptime_params").cs(
+                    T("comptime_param").cs(
                         T("ident", Tok("T")),
                         T("bound_list").cs(
                             T("basic_typ").cs(T("path", "ident", Tok("Show")), None),
@@ -1173,7 +1189,7 @@ COMMENTED_INTS = [
             "Vec[i32]",
             T("basic_typ").cs(
                 T("path", "ident", Tok("Vec")),
-                T("generic_args").cs(T("basic_typ").cs(T("path", "ident", Tok("i32")), None)),
+                T("comptime_args").cs(T("basic_typ").cs(T("path", "ident", Tok("i32")), None)),
             ),
         ),
         (
@@ -1181,9 +1197,39 @@ COMMENTED_INTS = [
             "Pair[i32, bool]",
             T("basic_typ").cs(
                 T("path", "ident", Tok("Pair")),
-                T("generic_args").cs(
+                T("comptime_args").cs(
                     T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
                     T("basic_typ").cs(T("path", "ident", Tok("bool")), None),
+                ),
+            ),
+        ),
+        (
+            "typ",
+            "Buf[i32, 4]",
+            T("basic_typ").cs(
+                T("path", "ident", Tok("Buf")),
+                T("comptime_args").cs(
+                    T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                    T("int_lit", Tok("4")),
+                ),
+            ),
+        ),
+        (
+            "typ",
+            "Flag[true]",
+            T("basic_typ").cs(
+                T("path", "ident", Tok("Flag")),
+                T("comptime_args").cs(T("bool_lit", Tok("true"))),
+            ),
+        ),
+        (
+            "typ",
+            "Buf[i32, N]",
+            T("basic_typ").cs(
+                T("path", "ident", Tok("Buf")),
+                T("comptime_args").cs(
+                    T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                    T("basic_typ").cs(T("path", "ident", Tok("N")), None),
                 ),
             ),
         ),
@@ -1193,9 +1239,20 @@ COMMENTED_INTS = [
             T("call_expr").cs(
                 T("var_expr").cs(
                     T("path", "ident", Tok("f")),
-                    T("generic_args").cs(T("basic_typ").cs(T("path", "ident", Tok("i32")), None)),
+                    T("comptime_args").cs(T("basic_typ").cs(T("path", "ident", Tok("i32")), None)),
                 ),
                 T("arg_list").cs(T("var_expr").cs(T("path", "ident", Tok("x")), None)),
+            ),
+        ),
+        (
+            # A variable reference's comptime_args accepts int_lit too, the
+            # same as basic_typ's - this is no longer ambiguous with array
+            # indexing, which requires the ".[" operator.
+            "expr",
+            "a[10]",
+            T("var_expr").cs(
+                T("path", "ident", Tok("a")),
+                T("comptime_args").cs(T("int_lit", Tok("10"))),
             ),
         ),
         (
@@ -1335,7 +1392,6 @@ def test_parse(rule, src, expected):
         ("expr", "*a"),
         ("expr", "a < b < c"),
         ("expr", "a.1"),
-        ("expr", "a[10]"),
         ("expr", ".a"),
         ("expr", "a."),
         ("block_expr", ""),
@@ -1367,8 +1423,8 @@ def test_parse(rule, src, expected):
         ("typ", "a b"),
         ("typ", "a*"),
         ("typ", "Vec[]"),
-        ("generic_params", "[]"),
-        ("generic_params", "[T"),
+        ("comptime_params", "[]"),
+        ("comptime_params", "[T"),
         ("expr", "f[](x)"),
         ("struct_defn", "struct Foo[] {}"),
         ("impl_defn", "impl[] Foo {}"),

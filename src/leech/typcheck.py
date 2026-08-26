@@ -137,13 +137,13 @@ class TypCheckResults:
     def generic_call(
         self, node: ast.CallExpr
     ) -> Optional[tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]:
-        """Return a generic call's resolved function and type arguments, if any."""
+        """Return a generic call's resolved function and comptime arguments, if any."""
         return self._generic_calls.get(node)
 
     def _set_generic_call(
-        self, node: ast.CallExpr, fn: ir_module.FnSymbol, typ_args: tuple[typs.Typ, ...]
+        self, node: ast.CallExpr, fn: ir_module.FnSymbol, comptime_args: tuple[typs.Typ, ...]
     ) -> None:
-        self._generic_calls[node] = (fn, typ_args)
+        self._generic_calls[node] = (fn, comptime_args)
 
     def generic_var_ref(
         self, node: ast.VarExpr
@@ -152,9 +152,9 @@ class TypCheckResults:
         return self._generic_var_refs.get(node)
 
     def _set_generic_var_ref(
-        self, node: ast.VarExpr, fn: ir_module.FnSymbol, typ_args: tuple[typs.Typ, ...]
+        self, node: ast.VarExpr, fn: ir_module.FnSymbol, comptime_args: tuple[typs.Typ, ...]
     ) -> None:
-        self._generic_var_refs[node] = (fn, typ_args)
+        self._generic_var_refs[node] = (fn, comptime_args)
 
     def struct_expr_typ(self, node: ast.StructExpr) -> typs.StructTyp:
         """Return ``node``'s resolved (possibly still abstract) type."""
@@ -431,7 +431,7 @@ class TypCheck:
             var = self._resolve_var(callee_ast, e)
             if (
                 isinstance(var, (ir_module.SrcFnSymbol, ir_module.IntrinsicFnSymbol))
-                and var.typ_params
+                and var.comptime_params
             ):
                 return self._resolve_generic_call(var, call_ast, e), None, None
 
@@ -506,10 +506,10 @@ class TypCheck:
         for bound in typ_param.bounds:
             item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
             if not isinstance(item, ir_traits.Trait):
-                raise errors.BoundNotATraitError(bound.path.str(), bound.path.span)
+                raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
             method = item.get_trait_method(name)
             if method is not None:
-                if bound.generic_args:
+                if bound.comptime_args:
                     # The signature would still name the trait's own type
                     # parameters, not the bound's arguments; substituting
                     # them needs generic traits.
@@ -525,63 +525,63 @@ class TypCheck:
     ) -> typs.FnTyp:
         """Resolve and record a generic call's concrete function type."""
         callee_ast = asserts.checked_cast(call_ast.callee, ast.VarExpr)
-        typ_params = self._typ_params_of(fn)
+        comptime_params = self._comptime_params_of(fn)
 
-        if callee_ast.generic_args:
-            mapping = self._resolve_explicit_typ_args(
-                fn, typ_params, callee_ast.generic_args, callee_ast.span, e
+        if callee_ast.comptime_args:
+            mapping = self._resolve_explicit_comptime_args(
+                fn, comptime_params, callee_ast.comptime_args, callee_ast.span, e
             )
         else:
-            mapping = self._infer_typ_args(fn, call_ast, e, typ_params)
+            mapping = self._infer_comptime_args(fn, call_ast, e, comptime_params)
 
-        typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
-        typs.check_typ_arg_bounds(typ_params, typ_args, e, call_ast.span)
-        self.results._set_generic_call(call_ast, fn, typ_args)
+        comptime_args = tuple(mapping[typ_param] for typ_param in comptime_params)
+        typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, call_ast.span)
+        self.results._set_generic_call(call_ast, fn, comptime_args)
         return asserts.checked_cast(fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
 
-    def _typ_params_of(self, fn: ir_module.FnSymbol) -> list[typs.TypParamTyp]:
-        """Return ``fn``'s interned type parameters in declaration order."""
-        return list(fn.typ_params)
+    def _comptime_params_of(self, fn: ir_module.FnSymbol) -> list[typs.ComptimeParamTyp]:
+        """Return ``fn``'s interned comptime parameters in declaration order."""
+        return list(fn.comptime_params)
 
-    def _resolve_explicit_typ_args(
+    def _resolve_explicit_comptime_args(
         self,
         fn: ir_module.FnSymbol,
-        typ_params: list[typs.TypParamTyp],
-        generic_args: Sequence[ast.Typ],
+        comptime_params: Sequence[typs.ComptimeParamTyp],
+        comptime_args: Sequence[ast.ComptimeArg],
         span: Optional[src.SrcSpan],
         e: ir_env.Env,
-    ) -> dict[typs.TypParamTyp, typs.Typ]:
-        """Resolve explicit type arguments against parameters positionally."""
-        if len(generic_args) != len(typ_params):
-            raise errors.WrongNumberOfTypArgsError(
-                fn.name, len(generic_args), len(typ_params), span
+    ) -> dict[typs.ComptimeParamTyp, typs.Typ]:
+        """Resolve explicit comptime arguments against parameters positionally."""
+        if len(comptime_args) != len(comptime_params):
+            raise errors.WrongNumberOfComptimeArgsError(
+                fn.name, len(comptime_args), len(comptime_params), span
             )
         return {
-            typ_param: typs.Typ.from_ast(arg_ast, e)
-            for typ_param, arg_ast in zip(typ_params, generic_args, strict=True)
+            param: typs.resolve_comptime_arg(param, arg_ast, e)
+            for param, arg_ast in zip(comptime_params, comptime_args, strict=True)
         }
 
-    def _infer_typ_args(
+    def _infer_comptime_args(
         self,
         fn: ir_module.FnSymbol,
         call_ast: ast.CallExpr,
         e: ir_env.Env,
-        typ_params: list[typs.TypParamTyp],
-    ) -> dict[typs.TypParamTyp, typs.Typ]:
-        """Infer type arguments structurally from left to right.
+        comptime_params: Sequence[typs.ComptimeParamTyp],
+    ) -> dict[typs.ComptimeParamTyp, typs.Typ]:
+        """Infer comptime arguments structurally from left to right.
 
         Unsuffixed integer literals are skipped because they need an expected type.
         """
-        bindings: dict[typs.TypParamTyp, typs.Typ] = {}
+        bindings: dict[typs.ComptimeParamTyp, typs.Typ] = {}
         for declared_typ, arg_ast in zip(fn.fn_typ.param_typs, call_ast.args, strict=False):
             if is_flexible_int_lit(arg_ast):
                 continue
             arg_typ = self._check_expr(arg_ast, e, None)
             declared_typ.infer_typ_args(arg_typ, bindings)
 
-        for typ_param in typ_params:
+        for typ_param in comptime_params:
             if typ_param not in bindings:
-                raise errors.CannotInferTypArgError(fn.name, typ_param.name, call_ast.span)
+                raise errors.CannotInferComptimeArgError(fn.name, typ_param.name, call_ast.span)
 
         return bindings
 
@@ -732,16 +732,23 @@ class TypCheck:
         from leech import ir_module, ir_traits  # noqa: PLC0415
 
         var = self._resolve_var(var_ast, e)
-        if isinstance(var, (ir_module.SrcFnSymbol, ir_module.IntrinsicFnSymbol)) and var.typ_params:
+        if (
+            isinstance(var, (ir_module.SrcFnSymbol, ir_module.IntrinsicFnSymbol))
+            and var.comptime_params
+        ):
             return self._generic_var_ref_typ(var_ast, var, e)
-        if var_ast.generic_args:
-            raise errors.TypArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
+        if var_ast.comptime_args:
+            raise errors.ComptimeArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
         if isinstance(var, (ir_traits.ImplFnSelection, ir_module.FnSymbol)):
             return var.ptr_typ
         if isinstance(var, ir_values.ComptimeEnum):
             # An enum variant has no address - see
             # `Env._resolve_path_segment`'s `EnumTyp` case.
             return var.typ
+        if isinstance(var, typs.ValueParamTyp):
+            # Not a place (same reasoning as the ComptimeEnum case above) -
+            # a value parameter has no address to take.
+            return var.value_typ
         if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
             return self._local_typs[var].pointee_typ
         return var.typ.pointee_typ
@@ -750,15 +757,16 @@ class TypCheck:
         self, var_ast: ast.VarExpr, var: ir_module.FnSymbol, e: ir_env.Env
     ) -> typs.PtrTyp:
         """Return an explicitly applied generic function reference's pointer type."""
-        if not var_ast.generic_args:
-            raise errors.MissingTypArgsError(var.name, var_ast.span)
+        if not var_ast.comptime_args:
+            raise errors.MissingComptimeArgsError(var.name, var_ast.span)
         # An uncalled reference has no arguments from which to infer types.
-        typ_params = self._typ_params_of(var)
-        mapping = self._resolve_explicit_typ_args(
-            var, typ_params, var_ast.generic_args, var_ast.span, e
+        comptime_params = self._comptime_params_of(var)
+        mapping = self._resolve_explicit_comptime_args(
+            var, comptime_params, var_ast.comptime_args, var_ast.span, e
         )
-        typ_args = tuple(mapping[typ_param] for typ_param in typ_params)
-        self.results._set_generic_var_ref(var_ast, var, typ_args)
+        comptime_args = tuple(mapping[typ_param] for typ_param in comptime_params)
+        typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, var_ast.span)
+        self.results._set_generic_var_ref(var_ast, var, comptime_args)
         substituted = asserts.checked_cast(var.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
         return typs.PtrTyp.get_or_create(substituted, typs.CONST)
 
@@ -791,7 +799,7 @@ class TypCheck:
                 first_span = arr_expr.elements[0].span
             raise errors.VoidArrayElementError(first_span)
 
-        arr_typ = typs.ArrayTyp.get_or_create(elt_typ, len(arr_expr.elements))
+        arr_typ = typs.ArrayTyp.of_length(elt_typ, len(arr_expr.elements))
         for i, elt_ast in enumerate(arr_expr.elements):
             elt_typ_i = opt_util.opt_unwrap(built[i])
             # Elements only coerce towards an element type the context
@@ -908,11 +916,11 @@ class TypCheck:
             # Function symbols produce their function-pointer type directly:
             # taking their address is a no-op rather than another indirection.
             # Explicitly applied generic symbols delegate to
-            # _generic_var_ref_typ, including its MissingTypArgsError.
+            # _generic_var_ref_typ, including its MissingComptimeArgsError.
             var = self._resolve_var(expr_ast, e)
             if (
                 isinstance(var, (ir_module.SrcFnSymbol, ir_module.IntrinsicFnSymbol))
-                and var.typ_params
+                and var.comptime_params
             ):
                 return self._generic_var_ref_typ(expr_ast, var, e)
             if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
@@ -923,7 +931,7 @@ class TypCheck:
             # non-place expression.
             if isinstance(var, (ir_traits.ImplFnSelection, ir_module.FnSymbol)):
                 return var.ptr_typ
-            if not isinstance(var, ir_values.ComptimeEnum):
+            if not isinstance(var, (ir_values.ComptimeEnum, typs.ValueParamTyp)):
                 return var.typ
 
         value_typ = self._check_expr(expr_ast, e, None)
@@ -938,9 +946,16 @@ class TypCheck:
 
                 var = self._resolve_var(expr_ast, e)
                 # Function symbols and selections are const, while an enum
-                # variant is a temporary rather than a place.
+                # variant or a value parameter is a temporary rather than
+                # a place.
                 if isinstance(
-                    var, (ir_module.FnSymbol, ir_traits.ImplFnSelection, ir_values.ComptimeEnum)
+                    var,
+                    (
+                        ir_module.FnSymbol,
+                        ir_traits.ImplFnSelection,
+                        ir_values.ComptimeEnum,
+                        typs.ValueParamTyp,
+                    ),
                 ):
                     return typs.CONST
                 if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):

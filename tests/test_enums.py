@@ -308,7 +308,7 @@ def test_enum_variant_typ_args_on_non_generic_enum(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.TypArgsOnNonGenericItemError):
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
         util.compile_str(tmp_path, src)
 
 

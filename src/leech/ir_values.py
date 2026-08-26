@@ -142,7 +142,7 @@ class ComptimeCStr(ComptimeValue[typs.PtrTyp]):
     def __init__(self, value: str, ast_node: Optional[ast.Ast]) -> None:
         super().__init__(ast_node)
         self.value = bytearray(value.encode() + b"\0")
-        self.initializer_typ = typs.ArrayTyp.get_or_create(typs.U8, len(self.value))
+        self.initializer_typ = typs.ArrayTyp.of_length(typs.U8, len(self.value))
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
@@ -192,7 +192,9 @@ class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
     def __init__(
         self, typ: typs.ArrayTyp, elements: list[ComptimeValue], ast_node: Optional[ast.Ast]
     ) -> None:
-        asserts.assert_eq(typ.length, len(elements))
+        asserts.assert_eq(
+            asserts.checked_cast(typ.length, typs.ComptimeValueTyp).value, len(elements)
+        )
         asserts.assert_all_eq([elt.typ for elt in elements], typ.element_typ)
         super().__init__(ast_node)
         self._typ = typ

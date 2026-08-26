@@ -17,7 +17,7 @@ def _get_intrinsic(mod, name: str) -> ir_module.IntrinsicFnSymbol:
 def test_bare_generic_builtin_reference_requires_typ_args(tmp_path):
     src = "pub fn main() i32 { let size = __size_of; return 0; }"
 
-    with pytest.raises(errors.MissingTypArgsError):
+    with pytest.raises(errors.MissingComptimeArgsError):
         util.compile_str(tmp_path, src)
 
 
@@ -104,7 +104,7 @@ def test_size_of_wrong_number_of_typ_args(tmp_path):
         return __size_of[i32, bool]();
     }
     """
-    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"__size_of"' in str(exc_info.value)
 
@@ -240,7 +240,7 @@ def test_ptr_cast_mut_wrong_number_of_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"__ptr_cast_mut"' in str(exc_info.value)
 

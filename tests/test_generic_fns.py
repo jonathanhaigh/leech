@@ -279,7 +279,7 @@ def test_bare_reference_to_generic_fn_requires_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
 
     assert '"id"' in str(exc_info.value)
@@ -296,7 +296,7 @@ def test_address_of_generic_fn_requires_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingTypArgsError) as exc_info:
+    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"id"' in str(exc_info.value)
 
@@ -351,7 +351,7 @@ def test_wrong_number_of_explicit_typ_args_on_bare_generic_fn_reference(tmp_path
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"id"' in str(exc_info.value)
 
@@ -364,7 +364,7 @@ def test_explicit_typ_args_on_non_generic_fn_reference(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"f"' in str(exc_info.value)
 
@@ -587,7 +587,7 @@ def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.CannotInferTypArgError) as exc_info:
+    with pytest.raises(errors.CannotInferComptimeArgError) as exc_info:
         util.compile_str(tmp_path, src)
     msg = str(exc_info.value)
     assert '"T"' in msg
@@ -602,7 +602,7 @@ def test_calling_generic_fn_with_wrong_number_of_explicit_typ_args(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfTypArgsError) as exc_info:
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"id"' in str(exc_info.value)
 
@@ -615,7 +615,7 @@ def test_explicit_typ_args_on_non_generic_fn(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.TypArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"f"' in str(exc_info.value)
 
@@ -836,3 +836,232 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
     }
     assert expected_names <= callees.keys()
     assert all(isinstance(callees[name], ir_module.FnRef) for name in expected_names)
+
+
+def test_value_param_declaration_typechecks(tmp_path):
+    src = """
+    fn f[N: usize]() usize { return N; }
+    pub fn main() i32 { return 0; }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_calling_generic_fn_with_explicit_value_arg(tmp_path):
+    src = """
+    fn f[N: i32]() i32 { return N; }
+    pub fn main() i32 {
+        return f[4]() - 4;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_calling_generic_fn_with_explicit_bool_arg(tmp_path):
+    src = """
+    fn f[B: bool]() bool { return B; }
+    pub fn main() i32 {
+        if (f[true]()) { return 0; };
+        return 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_value_and_typ_params_coexist(tmp_path):
+    src = """
+    fn f[T, N: i32](x: T) i32 { return N; }
+    pub fn main() i32 {
+        return f[i32, 3](9) - 3;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_equal_value_args_share_one_instance(tmp_path):
+    src = """
+    fn f[N: i32]() i32 { return N; }
+    pub fn main() i32 {
+        return f[4]() - f[4]();
+    }
+    """
+    ir_text = util.compile_str(tmp_path, src).read_text()
+    assert ir_text.count('define linkonce_odr i32 @"main::f[4]"') == 1
+
+
+def test_distinct_value_args_get_distinct_instances(tmp_path):
+    src = """
+    fn f[N: i32]() i32 { return N; }
+    pub fn main() i32 {
+        return f[4]() - f[5]() + 1;
+    }
+    """
+    ir_text = util.compile_str(tmp_path, src).read_text()
+    assert 'define linkonce_odr i32 @"main::f[4]"' in ir_text
+    assert 'define linkonce_odr i32 @"main::f[5]"' in ir_text
+
+
+def test_value_param_with_unsupported_typ_is_rejected(tmp_path):
+    src = """
+    struct Foo {}
+    fn f[N: Foo]() {}
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"Foo"' in str(exc_info.value)
+
+
+def test_typ_arg_given_for_value_param_is_rejected(tmp_path):
+    src = """
+    fn f[N: usize]() usize { return N; }
+    pub fn main() i32 {
+        let _ = f[i32]();
+        return 0;
+    }
+    """
+    with pytest.raises(errors.WrongKindOfComptimeArgError):
+        util.compile_str(tmp_path, src)
+
+
+def test_value_arg_given_for_typ_param_is_rejected(tmp_path):
+    src = """
+    fn f[T](x: T) T { return x; }
+    pub fn main() i32 {
+        let _ = f[4](9);
+        return 0;
+    }
+    """
+    with pytest.raises(errors.WrongKindOfComptimeArgError):
+        util.compile_str(tmp_path, src)
+
+
+def test_wrong_typ_value_arg_is_rejected(tmp_path):
+    src = """
+    fn f[N: usize]() usize { return N; }
+    pub fn main() i32 {
+        let _ = f[true]();
+        return 0;
+    }
+    """
+    with pytest.raises(errors.WrongComptimeValueTypError):
+        util.compile_str(tmp_path, src)
+
+
+def test_wrong_value_arg_on_bare_generic_fn_reference_is_rejected(tmp_path):
+    src = """
+    fn f[N: usize]() usize { return N; }
+    pub fn main() i32 {
+        let g = f[true];
+        return 0;
+    }
+    """
+    with pytest.raises(errors.WrongComptimeValueTypError):
+        util.compile_str(tmp_path, src)
+
+
+def test_typ_arg_on_bare_generic_value_param_fn_reference_is_rejected(tmp_path):
+    src = """
+    fn f[N: usize]() usize { return N; }
+    pub fn main() i32 {
+        let g = f[i32];
+        return 0;
+    }
+    """
+    with pytest.raises(errors.WrongKindOfComptimeArgError):
+        util.compile_str(tmp_path, src)
+
+
+def test_value_param_used_as_param_typ_is_rejected(tmp_path):
+    src = """
+    fn f[N: usize](x: N) usize { return N; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ValueUsedAsTypError):
+        util.compile_str(tmp_path, src)
+
+
+def test_value_param_used_as_let_typ_is_rejected(tmp_path):
+    src = """
+    fn f[N: usize]() usize {
+        let x: N = 5;
+        return x;
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ValueUsedAsTypError):
+        util.compile_str(tmp_path, src)
+
+
+def test_value_param_used_as_ptr_pointee_typ_is_rejected(tmp_path):
+    src = """
+    fn f[N: usize](x: *N) i32 { return 0; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ValueUsedAsTypError):
+        util.compile_str(tmp_path, src)
+
+
+def test_out_of_range_value_arg_is_rejected(tmp_path):
+    src = """
+    fn f[N: u8]() u8 { return N; }
+    pub fn main() i32 {
+        let _ = f[300]();
+        return 0;
+    }
+    """
+    with pytest.raises(errors.IntLitOverflowError):
+        util.compile_str(tmp_path, src)
+
+
+def test_int_lit_against_bool_value_param_is_rejected(tmp_path):
+    src = """
+    fn f[B: bool]() bool { return B; }
+    pub fn main() i32 {
+        let _ = f[4]();
+        return 0;
+    }
+    """
+    with pytest.raises(errors.WrongKindOfComptimeArgError):
+        util.compile_str(tmp_path, src)
+
+
+def test_value_param_inferred_from_array_arg(tmp_path):
+    src = """
+    fn first[T, N: usize](x: [T; N]) T { return x.[0]; }
+    pub fn main() i32 {
+        return first([7, 8, 9]) - 7;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_value_param_inference_distinguishes_array_lengths(tmp_path):
+    # N must stay usize here (array lengths are always usize), so the
+    # result is compared rather than turned into main's i32 return value -
+    # there's no int-to-int cast operator in this language.
+    src = """
+    fn len_times_2[T, N: usize](x: [T; N]) usize { return N * 2; }
+    pub fn main() i32 {
+        if (len_times_2([1, 2, 3]) == 6) { return 0; };
+        return 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_first_from_generic_struct_with_value_param(tmp_path):
+    src = """
+    struct Buf[T, N: usize] {
+        data: [T; N],
+    }
+
+    fn first[T, N: usize](b: *Buf[T, N]) T {
+        return b.*.data.[0];
+    }
+
+    pub fn main() i32 {
+        let buf = Buf[i32, 4] { data: [11, 22, 33, 44] };
+        return first(&buf) - 11;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)

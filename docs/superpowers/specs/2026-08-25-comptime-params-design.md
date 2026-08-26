@@ -51,12 +51,14 @@ with no way to carry a value alongside a type.
 
 `generic_param`'s grammar is unchanged: `ident (":" bound_list)?`. A
 single-entry bound list is resolved by what the name denotes: a `Trait`
-makes this a type parameter with that bound (today's behavior); a `Typ`
-makes this a value parameter of that type, provided the type is one this
-issue's representation and argument grammar can actually carry - an
-`IntTyp` or `BoolTyp`. A `Typ` of any other kind (e.g. `N: SomeStruct`) is a
-new `UnsupportedValueParamTypError`, since it would parse but could never
-receive a representable argument. A multi-entry bound list (`T: A + B`) is
+makes this a type parameter with that bound (today's behavior); an `IntTyp`
+or `BoolTyp` makes this a value parameter of that type. A `Typ` of any
+other kind (e.g. `N: SomeStruct`) is the existing `BoundNotATraitError`,
+broadened to `InvalidComptimeBoundError` - one error for "this bound is
+usable as neither a trait nor a value parameter's type," not two, since
+which the author intended isn't decidable from the syntax and there's no
+principled reason to give one non-trait `Typ` kind (a struct) a different
+diagnostic from another (an enum). A multi-entry bound list (`T: A + B`) is
 always a set of trait bounds, since a value parameter has exactly one type,
 never several.
 
@@ -255,13 +257,15 @@ scheme `ArrayTyp` already uses for its own length.
 
 ## Diagnostics
 
-Three new errors, named to match the existing
-`*TypArgsError`/`*TypParamError` family (renamed to the `Comptime`
-vocabulary per the rename below):
+The existing `BoundNotATraitError` broadens to `InvalidComptimeBoundError`:
+a comptime parameter's single bound resolving to neither a `Trait` nor a
+supported value type (`IntTyp`/`BoolTyp`) is one failure mode, covering
+both a genuine trait-bound typo and an unsupported value-parameter type
+(a struct, an enum, anything else) with one diagnostic - see Syntax above.
 
-- `UnsupportedValueParamTypError` - a value parameter's bound resolves to a
-  `Typ` that isn't an `IntTyp` or `BoolTyp` (e.g. `N: SomeStruct`), raised
-  where the parameter is declared.
+Two new errors, named to match the existing `*TypArgsError`/`*TypParamError`
+family (renamed to the `Comptime` vocabulary per the rename below):
+
 - `WrongKindOfComptimeArgError` - an explicit argument is a type where a
   value was declared, or vice versa.
 - `WrongComptimeValueTypError` - a value argument's type doesn't match its
@@ -269,10 +273,9 @@ vocabulary per the rename below):
   Sits alongside the existing `UnsatisfiedBoundError`, which continues to
   cover unsatisfied trait bounds on type parameters.
 
-A comptime-parameter bound name resolving to neither a `Trait` nor a `Typ`,
-and an `array_length` identifier not resolving to an in-scope value, both
-reuse the existing unresolved-name diagnostic family rather than introducing
-new error types.
+An `array_length` identifier not resolving to an in-scope value reuses the
+existing unresolved-name diagnostic family rather than introducing a new
+error type.
 
 ## Terminology Rename
 

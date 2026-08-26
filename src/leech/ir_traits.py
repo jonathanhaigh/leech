@@ -39,7 +39,7 @@ class ImplFnSelection:
     def fn_typ(self) -> typs.FnTyp:
         """The selected function signature after substituting impl arguments."""
         impl = opt_util.opt_unwrap(self.fn.impl)
-        mapping = dict(zip(impl.typ_params, self.impl_args, strict=True))
+        mapping = dict(zip(impl.comptime_params, self.impl_args, strict=True))
         return asserts.checked_cast(self.fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
 
     @property
@@ -76,11 +76,16 @@ class TraitMethod:
         """The source location of this method's prototype."""
         return self.ast.span
 
-    def fn_typ_for_self(self, self_typ: typs.Typ) -> typs.FnTyp:
+    def fn_typ_for_self(
+        self, self_typ: typs.Typ, trait_args: tuple[typs.Typ, ...] = ()
+    ) -> typs.FnTyp:
         """Return this method's signature with ``self_typ`` as its receiver pointee.
 
-        ``self_typ`` is also what ``Self`` names in the declared parameter and
-        return types.
+        ``self_typ`` is also what ``Self`` names in the declared parameter
+        and return types. ``trait_args`` substitutes this trait's own
+        comptime parameters (if it declares any) to the values a specific
+        ``impl`` applies it with, e.g. ``N`` in ``impl[N: i32] Sized[N]
+        for Buf[N]``.
         """
         assert self.ast.receiver is not None
         recv_typ = typs.PtrTyp.get_or_create(
@@ -94,7 +99,11 @@ class TraitMethod:
         ret_typ = (
             typs.VOID if self.ast.ret_typ is None else typs.Typ.from_ast(self.ast.ret_typ, env)
         )
-        return typs.FnTyp.get_or_create(ret_typ, tuple(param_typs))
+        fn_typ = typs.FnTyp.get_or_create(ret_typ, tuple(param_typs))
+        if not self._trait.comptime_params:
+            return fn_typ
+        mapping = dict(zip(self._trait.comptime_params, trait_args, strict=True))
+        return asserts.checked_cast(fn_typ.substitute_typ_params(mapping), typs.FnTyp)
 
 
 class Trait:
@@ -109,8 +118,10 @@ class Trait:
         self.ast = trait_ast
         self.mod_name = mod_name
         self._env = e.new_child()
-        for typ_param in self.typ_params:
-            self._env.add_container(typ_param.name, typ_param)
+        for comptime_param in self.comptime_params:
+            self._env.add_container(comptime_param.name, comptime_param)
+            if isinstance(comptime_param, typs.ValueParamTyp):
+                self._env.add_var(comptime_param.name, comptime_param)
         self._methods = {}
         for method_ast in trait_ast.fn_decls:
             method = TraitMethod(method_ast, self)
@@ -124,9 +135,9 @@ class Trait:
             self._methods[method.name] = method
 
     @functools.cached_property
-    def typ_params(self) -> tuple[typs.TypParamTyp, ...]:
+    def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
         """This trait's own interned generic parameters, in declaration order."""
-        return typs.typ_params_from_ast(self.ast, self.ast.generic_params, self._env)
+        return typs.comptime_params_from_ast(self.ast, self.ast.comptime_params, self._env)
 
     @property
     def name(self) -> str:
@@ -160,12 +171,17 @@ class Impl:
 
     :param trait: The trait implemented, or ``None`` for an inherent
         block.
+    :param trait_args: The concrete arguments this impl applies to
+        ``trait``'s own comptime parameters, e.g. ``(N,)`` for ``impl[N:
+        i32] Sized[N] for Buf[N]``. Empty for an inherent block or a
+        trait declaring no comptime parameters of its own.
     """
 
     ast: Final[ast.ImplDefn]
     trait: Final[Optional[Trait]]
     self_typ: Final[typs.Typ]
-    typ_params: Final[tuple[typs.TypParamTyp, ...]]
+    comptime_params: Final[tuple[typs.ComptimeParamTyp, ...]]
+    trait_args: Final[tuple[typs.Typ, ...]]
     env: Final[ir_env.Env]
     _mod_name: Final[str]
     _trait_methods: Final[dict[TraitMethod, ir_module.SrcFnSymbol]]
@@ -176,14 +192,16 @@ class Impl:
         impl_ast: ast.ImplDefn,
         trait: Optional[Trait],
         self_typ: typs.Typ,
-        typ_params: tuple[typs.TypParamTyp, ...],
+        comptime_params: tuple[typs.ComptimeParamTyp, ...],
         e: ir_env.Env,
         mod_name: str,
+        trait_args: tuple[typs.Typ, ...] = (),
     ) -> None:
         self.ast = impl_ast
         self.trait = trait
         self.self_typ = self_typ
-        self.typ_params = typ_params
+        self.comptime_params = comptime_params
+        self.trait_args = trait_args
         self._mod_name = mod_name
         self.env = e.new_child()
         self.env.add_container(reserved.SELF_TYP_NAME, self_typ)
@@ -233,17 +251,21 @@ class Impl:
         ):
             raise errors.OrphanImplError(self.trait.name, self.self_typ.name, self.span)
 
-    def check_typ_params_constrained(self) -> None:
-        """Raise if the self type does not determine every impl type parameter."""
-        for typ_param, param_ast in zip(self.typ_params, self.ast.generic_params, strict=True):
+    def check_comptime_params_constrained(self) -> None:
+        """Raise if the self type does not determine every impl comptime parameter."""
+        for typ_param, param_ast in zip(
+            self.comptime_params, self.ast.comptime_params, strict=True
+        ):
             if not typs.contains_typ(self.self_typ, typ_param):
-                raise errors.UnconstrainedImplTypParamError(typ_param.name, param_ast.ident.span)
+                raise errors.UnconstrainedImplComptimeParamError(
+                    typ_param.name, param_ast.ident.span
+                )
 
     def instantiation_args(self, concrete_self_typ: typs.Typ) -> tuple[typs.Typ, ...]:
         """Return this impl's arguments as selected for ``concrete_self_typ``."""
         bindings = typs.match_typ_args(self.self_typ, concrete_self_typ)
         assert bindings is not None
-        return tuple(bindings[typ_param] for typ_param in self.typ_params)
+        return tuple(bindings[typ_param] for typ_param in self.comptime_params)
 
     def add_fn_symbol(self, fn: ir_module.SrcFnSymbol) -> None:
         """Register ``fn`` as one of this block's functions.
@@ -279,7 +301,7 @@ class Impl:
             )
         if trait_method is not None:
             assert trait is not None
-            expected_typ = trait_method.fn_typ_for_self(self.self_typ)
+            expected_typ = trait_method.fn_typ_for_self(self.self_typ, self.trait_args)
             if fn.fn_typ is not expected_typ:
                 raise errors.TraitMethodSignatureMismatchError(
                     trait.name, fn.name, fn.fn_typ.name, expected_typ.name, fn.span
@@ -479,7 +501,7 @@ class ImplRegistry:
         self,
         impl: Impl,
         matched_self_typ: typs.Typ,
-        bindings: Mapping[typs.TypParamTyp, typs.Typ],
+        bindings: Mapping[typs.ComptimeParamTyp, typs.Typ],
     ) -> bool:
         """Whether ``impl``'s bounds hold when matched to ``matched_self_typ``.
 

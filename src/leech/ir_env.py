@@ -26,9 +26,14 @@ type Container = typs.Typ | typs.StructTypTemplate | ir_module.Mod | ir_traits.T
 """A type, module, or trait bound in the shared container namespace."""
 
 type Var = (
-    ir_values.Value[typs.PtrTyp] | ir_module.FnSymbol | ast.Param | ast.Receiver | ast.LetStmt
+    ir_values.Value[typs.PtrTyp]
+    | ir_module.FnSymbol
+    | ast.Param
+    | ast.Receiver
+    | ast.LetStmt
+    | typs.ValueParamTyp
 )
-"""A value, function symbol, or local declaration-site AST node.
+"""A value, function symbol, local declaration-site AST node, or value parameter.
 
 :invariant: every bound Value is PtrTyp-typed [unchecked: hot path]
 """
@@ -173,7 +178,7 @@ class Env:
                             item_kind, ident.name, ident.span, defn_span
                         )
             case typs.StructTypTemplate():
-                raise errors.MissingTypArgsError(scope.name, opt_util.opt_unwrap(scope_span))
+                raise errors.MissingComptimeArgsError(scope.name, opt_util.opt_unwrap(scope_span))
             case typs.StructTyp():
                 # Only associated functions are reachable by path:
                 # `SomeStruct::x` is not a way to name a field.
@@ -217,6 +222,8 @@ class Env:
             raise errors.ModUsedAsTypError(item.name, path.idents[-1].span)
         if isinstance(item, ir_traits.Trait):
             raise errors.TraitUsedAsTypError(item.name, path.idents[-1].span)
+        if isinstance(item, (typs.ValueParamTyp, typs.ComptimeValueTyp)):
+            raise errors.ValueUsedAsTypError(item.name, path.idents[-1].span)
         assert isinstance(item, (typs.Typ, typs.StructTypTemplate))
         return item
 

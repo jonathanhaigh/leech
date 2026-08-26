@@ -37,7 +37,7 @@ class _ExprContext(enum.Enum):
 class CfgBuilder:
     """Lower one function body or module initializer to a control-flow graph.
 
-    Generic instances substitute ``typ_arg_mapping`` into recorded facts that still contain
+    Generic instances substitute ``comptime_arg_mapping`` into recorded facts that still contain
     declaration parameters.
     """
 
@@ -52,7 +52,7 @@ class CfgBuilder:
     _typ_check_results: Final[typcheck.TypCheckResults]
     _impl_registry: Final[ir_traits.ImplRegistry]
     _panic_ref: Final[Optional[ir_module.FnRef]]
-    _typ_arg_mapping: Final[Mapping[typs.TypParamTyp, typs.Typ]]
+    _comptime_arg_mapping: Final[Mapping[typs.ComptimeParamTyp, typs.Typ]]
     cfg: Final[ir_values.Cfg]
     _curr_bb: ir_values.BasicBlock
     _generate_bb_name: Final[naming.VarNamer]
@@ -69,13 +69,13 @@ class CfgBuilder:
         impl_registry: ir_traits.ImplRegistry,
         panic_ref: Optional[ir_module.FnRef],
         fn: Optional[ir_module.FnInstance] = None,
-        typ_arg_mapping: Optional[Mapping[typs.TypParamTyp, typs.Typ]] = None,
+        comptime_arg_mapping: Optional[Mapping[typs.ComptimeParamTyp, typs.Typ]] = None,
     ) -> None:
         self._fn = fn
         self._typ_check_results = typ_check_results
         self._impl_registry = impl_registry
         self._panic_ref = panic_ref
-        self._typ_arg_mapping = opt_util.opt_or_default(typ_arg_mapping, {})
+        self._comptime_arg_mapping = opt_util.opt_or_default(comptime_arg_mapping, {})
         self.cfg = ir_values.Cfg()
         self._generate_bb_name = naming.VarNamer()
         # Reserve the "entry"/"exit" basenames so a later `add_bb` call
@@ -363,7 +363,7 @@ class CfgBuilder:
 
         generic_call = self._typ_check_results.generic_call(call_ast)
         if generic_call is not None:
-            # TypCheck recorded the resolved function and type arguments.
+            # TypCheck recorded the resolved function and comptime arguments.
             callee: ir_values.Value = self._resolve_fn_ref(*generic_call)
         elif isinstance(callee_ast, ast.FieldAccessExpr):
             recv_place = self._build_place(callee_ast.value)
@@ -727,30 +727,30 @@ class CfgBuilder:
         return target.instantiate(()).ref
 
     def _resolve_fn_ref(
-        self, fn: ir_module.FnSymbol, typ_args: tuple[typs.Typ, ...]
+        self, fn: ir_module.FnSymbol, comptime_args: tuple[typs.Typ, ...]
     ) -> ir_module.FnRef:
-        """Return a reference to the instance identified by ``fn`` and ``typ_args``.
+        """Return a reference to the instance identified by ``fn`` and ``comptime_args``.
 
         :param fn: The generic function TypCheck resolved.
-        :param typ_args: Its type arguments as TypCheck recorded them -
-            against ``fn``'s own declaration, so possibly still
-            containing a type parameter (e.g. a generic function
-            recursing on its own type parameter, or naming another
-            generic item applied to its own type parameter). Substituted
-            here against this lowering's own type arguments (a no-op
+        :param comptime_args: Its comptime arguments as TypCheck recorded
+            them - against ``fn``'s own declaration, so possibly still
+            containing a comptime parameter (e.g. a generic function
+            recursing on its own comptime parameter, or naming another
+            generic item applied to its own comptime parameter). Substituted
+            here against this lowering's own comptime arguments (a no-op
             outside a generic instance) to resolve down to concrete
             types before asking for the instance itself.
         :return: The cached reference belonging to the selected instance.
         """
-        concrete_typ_args = tuple(
-            typ_arg.substitute_typ_params(self._typ_arg_mapping) for typ_arg in typ_args
+        concrete_comptime_args = tuple(
+            typ_arg.substitute_typ_params(self._comptime_arg_mapping) for typ_arg in comptime_args
         )
-        return fn.instantiate(concrete_typ_args).ref
+        return fn.instantiate(concrete_comptime_args).ref
 
     def _selection_ref(self, selection: ir_traits.ImplFnSelection) -> ir_module.FnRef:
         """Instantiate an impl-function selection for this concrete body."""
         args = tuple(
-            arg.substitute_typ_params(self._typ_arg_mapping) for arg in selection.impl_args
+            arg.substitute_typ_params(self._comptime_arg_mapping) for arg in selection.impl_args
         )
         return selection.fn.instantiate(args).ref
 
@@ -767,7 +767,7 @@ class CfgBuilder:
         generic_ref = self._typ_check_results.generic_var_ref(var_ast)
         if generic_ref is not None:
             # TypCheck already resolved which generic function this names
-            # and its explicit type arguments; this just has to get the
+            # and its explicit comptime arguments; this just has to get the
             # reference belonging to the instance they name.
             return self._resolve_fn_ref(*generic_ref)
 
@@ -784,6 +784,11 @@ class CfgBuilder:
             # that, the same as any other non-place value (see
             # _in_context/_value_to_ptr).
             return self._in_context(target, ctx)
+        if isinstance(target, typs.ValueParamTyp):
+            concrete = asserts.checked_cast(
+                target.substitute_typ_params(self._comptime_arg_mapping), typs.ComptimeValueTyp
+            )
+            return self._in_context(concrete.to_comptime_value(var_ast), ctx)
         if isinstance(target, (ast.Param, ast.Receiver, ast.LetStmt)):
             var = self._local_values[target]
         else:
@@ -851,7 +856,7 @@ class CfgBuilder:
             for i, v in enumerate(built)
         ]
 
-        arr_typ = typs.ArrayTyp.get_or_create(elt_typ, len(elts))
+        arr_typ = typs.ArrayTyp.of_length(elt_typ, len(elts))
         arr = ir_values.ComptimeArray(
             arr_typ,
             [ir_values.UndefValue(arr_typ.element_typ, arr_expr)] * len(elts),
@@ -889,7 +894,9 @@ class CfgBuilder:
 
         array_typ = asserts.checked_cast(arr_ptr.typ, typs.PtrTyp).pointee_typ
         array_typ = asserts.checked_cast(array_typ, typs.ArrayTyp)
-        length = ir_values.ComptimeInt(typs.USIZE, array_typ.length, aa_expr)
+        length = ir_values.ComptimeInt(
+            typs.USIZE, asserts.checked_cast(array_typ.length, typs.ComptimeValueTyp).value, aa_expr
+        )
         out_of_bounds = self._curr_bb.icmp_unsigned(">=", index, length, aa_expr)
         self._panic_if(out_of_bounds, "index out of bounds", aa_expr)
 
@@ -911,7 +918,7 @@ class CfgBuilder:
         """
         cached_typ = self._typ_check_results.struct_expr_typ(struct_expr)
         struct_typ = asserts.checked_cast(
-            cached_typ.substitute_typ_params(self._typ_arg_mapping), typs.StructTyp
+            cached_typ.substitute_typ_params(self._comptime_arg_mapping), typs.StructTyp
         )
 
         struct = ir_values.ComptimeStruct(
@@ -1110,7 +1117,7 @@ class CfgBuilder:
         """
         cached_typ = self._typ_check_results.let_declared_typ(let_ast)
         expected_typ = opt_util.opt_map(
-            cached_typ, lambda t: t.substitute_typ_params(self._typ_arg_mapping)
+            cached_typ, lambda t: t.substitute_typ_params(self._comptime_arg_mapping)
         )
         expr = self._build_expr(let_ast.expr, ctx, expected_typ)
         if cached_typ is None:
@@ -1152,12 +1159,12 @@ class CfgBuilder:
                 # point. target was recorded against the generic
                 # declaration's own (possibly type-parameter-typed)
                 # signature, so it needs substituting for this lowering's
-                # concrete type arguments - a no-op outside a generic
-                # instance, where _typ_arg_mapping is empty.
+                # concrete comptime arguments - a no-op outside a generic
+                # instance, where _comptime_arg_mapping is empty.
                 if not self._curr_bb.terminated:
                     self._curr_bb.unreachable(node)
                 return ir_values.UndefValue(
-                    target.substitute_typ_params(self._typ_arg_mapping), node
+                    target.substitute_typ_params(self._comptime_arg_mapping), node
                 )
             case typcheck.IntExt(target=target):
                 return self._curr_bb.int_ext(value, target, node)

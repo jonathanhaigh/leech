@@ -13,7 +13,7 @@ defn: fn_defn
   | impl_defn
   | import
 
-fn_defn: access "fn" ident [generic_params] "(" param_list ")" [typ] block_expr
+fn_defn: access "fn" ident [comptime_params] "(" param_list ")" [typ] block_expr
 _fn_signature: "fn" ident "(" param_list ")" [typ]
 !access: ["pub"]
 param_list: _param_list?
@@ -26,7 +26,7 @@ extern_fn_decl: "extern" _fn_signature ";"
 
 var_defn: access let_stmt
 
-struct_defn: access "struct" ident [generic_params] "{" struct_field_defn_list "}"
+struct_defn: access "struct" ident [comptime_params] "{" struct_field_defn_list "}"
 struct_field_defn_list: _struct_field_defn_list?
 _struct_field_defn_list: struct_field_defn ("," struct_field_defn)* ","?
 struct_field_defn: access mut ident ":" typ
@@ -37,29 +37,32 @@ _enum_variant_list: enum_variant ("," enum_variant)* ","?
 enum_variant: ident ["=" enum_variant_value]
 !enum_variant_value: ["-"] int_lit
 
-trait_defn: access "trait" ident [generic_params] "{" trait_fn_decl* "}"
+trait_defn: access "trait" ident [comptime_params] "{" trait_fn_decl* "}"
 trait_fn_decl: _fn_signature ";"
 
-impl_defn: "impl" [generic_params] typ ["for" typ] "{" fn_defn* "}"
+impl_defn: "impl" [comptime_params] typ ["for" typ] "{" fn_defn* "}"
 
 import: "import" path ";"
 
-generic_params: "[" _generic_param_list "]"
-_generic_param_list: generic_param ("," generic_param)* ","?
-generic_param: ident (":" bound_list)?
+comptime_params: "[" _comptime_param_list "]"
+_comptime_param_list: comptime_param ("," comptime_param)* ","?
+comptime_param: ident (":" bound_list)?
 bound_list: basic_typ ("+" basic_typ)*
 
-generic_args: "[" _generic_arg_list "]"
-_generic_arg_list: typ ("," typ)* ","?
+comptime_args: "[" _comptime_arg_list "]"
+_comptime_arg_list: comptime_arg ("," comptime_arg)* ","?
+?comptime_arg: typ
+  | int_lit
+  | bool_lit
 
 ?typ: basic_typ
   | ptr_typ
   | array_typ
 
-basic_typ: path [generic_args]
+basic_typ: path [comptime_args]
 ptr_typ: "*" mut typ
 array_typ: "[" typ ";" array_length "]"
-array_length: NONNEG_INT
+array_length: NONNEG_INT | path
 
 stmt: expr_stmt
   | ret_stmt
@@ -178,7 +181,7 @@ deref_expr: atom_expr ".*"
 str_lit: STR_LIT
 int_lit: INT_LIT
 !bool_lit: "true" | "false"
-var_expr: path [generic_args]
+var_expr: path [comptime_args]
 path: ident ("::" ident)*
 ident: IDENT
 array_expr: "[" arg_list "]"
