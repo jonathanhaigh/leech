@@ -696,6 +696,18 @@ class ArrayTyp(Typ):
         return ArrayTyp.get_or_create(element_typ, ComptimeValueTyp.get_or_create(USIZE, length))
 
     @property
+    def length_value(self) -> int:
+        """This array's concrete length as a Python ``int``.
+
+        :pre: length is a concrete usize value [checked_cast, assert]
+        """
+        concrete = asserts.checked_cast(self.length, ComptimeValueTyp)
+        assert concrete.value_typ is USIZE, (
+            f"array length must be usize, not {concrete.value_typ.name}"
+        )
+        return asserts.checked_cast(concrete.value, int)
+
+    @property
     @override
     def name(self) -> str:
         return f"[{self.element_typ.name}; {self.length.name}]"
@@ -885,6 +897,11 @@ class ComptimeValueTyp(Typ):
     @override
     def is_concrete(self) -> bool:
         return True
+
+    @staticmethod
+    def checked_value(typ: Typ) -> int | bool:
+        """Assert ``typ`` is a concrete comptime value and return its Python value."""
+        return asserts.checked_cast(typ, ComptimeValueTyp).value
 
     def to_comptime_value(self, ast_node: Optional[ast.Ast] = None) -> ir_values.ComptimeValue:
         """Build the :class:`~leech.ir_values.ComptimeValue` this value denotes."""

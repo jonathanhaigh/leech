@@ -534,7 +534,7 @@ class TypCheck:
         else:
             mapping = self._infer_comptime_args(fn, call_ast, e, comptime_params)
 
-        comptime_args = tuple(mapping[typ_param] for typ_param in comptime_params)
+        comptime_args = tuple(mapping[comptime_param] for comptime_param in comptime_params)
         typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, call_ast.span)
         self.results._set_generic_call(call_ast, fn, comptime_args)
         return asserts.checked_cast(fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
@@ -764,7 +764,7 @@ class TypCheck:
         mapping = self._resolve_explicit_comptime_args(
             var, comptime_params, var_ast.comptime_args, var_ast.span, e
         )
-        comptime_args = tuple(mapping[typ_param] for typ_param in comptime_params)
+        comptime_args = tuple(mapping[comptime_param] for comptime_param in comptime_params)
         typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, var_ast.span)
         self.results._set_generic_var_ref(var_ast, var, comptime_args)
         substituted = asserts.checked_cast(var.fn_typ.substitute_typ_params(mapping), typs.FnTyp)

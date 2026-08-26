@@ -528,6 +528,21 @@ def test_comptime_value_typ_is_concrete_and_self_substitutes():
     assert v.substitute_typ_params({}) is v
 
 
+def test_checked_value_returns_the_python_value():
+    assert (
+        typs.ComptimeValueTyp.checked_value(typs.ComptimeValueTyp.get_or_create(typs.USIZE, 4)) == 4
+    )
+    assert (
+        typs.ComptimeValueTyp.checked_value(typs.ComptimeValueTyp.get_or_create(typs.BOOL, True))
+        is True
+    )
+
+
+def test_checked_value_rejects_a_non_comptime_value_typ():
+    with pytest.raises(AssertionError):
+        typs.ComptimeValueTyp.checked_value(typs.I32)
+
+
 def test_value_param_typ_interns_by_owner_and_index(tmp_path):
     mod = util.parse_mod(tmp_path, "fn f() {}")
     (fn,) = mod.defns
@@ -555,6 +570,16 @@ def test_value_param_typ_substitutes_to_comptime_value_typ(tmp_path):
     p = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)
     four = typs.ComptimeValueTyp.get_or_create(typs.USIZE, 4)
     assert p.substitute_typ_params({p: four}) is four
+
+
+def test_array_typ_length_value_returns_the_python_int():
+    assert typs.ArrayTyp.of_length(typs.I32, 4).length_value == 4
+
+
+def test_array_typ_length_value_rejects_a_non_usize_length():
+    non_usize_length = typs.ComptimeValueTyp.get_or_create(typs.U32, 4)
+    with pytest.raises(AssertionError):
+        _ = typs.ArrayTyp.get_or_create(typs.I32, non_usize_length).length_value
 
 
 def test_array_typ_of_length_wraps_comptime_value_typ():

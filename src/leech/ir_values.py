@@ -192,9 +192,7 @@ class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
     def __init__(
         self, typ: typs.ArrayTyp, elements: list[ComptimeValue], ast_node: Optional[ast.Ast]
     ) -> None:
-        asserts.assert_eq(
-            asserts.checked_cast(typ.length, typs.ComptimeValueTyp).value, len(elements)
-        )
+        asserts.assert_eq(typ.length_value, len(elements))
         asserts.assert_all_eq([elt.typ for elt in elements], typ.element_typ)
         super().__init__(ast_node)
         self._typ = typ

@@ -894,9 +894,7 @@ class CfgBuilder:
 
         array_typ = asserts.checked_cast(arr_ptr.typ, typs.PtrTyp).pointee_typ
         array_typ = asserts.checked_cast(array_typ, typs.ArrayTyp)
-        length = ir_values.ComptimeInt(
-            typs.USIZE, asserts.checked_cast(array_typ.length, typs.ComptimeValueTyp).value, aa_expr
-        )
+        length = ir_values.ComptimeInt(typs.USIZE, array_typ.length_value, aa_expr)
         out_of_bounds = self._curr_bb.icmp_unsigned(">=", index, length, aa_expr)
         self._panic_if(out_of_bounds, "index out of bounds", aa_expr)
 
