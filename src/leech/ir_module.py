@@ -42,7 +42,6 @@ class ModItem:
 
     @property
     def _ns(self) -> ir_env.Env.Namespace:
-        """Return the namespace in which this item is bound."""
         if isinstance(self.value, (ir_values.Value, FnSymbol)):
             return ir_env.Env.Namespace.VARS
         return ir_env.Env.Namespace.CONTAINERS
@@ -78,7 +77,7 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
 
     @abc.abstractmethod
     def calculate_params(self) -> tuple[ir_values.Param, ...]:
-        """Compute :attr:`params`; overridden by subclasses."""
+        """Compute ``params``; overridden by subclasses."""
 
     @property
     @abc.abstractmethod
@@ -107,10 +106,7 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
 
     @abc.abstractmethod
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
-        """Return the cached instance for ``args``, creating it if needed.
-
-        :post: instantiate(a) is instantiate(a) for equal a [cache]
-        """
+        """Return the cached instance for ``args``, creating it if needed."""
 
 
 class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
@@ -265,7 +261,6 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
 
     @functools.cached_property
     def _comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
-        """This function's interned comptime parameters in declaration order."""
         fn_ast = opt_util.opt_unwrap(self.ast)
         return typs.comptime_params_from_ast(fn_ast, fn_ast.comptime_params, self.env)
 
@@ -276,7 +271,6 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
 
     @functools.cached_property
     def _typ_check_results(self) -> typcheck.TypCheckResults:
-        """Lazily compute the unsubstituted lowering facts shared by all instances."""
         return typcheck.TypCheck().check_fn(
             opt_util.opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
         )
@@ -297,14 +291,11 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
         Only relevant for associated functions (defined in an ``impl``
         block): a private one can only be called from the module its
         struct is defined in, mirroring
-        :meth:`~leech.typs.StructField.is_accessible_from`. Free module-level
+        ``typs.StructField.is_accessible_from``. Free module-level
         functions are filtered by access before reaching this point, during
         name resolution, so this is only consulted for the two ways of
         reaching an associated function: the ``Struct::method()`` path
         form, and the ``value.method()`` dot-call form, during lowering.
-
-        :param file: The source file to check accessibility from.
-        :return: Whether this function is accessible from ``file``.
         """
         assert self.ast is not None
         return self.access == visibility.PUBLIC or self.ast.span.file.path == file.path
@@ -337,10 +328,8 @@ class FnInstance:
     """One concrete instantiation of a function declaration.
 
     The declaration may own a checked source or intrinsic body, or it may
-    be a bodyless extern declaration.
-
-    :param fn: The declaration this is an instantiation of.
-    :param args: The impl's comptime arguments followed by the function's own.
+    be a bodyless extern declaration. ``args`` holds the impl's comptime
+    arguments followed by the function's own.
     """
 
     _fn: Final[FnSymbol]
@@ -405,8 +394,8 @@ class FnInstance:
     def _render_name(self, qualified: bool) -> str:
         """Render this instance's own name and comptime arguments.
 
-        :param qualified: Whether to render the comptime arguments as they
-            appear in a symbol name rather than in a diagnostic.
+        ``qualified`` selects whether the comptime arguments render as
+        they appear in a symbol name rather than in a diagnostic.
         """
         arg_names = ", ".join(
             typ_arg.qualified_name if qualified else typ_arg.name for typ_arg in self.fn_args
@@ -422,12 +411,12 @@ class FnInstance:
         A trait impl's method takes the trait as well as the self type,
         because two traits may declare a method of the same name and the
         same type may implement both. The shape matches the one
-        :attr:`~leech.ir_traits.Impl.name` gives a non-generic impl, but
+        ``ir_traits.Impl.name`` gives a non-generic impl, but
         is rebuilt here per instance from that instance's own concrete
         self type rather than from the impl's abstract one.
 
         The comptime arguments are qualified too, for the same reason
-        :attr:`~leech.typs.StructTyp.qualified_name` qualifies its own:
+        ``typs.StructTyp.qualified_name`` qualifies its own:
         two same-named types from different modules are distinct and
         must not reach one symbol.
         """
@@ -503,10 +492,6 @@ class FnInstance:
         so that a method nothing calls is never instantiated - an
         instance exists to be lowered and emitted, so building one
         speculatively emits a function the program never reaches.
-
-        :param target: The function referred to from this instance's
-            body.
-        :return: The sibling instance, or ``None`` if ``target`` is unrelated.
         """
         if target not in self._siblings:
             return None
@@ -557,7 +542,6 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
         self.env = e.new_child()
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
-        """Return the cached instance for ``args``, creating it if needed."""
         assert len(args) == len(self.comptime_params)
         return self.env.ctx.instantiate_fn(self, args)
 
@@ -568,7 +552,6 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
 
     @functools.cached_property
     def _typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        """This intrinsic's interned type parameters in declaration order."""
         return tuple(
             typs.TypParamTyp.get_or_create(self, i, name)
             for i, name in enumerate(self._typ_param_names)
@@ -655,12 +638,10 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     def initializer(self) -> ir_values.ComptimeValue:
         """This variable's initial value, evaluated at compile time.
 
-        Computed lazily, on first access.
-
-        :raises CircularVarInitializerError: If evaluating this
-            variable's initializer requires (directly or transitively,
-            possibly through other modules) evaluating this same
-            variable's initializer again.
+        Computed lazily, on first access. Raises
+        ``errors.CircularVarInitializerError`` if evaluating it
+        requires (directly or transitively, possibly through other modules)
+        evaluating this same variable's initializer again.
         """
         assert self.ast is not None
         with self.env.ctx.detect_cycle(
@@ -681,7 +662,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     def typ_check_results(self) -> typcheck.TypCheckResults:
         """This variable's initializer, type-checked into a side table.
 
-        Built lazily, on first access; forced by :attr:`cfg` before
+        Built lazily, on first access; forced by ``cfg`` before
         lowering begins.
         """
         return typcheck.TypCheck().check_var_initializer(opt_util.opt_unwrap(self.ast), self.env)
@@ -847,11 +828,6 @@ class Mod:
                 raise AssertionError(f"unhandled definition {defn_ast}")
 
     def _build_impl_defn(self, impl_ast: ast.ImplDefn, src_fn_symbols: list[SrcFnSymbol]) -> None:
-        """Build one inherent or trait ``impl`` block.
-
-        :param impl_ast: The parsed ``impl`` block.
-        :param src_fn_symbols: Accumulates every source function symbol.
-        """
         # The impl's own comptime parameters, if any, are bound here - before
         # either the inherent or trait branch resolves its target type(s)
         # - so a generic impl's target (e.g. `Pair[T, T]`, or a trait
@@ -880,15 +856,8 @@ class Mod:
     ) -> None:
         """Build one inherent ``impl SomeStruct { ... }`` block's associated functions.
 
-        :param impl_ast: The parsed ``impl`` block (``impl_ast.for_typ is
-            None``).
-        :param impl_env: The impl's own scope, with its comptime parameters
-            (if any) already bound.
-        :param src_fn_symbols: Accumulates every source function symbol.
-        :raises ImplForNonStructTypError: If ``impl_ast.typ`` doesn't name
-            a struct type.
-        :raises ImplForNonLocalStructTypError: If ``impl_ast.typ`` names a
-            struct defined outside this module.
+        Rejects ``impl_ast.typ`` if it doesn't name a struct type defined
+        in this module.
         """
         impl_typ_ast = impl_ast.typ
         if not isinstance(impl_typ_ast, ast.BasicTyp):
@@ -920,36 +889,11 @@ class Mod:
         coherence comes from the orphan rule instead (see below), not
         from requiring the type to be local outright.
 
-        :param impl_ast: The parsed ``impl`` block (``impl_ast.for_typ is
-            not None``).
-        :param impl_env: The impl's own scope, with its comptime parameters
-            (if any) already bound.
-        :param src_fn_symbols: Accumulates every source function symbol.
-        :raises ImplForNonTraitError: If ``impl_ast.typ`` doesn't name a
-            trait.
-        :raises MissingComptimeArgsError: If the trait declares comptime
-            parameters and this impl gives it none.
-        :raises WrongNumberOfComptimeArgsError: If the number of arguments
-            given to the trait doesn't match its declared parameters.
-        :raises ComptimeArgsOnNonGenericItemError: If the trait declares
-            no comptime parameters but this impl gives it arguments.
-        :raises WrongKindOfComptimeArgError: If an argument given to the
-            trait is a type where a value was declared, or vice versa.
-        :raises WrongComptimeValueTypError: If a value argument given to
-            the trait doesn't match its parameter's declared type.
-        :raises UnsatisfiedBoundError: If a type argument given to the
-            trait doesn't satisfy its parameter's trait bound.
-        :raises OrphanImplError: If neither the trait nor the self type is
-            defined in this module.
-        :raises ExtraMethodInImplError: If a method here isn't declared by
-            the trait.
-        :raises TraitMethodSignatureMismatchError: If a method's signature
-            doesn't match the trait's declared prototype for it.
-        :raises TraitMethodNotImplementedError: If the trait declares a
-            method this impl doesn't define.
-        :raises ConflictingImplsError: If this impl's self type could
-            overlap with another already-registered impl of the same
-            trait.
+        Rejects ``impl_ast.typ`` if it doesn't name a trait, resolves its
+        comptime arguments against the trait's declared comptime
+        parameters, and validates coherence (the orphan rule, and no
+        overlap with another impl of the same trait) and that this impl's
+        methods exactly match the trait's declared prototypes.
         """
         trait_typ_ast = impl_ast.typ
         if not isinstance(trait_typ_ast, ast.BasicTyp):
@@ -995,10 +939,7 @@ class Mod:
     ) -> None:
         """Build and register every function in an ``impl`` block.
 
-        :param impl_ast: The parsed ``impl`` block.
-        :param impl: The block's reified form, which every built function
-            is registered on and points back at.
-        :param src_fn_symbols: Accumulates every source function symbol.
+        Every built function is registered on ``impl`` and points back at it.
         """
         for fn_ast in impl_ast.fn_defns:
             # Generic associated functions/methods aren't supported yet -

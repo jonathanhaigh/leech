@@ -35,7 +35,8 @@ type Var = (
 )
 """A value, function symbol, local declaration-site AST node, or value parameter.
 
-:invariant: every bound Value is PtrTyp-typed [unchecked: hot path]
+Every bound ``ir_values.Value`` is ``PtrTyp``-typed; this isn't
+checked, since binding is a hot path.
 """
 
 
@@ -141,7 +142,7 @@ class Env:
     ) -> Optional[tuple[str, Optional[src.SrcSpan]]]:
         """Return a private item's diagnostic kind and definition span, if applicable.
 
-        Only ever called with a :class:`~leech.ir_module.ModItem`'s own
+        Only ever called with a ``ir_module.ModItem``'s own
         value, never a local binding - narrower than the general ``Var``.
         """
         if isinstance(value, ir_module.FnSymbol):

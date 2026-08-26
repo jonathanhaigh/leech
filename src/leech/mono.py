@@ -46,8 +46,8 @@ def _discover_fn_instances(
 ) -> tuple[list[ir_module.FnInstance], list[ir_module.FnInstance]]:
     """Discover requested function instances while draining the live request log.
 
-    :return: Body-owning instances and imported declaration instances,
-        each in discovery order.
+    Returns body-owning instances and imported declaration instances, each
+    in discovery order.
     """
     for fn in mod.src_fn_symbols:
         if not fn.is_generic and (fn.is_main or fn.access == visibility.PUBLIC):
@@ -90,9 +90,8 @@ def _discover_struct_instances(mod: ir_module.Mod) -> list[typs.StructTyp]:
     """Discover requested struct instances while draining the live request log.
 
     Resolving fields can append further requests. Non-concrete instances created while
-    checking generic definitions are ignored.
-
-    :return: Every instantiation discovered, in discovery order.
+    checking generic definitions are ignored. Returns every instantiation
+    discovered, in discovery order.
     """
     discovered = []
     requests = mod.loader.ctx.requested_struct_instances()

@@ -826,7 +826,7 @@ class ComptimeParam(Ast):
     references (``T: Trait1 + Trait2``); a value parameter instead has
     exactly one bound naming its value type (``N: usize``). Which one
     ``bounds`` actually names is only resolved later, once the referenced
-    names are in scope - see :func:`leech.typs.comptime_params_from_ast`.
+    names are in scope - see ``typs.comptime_params_from_ast``.
     """
 
     ident: Final[Ident]
@@ -1078,7 +1078,7 @@ class EnumDefn(Defn):
 
 
 class EnumVariantDefn(Ast):
-    """A single variant declaration within an :class:`EnumDefn`."""
+    """A single variant declaration within an ``EnumDefn``."""
 
     ident: Final[Ident]
     #: The explicit ``= N`` discriminant's magnitude, if written.

@@ -372,16 +372,10 @@ class Compiler:
 
         Declared to return ``{typ, i1}``: the operation's own result
         alongside the overflow flag - see the
-        :class:`~leech.ir_values.CheckedAddInstr`/``CheckedSubInstr``/
-        ``CheckedMulInstr`` case in :meth:`_compile_instr`, which reads
+        ``ir_values.CheckedAddInstr``/``CheckedSubInstr``/
+        ``CheckedMulInstr`` case in ``_compile_instr``, which reads
         both back out (via ``extractvalue``, once each, from its shared
         call result) rather than computing the operation separately.
-
-        :param instr_typ: Which checked instruction to get the intrinsic
-            for: :class:`~leech.ir_values.CheckedAddInstr`, ``CheckedSubInstr``,
-            or ``CheckedMulInstr``.
-        :param typ: The operands' type.
-        :return: The (possibly newly-declared) intrinsic function.
         """
         prefix = _OVERFLOW_INTRINSIC_PREFIXES[(instr_typ, typ.signage)]
         name = f"llvm.{prefix}.with.overflow.i{typ.width}"

@@ -4,7 +4,7 @@
 
 """Name-resolution facts shared between type checking and CFG lowering.
 
-TypCheck is the sole walker of :class:`~leech.ir_env.Env` for body-level
+TypCheck is the sole walker of ``ir_env.Env`` for body-level
 code; it records what each reference resolves to here, once, so CfgBuilder
 never needs to re-resolve it.
 """
@@ -41,7 +41,7 @@ type CalleeTarget = Callee | ir_traits.TraitMethod
 
 
 class CalleeResolution(enum.Enum):
-    """:meth:`Resolutions.callee`'s non-callable outcome."""
+    """``Resolutions.callee``'s non-callable outcome."""
 
     # TODO: Python 3.15 adds a `sentinel()` builtin that gives each
     # sentinel its own precisely-typeable singleton type - once leech

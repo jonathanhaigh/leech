@@ -19,7 +19,7 @@ class CycleDomain(enum.Enum):
     """A semantic operation whose active computations may form cycles.
 
     Each domain must always use one identity type and one detail type. This invariant
-    makes it safe for :meth:`Ctx.detect_cycle` to restore the types erased in its stack.
+    makes it safe for ``Ctx.detect_cycle`` to restore the types erased in its stack.
     """
 
     MOD_VAR_INITIALIZER = enum.auto()
@@ -134,8 +134,8 @@ class Ctx:
         """Return the cached struct instance for ``template`` and ``args``.
 
         :param record_request: Whether a newly created instance is appended to
-            :meth:`requested_struct_instances`. Pass ``True`` for an instance a source
-            reference requests, which :func:`~leech.mono.discover` must find and code
+            ``requested_struct_instances``. Pass ``True`` for an instance a source
+            reference requests, which ``mono.discover`` must find and code
             generation must emit. Pass ``False`` for an instance code generation already
             reaches another way, so it must not be discovered as a separate emission
             request: a non-generic declaration's zero-argument module instance, and a

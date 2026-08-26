@@ -96,10 +96,7 @@ class ModLoader:
         raise errors.ModDoesNotExistError(path.str(), path.span)
 
     def load(self, path: pathlib.Path, qualified_name: str) -> ir_module.Mod:
-        """Load a path-deduplicated module, using the first qualified name seen.
-
-        :post: load(a) is load(b) for a.resolve() == b.resolve() [cache]
-        """
+        """Load a path-deduplicated module, using the first qualified name seen."""
         key = path.resolve()
         cached = self._mods.get(key)
         if cached is not None:

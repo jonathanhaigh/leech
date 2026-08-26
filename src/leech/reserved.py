@@ -67,9 +67,8 @@ def is_reserved(name: str) -> bool:
 
 
 def check_fn_params(fn_ast: ast.FnDecl) -> None:
-    """Check a function's declared parameters, which exclude any receiver.
-
-    :raises ReservedNameError: If a parameter takes a reserved name.
+    """Raise if any of a function's declared parameters takes a reserved
+    name. Declared parameters exclude any receiver.
     """
     for param_ast in fn_ast.params:
         if is_reserved(param_ast.name.name):

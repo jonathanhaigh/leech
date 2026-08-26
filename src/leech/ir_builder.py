@@ -122,10 +122,6 @@ class CfgBuilder:
     def _finish_ret(
         self, value: ir_values.Value, attribute_ast: ast.Ast, coerce_ast: ast.Ast
     ) -> None:
-        """Emit ``unreachable`` for ``never`` or coerce and return ``value``.
-
-        :pre: value coerces to the enclosing function's return type [opt_unwrap]
-        """
         if value.typ == typs.NEVER:
             if not self._curr_bb.terminated:
                 self._curr_bb.unreachable(attribute_ast)
@@ -139,7 +135,6 @@ class CfgBuilder:
         ctx: _ExprContext,
         expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
-        """Lower an expression in value or address context, using an optional type hint."""
         match expr_ast:
             case ast.BlockExpr():
                 return self._build_block_expr(expr_ast, ctx, expected_typ)
@@ -183,17 +178,9 @@ class CfgBuilder:
         ctx: _ExprContext,
         expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
-        """Lower a ``{ ... }`` block expression.
-
-        :param block_ast: The parsed block expression.
-        :param ctx: Whether to lower the tail expression for its value or
-            its address.
-        :param expected_typ: The type the block is expected to have, if
-            known; the block's value is its tail expression's, so this is
-            passed straight on to it.
-        :return: The lowered tail expression's value if the block has one;
-            otherwise a void value if its statements complete normally, or
-            a never value if they already diverged (e.g. via ``return``).
+        """Lower a ``{ ... }`` block expression: the tail expression's value
+        if it has one, otherwise void if its statements complete normally,
+        or never if they already diverged (e.g. via ``return``).
         """
         for stmt_ast in block_ast.stmts:
             self._build_stmt(stmt_ast)
@@ -210,20 +197,9 @@ class CfgBuilder:
         ctx: _ExprContext,
         expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
-        """Lower an ``if``/``else`` expression.
-
-        :param if_ast: The parsed ``if`` expression.
-        :param ctx: Whether to lower the taken branch for its value or its
-            address.
-        :param expected_typ: The type the expression is expected to have,
-            if known; its value comes from whichever branch is taken, so
-            this is passed on to both branches (but not the condition,
-            which is always ``bool``).
-        :return: The value of whichever branch is taken, merged via a phi
-            instruction if both branches complete normally.
-
-        :pre: if_ast.condition coerces to bool [opt_unwrap]
-        :pre: if both arms produce a value, they have the same type [assert_eq]
+        """Lower an ``if``/``else`` expression, merging whichever branch's
+        value is taken via a phi instruction when both branches complete
+        normally.
         """
         cond = self._build_expr(if_ast.condition, _ExprContext.VALUE)
         cond = opt_util.opt_unwrap(self._coerce(cond, if_ast.condition))
@@ -299,15 +275,9 @@ class CfgBuilder:
     ) -> tuple[ir_values.Value, ir_values.BasicBlock, bool]:
         """Lower one arm of an ``if``/``else`` into its own basic block.
 
-        :param arm_ast: The parsed arm.
-        :param arm_bb: The block to lower the arm into.
-        :param end_bb: The block the arms merge at.
-        :param ctx: Whether to lower the arm for its value or its address.
-        :param expected_typ: The type the arm is expected to have, if
-            known.
-        :return: The arm's value, the block its lowering ended in (which
-            isn't ``arm_bb`` if the arm contained control flow of its
-            own), and whether control reaches ``end_bb`` from it.
+        Returns the arm's value, the block its lowering ended in (which
+        isn't ``arm_bb`` if the arm contained control flow of its own),
+        and whether control reaches ``end_bb`` from it.
         """
         self._set_position(arm_bb)
         value = self._build_expr(arm_ast, ctx, expected_typ)
@@ -320,13 +290,6 @@ class CfgBuilder:
         return value, last_bb, have_value
 
     def _build_while_expr(self, while_ast: ast.WhileExpr, _ctx: _ExprContext) -> ir_values.Value:
-        """Lower a ``while`` loop expression.
-
-        :param while_ast: The parsed ``while`` expression.
-        :return: A void value.
-
-        :pre: while_ast.condition coerces to bool [opt_unwrap]
-        """
         cond_bb = self._add_bb("while_cond")
         loop_bb = self._add_bb("while_loop")
         end_bb = self._add_bb("while_end")
@@ -348,15 +311,7 @@ class CfgBuilder:
         return ir_values.VoidValue(while_ast)
 
     def _build_call_expr(self, call_ast: ast.CallExpr, ctx: _ExprContext) -> ir_values.Value:
-        """Lower a call, including method receivers and generic instances.
-
-        :param call_ast: The parsed call expression.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: The call's result.
-
-        :pre: every arg, including the receiver if any, coerces to its param type [opt_unwrap]
-        """
+        """Lower a call, including method receivers and generic instances."""
         callee_ast = call_ast.callee
         recv_ast: Optional[ast.Expr] = None
         recv_arg: Optional[ir_values.Value] = None
@@ -417,15 +372,9 @@ class CfgBuilder:
     ) -> ir_values.Value:
         """Lower a binary operator expression (arithmetic or comparison).
 
-        :param op_ast: The parsed binary operation.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :param expected_typ: The type the expression is expected to have,
-            if known. Only used when *both* operands are bare integer
-            literals and so have nothing else to take a type from; when
-            either operand's type is already decided, that type is what
-            the other has to match.
-        :return: The operation's result.
+        ``expected_typ`` only matters when both operands are bare integer
+        literals; otherwise the operands are peers, and whichever one's
+        type is already decided is what the other has to match.
         """
         if op_ast.op.name in ("and", "or"):
             return self._build_logic_bin_op_expr(op_ast, ctx)
@@ -496,11 +445,6 @@ class CfgBuilder:
     ) -> ir_values.Value:
         """Whether ``value`` equals ``typ.min_value`` - the one value a
         signed type's negation, or division by ``-1``, overflows on.
-
-        :param value: The value to check; must have type ``typ``.
-        :param typ: ``value``'s own (signed) type.
-        :param op_ast: The AST node the emitted instruction is attributed to.
-        :return: A ``bool``-typed value.
         """
         return self._curr_bb.icmp_signed(
             "==", value, ir_values.ComptimeInt(typ, typ.min_value, op_ast), op_ast
@@ -513,32 +457,22 @@ class CfgBuilder:
         rhs: ir_values.Value,
         op_ast: ast.Ast,
     ) -> ir_values.Value:
-        """Lower ``add``/``sub``/``mul``, panicking if the exact result
+        """Lower ``add``/``sub``/``mul`` (``op``, used to call the matching
+        ``BasicBlock.checked_*`` method), panicking if the exact result
         overflows ``lhs``/``rhs``'s type.
 
-        Builds a :class:`~leech.ir_values.CheckedAddInstr`/``CheckedSubInstr``/
-        ``CheckedMulInstr`` - a plain :class:`~leech.ir_values.BinOpInstr`
-        subclass, computing the operation's own (possibly wrapped) result
-        exactly like the corresponding unchecked instruction, but paired
-        with an :class:`~leech.ir_values.OverflowFlagInstr` that reports
+        Builds a CheckedAddInstr/CheckedSubInstr/CheckedMulInstr - a plain
+        BinOpInstr subclass, computing the operation's own (possibly
+        wrapped) result exactly like the corresponding unchecked
+        instruction, but paired with an OverflowFlagInstr that reports
         whether it overflowed - both lower to a single
-        ``llvm.*.with.overflow`` intrinsic call between them (see
-        :class:`~leech.codegen.Compiler`), rather than computing the
-        operation twice. :class:`~leech.comptime.Interpreter` evaluates
-        the two exactly as generically (no special-casing arithmetic
-        overflow at all) - the checked instruction wraps like its LLVM
-        counterpart, and the flag instruction reports whether it did -
-        so :meth:`_panic_if`'s ``panic`` call is what reports overflow
-        both at runtime and at compile time.
-
-        :param op: Which operation to build: ``"add"``, ``"sub"``, or
-            ``"mul"`` - the name of the :class:`~leech.ir_values.BasicBlock`
-            ``checked_*`` method to call.
-        :param lhs: The left operand.
-        :param rhs: The right operand.
-        :param op_ast: The AST node the emitted instructions are
-            attributed to.
-        :return: The operation's result.
+        ``llvm.*.with.overflow`` intrinsic call between them (see the
+        Compiler class in codegen), rather than computing the operation
+        twice. The comptime Interpreter evaluates the two exactly as
+        generically (no special-casing arithmetic overflow at all) - the
+        checked instruction wraps like its LLVM counterpart, and the flag
+        instruction reports whether it did - so ``_panic_if``'s ``panic``
+        call is what reports overflow both at runtime and at compile time.
         """
         res = getattr(self._curr_bb, f"checked_{op}")(lhs, rhs, op_ast)
         overflowed = self._curr_bb.overflow_flag(res, op_ast)
@@ -556,17 +490,10 @@ class CfgBuilder:
         type) the one case where the exact quotient doesn't fit:
         ``typ.min_value / -1``.
 
-        Unlike :meth:`_build_checked_bin_op`'s operations, an actual
+        Unlike ``_build_checked_bin_op``'s operations, an actual
         ``sdiv``/``udiv`` by zero is a trap, not a well-defined wrapping
         result - so, unlike there, the checks here have to run *before*
         the real division, not after.
-
-        :param lhs: The dividend.
-        :param rhs: The divisor.
-        :param typ: ``lhs`` and ``rhs``'s common type.
-        :param op_ast: The AST node the emitted instructions are
-            attributed to.
-        :return: The quotient, at ``typ``.
         """
         is_signed = typ.signage == signage.SIGNED
         zero = ir_values.ComptimeInt(typ, 0, op_ast)
@@ -601,18 +528,9 @@ class CfgBuilder:
     def _build_logic_bin_op_expr(self, op_ast: ast.BinOpExpr, ctx: _ExprContext) -> ir_values.Value:
         """Lower a short-circuiting ``and``/``or`` expression.
 
-        Modelled on :meth:`_build_if_expr`: the right operand is only
+        Modelled on ``_build_if_expr``: the right operand is only
         evaluated when it can affect the result, in its own basic block,
         merged with the short-circuited outcome via a phi.
-
-        :param op_ast: The parsed binary operation (``op.name`` is
-            ``"and"`` or ``"or"``).
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: The operation's result.
-
-        :pre: op_ast.lhs coerces to bool [opt_unwrap]
-        :pre: op_ast.rhs coerces to bool [opt_unwrap]
         """
         is_and = op_ast.op.name == "and"
         lhs = self._build_expr(op_ast.lhs, _ExprContext.VALUE)
@@ -665,15 +583,8 @@ class CfgBuilder:
     ) -> ir_values.Value:
         """Lower a unary operator expression (``&``, ``-``, or ``not``).
 
-        :param op_ast: The parsed unary operation.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :param expected_typ: The type the expression is expected to have,
-            if known. Negation preserves its operand's type, so this is
-            passed on to the operand; ``&`` and ``not`` ignore it.
-        :return: The operation's result.
-
-        :pre: op_ast.op.name == "not" implies operand coerces to bool [opt_unwrap]
+        Negation preserves its operand's type, so ``expected_typ`` is
+        passed on to the operand; ``&`` and ``not`` ignore it.
         """
         match op_ast.op.name:
             case "&":
@@ -731,16 +642,13 @@ class CfgBuilder:
     ) -> ir_module.FnRef:
         """Return a reference to the instance identified by ``fn`` and ``comptime_args``.
 
-        :param fn: The generic function TypCheck resolved.
-        :param comptime_args: Its comptime arguments as TypCheck recorded
-            them - against ``fn``'s own declaration, so possibly still
-            containing a comptime parameter (e.g. a generic function
-            recursing on its own comptime parameter, or naming another
-            generic item applied to its own comptime parameter). Substituted
-            here against this lowering's own comptime arguments (a no-op
-            outside a generic instance) to resolve down to concrete
-            types before asking for the instance itself.
-        :return: The cached reference belonging to the selected instance.
+        ``comptime_args`` is recorded against ``fn``'s own declaration, so
+        it may still contain a comptime parameter (e.g. a generic function
+        recursing on its own comptime parameter, or naming another generic
+        item applied to its own comptime parameter); it's substituted here
+        against this lowering's own comptime arguments (a no-op outside a
+        generic instance) to resolve down to concrete types before asking
+        for the instance itself.
         """
         concrete_comptime_args = tuple(
             typ_arg.substitute_typ_params(self._comptime_arg_mapping) for typ_arg in comptime_args
@@ -757,12 +665,8 @@ class CfgBuilder:
     def _build_var_expr(self, var_ast: ast.VarExpr, ctx: _ExprContext) -> ir_values.Value:
         """Lower a possibly qualified variable or function reference.
 
-        :param var_ast: The parsed variable expression.
-        :param ctx: Whether to lower the result for its value or its
-            address; ignored for function references, which are always
-            returned as-is.
-        :return: The referenced variable or function.
-        :raises ItemNotFoundError: If the path cannot be resolved.
+        ``ctx`` is ignored for function references, which are always
+        returned as-is.
         """
         generic_ref = self._typ_check_results.generic_var_ref(var_ast)
         if generic_ref is not None:
@@ -817,15 +721,6 @@ class CfgBuilder:
         rejected. When ``expected_typ`` is known, it's also propagated to
         each element, so a nested empty array (e.g. one element of a
         non-empty outer array) can be resolved the same way.
-
-        :param arr_expr: The parsed array expression.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :param expected_typ: This array literal's expected type, if known
-            from the surrounding context.
-        :return: The constructed array value.
-
-        :pre: every arr_expr.elements[i] coerces to the resolved elt_typ [opt_unwrap]
         """
         expected_elt_typ = (
             expected_typ.element_typ if isinstance(expected_typ, typs.ArrayTyp) else None
@@ -874,16 +769,6 @@ class CfgBuilder:
     def _build_array_access_expr(
         self, aa_expr: ast.ArrayAccessExpr, ctx: _ExprContext
     ) -> ir_values.Value:
-        """Lower an array indexing expression (``arr[index]``).
-
-        :param aa_expr: The parsed array access expression.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: The indexed element, or a pointer to it if ``ctx`` is
-            :attr:`~_ExprContext.PLACE`.
-
-        :pre: aa_expr.index coerces to usize [opt_unwrap]
-        """
         arr_ptr = self._build_place(aa_expr.array)
 
         # An index is a coercion point like any other unambiguous target
@@ -902,18 +787,6 @@ class CfgBuilder:
         return self._deref_in_context(elt_ptr, ctx, aa_expr)
 
     def _build_struct_expr(self, struct_expr: ast.StructExpr, ctx: _ExprContext) -> ir_values.Value:
-        """Lower a struct literal expression.
-
-        :param struct_expr: The parsed struct expression.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: The constructed struct value.
-        :raises ItemNotFoundError: If the named type cannot be resolved.
-
-        :pre: each field expression has a resolved field index [TypCheckResults]
-        :pre: each struct field has an expression exactly once [TypCheck]
-        :pre: each field expression is accessible and its value coerces [TypCheck]
-        """
         cached_typ = self._typ_check_results.struct_expr_typ(struct_expr)
         struct_typ = asserts.checked_cast(
             cached_typ.substitute_typ_params(self._comptime_arg_mapping), typs.StructTyp
@@ -948,14 +821,6 @@ class CfgBuilder:
     def _build_field_access_expr(
         self, fa_expr: ast.FieldAccessExpr, ctx: _ExprContext
     ) -> ir_values.Value:
-        """Lower a field access expression (``s.field``).
-
-        :param fa_expr: The parsed field access expression.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: The field's value, or a pointer to it if ``ctx`` is
-            :attr:`~_ExprContext.PLACE`.
-        """
         struct_ptr = self._build_place(fa_expr.value)
         return self._build_struct_field_access(struct_ptr, fa_expr, ctx)
 
@@ -967,21 +832,10 @@ class CfgBuilder:
     ) -> ir_values.Value:
         """Lower ``s.field`` given ``s``'s already-lowered place pointer.
 
-        Split out of :meth:`_build_field_access_expr` so
-        :meth:`_build_call_expr` can fall back to plain field access
-        (e.g. a struct field that happens to hold a callable value)
-        without re-lowering ``fa_expr.value`` a second time.
-
-        :param struct_ptr: ``fa_expr.value`` already lowered in
-            :attr:`~_ExprContext.PLACE` context.
-        :param fa_expr: The parsed field access expression.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: The field's value, or a pointer to it if ``ctx`` is
-            :attr:`~_ExprContext.PLACE`.
-
-        :pre: struct_ptr.typ.pointee_typ is a StructTyp [checked_cast]
-        :pre: fa_expr has a resolved field index [TypCheckResults]
+        Split out of ``_build_field_access_expr`` so ``_build_call_expr``
+        can fall back to plain field access (e.g. a struct field that
+        happens to hold a callable value) without re-lowering
+        ``fa_expr.value`` a second time.
         """
         struct_typ = asserts.checked_cast(struct_ptr.typ.pointee_typ, typs.StructTyp)
         field_index = self._typ_check_results.struct_field_index(fa_expr)
@@ -992,22 +846,12 @@ class CfgBuilder:
         return self._deref_in_context(field_ptr, ctx, fa_expr)
 
     def _build_deref_expr(self, d_expr: ast.DerefExpr, ctx: _ExprContext) -> ir_values.Value:
-        """Lower a pointer dereference expression (``ptr.*``).
-
-        :param d_expr: The parsed dereference expression.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: The pointee's value, or the pointer itself unchanged if
-            ``ctx`` is :attr:`~_ExprContext.PLACE`.
-        """
         ptr = self._build_expr(d_expr.ptr, _ExprContext.VALUE)
         return self._deref_in_context(ptr, ctx, d_expr)
 
     def _build_stmt(self, stmt_ast: ast.Stmt) -> None:
         """Lower any statement, dispatching to the ``build_*_stmt`` method
         matching its AST node kind.
-
-        :param stmt_ast: The parsed statement.
         """
         match stmt_ast:
             case ast.ExprStmt():
@@ -1026,10 +870,6 @@ class CfgBuilder:
                 self._build_continue_stmt(stmt_ast)
 
     def _build_ret_stmt(self, ret_ast: ast.RetStmt) -> None:
-        """Lower a ``return`` statement.
-
-        :param ret_ast: The parsed return statement.
-        """
         assert self._fn is not None
         ret_typ = self._fn.fn_typ.ret_typ
 
@@ -1044,26 +884,14 @@ class CfgBuilder:
         self._ret(ir_values.VoidValue(ret_ast), ret_ast)
 
     def _build_break_stmt(self, break_ast: ast.BreakStmt) -> None:
-        """Lower a ``break`` statement.
-
-        :param break_ast: The parsed break statement.
-        """
         target = self._loop_ctxs[self._typ_check_results.resolutions.loop_target(break_ast)]
         self._branch(target.end_bb, break_ast)
 
     def _build_continue_stmt(self, continue_ast: ast.ContinueStmt) -> None:
-        """Lower a ``continue`` statement.
-
-        :param continue_ast: The parsed continue statement.
-        """
         target = self._loop_ctxs[self._typ_check_results.resolutions.loop_target(continue_ast)]
         self._branch(target.cond_bb, continue_ast)
 
     def _build_let_stmt(self, let_ast: ast.LetStmt) -> None:
-        """Lower a local ``let`` statement.
-
-        :param let_ast: The parsed ``let`` statement.
-        """
         expr = self._build_let_initializer(let_ast, _ExprContext.VALUE)
         mut = typs.Mutability.from_ast(let_ast.mut)
         alloca = self._curr_bb.alloca(expr.typ, mut, 1, let_ast)
@@ -1079,15 +907,9 @@ class CfgBuilder:
         value expressions both have observable side effects (e.g. a call
         in an array index alongside a call on the right-hand side), the
         place's side effects happen first. This is also what makes the
-        place's type available to use as the value expression's
-        :meth:`_build_expr`-level ``expected_typ`` hint (needed e.g. to
-        resolve an empty array literal assigned into a place of known
-        array type).
-
-        :param ass_ast: The parsed assignment statement.
-
-        :pre: ass_ast.place is mut [assert_eq]
-        :pre: ass_ast.expr coerces to ass_ast.place's type [opt_unwrap]
+        place's type available as the value expression's ``expected_typ``
+        hint (needed e.g. to resolve an empty array literal assigned into
+        a place of known array type).
         """
         place = self._build_place(ass_ast.place)
         place_typ = place.typ
@@ -1099,19 +921,11 @@ class CfgBuilder:
         self._curr_bb.store(coerced, place, ass_ast)
 
     def _build_let_initializer(self, let_ast: ast.LetStmt, ctx: _ExprContext) -> ir_values.Value:
-        """Lower a ``let`` statement's initializer expression, shared by
-        :meth:`_build_let_stmt` and :meth:`build_var_initializer`.
+        """Lower a ``let`` statement's initializer expression.
 
         If ``let_ast`` has a declared type, the initializer is coerced to
         it; otherwise the initializer's own type is used as-is, with no
         coercion.
-
-        :param let_ast: The parsed ``let`` statement.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: The (possibly coerced) initializer's value.
-
-        :pre: let_ast.typ is not None implies let_ast.expr coerces to it [opt_unwrap]
         """
         cached_typ = self._typ_check_results.let_declared_typ(let_ast)
         expected_typ = opt_util.opt_map(
@@ -1125,10 +939,8 @@ class CfgBuilder:
     def _build_int_lit(self, lit_ast: ast.IntLit, negated: bool) -> ir_values.Value:
         """Lower an integer literal to a compile-time-known value.
 
-        :param lit_ast: The parsed integer literal.
-        :param negated: Whether the literal is the operand of a unary
-            minus, and so denotes the negation of its written value.
-        :return: The literal's value.
+        ``negated`` means the literal is the operand of a unary minus, and
+        so denotes the negation of its written value.
         """
         typ = self._typ_check_results.int_lit_typ(lit_ast)
         value = -lit_ast.value if negated else lit_ast.value
@@ -1137,12 +949,9 @@ class CfgBuilder:
     def _coerce(self, value: ir_values.Value, node: ast.Ast) -> Optional[ir_values.Value]:
         """Convert ``value`` to the type its context expects, if allowed.
 
-        :param value: The value to convert.
-        :param node: The AST node ``value`` was checked against its
-            expected type with (see :meth:`TypCheckResults.coercion`), and
-            to attribute any emitted instruction to.
-        :return: A value of the expected type, or ``None`` if ``value``'s
-            type doesn't coerce to it.
+        ``node`` is the AST node ``value`` was checked against its expected
+        type with (see ``TypCheckResults.coercion``), and to attribute any
+        emitted instruction to.
         """
         coercion = self._typ_check_results.coercion(node)
         match coercion:
@@ -1176,14 +985,7 @@ class CfgBuilder:
     def _propagate_never(
         self, value: ir_values.Value, ast_node: ast.Ast, ctx: _ExprContext
     ) -> Optional[ir_values.Value]:
-        """If ``value`` is ``never``-typed, terminate the current block.
-
-        :param value: The already-built operand to check.
-        :param ast_node: The AST node to attribute a new terminator to.
-        :param ctx: Whether to lower the result for its value or its
-            address.
-        :return: A ``never``-typed result, or ``None`` otherwise.
-        """
+        """If ``value`` is ``never``-typed, terminate the current block."""
         if value.typ != typs.NEVER:
             return None
         if not self._curr_bb.terminated:
@@ -1191,14 +993,7 @@ class CfgBuilder:
         return self._in_context(ir_values.NeverValue(ast_node), ctx)
 
     def _build_place(self, expr_ast: ast.Expr) -> ir_values.Value[typs.PtrTyp]:
-        """Lower ``expr_ast`` for its address rather than its value.
-
-        :param expr_ast: The parsed expression to lower as a place.
-        :return: A pointer to ``expr_ast``'s storage.
-
-        :pre: expr_ast is a place expr [TypCheck]
-        :post: isinstance(result.typ, PtrTyp) [checked_cast]
-        """
+        """Lower ``expr_ast`` for its address rather than its value."""
         value = self._build_expr(expr_ast, _ExprContext.PLACE)
         asserts.checked_cast(value.typ, typs.PtrTyp)
         return cast(ir_values.Value[typs.PtrTyp], value)
@@ -1221,34 +1016,21 @@ class CfgBuilder:
         return self._curr_bb.load(ptr, ast_node)
 
     def _add_bb(self, basename: str) -> ir_values.BasicBlock:
-        """Create a new, empty basic block and add it to :attr:`cfg`.
+        """Create a new, empty basic block and add it to ``cfg``.
 
-        :param basename: A human-readable name to derive the block's
-            (uniquified) name from.
-        :return: The new basic block. It is not made the current block;
-            use :meth:`_set_position` for that.
+        It is not made the current block; use ``_set_position`` for that.
         """
         bb = ir_values.BasicBlock(self._generate_bb_name(basename))
         self.cfg.add_node(bb)
         return bb
 
     def _set_position(self, bb: ir_values.BasicBlock) -> None:
-        """Make ``bb`` the block that subsequent instructions are added to.
-
-        :param bb: The basic block to switch to; must already be in
-            :attr:`cfg`.
-        """
         asserts.assert_in(bb, self.cfg)
         self._curr_bb = bb
 
     def _branch(self, target: ir_values.BasicBlock, ast_node: ast.Ast) -> None:
-        """Terminate :attr:`_curr_bb` with an unconditional branch.
-
-        Leaves :attr:`_curr_bb` unchanged.
-
-        :param target: The basic block to branch to; must already be in
-            :attr:`cfg`.
-        :param ast_node: The AST node the branch instruction is attributed to.
+        """Terminate ``_curr_bb`` with an unconditional branch, leaving
+        ``_curr_bb`` itself unchanged.
         """
         asserts.assert_in(target, self.cfg)
         self._curr_bb.branch(target, ast_node)
@@ -1261,16 +1043,8 @@ class CfgBuilder:
         false_target: ir_values.BasicBlock,
         ast_node: ast.Ast,
     ) -> None:
-        """Terminate :attr:`_curr_bb` with a conditional branch.
-
-        Leaves :attr:`_curr_bb` unchanged.
-
-        :param condition: The boolean value to branch on.
-        :param true_target: The block to branch to if ``condition`` is
-            true; must already be in :attr:`cfg`.
-        :param false_target: The block to branch to if ``condition`` is
-            false; must already be in :attr:`cfg`.
-        :param ast_node: The AST node the branch instruction is attributed to.
+        """Terminate ``_curr_bb`` with a conditional branch, leaving
+        ``_curr_bb`` itself unchanged.
         """
         asserts.assert_in(true_target, self.cfg)
         asserts.assert_in(false_target, self.cfg)
@@ -1279,11 +1053,7 @@ class CfgBuilder:
         self.cfg.add_edge(self._curr_bb, false_target)
 
     def _ret(self, value: ir_values.Value, ast_node: Optional[ast.Ast]) -> None:
-        """Terminate :attr:`_curr_bb` with a return of ``value``.
-
-        :param value: The value to return.
-        :param ast_node: The AST node the return instruction is attributed to.
-        """
+        """Terminate ``_curr_bb`` with a return of ``value``."""
         self._curr_bb.ret(value, ast_node)
         self.cfg.add_edge(self._curr_bb, self.cfg.exit)
 
@@ -1299,35 +1069,29 @@ class CfgBuilder:
 
         Used for safety checks with no source-level ``if`` behind them -
         array bounds, integer overflow, division by zero - built directly
-        out of basic blocks rather than :meth:`_build_if_expr`, since
-        there's no ``ast.IfExpr`` to lower. Always calls the real prelude
-        ``panic`` (:attr:`_panic_ref`), never whatever a module's own
-        same-named definition might shadow it with locally - these checks
-        exist to enforce the language's own safety guarantees, which user
-        code shouldn't be able to opt out of by happening to define a
-        function called ``panic``.
+        out of basic blocks rather than ``_build_if_expr``, since there's
+        no ``ast.IfExpr`` to lower. Always calls the real prelude ``panic``
+        (``_panic_ref``), never whatever a module's own same-named
+        definition might shadow it with locally - these checks exist to
+        enforce the language's own safety guarantees, which user code
+        shouldn't be able to opt out of by happening to define a function
+        called ``panic``.
 
-        Already-dead code (:attr:`_curr_bb` terminated - e.g. this check
-        would follow a ``return`` earlier in the same block) is left alone
+        Already-dead code (``_curr_bb`` terminated - e.g. this check would
+        follow a ``return`` earlier in the same block) is left alone
         rather than given new blocks of its own: every instruction built
-        into an already-terminated block is silently dropped (see
-        :meth:`~leech.ir_values.BasicBlock._add_instr`), but :meth:`_cbranch`
-        unconditionally records a graph edge to wherever it points
-        regardless of whether its own instruction actually landed - so
-        without this, an unreachable check would still make its ``ok``
+        into an already-terminated block is silently dropped, but
+        ``_cbranch`` unconditionally records a graph edge to wherever it
+        points regardless of whether its own instruction actually landed -
+        so without this, an unreachable check would still make its ``ok``
         block reachable *in the graph*, resuming real instruction-building
         there and letting anything built afterwards - not just this
         check's own - reference values (e.g. an also-silently-dropped
         ``alloca``) that were never actually compiled.
 
-        :param cond: A ``bool``-typed value; true means the check failed.
-        :param message: The literal message to pass to ``panic``.
-        :param ast_node: The AST node the emitted instructions are
-            attributed to.
-        :param ok_bb: An existing continuation block, or ``None`` to
-            create one.
-
-        :post: _curr_bb.terminated or (_curr_bb is ok_bb, reached only when cond was false) [ctor]
+        Afterwards, ``_curr_bb`` is either terminated or is ``ok_bb``
+        (reached only when ``cond`` was false), so callers can keep
+        building into it.
         """
         if self._curr_bb.terminated:
             return

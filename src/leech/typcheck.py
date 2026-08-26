@@ -5,7 +5,7 @@
 """Type checking before LLVM lowering.
 
 Each body is checked completely, including unreachable code, and lowering decisions are
-recorded by AST-node identity in :class:`TypCheckResults`.
+recorded by AST-node identity in ``TypCheckResults``.
 """
 
 import dataclasses
@@ -86,10 +86,7 @@ class PtrMutRelax(Coercion):
 
 @dataclasses.dataclass(frozen=True)
 class IntExt(Coercion):
-    """Zero/sign-extend an integer value to a wider integer type.
-
-    :param target: The type to extend to.
-    """
+    """Zero/sign-extend an integer value to a wider integer type."""
 
     target: typs.IntTyp
 

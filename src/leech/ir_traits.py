@@ -241,8 +241,6 @@ class Impl:
         the same type, since the self type isn't restricted to a local
         type the way an inherent impl's target is. An inherent block is
         exempt - its own target is required to be local.
-
-        :raises OrphanImplError: If neither is local.
         """
         if self.trait is None:
             return
@@ -272,15 +270,6 @@ class Impl:
 
         For a trait impl this also checks ``fn`` against the prototype
         the trait declares for it.
-
-        :raises ExtraMethodInImplError: If this impl's trait declares no
-            method named ``fn.name``.
-        :raises ReservedNameError: If an inherent associated function takes
-            a reserved name.
-        :raises DuplicateItemDefnError: If this impl already defines a
-            function of that name.
-        :raises TraitMethodSignatureMismatchError: If ``fn``'s signature
-            doesn't match the one this impl's trait declares for it.
         """
         trait = self.trait
         trait_method = None
@@ -318,9 +307,6 @@ class Impl:
         """Raise if this impl is missing any of its trait's methods.
 
         An inherent block has no obligations to check.
-
-        :raises TraitMethodNotImplementedError: If this impl's trait
-            declares a method this impl never defined.
         """
         if self.trait is None:
             return
@@ -336,9 +322,6 @@ def _head_shape(typ: typs.Typ) -> Hashable:
 
     Struct instances share their declaration's shape; other types use
     their Python class. This is only a pre-filter for structural matching.
-
-    :param typ: The type to compute a head shape for.
-    :return: The head shape.
     """
     if isinstance(typ, typs.StructTyp):
         return typ.template
@@ -356,13 +339,15 @@ def _selection_shapes(typ: typs.Typ) -> tuple[Hashable, ...]:
 class ImplRegistry:
     """Program-wide implementations indexed by trait and receiver type.
 
-    :invariant: for every t in _traits_by_shape[s], (t, s) in _impls [ctor]
+    ``_traits_by_shape`` is kept consistent with ``_impls``: for
+    every trait ``t`` in ``_traits_by_shape[s]``, ``(t, s)`` is a key in
+    ``_impls``.
     """
 
     _impls: Final[dict[tuple[Optional[Trait], Hashable], list[Impl]]]
     ctx: Final[compilation.Ctx]
     #: Every trait with at least one impl of a given head shape, indexing
-    #: :attr:`_impls` so :meth:`_find_trait_impls_for_typ` doesn't have to scan
+    #: ``_impls`` so ``_find_trait_impls_for_typ`` doesn't have to scan
     #: every trait/shape pair ever registered in the program.
     _traits_by_shape: Final[dict[Hashable, list[Trait]]]
 
@@ -374,14 +359,6 @@ class ImplRegistry:
     def add_impl(self, impl: Impl) -> None:
         """Register ``impl``, rejecting it if it's incoherent or conflicts with one
         already registered.
-
-        :param impl: The impl to register.
-        :raises OrphanImplError: If neither ``impl``'s trait nor its self
-            type is defined in ``impl``'s own module.
-        :raises ConflictingImplsError: If ``impl``'s self type could
-            overlap with an already-registered impl of the same trait.
-        :raises DuplicateItemDefnError: If an overlapping inherent impl
-            declares an associated function with the same name.
         """
         impl.check_orphan_rule()
         shape = _head_shape(impl.self_typ)
@@ -400,7 +377,6 @@ class ImplRegistry:
         impls.append(impl)
 
     def _iter_trait_impl_conflict_candidates(self, trait_impl: Impl) -> Iterator[Impl]:
-        """Yield registered impls that could conflict with ``trait_impl``."""
         trait = trait_impl.trait
         assert trait is not None
         if isinstance(trait_impl.self_typ, typs.TypParamTyp):
@@ -416,7 +392,6 @@ class ImplRegistry:
                 yield candidate_trait_impl
 
     def _check_trait_impl_conflicts(self, trait_impl: Impl) -> None:
-        """Reject ``trait_impl`` when it overlaps a registered trait impl."""
         trait = trait_impl.trait
         assert trait is not None
         for existing_trait_impl in self._iter_trait_impl_conflict_candidates(trait_impl):
@@ -451,12 +426,9 @@ class ImplRegistry:
     def find_inherent_impls(self, typ: typs.Typ) -> list[Impl]:
         """Find every inherent ``impl`` block that applies to ``typ``.
 
-        Unlike :meth:`find_trait_impl`, more than one can apply: inherent
+        Unlike ``find_trait_impl``, more than one can apply: inherent
         blocks are distinguished by the members they declare, not by being
         mutually exclusive.
-
-        :param typ: The type to find inherent implementations for.
-        :return: The applicable inherent impl blocks.
         """
         inherent_impls = []
         for inherent_impl in self._impls.get((None, _head_shape(typ)), ()):
@@ -466,12 +438,7 @@ class ImplRegistry:
         return inherent_impls
 
     def find_trait_impl(self, trait: Trait, typ: typs.Typ) -> Optional[Impl]:
-        """Find the trait impl of ``trait`` that applies to ``typ``, if any.
-
-        :param trait: The trait to find an implementation of.
-        :param typ: The type to find an implementation for.
-        :return: The applicable trait impl, or ``None`` if none is registered.
-        """
+        """Find the trait impl of ``trait`` that applies to ``typ``, if any."""
         for shape in _selection_shapes(typ):
             for trait_impl in self._impls.get((trait, shape), ()):
                 bindings = typs.match_typ_args(trait_impl.self_typ, typ)
@@ -488,10 +455,6 @@ class ImplRegistry:
         assumption in scope through its own declared bounds. Method lookup inside
         a generic body uses only that second form: ``fn f[U: Show]`` may call
         ``Show``'s methods on ``U``, and ``fn f[U]`` may not.
-
-        :param trait: The trait to prove an implementation of.
-        :param typ: The type to prove it for.
-        :return: Whether an impl or a bound in scope establishes it.
         """
         if isinstance(typ, typs.TypParamTyp) and typ.declares_bound(trait):
             return True
@@ -509,16 +472,17 @@ class ImplRegistry:
         the program ill-formed: ``Box[bool]`` simply doesn't implement
         ``Show`` when only ``impl[T: Show] Show for Box[T]`` provides it.
         Two impls distinguished only by their bounds still conflict,
-        though, so this gates selection and not :meth:`add_impl`'s
+        though, so this gates selection and not ``add_impl``'s
         coherence checks.
 
         This holds for an abstract type as much as a concrete one, by way
-        of :meth:`implements`: matching the impl above against its own
+        of ``implements``: matching the impl above against its own
         ``Box[T]`` binds ``T`` to itself, and the impl's ``T: Show`` is
         exactly the assumption that discharges it.
 
-        :raises RecursiveImplSelectionError: If checking the bounds repeats
-            the same concrete implementation obligation.
+        Raises ``errors.RecursiveImplSelectionError`` if
+        checking the bounds repeats the same concrete implementation
+        obligation.
         """
         with self.ctx.detect_cycle(
             compilation.CycleDomain.IMPL_SELECTION,
@@ -545,11 +509,7 @@ class ImplRegistry:
             return typs.unsatisfied_bound(bindings, impl.env) is None
 
     def _find_trait_impls_for_typ(self, typ: typs.Typ) -> list[Impl]:
-        """Find every trait impl that applies to ``typ``.
-
-        :param typ: The (concrete) type to find implementations for.
-        :return: The applicable trait impls, one per trait at most.
-        """
+        """Find every trait impl that applies to ``typ``, one per trait at most."""
         trait_impls = []
         seen_traits = set()
         for shape in _selection_shapes(typ):
@@ -591,14 +551,8 @@ class ImplRegistry:
         unsubstituted type parameter resolves differently, against the
         parameter's own declared bounds rather than the registry.
 
-        :param typ: The type to look up a member on.
-        :param name: The member's name.
-        :param span: Where to point an :class:`~leech.errors.AmbiguousMethodError`
-            at, if one applies.
-        :return: The member, or ``None`` if neither an inherent member nor any
-            applicable trait impl provides one of that name.
-        :raises AmbiguousMethodError: If more than one applicable impl provides
-            a member of that name.
+        ``span`` is where to point an ``errors.AmbiguousMethodError`` at,
+        if one applies.
         """
         inherent_fn = self.lookup_assoc_fn(typ, name)
         if inherent_fn is not None:
@@ -628,14 +582,8 @@ def disambiguate[T](
 ) -> Optional[T]:
     """Return the sole candidate, rejecting ambiguous matches.
 
-    :param matches: Every candidate found, however that search was done.
-    :param name: The member name being looked up.
-    :param typ_name: The name of the type the lookup was against, for the
-        diagnostic.
-    :param span: Where to point an :class:`~leech.errors.AmbiguousMethodError`
-        at, if one applies.
-    :return: The sole match, or ``None`` if ``matches`` is empty.
-    :raises AmbiguousMethodError: If ``matches`` has more than one entry.
+    ``span`` is where to point an ``errors.AmbiguousMethodError`` at, if
+    one applies.
     """
     if len(matches) > 1:
         raise errors.AmbiguousMethodError(name, typ_name, span)

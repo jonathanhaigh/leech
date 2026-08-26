@@ -58,7 +58,7 @@ def resolve_bound(
     """Resolve a bound to its trait and its resolved comptime arguments.
 
     Applies the same arity rules to a bound's trait reference that
-    :meth:`Typ._basic_typ_from_ast` applies to a type reference, and checks the
+    ``Typ._basic_typ_from_ast`` applies to a type reference, and checks the
     resolved arguments against the trait's own parameter bounds. Whether any
     particular type *satisfies* the bound is left to callers.
     """
@@ -79,7 +79,7 @@ def resolve_trait_comptime_args(
 ) -> tuple[Typ, ...]:
     """Resolve and bounds-check comptime arguments applied to ``trait``.
 
-    Applies the same arity rules :meth:`Typ._basic_typ_from_ast` applies to
+    Applies the same arity rules ``Typ._basic_typ_from_ast`` applies to
     a generic struct reference, and checks the resolved arguments against
     the trait's own parameter bounds. Shared by a bound's own trait
     reference (``T: Container[i32]``) and a trait impl's (``impl
@@ -108,12 +108,9 @@ def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[ComptimeParamTyp
 
     The match succeeds when some substitution for ``declared``'s own comptime
     parameters turns it into exactly ``actual`` - so ``Pair[A, A]``
-    matches ``Pair[i32, i32]`` but not ``Pair[i32, bool]``.
-
-    :param declared: The type as written, possibly naming comptime parameters.
-    :param actual: The type to match it against.
-    :return: The substitution that makes them equal, or ``None`` if no
-        substitution does. An empty mapping means they were already equal.
+    matches ``Pair[i32, i32]`` but not ``Pair[i32, bool]``. Returns the
+    substitution, or ``None`` if none makes them equal; an empty mapping
+    means they were already equal.
     """
     bindings: dict[ComptimeParamTyp, Typ] = {}
     declared.infer_typ_args(actual, bindings)
@@ -144,7 +141,7 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
     """Return whether substitutions can make ``a`` and ``b`` the same type.
 
     Comptime parameters in either argument are unification variables. This differs
-    from :func:`match_typ_args`, whose parameters are only variables on its
+    from ``match_typ_args``, whose parameters are only variables on its
     ``declared`` side. Bindings must remain finite, so an equation such as
     ``T = Box[T]`` does not establish an overlap.
     """
@@ -214,13 +211,11 @@ def unsatisfied_bound(
 ) -> Optional[tuple[TypParamTyp, Typ, ir_traits.Trait]]:
     """Find a type argument that doesn't satisfy its type parameter's bounds.
 
-    :param bindings: Each comptime parameter mapped to the comptime
-        argument standing in for it. A value parameter's binding is
-        skipped - it has no bounds of its own to violate.
-    :param e: The scope each bound's trait name resolves in.
-    :return: The first type parameter, argument and trait for which the
-        argument doesn't implement the trait, or ``None`` if every bound
-        holds.
+    ``bindings`` maps each comptime parameter to the comptime argument
+    standing in for it; a value parameter's binding is skipped, since it
+    has no bounds of its own to violate. Returns the first type parameter,
+    argument, and trait for which the argument doesn't implement the
+    trait, or ``None`` if every bound holds.
     """
     # Bind every parameter before checking any bound, so that a bound's type
     # arguments can name a sibling parameter declared either side of it.
@@ -269,12 +264,9 @@ def resolve_comptime_arg(param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: i
     """Resolve one parsed comptime argument against its declared parameter.
 
     An unsuffixed integer literal takes ``param``'s declared value type
-    when ``param`` is a :class:`ValueParamTyp`; an explicitly suffixed one
+    when ``param`` is a ``ValueParamTyp``; an explicitly suffixed one
     resolves to its own suffix, exactly like an ordinary integer literal
     elsewhere.
-
-    :raises WrongKindOfComptimeArgError: If a bare integer literal is
-        given for a type parameter.
     """
     if isinstance(arg_ast, ast.IntLit):
         if arg_ast.explicit_width is not None:
@@ -307,15 +299,7 @@ def check_comptime_arg_bounds(
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
 ) -> None:
-    """Raise if a comptime argument violates its corresponding parameter's bounds.
-
-    :raises WrongKindOfComptimeArgError: If a type argument was given for a
-        value parameter, or vice versa.
-    :raises WrongComptimeValueTypError: If a value argument's type doesn't
-        match its parameter's declared type.
-    :raises UnsatisfiedBoundError: If a type argument doesn't satisfy a
-        trait bound.
-    """
+    """Raise if a comptime argument violates its corresponding parameter's bounds."""
     typ_param_bindings: dict[ComptimeParamTyp, Typ] = {}
     for param, arg in zip(comptime_params, comptime_args, strict=True):
         arg_value_typ = None
@@ -342,8 +326,6 @@ class Typ(abc.ABC):
 
     Most types are weakly interned here. Struct instances are instead owned by
     their compilation context.
-
-    :invariant: get_or_create(*a) is get_or_create(*a) [assert_not_in @ create]
     """
 
     _cache: ClassVar[weakref.WeakValueDictionary[Hashable, Typ]] = weakref.WeakValueDictionary()
@@ -416,7 +398,7 @@ class Typ(abc.ABC):
     def qualified_name(self) -> str:
         """This type's name as used to build LLVM symbol names.
 
-        Unlike :attr:`name`, this must identify the type program-wide, so
+        Unlike ``name``, this must identify the type program-wide, so
         a type declared in a module carries that module's name and a type
         built from others qualifies those too. The base implementation is
         the bare name, correct for the builtin types, which are declared
@@ -482,11 +464,7 @@ class Typ(abc.ABC):
 
 
 class IntTyp(Typ):
-    """A fixed-width signed or unsigned integer type, e.g. ``i32`` or ``u8``.
-
-    :param width: The bit width.
-    :param sign: Whether the type is signed or unsigned.
-    """
+    """A fixed-width signed or unsigned integer type, e.g. ``i32`` or ``u8``."""
 
     width: Final[int]
     signage: Final[signage.Signage]
@@ -516,11 +494,7 @@ class IntTyp(Typ):
         return 2**self.width - 1
 
     def fits(self, value: int) -> bool:
-        """Whether ``value`` is representable by this type.
-
-        :param value: The value to check.
-        :return: Whether ``min_value <= value <= max_value``.
-        """
+        """Whether ``value`` is representable by this type."""
         return self.min_value <= value <= self.max_value
 
     @override
@@ -551,9 +525,8 @@ class IntTyp(Typ):
     def from_name(name: str) -> Optional[IntTyp]:
         """Recognize and build the interned builtin int type spelled ``name``.
 
-        :param name: The spelling to parse, e.g. ``"i32"`` or ``"u8"``.
-        :return: The int type, or ``None`` if ``name`` doesn't spell one, or
-            spells a width too large to parse.
+        Returns ``None`` if ``name`` doesn't spell one, or spells a width
+        too large to parse.
         """
         m = IntTyp._NAME_RE.fullmatch(name)
         if m is None:
@@ -577,11 +550,7 @@ class BoolTyp(Typ):
 
 
 class CallableTyp(Typ):
-    """Base class for types of things that can be called.
-
-    :param ret_typ: The return type.
-    :param param_typs: The parameter types, in declaration order.
-    """
+    """Base class for types of things that can be called."""
 
     ret_typ: Final[Typ]
     param_typs: Final[tuple[Typ, ...]]
@@ -623,11 +592,7 @@ class FnTyp(CallableTyp):
 
 
 class PtrTyp(Typ):
-    """A pointer type, e.g. ``*i32`` or ``*mut i32``.
-
-    :param pointee_typ: The type pointed to.
-    :param mut: Whether the pointee may be written through this pointer.
-    """
+    """A pointer type, e.g. ``*i32`` or ``*mut i32``."""
 
     pointee_typ: Final[Typ]
     mut: Final[Mutability]
@@ -697,10 +662,7 @@ class ArrayTyp(Typ):
 
     @property
     def length_value(self) -> int:
-        """This array's concrete length as a Python ``int``.
-
-        :pre: length is a concrete usize value [checked_cast, assert]
-        """
+        """This array's concrete length as a Python ``int``."""
         concrete = asserts.checked_cast(self.length, ComptimeValueTyp)
         assert concrete.value_typ is USIZE, (
             f"array length must be usize, not {concrete.value_typ.name}"
@@ -740,7 +702,7 @@ class ComptimeParamTyp(Typ):
 
     Interned by its owner and position - a parameter is declared in exactly
     one place, so the first interning fixes it. Never instantiated
-    directly; use :class:`TypParamTyp` or :class:`ValueParamTyp`.
+    directly; use ``TypParamTyp`` or ``ValueParamTyp``.
     """
 
     _owner: Final[Hashable]
@@ -755,10 +717,7 @@ class ComptimeParamTyp(Typ):
     @override
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key a comptime parameter by its declaring item and position.
-
-        :pre: len(args) > 1 [assert_gt]
-        """
+        """Key a comptime parameter by its declaring item and position."""
         asserts.assert_gt(len(args), 1)
         return (cls, args[0], args[1])
 
@@ -813,9 +772,6 @@ class TypParamTyp(ComptimeParamTyp):
         This is what stands in for an impl inside a generic definition:
         nothing is registered against a type parameter, so what its
         declaration assumes about it is all that can be known.
-
-        :param trait: The trait to look for.
-        :return: Whether some bound resolves to ``trait``.
         """
         return any(
             resolve_bound(bound, opt_util.opt_unwrap(self.decl_env))[0] is trait
@@ -839,10 +795,10 @@ class ValueParamTyp(ComptimeParamTyp):
     """An opaque comptime value parameter interned by its owner and position.
 
     It has no LLVM representation of its own; a concrete argument
-    substitutes to a :class:`ComptimeValueTyp` of the same ``value_typ``.
+    substitutes to a ``ComptimeValueTyp`` of the same ``value_typ``.
 
-    :param value_typ: This parameter's declared type - an :class:`IntTyp`
-        or :data:`BOOL`.
+    :param value_typ: This parameter's declared type - an ``IntTyp``
+        or ``BOOL``.
     """
 
     value_typ: Final[Typ]
@@ -855,14 +811,12 @@ class ValueParamTyp(ComptimeParamTyp):
 class ComptimeValueTyp(Typ):
     """A concrete compile-time value used as a comptime argument.
 
-    The type-level counterpart to :class:`~leech.ir_values.ComptimeValue`:
+    The type-level counterpart to ``ir_values.ComptimeValue``:
     a ``Typ`` node whose entire content is one concrete compile-time value,
     interned the same way every other ``Typ`` is - equal values are
     therefore always the same instance.
 
-    :param value_typ: This value's type - an :class:`IntTyp` or :data:`BOOL`.
-
-    :pre: (value_typ is BOOL) == isinstance(value, bool) [assert]
+    :param value_typ: This value's type - an ``IntTyp`` or ``BOOL``.
     """
 
     value_typ: Final[Typ]
@@ -878,10 +832,7 @@ class ComptimeValueTyp(Typ):
     @override
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key a comptime value by its type and its own value.
-
-        :pre: len(args) == 2 [assert_eq]
-        """
+        """Key a comptime value by its type and its own value."""
         asserts.assert_eq(len(args), 2)
         return (cls, args[0], args[1])
 
@@ -904,7 +855,7 @@ class ComptimeValueTyp(Typ):
         return asserts.checked_cast(typ, ComptimeValueTyp).value
 
     def to_comptime_value(self, ast_node: Optional[ast.Ast] = None) -> ir_values.ComptimeValue:
-        """Build the :class:`~leech.ir_values.ComptimeValue` this value denotes."""
+        """Build the ``ir_values.ComptimeValue`` this value denotes."""
         # Local to avoid the ir_values import cycle (ir_values imports this module).
         from leech import ir_values  # noqa: PLC0415
 
@@ -927,20 +878,17 @@ def comptime_params_from_ast(
     A single-entry bound list is resolved against ``e``: a name that
     denotes a ``Trait`` declares a type parameter with that bound (as a
     multi-entry bound list always does); a name that denotes an
-    :class:`IntTyp` or :data:`BOOL` declares a value parameter of that
+    ``IntTyp`` or ``BOOL`` declares a value parameter of that
     type instead. This declaration is called eagerly (e.g. from a
     function's or trait's own ``__init__``), so a single bound that
     doesn't yet resolve - e.g. a trait declared later in the same module,
     as in mutually recursive trait bounds - is left unresolved here and
-    always yields a type parameter; the deferred :meth:`resolve_bound`
+    always yields a type parameter; the deferred ``resolve_bound``
     call that checks it later (after the whole module is loaded) raises
     if it still doesn't name a trait.
 
     :param e: The scope enclosing the declaration, in which parameters'
-        bounds are resolved. See :attr:`TypParamTyp.decl_env`.
-    :raises ReservedNameError: If a parameter takes a reserved name.
-    :raises InvalidComptimeBoundError: If a single bound resolves now and
-        names neither a trait nor a usable value type.
+        bounds are resolved. See ``TypParamTyp.decl_env``.
     """
     # Local to avoid the ir_traits import cycle.
     from leech import ir_traits  # noqa: PLC0415
@@ -1061,10 +1009,7 @@ class StructTypTemplate:
         return comptime_params_from_ast(self.ast, self.ast.comptime_params, self._decl_env)
 
     def instantiate(self, comptime_args: tuple[Typ, ...]) -> StructTyp:
-        """Return the cached instance for ``comptime_args`` and record its request.
-
-        :post: instantiate(a) is instantiate(a) for equal a [cache]
-        """
+        """Return the cached instance for ``comptime_args`` and record its request."""
         asserts.assert_eq(len(comptime_args), len(self.comptime_params))
         return self._decl_env.ctx.instantiate_struct(self, comptime_args, record_request=True)
 
@@ -1129,7 +1074,7 @@ class StructTyp(Typ):
         """This instantiation's mangled symbol name, e.g. ``mod::Pair[i32, i32]``.
 
         The comptime arguments are qualified too, rather than rendered as
-        :attr:`name` renders them: two same-named structs declared in
+        ``name`` renders them: two same-named structs declared in
         different modules are different types, so ``Box[a::Foo]`` and
         ``Box[b::Foo]`` must not arrive at one symbol.
         """
@@ -1220,7 +1165,6 @@ class StructTyp(Typ):
     def _display_name(
         typ: StructTyp, hop: Optional[errors.StructLayoutHop], root_name: Optional[str]
     ) -> str:
-        """Return ``root_name`` for an un-hopped root frame, else ``typ``'s ordinary name."""
         return root_name if hop is None and root_name is not None else typ.name
 
     @staticmethod
@@ -1248,12 +1192,8 @@ class EnumTyp(Typ):
     """An enum type: a fixed, named set of integer discriminants backed by
     an explicit or inferred integer type.
 
-    Unlike :class:`StructTyp`, never generic and never instantiated - one
+    Unlike ``StructTyp``, never generic and never instantiated - one
     ``enum`` declaration is always exactly one ``EnumTyp``.
-
-    :param enum_ast: The parsed enum declaration.
-    :param e: The enclosing scope, used to resolve the backing type.
-    :param mod_name: The name of the module this enum is declared in.
     """
 
     ast: Final[ast.EnumDefn]
@@ -1286,9 +1226,6 @@ class EnumTyp(Typ):
         """This enum's variants, keyed by name, in declaration order, each
         mapped to its discriminant value - the previous variant's value
         plus one, or an explicit ``= N`` override.
-
-        :raises DuplicateVariantInEnumDefnError: If two variants share a name.
-        :raises ReservedNameError: If a variant takes a reserved name.
         """
         result: dict[str, int] = {}
         next_value = 0
@@ -1313,16 +1250,6 @@ class EnumTyp(Typ):
     def backing_typ(self) -> IntTyp:
         """This enum's backing integer type: explicit, or the smallest
         unsigned builtin integer type fitting every discriminant.
-
-        :raises EnumBackingTypNotIntError: If an explicit backing type is
-            given and isn't an integer type.
-        :raises EnumVariantValueTypMismatchError: If an explicit backing
-            type is given and a discriminant literal's own explicit type
-            suffix doesn't coerce to it.
-        :raises IntLitOverflowError: If an explicit backing type is given
-            and a discriminant doesn't fit it.
-        :raises EnumDiscriminantOverflowError: If no explicit backing type
-            is given and a discriminant doesn't fit any builtin integer type.
         """
         if self.ast.backing_typ is not None:
             typ = Typ.from_ast(self.ast.backing_typ, self._env)
@@ -1372,15 +1299,15 @@ class EnumBackingTyp(Typ):
     ``inner`` becomes once substituted.
 
     Exists only inside a generic builtin's own opaque self-describing
-    signature (see ``__enum_to_int``'s :class:`~leech.ir_builtins.EnumToIntIntrinsicFn`,
+    signature (see ``__enum_to_int``'s ``ir_builtins.EnumToIntIntrinsicFn``,
     whose return type can't be spelled as any concrete type until its own
-    type argument is known to be a concrete :class:`EnumTyp`) - substituting
+    type argument is known to be a concrete ``EnumTyp``) - substituting
     a concrete enum type for ``inner`` collapses this straight to that
-    enum's real :attr:`EnumTyp.backing_typ`, so it never survives into a
+    enum's real ``EnumTyp.backing_typ``, so it never survives into a
     fully-substituted, lowerable signature.
 
     :param inner: The (possibly still a type parameter) type whose backing
-        type this stands for; must resolve to an :class:`EnumTyp` once
+        type this stands for; must resolve to an ``EnumTyp`` once
         every type parameter within it is substituted away.
     """
 

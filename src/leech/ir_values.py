@@ -77,10 +77,7 @@ class ComptimeValue[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](
 
 
 class ComptimeInt(ComptimeValue[typs.IntTyp]):
-    """A compile-time-known integer already canonicalized into its type's range.
-
-    :pre: typ.fits(value) [assert]
-    """
+    """A compile-time-known integer already canonicalized into its type's range."""
 
     _typ: Final[typs.IntTyp]
     value: Final[int]
@@ -98,12 +95,7 @@ class ComptimeInt(ComptimeValue[typs.IntTyp]):
 
 
 class ComptimeEnum(ComptimeValue[typs.EnumTyp]):
-    """A compile-time-known enum value - one of its type's variants.
-
-    :param typ: The enum type.
-    :param value: The variant's discriminant value.
-    :param ast_node: The AST node this value was built from, if any.
-    """
+    """A compile-time-known enum value - one of its type's variants."""
 
     _typ: Final[typs.EnumTyp]
     value: Final[int]
@@ -171,19 +163,12 @@ class ComptimeAggregate[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast
         return [self.get_element(i) for i in range(len(self))]
 
     def _check_index(self, index: int) -> None:
-        """Assert that ``index`` is in bounds."""
         asserts.assert_ge(index, 0)
         asserts.assert_lt(index, len(self))
 
 
 class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
-    """A compile-time-known array value.
-
-    :param typ: The array type.
-    :param elements: The element values, in index order; must match
-        ``typ`` in length and element type.
-    :param ast_node: The AST node this value was built from, if any.
-    """
+    """A compile-time-known array value."""
 
     elements: Final[list[ComptimeValue]]
     _typ: Final[typs.ArrayTyp]
@@ -222,13 +207,7 @@ class ComptimeArray(ComptimeAggregate[typs.ArrayTyp]):
 
 
 class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
-    """A compile-time-known struct value.
-
-    :param typ: The struct type.
-    :param fields: The field values, keyed by field name; must match
-        ``typ``'s fields in names and types.
-    :param ast_node: The AST node this value was built from, if any.
-    """
+    """A compile-time-known struct value."""
 
     fields: Final[dict[str, ComptimeValue]]
     _typ: Final[typs.StructTyp]
@@ -279,7 +258,7 @@ class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
 class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[typs.PtrTyp, AstT_co]):
     """Base class for compile-time-known pointer values.
 
-    Unlike a runtime pointer (see :class:`AllocaInstr`), a compile-time
+    Unlike a runtime pointer (see ``AllocaInstr``), a compile-time
     pointer can be directly loaded from and stored to, since the pointee
     it refers to is itself tracked as a Python object rather than living
     in memory.
@@ -291,10 +270,7 @@ class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[typs.PtrTyp, AstT_co
 
     @abc.abstractmethod
     def store(self, value: ComptimeValue) -> None:
-        """Overwrite the value pointed to.
-
-        :param value: The value to store.
-        """
+        """Overwrite the value pointed to."""
 
     @abc.abstractmethod
     def is_temporary(self) -> bool:
@@ -302,17 +278,12 @@ class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[typs.PtrTyp, AstT_co
 
         Used to reject taking the address of, or returning a pointer
         into, a compile-time-only temporary (see
-        :class:`~leech.errors.CannotTakeAddressOfComptimeValueError`).
+        ``errors.CannotTakeAddressOfComptimeValueError``).
         """
 
 
 class ComptimeAlloc(ComptimePtr):
-    """A compile-time-known pointer to a freshly-allocated, uninitialized value.
-
-    :param typ: The type of the allocated value.
-    :param mut: The mutability of the allocated value.
-    :param ast_node: The AST node this value was built from, if any.
-    """
+    """A compile-time-known pointer to a freshly-allocated, uninitialized value."""
 
     value: ComptimeValue
     mut: Final[typs.Mutability]
@@ -343,10 +314,6 @@ class ComptimeAlloc(ComptimePtr):
 class ComptimeGep(ComptimePtr):
     """A compile-time-known pointer into an aggregate, e.g. ``&arr[i]`` or
     ``&s.field``.
-
-    :param base: The pointer being indexed into.
-    :param index: The array or struct field index.
-    :param ast_node: The AST node this value was built from, if any.
     """
 
     base: Final[ComptimePtr]
@@ -378,10 +345,7 @@ class ComptimeGep(ComptimePtr):
 
 
 class VoidValue(ComptimeValue[typs.VoidTyp]):
-    """The single, valueless result of a void-typed expression.
-
-    :param ast_node: The AST node this value was built from, if any.
-    """
+    """The single, valueless result of a void-typed expression."""
 
     @override
     def __init__(self, ast_node: Optional[ast.Ast]):
@@ -396,13 +360,11 @@ class NeverValue(ComptimeValue[typs.NeverTyp]):
     """The valueless result of a block that ends already terminated.
 
     Used for a block with no tail expression whose statements already
-    diverged (e.g. ended in ``return``), as opposed to :class:`VoidValue`
+    diverged (e.g. ended in ``return``), as opposed to ``VoidValue``
     for one that genuinely falls off the end. Unlike the ``never``-typed
-    terminator instructions (:class:`RetInstr`, :class:`BranchInstr`,
-    :class:`UnreachableInstr`), this adds nothing to the block: one of
+    terminator instructions (``RetInstr``, ``BranchInstr``,
+    ``UnreachableInstr``), this adds nothing to the block: one of
     those has already terminated it by the time this is used.
-
-    :param ast_node: The AST node this value was built from, if any.
     """
 
     @override
@@ -415,11 +377,7 @@ class NeverValue(ComptimeValue[typs.NeverTyp]):
 
 
 class UndefValue(ComptimeValue):
-    """A placeholder for a not-yet-initialized element of an aggregate being built.
-
-    :param typ: The type the eventual value will have.
-    :param ast_node: The AST node this value was built from, if any.
-    """
+    """A placeholder for a not-yet-initialized element of an aggregate being built."""
 
     _typ: Final[typs.Typ]
 
@@ -436,13 +394,8 @@ class UndefValue(ComptimeValue):
 class Param(Value[typs.Typ, ast.Param | ast.Receiver]):
     """A formal parameter of a function, including a method's receiver.
 
-    :param fn: The declaration for an unsubstituted formal parameter, or
-        the concrete instance for a lowered parameter.
-    :param pos: The parameter's zero-based position in the parameter
-        list.
-    :param ast_node: The AST node this value was built from, if any - a
-        :class:`~leech.ast.Receiver` at position 0 for a method's ``self``,
-        otherwise a :class:`~leech.ast.Param`.
+    Its AST node is an ``ast.Receiver`` at position 0 for a method's
+    ``self``, otherwise an ``ast.Param``.
     """
 
     fn: Final[ir_module.FnSymbol | ir_module.FnInstance]
@@ -466,11 +419,7 @@ class Param(Value[typs.Typ, ast.Param | ast.Receiver]):
 
 
 class Instr[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT_co, AstT_co]):
-    """Base class for a single instruction within a :class:`BasicBlock`.
-
-    :param bb: The basic block this instruction belongs to.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Base class for a single instruction within a ``BasicBlock``."""
 
     bb: Final[BasicBlock]
 
@@ -484,18 +433,12 @@ class Instr[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](Value[TypT
 
     @property
     def name(self) -> str:
-        """This instruction's kind, as used in :class:`BasicBlock`'s textual dump."""
+        """This instruction's kind, as used in ``BasicBlock``'s textual dump."""
         return type(self).__name__
 
 
 class BinOpInstr(Instr):
-    """Base class for binary arithmetic instructions.
-
-    :param bb: The basic block this instruction belongs to.
-    :param lhs: The left-hand operand; must have the same type as ``rhs``.
-    :param rhs: The right-hand operand.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Base class for binary arithmetic instructions."""
 
     lhs: Final[Value]
     rhs: Final[Value]
@@ -533,12 +476,7 @@ class UdivInstr(BinOpInstr):
 
 
 class NegInstr(Instr):
-    """Integer negation.
-
-    :param bb: The basic block this instruction belongs to.
-    :param operand: The value to negate.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Integer negation."""
 
     operand: Final[Value]
 
@@ -553,12 +491,7 @@ class NegInstr(Instr):
 
 
 class NotInstr(Instr):
-    """Boolean negation.
-
-    :param bb: The basic block this instruction belongs to.
-    :param operand: The value to negate.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Boolean negation."""
 
     operand: Final[Value]
 
@@ -573,14 +506,7 @@ class NotInstr(Instr):
 
 
 class IcmpInstr(Instr):
-    """Base class for integer comparison instructions.
-
-    :param bb: The basic block this instruction belongs to.
-    :param op: The comparison operator, e.g. ``"<"`` or ``"=="``.
-    :param lhs: The left-hand operand; must have the same type as ``rhs``.
-    :param rhs: The right-hand operand.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Base class for integer comparison instructions (``op`` is e.g. ``"<"`` or ``"=="``)."""
 
     op: Final[str]
     lhs: Final[Value]
@@ -609,40 +535,37 @@ class IcmpUnsignedInstr(IcmpInstr):
 
 
 class CheckedAddInstr(AddInstr):
-    """Integer addition, paired with an :class:`OverflowFlagInstr` that
+    """Integer addition, paired with an ``OverflowFlagInstr`` that
     reports whether it overflowed.
 
-    Behaves exactly like a plain :class:`AddInstr` - comptime evaluation,
+    Behaves exactly like a plain ``AddInstr`` - comptime evaluation,
     in particular, treats it as one unchanged (inherited, not overridden) -
     and exists purely so codegen can tell the two apart: this lowers to
     ``llvm.{s,u}add.with.overflow`` instead of plain ``add``, computing the
     result and detecting overflow in a single operation (see
-    :meth:`~leech.ir_builder.CfgBuilder._build_checked_bin_op` and
-    :class:`~leech.codegen.Compiler`), rather than needing two separate
+    ``ir_builder.CfgBuilder._build_checked_bin_op`` and
+    ``codegen.Compiler``), rather than needing two separate
     instructions to do each.
     """
 
 
 class CheckedSubInstr(SubInstr):
-    """Integer subtraction; see :class:`CheckedAddInstr`."""
+    """Integer subtraction; see ``CheckedAddInstr``."""
 
 
 class CheckedMulInstr(MulInstr):
-    """Integer multiplication; see :class:`CheckedAddInstr`."""
+    """Integer multiplication; see ``CheckedAddInstr``."""
 
 
-#: Any instruction :meth:`BasicBlock.checked_add`/``checked_sub``/``checked_mul``
-#: can build - the only instructions :class:`OverflowFlagInstr` can pair with.
+#: Any instruction ``BasicBlock.checked_add``/``checked_sub``/``checked_mul``
+#: can build - the only instructions ``OverflowFlagInstr`` can pair with.
 type CheckedBinOpInstr = CheckedAddInstr | CheckedSubInstr | CheckedMulInstr
 
 
 class OverflowFlagInstr(Instr[typs.BoolTyp]):
-    """Whether a :class:`CheckedBinOpInstr` overflowed.
+    """Whether a ``CheckedBinOpInstr`` overflowed.
 
-    :param bb: The basic block this instruction belongs to.
-    :param checked_op: The instruction to report the overflow of; must
-        already be in ``bb``'s :class:`Cfg`.
-    :param ast_node: The AST node this instruction was built from, if any.
+    ``checked_op`` must already be in ``bb``'s ``Cfg``.
     """
 
     checked_op: Final[CheckedBinOpInstr]
@@ -660,12 +583,7 @@ class OverflowFlagInstr(Instr[typs.BoolTyp]):
 
 
 class LoadInstr(Instr):
-    """Reads the value pointed to by a pointer.
-
-    :param bb: The basic block this instruction belongs to.
-    :param src_ptr: The pointer to read through.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Reads the value pointed to by a pointer."""
 
     src: Final[Value]
 
@@ -685,14 +603,9 @@ class IntExtInstr(Instr[typs.IntTyp]):
     """Widens an integer to a type that can represent all of its values.
 
     Only ever built for a legal widening coercion (see
-    :meth:`~leech.typs.IntTyp.coerces_to`), so it never changes the value -
+    ``typs.IntTyp.coerces_to``), so it never changes the value -
     which of LLVM's sign- and zero-extend it lowers to follows from
-    whether :attr:`value`'s type is signed.
-
-    :param bb: The basic block this instruction belongs to.
-    :param value: The integer to widen.
-    :param typ: The integer type to widen it to.
-    :param ast_node: The AST node this instruction was built from, if any.
+    whether ``value``'s type is signed.
     """
 
     value: Final[Value]
@@ -714,14 +627,7 @@ class IntExtInstr(Instr[typs.IntTyp]):
 
 
 class AllocaInstr(Instr[typs.PtrTyp]):
-    """Allocates space for a value on the stack and returns a pointer to it.
-
-    :param bb: The basic block this instruction belongs to.
-    :param typ: The type of value to allocate space for.
-    :param mut: The mutability of the returned pointer.
-    :param count: The number of contiguous values to allocate space for.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Allocates space for a value on the stack and returns a pointer to it."""
 
     allocated_typ: Final[typs.Typ]
     mut: Final[typs.Mutability]
@@ -747,13 +653,7 @@ class AllocaInstr(Instr[typs.PtrTyp]):
 
 
 class StoreInstr(Instr[typs.VoidTyp]):
-    """Writes a value through a pointer.
-
-    :param bb: The basic block this instruction belongs to.
-    :param value: The value to write; must match ``dest``'s pointee type.
-    :param dest: The pointer to write through.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Writes a value through a pointer."""
 
     value: Final[Value]
     dest: Final[Value]
@@ -781,11 +681,6 @@ class GepInstr(Instr[typs.PtrTyp]):
     index into ``base`` itself (which LLVM requires to always be ``0`` for
     non-array pointer accesses); ``index`` indexes directly into the
     pointee.
-
-    :param bb: The basic block this instruction belongs to.
-    :param base: The pointer to the array or struct being indexed into.
-    :param index: The array or struct field index into ``base``'s pointee type.
-    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     base: Final[Value]
@@ -813,15 +708,11 @@ class SizeOfInstr(Instr[typs.IntTyp]):
     """Computes the size in bytes of a type.
 
     Backs the ``__size_of`` compiler intrinsic (see
-    :class:`~leech.ir_builtins.SizeOfIntrinsicFn`). Lowers (see
-    :mod:`leech.codegen`) to the portable ``getelementptr``/``ptrtoint``
+    ``ir_builtins.SizeOfIntrinsicFn``). Lowers (see
+    ``codegen``) to the portable ``getelementptr``/``ptrtoint``
     idiom, rather than a hand-computed size, so it always agrees with
     LLVM's own (platform-dependent, padding-including) notion of a type's
     size.
-
-    :param bb: The basic block this instruction belongs to.
-    :param sized_typ: The type whose size is computed.
-    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     sized_typ: Final[typs.Typ]
@@ -840,15 +731,9 @@ class PtrCastInstr(Instr[typs.PtrTyp]):
     """Reinterprets a pointer as a different pointer type.
 
     Backs the ``__ptr_cast_mut`` compiler intrinsic (see
-    :class:`~leech.ir_builtins.PtrCastMutIntrinsicFn`). Lowers to a real
+    ``ir_builtins.PtrCastMutIntrinsicFn``). Lowers to a real
     LLVM ``bitcast``, not a no-op - unlike a mut-to-const pointer coercion,
     the source and target LLVM pointer types can genuinely differ here.
-
-    :param bb: The basic block this instruction belongs to.
-    :param operand: The pointer value to cast; must already be
-        :class:`~leech.typs.PtrTyp`-typed.
-    :param target_typ: The pointer type to cast to.
-    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     operand: Final[Value]
@@ -876,13 +761,8 @@ class EnumToIntInstr(Instr[typs.IntTyp]):
     """Reads an enum value as its backing integer type.
 
     Backs the ``__enum_to_int`` compiler intrinsic (see
-    :class:`~leech.ir_builtins.EnumToIntIntrinsicFn`). A no-op at codegen: an
+    ``ir_builtins.EnumToIntIntrinsicFn``). A no-op at codegen: an
     enum's own LLVM type already *is* its backing type's.
-
-    :param bb: The basic block this instruction belongs to.
-    :param operand: The enum value to read; must already be
-        :class:`~leech.typs.EnumTyp`-typed.
-    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     operand: Final[Value]
@@ -902,14 +782,9 @@ class IsNullInstr(Instr[typs.BoolTyp]):
     """Tests whether a pointer is null.
 
     Backs the ``__is_null`` compiler intrinsic (see
-    :class:`~leech.ir_builtins.IsNullIntrinsicFn`) - the only way a null
+    ``ir_builtins.IsNullIntrinsicFn``) - the only way a null
     pointer is ever produced or observed in Leech, since there is no
     null-pointer literal or ``==``/``!=`` operator on pointers.
-
-    :param bb: The basic block this instruction belongs to.
-    :param operand: The pointer value to test; must already be
-        :class:`~leech.typs.PtrTyp`-typed.
-    :param ast_node: The AST node this instruction was built from, if any.
     """
 
     operand: Final[Value]
@@ -926,14 +801,7 @@ class IsNullInstr(Instr[typs.BoolTyp]):
 
 
 class InsertValueInstr(Instr):
-    """Returns a copy of an aggregate value with one element replaced.
-
-    :param bb: The basic block this instruction belongs to.
-    :param aggregate: The aggregate value to copy.
-    :param value: The value to insert.
-    :param index: The index of the element to replace.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Returns a copy of an aggregate value with one element replaced."""
 
     aggregate: Final[Value]
     value: Final[Value]
@@ -959,13 +827,7 @@ class InsertValueInstr(Instr):
 
 
 class CallInstr(Instr[typs.Typ, ast.CallExpr]):
-    """Calls a function.
-
-    :param bb: The basic block this instruction belongs to.
-    :param callee: The function pointer to call.
-    :param args: The argument values, in parameter order.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Calls a function."""
 
     callee: Final[Value]
     args: Final[tuple[Value, ...]]
@@ -990,13 +852,7 @@ class CallInstr(Instr[typs.Typ, ast.CallExpr]):
 
 
 class PhiInstr(Instr):
-    """Selects a value depending on which predecessor block control arrived from.
-
-    :param bb: The basic block this instruction belongs to.
-    :param incoming: The value to select for each possible predecessor
-        block; all values must have the same type.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Selects a value depending on which predecessor block control arrived from."""
 
     incoming: Final[dict[BasicBlock, Value]]
 
@@ -1018,12 +874,7 @@ class PhiInstr(Instr):
 
 
 class BranchInstr(Instr[typs.NeverTyp]):
-    """An unconditional branch to another basic block; terminates its block.
-
-    :param bb: The basic block this instruction belongs to.
-    :param target: The block to branch to.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """An unconditional branch to another basic block; terminates its block."""
 
     target: Final[BasicBlock]
 
@@ -1038,15 +889,7 @@ class BranchInstr(Instr[typs.NeverTyp]):
 
 
 class CbranchInstr(Instr[typs.NeverTyp]):
-    """A conditional branch to one of two basic blocks; terminates its block.
-
-    :param bb: The basic block this instruction belongs to.
-    :param condition: The boolean value to branch on.
-    :param true_target: The block to branch to if ``condition`` is true.
-    :param false_target: The block to branch to if ``condition`` is
-        false.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """A conditional branch to one of two basic blocks; terminates its block."""
 
     condition: Final[Value]
     true_target: Final[BasicBlock]
@@ -1072,12 +915,7 @@ class CbranchInstr(Instr[typs.NeverTyp]):
 
 
 class RetInstr(Instr[typs.NeverTyp]):
-    """Returns a value from the current function; terminates its block.
-
-    :param bb: The basic block this instruction belongs to.
-    :param value: The value to return.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Returns a value from the current function; terminates its block."""
 
     value: Final[Value]
 
@@ -1092,11 +930,7 @@ class RetInstr(Instr[typs.NeverTyp]):
 
 
 class UnreachableInstr(Instr[typs.NeverTyp]):
-    """Marks a point control flow can never reach; terminates its block.
-
-    :param bb: The basic block this instruction belongs to.
-    :param ast_node: The AST node this instruction was built from, if any.
-    """
+    """Marks a point control flow can never reach; terminates its block."""
 
     @override
     def __init__(self, bb: BasicBlock, ast_node: Optional[ast.Ast]) -> None:
@@ -1110,16 +944,15 @@ class UnreachableInstr(Instr[typs.NeverTyp]):
 class BasicBlock:
     """A straight-line sequence of instructions ending in at most one terminator.
 
-    Provides one factory method per instruction kind (:meth:`add`,
-    :meth:`load`, :meth:`branch`, etc.), each of which constructs the
-    instruction, appends it to :attr:`instrs`, and returns it. Once a
+    Provides one factory method per instruction kind (``add``,
+    ``load``, ``branch``, etc.), each of which constructs the
+    instruction, appends it to ``instrs``, and returns it. Once a
     terminator instruction (a branch, return, or unreachable) has been
     added, further additions are silently dropped (after a one-time
     unreachable-code warning) rather than appended, since LLVM does not
     allow instructions after a block's terminator.
 
-    :param name: This block's name, used as its label in the generated
-        LLVM IR.
+    ``name`` is used as this block's label in the generated LLVM IR.
     """
 
     name: Final[str]
@@ -1230,7 +1063,6 @@ class BasicBlock:
         return self._add_instr(IsNullInstr(self, operand, ast_node))
 
     def enum_to_int(self, operand: Value, ast_node: Optional[ast.Ast]) -> EnumToIntInstr:
-        """Append an :class:`EnumToIntInstr` to this block."""
         return self._add_instr(EnumToIntInstr(self, operand, ast_node))
 
     def insert_value(
