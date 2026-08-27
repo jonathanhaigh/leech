@@ -22,7 +22,7 @@ from leech import (
     visibility,
 )
 
-type Container = typs.Typ | typs.StructTypTemplate | ir_module.Mod | ir_traits.Trait
+type Container = typs.Typ | typs.GenericTypTemplate | ir_module.Mod | ir_traits.Trait
 """A type, module, or trait bound in the shared container namespace."""
 
 type Var = (
@@ -216,7 +216,7 @@ class Env:
 
         return res
 
-    def resolve_typ(self, path: ast.Path) -> typs.Typ | typs.StructTypTemplate:
+    def resolve_typ(self, path: ast.Path) -> typs.Typ | typs.GenericTypTemplate:
         """Resolve a qualified path whose final segment must be a type."""
         item = self.resolve_path(Env.Namespace.CONTAINERS, path)
         if isinstance(item, ir_module.Mod):
@@ -225,7 +225,7 @@ class Env:
             raise errors.TraitUsedAsTypError(item.name, path.idents[-1].span)
         if isinstance(item, (typs.ValueParamTyp, typs.ComptimeValueTyp)):
             raise errors.ValueUsedAsTypError(item.name, path.idents[-1].span)
-        assert isinstance(item, (typs.Typ, typs.StructTypTemplate))
+        assert isinstance(item, (typs.Typ, typs.GenericTypTemplate))
         return item
 
     def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:

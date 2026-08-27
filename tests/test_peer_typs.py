@@ -7,83 +7,6 @@ import util
 
 from leech import errors
 
-# --- Array literals: a bare literal takes its type from its siblings
-# wherever it sits, rather than the first element deciding for everyone ---
-
-
-@pytest.mark.parametrize(
-    "elements",
-    (
-        "1u8, 2, 3",
-        "1, 2u8, 3",
-        "1, 2, 3u8",
-        "1u8, 2u8, 3",
-    ),
-)
-def test_array_elt_typ_independent_of_order(elements, tmp_path):
-    # takes_u8 only accepts a u8, so this compiles exactly when every
-    # element came out as one.
-    src = f"""
-    fn takes_u8(x: u8) u8 {{ return x; }}
-    pub fn main() i32 {{
-        let a = [{elements}];
-        return takes_u8(a.[1usize]);
-    }}
-    """
-    util.check_prog_output(tmp_path, src, "", 2)
-
-
-def test_array_expected_elt_typ_still_wins(tmp_path):
-    src = """
-    pub fn main() i32 {
-        let a: [u8; 3] = [1, 2, 3];
-        return a.[2usize];
-    }
-    """
-    util.check_prog_output(tmp_path, src, "", 3)
-
-
-def test_array_all_flexible_falls_back_to_i32(tmp_path):
-    src = """
-    fn takes_i32(x: i32) i32 { return x; }
-    pub fn main() i32 {
-        let a = [1, 2, 3];
-        return takes_i32(a.[1usize]);
-    }
-    """
-    util.check_prog_output(tmp_path, src, "", 2)
-
-
-@pytest.mark.parametrize("elements", ("1u8, 2u16", "1u16, 2u8"))
-def test_array_two_decided_elts_must_agree(elements, tmp_path):
-    # Without a declared array type there's no unambiguous target to
-    # coerce towards, so elements that decide their own type have to
-    # match exactly - in either order. Widening one into the other would
-    # make acceptance depend on which was written first.
-    src = f"""
-    pub fn main() i32 {{
-        let a = [{elements}];
-        return 0;
-    }}
-    """
-    with pytest.raises(errors.IncompatibleTypInArrayExprError):
-        util.compile_str(tmp_path, src)
-
-
-@pytest.mark.parametrize("elements", ("1u8, 2u16", "1u16, 2u8"))
-def test_array_elts_widen_when_the_typ_is_declared(elements, tmp_path):
-    # With a declared type the target *is* unambiguous, so the usual
-    # widening coercion applies and both orders are accepted.
-    src = f"""
-    fn takes_u32(x: u32) u32 {{ return x; }}
-    pub fn main() i32 {{
-        let a: [u32; 2] = [{elements}];
-        return if (takes_u32(a.[1usize]) == 2u32) {{ 7 }} else {{ 0 }};
-    }}
-    """
-    util.check_prog_output(tmp_path, src, "", 7)
-
-
 # --- if/else arms ---
 
 
@@ -208,19 +131,6 @@ def test_binop_flexible_operand_does_not_adopt_non_int_typ(tmp_path):
 
 
 # --- Deferring a flexible peer must not reorder anything observable ---
-
-
-def test_array_peer_resolution_preserves_effect_order(tmp_path):
-    src = """
-    extern fn puts(s: *u8) i32;
-    fn a() u8 { puts("a"); return 1u8; }
-    fn b() u8 { puts("b"); return 2u8; }
-    pub fn main() i32 {
-        let arr = [a(), 5, b()];
-        return 0;
-    }
-    """
-    util.check_prog_output(tmp_path, src, "a\nb\n", 0)
 
 
 def test_binop_peer_resolution_preserves_effect_order(tmp_path):

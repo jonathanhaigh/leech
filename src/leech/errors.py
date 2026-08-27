@@ -507,24 +507,46 @@ class IncompatibleTypInArrayExprError(UserError):
         )
 
 
-class VoidArrayElementError(UserError):
-    """Raised when an array literal's element type is ``void``."""
+class WrongNumberOfArrayLitElementsError(UserError):
+    """Raised when an array literal's element count doesn't match its declared length."""
 
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, 'Array element cannot have type "void"', span)
+    def __init__(
+        self, array_typ: str, given: int, expected: int, span: Optional[src.SrcSpan]
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Wrong number of elements for array literal of type "{array_typ}":'
+                f" got {given}, expected {expected}"
+            ),
+            span,
+        )
 
 
-class EmptyArrayTypUnknownError(UserError):
-    """Raised when an empty array literal's element type can't be inferred.
+class NamedFieldInArrayLitError(UserError):
+    """Raised when an array literal's brace list contains a named ``field: value`` entry."""
 
-    An empty array literal has no elements to infer a type from, so it can
-    only be typed when the surrounding context (a function argument,
-    return value, struct field, or assignment target) already has a known
-    array type.
+    def __init__(self, field_name: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(ERROR, f'Array literal cannot contain named field "{field_name}"', span)
+
+
+class ArrayLitLengthNotConcreteError(UserError):
+    """Raised when an array literal's own length argument isn't a concrete value.
+
+    Every array literal states its element count directly, so this can
+    only happen when the length names an in-scope but still-abstract
+    value parameter (e.g. ``array[i32, N]{1, 2, 3}`` inside a function
+    generic over ``N``): there's no way to check the literal's fixed
+    element count against a value that isn't known until the enclosing
+    generic declaration is instantiated with a concrete argument for ``N``.
     """
 
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, "Cannot infer element type of empty array expression", span)
+        super().__init__(
+            ERROR,
+            "Array literal's length must be a concrete value, not a generic value parameter",
+            span,
+        )
 
 
 class ModUsedAsTypError(UserError):
@@ -784,13 +806,28 @@ class UnsatisfiedBoundError(UserError):
         )
 
 
-class TypeOfStructExprNotStructError(UserError):
-    """Raised when a struct literal's named type isn't actually a struct type."""
+class TypeOfBraceExprInvalidError(UserError):
+    """Raised when a struct or array literal's named type isn't actually a
+    struct or array type."""
 
     def __init__(self, typ: str, span: Optional[src.SrcSpan]):
         super().__init__(
             ERROR,
-            f'Cannot create value of not struct type "{typ}" using struct expression',
+            f'Cannot create value of non-struct, non-array type "{typ}" using literal syntax',
+            span,
+        )
+
+
+class PositionalElementInStructExprError(UserError):
+    """Raised when a struct literal's brace list contains a bare positional value."""
+
+    def __init__(self, struct_typ: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Struct expression of type "{struct_typ}" requires named fields,'
+                " not positional values"
+            ),
             span,
         )
 

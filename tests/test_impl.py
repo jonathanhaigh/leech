@@ -474,7 +474,7 @@ def test_separate_inherent_impl_blocks_do_not_share_bare_assoc_fn_names(tmp_path
     (
         "u8",
         "*Foo",
-        "[Foo; 3]",
+        "array[Foo, 3]",
     ),
 )
 def test_impl_on_non_struct_typ(impl_typ, tmp_path):

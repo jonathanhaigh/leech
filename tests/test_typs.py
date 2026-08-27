@@ -152,7 +152,7 @@ def test_int_lit_infers_declared_let_typ(tmp_path):
         # Every context with a single unambiguous target type.
         ("fn takes(v: u8) u8 { return v; }", "takes(200)"),
         ("struct T { a: u8 }", "T { a: 200 }.a"),
-        ("fn first(a: [u8; 2]) u8 { return a.[0]; }", "first([200, 1])"),
+        ("fn first(a: array[u8, 2]) u8 { return a.[0]; }", "first(array[u8, 2]{200, 1})"),
         ("fn ret() u8 { return 200; }", "ret()"),
         ("fn tail() u8 { 200 }", "tail()"),
         ("fn cond() u8 { if (true) { 200 } else { 1 } }", "cond()"),
@@ -254,7 +254,7 @@ def test_int_lit_too_big_for_inferred_typ(tmp_path):
         ("*i32", "*i32"),
         ("*mut i32", "*mut i32"),
         ("**mut u8", "**mut u8"),
-        ("[*mut i32; 2]", "[*mut i32; 2]"),
+        ("array[*mut i32, 2]", "array[*mut i32, 2]"),
     ),
 )
 def test_ptr_typ_name_matches_source_syntax(src, expected):
@@ -264,6 +264,7 @@ def test_ptr_typ_name_matches_source_syntax(src, expected):
     tree = parse.build_parser("typ").parse(src)
     ctx = compilation.Ctx()
     env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    env.add_container("array", typs.ARRAY_TEMPLATE)
     typ = typs.Typ.from_ast(ast.Typ.from_tree(file, tree), env)
     assert typ.name == expected
 

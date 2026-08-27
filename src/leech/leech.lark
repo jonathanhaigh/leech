@@ -57,12 +57,9 @@ _comptime_arg_list: comptime_arg ("," comptime_arg)* ","?
 
 ?typ: basic_typ
   | ptr_typ
-  | array_typ
 
 basic_typ: path [comptime_args]
 ptr_typ: "*" mut typ
-array_typ: "[" typ ";" array_length "]"
-array_length: NONNEG_INT | path
 
 stmt: expr_stmt
   | ret_stmt
@@ -151,7 +148,7 @@ while_expr: [ident ":"] "while" "(" expr ")" block_expr
 
 ?atom_expr: call_expr
   | array_access_expr
-  | struct_expr
+  | brace_expr
   | field_access_expr
   | deref_expr
   | atom
@@ -162,9 +159,10 @@ _arg_list: expr ("," expr)* ","?
 
 array_access_expr: atom_expr ".[" expr "]"
 
-struct_expr: basic_typ "{" struct_field_expr_list "}"
-struct_field_expr_list: _struct_field_expr_list?
-_struct_field_expr_list: struct_field_expr ("," struct_field_expr)* ","?
+brace_expr: basic_typ "{" brace_element_list "}"
+brace_element_list: _brace_element_list?
+_brace_element_list: brace_element ("," brace_element)* ","?
+?brace_element: struct_field_expr | or_expr
 struct_field_expr: ident ":" expr
 
 field_access_expr: atom_expr "." ident
@@ -175,7 +173,6 @@ deref_expr: atom_expr ".*"
   | int_lit
   | bool_lit
   | var_expr
-  | array_expr
   | "(" expr ")"
 
 str_lit: STR_LIT
@@ -184,7 +181,6 @@ int_lit: INT_LIT
 var_expr: path [comptime_args]
 path: ident ("::" ident)*
 ident: IDENT
-array_expr: "[" arg_list "]"
 
 INT_LIT: NONNEG_INT (("i"|"u") (POS_INT | "size"))?
 NONNEG_INT: POS_INT | "0"

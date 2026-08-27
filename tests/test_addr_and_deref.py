@@ -100,8 +100,8 @@ def test_addr_and_deref_comptime_field(tmp_path):
 def test_addr_and_deref_array_elt(tmp_path):
     src = """
     pub fn main() i32 {
-        let x = [101, 102, 103];
-        let y = [&x.[2usize], &x.[1usize], &x.[0usize]];
+        let x = array[i32, 3]{101, 102, 103};
+        let y = array[*i32, 3]{&x.[2usize], &x.[1usize], &x.[0usize]};
         return y.[1usize].*;
     }
     """
@@ -110,8 +110,8 @@ def test_addr_and_deref_array_elt(tmp_path):
 
 def test_addr_and_deref_comptime_array_elt(tmp_path):
     src = """
-    let x = [101, 102, 103];
-    let y = [&x.[2usize], &x.[1usize], &x.[0usize]];
+    let x = array[i32, 3]{101, 102, 103};
+    let y = array[*i32, 3]{&x.[2usize], &x.[1usize], &x.[0usize]};
     let z = y.[1usize].*;
 
     pub fn main() i32 {
@@ -125,15 +125,15 @@ def test_addr_and_deref_nested(tmp_path):
     src = """
 
     struct T {
-        a: [*i32; 3],
+        a: array[*i32, 3],
     }
 
     pub fn main() i32 {
-        let w = [101, 102, 103];
+        let w = array[i32, 3]{101, 102, 103};
         let x = T{
-            a: [&w.[0usize], &w.[1usize], &w.[2usize]],
+            a: array[*i32, 3]{&w.[0usize], &w.[1usize], &w.[2usize]},
         };
-        let y = [&x];
+        let y = array[*T, 1]{&x};
         let z = &y;
         let ret = z.*.[0usize].*.a.[2usize].*;
         return ret;
@@ -146,14 +146,14 @@ def test_addr_and_deref_comptime_nested(tmp_path):
     src = """
 
     struct T {
-        a: [*i32; 3],
+        a: array[*i32, 3],
     }
 
-    let w = [101, 102, 103];
+    let w = array[i32, 3]{101, 102, 103};
     let x = T{
-        a: [&w.[0usize], &w.[1usize], &w.[2usize]],
+        a: array[*i32, 3]{&w.[0usize], &w.[1usize], &w.[2usize]},
     };
-    let y = [&x];
+    let y = array[*T, 1]{&x};
     let z = &y;
     let ret = z.*.[0usize].*.a.[2usize].*;
 
@@ -240,9 +240,9 @@ def test_comptime_return_addr_of_local(tmp_path):
 
 def test_comptime_return_addr_of_local_in_array(tmp_path):
     src = """
-    fn f() [*i32; 1] {
+    fn f() array[*i32, 1] {
         let a = 1;
-        return [&a];
+        return array[*i32, 1]{&a};
     }
     let x = f();
     pub fn main() i32 {

@@ -496,7 +496,7 @@ def test_duplicate_import(tmp_path):
         "fn g() a { return 0; }",
         "struct S { x: a }",
         "fn g(p: *a) i32 { return 0; }",
-        "fn g(p: [a; 2]) i32 { return 0; }",
+        "fn g(p: array[a, 2]) i32 { return 0; }",
         "impl a { }",
         "fn g() i32 { let x = a { }; return 0; }",
     ),

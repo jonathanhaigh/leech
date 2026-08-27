@@ -12,12 +12,12 @@ def test_struct_access(tmp_path):
     src = """
     extern fn puts(s: *u8) i32;
 
-    let a = [1, 2, 3, 4];
+    let a = array[i32, 4]{1, 2, 3, 4};
 
     struct T {
       mut a: i32,
       mut b: *u8,
-      mut c: [i32; 4],
+      mut c: array[i32, 4],
     }
 
     pub fn main() i32 {
@@ -74,7 +74,7 @@ def test_duplicate_field_in_struct_defn(tmp_path):
     struct T {
       a: i32,
       b: *u8,
-      a: [i32; 4],
+      a: array[i32, 4],
     }
     pub fn main() i32 {
         return 0;
@@ -132,7 +132,7 @@ def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
     src = """
     struct T {
       a: i32,
-      ts: [*T; 3],
+      ts: array[*T, 3],
     }
     pub fn main() i32 {
         return 0;
@@ -203,7 +203,7 @@ def test_struct_contains_itself_via_zero_length_array(tmp_path):
     # the array's length.
     src = """
     struct T {
-      t: [T; 0],
+      t: array[T, 0],
     }
     pub fn main() i32 {
         return 0;
@@ -216,7 +216,7 @@ def test_struct_contains_itself_via_zero_length_array(tmp_path):
 def test_struct_contains_itself_via_nonempty_array(tmp_path):
     src = """
     struct T {
-      t: [T; 3],
+      t: array[T, 3],
     }
     pub fn main() i32 {
         return 0;
@@ -278,14 +278,14 @@ def test_struct_diamond_containment_is_not_a_cycle(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_typ_of_struct_expr_not_struct(tmp_path):
+def test_typ_of_brace_expr_invalid(tmp_path):
     src = """
     pub fn main() i32 {
         let a = i32 {a: 0};
         return 0;
     }
     """
-    with pytest.raises(errors.TypeOfStructExprNotStructError):
+    with pytest.raises(errors.TypeOfBraceExprInvalidError):
         util.compile_str(tmp_path, src)
 
 
@@ -366,7 +366,7 @@ def test_void_call_as_struct_field_initializer(tmp_path):
 def test_field_access_into_non_struct(tmp_path):
     src = """
     pub fn main() i32 {
-        let x = [0, 1, 2, 3];
+        let x = array[i32, 4]{0, 1, 2, 3};
 
         return x.a;
     }
@@ -402,7 +402,7 @@ def test_typ_of_comptime_struct_expr_not_struct(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.TypeOfStructExprNotStructError):
+    with pytest.raises(errors.TypeOfBraceExprInvalidError):
         util.compile_str(tmp_path, src)
 
 
@@ -467,7 +467,7 @@ def test_incompatible_comptime_struct_field_typ(tmp_path):
 
 def test_comptime_field_access_into_non_struct(tmp_path):
     src = """
-    let x = [0, 1, 2, 3];
+    let x = array[i32, 4]{0, 1, 2, 3};
     let y = x.a;
     pub fn main() i32 {
 

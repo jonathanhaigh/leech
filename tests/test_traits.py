@@ -270,12 +270,12 @@ def test_bounded_generic_trait_impl_method_calls_sibling(tmp_path):
 def test_generic_trait_impl_method_calls_sibling_for_non_struct_self_typ(tmp_path):
     src = """
     trait Show { fn show(*self) i32; fn twice(*self) i32; }
-    impl[T] Show for [T; 3] {
+    impl[T] Show for array[T, 3] {
         fn show(*self) i32 { 5 }
         fn twice(*self) i32 { self.*.show() + self.*.show() }
     }
     pub fn main() i32 {
-        let mut a: [i32; 3] = [1, 2, 3];
+        let mut a: array[i32, 3] = array[i32, 3]{1, 2, 3};
         return a.twice() - 10;
     }
     """
@@ -311,9 +311,9 @@ def test_generic_trait_impl_method_calls_free_fn(tmp_path):
     src = """
     trait Show { fn show(*self) i32; }
     fn helper() i32 { return 4; }
-    impl[T] Show for [T; 3] { fn show(*self) i32 { helper() } }
+    impl[T] Show for array[T, 3] { fn show(*self) i32 { helper() } }
     pub fn main() i32 {
-        let mut a: [i32; 3] = [1, 2, 3];
+        let mut a: array[i32, 3] = array[i32, 3]{1, 2, 3};
         return a.show() - 4;
     }
     """
@@ -326,9 +326,9 @@ def test_generic_trait_impl_for_non_struct_self_typ(tmp_path):
     # type constructor.
     src = """
     trait Show { fn show(*self) i32; }
-    impl[T] Show for [T; 3] { fn show(*self) i32 { 7 } }
+    impl[T] Show for array[T, 3] { fn show(*self) i32 { 7 } }
     pub fn main() i32 {
-        let mut a: [i32; 3] = [1, 2, 3];
+        let mut a: array[i32, 3] = array[i32, 3]{1, 2, 3};
         return a.show() - 7;
     }
     """
@@ -345,10 +345,10 @@ def test_non_struct_self_typs_differing_only_by_an_enum_elements_module(tmp_path
     import a;
     import b;
     trait Show { fn show(*self) i32; }
-    impl[T] Show for [T; 2] { fn show(*self) i32 { 1 } }
+    impl[T] Show for array[T, 2] { fn show(*self) i32 { 1 } }
     pub fn main() i32 {
-        let mut x: [a::E; 2] = [a::E::A, a::E::A];
-        let mut y: [b::E; 2] = [b::E::A, b::E::A];
+        let mut x: array[a::E, 2] = array[a::E, 2]{a::E::A, a::E::A};
+        let mut y: array[b::E, 2] = array[b::E, 2]{b::E::A, b::E::A};
         return x.show() + y.show() - 2;
     }
     """
@@ -1249,7 +1249,7 @@ def test_growing_recursive_trait_bound_via_pointer(tmp_path):
 
 def test_growing_recursive_trait_bound_via_array(tmp_path):
     src = """
-    trait Bar[T: Bar[[T; 2]]] { fn get(*self) T; }
+    trait Bar[T: Bar[array[T, 2]]] { fn get(*self) T; }
     fn f[U: Bar[i32]](x: U) i32 { return 0; }
     pub fn main() i32 {
         let n: i32 = 1;

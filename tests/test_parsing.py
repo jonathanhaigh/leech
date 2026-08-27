@@ -175,15 +175,37 @@ COMMENTED_INTS = [
         ),
         (
             "expr",
-            "[1, 2, a, b]",
-            T("array_expr", "arg_list").cs(
-                T("int_lit", Tok("1")),
-                T("int_lit", Tok("2")),
-                T("var_expr").cs(T("path", "ident", Tok("a")), None),
-                T("var_expr").cs(T("path", "ident", Tok("b")), None),
+            "array[i32, 4]{1, 2, a, b}",
+            T("brace_expr").cs(
+                T("basic_typ").cs(
+                    T("path", "ident", Tok("array")),
+                    T("comptime_args").cs(
+                        T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                        T("int_lit", Tok("4")),
+                    ),
+                ),
+                T("brace_element_list").cs(
+                    T("int_lit", Tok("1")),
+                    T("int_lit", Tok("2")),
+                    T("var_expr").cs(T("path", "ident", Tok("a")), None),
+                    T("var_expr").cs(T("path", "ident", Tok("b")), None),
+                ),
             ),
         ),
-        ("expr", "[]", T("array_expr", "arg_list")),
+        (
+            "expr",
+            "array[i32, 0]{}",
+            T("brace_expr").cs(
+                T("basic_typ").cs(
+                    T("path", "ident", Tok("array")),
+                    T("comptime_args").cs(
+                        T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                        T("int_lit", Tok("0")),
+                    ),
+                ),
+                T("brace_element_list"),
+            ),
+        ),
         (
             "expr",
             "a.[0]",
@@ -206,9 +228,9 @@ COMMENTED_INTS = [
         (
             "expr",
             "s { a: 10, b: x, c: f(), }",
-            T("struct_expr").cs(
+            T("brace_expr").cs(
                 T("basic_typ").cs(T("path", "ident", Tok("s")), None),
-                T("struct_field_expr_list").cs(
+                T("brace_element_list").cs(
                     T("struct_field_expr").cs(
                         T("ident", Tok("a")),
                         T("int_lit", Tok("10")),
@@ -230,9 +252,9 @@ COMMENTED_INTS = [
         (
             "expr",
             "_empty_struct { }",
-            T("struct_expr").cs(
+            T("brace_expr").cs(
                 T("basic_typ").cs(T("path", "ident", Tok("_empty_struct")), None),
-                T("struct_field_expr_list"),
+                T("brace_element_list"),
             ),
         ),
         (
@@ -826,62 +848,83 @@ COMMENTED_INTS = [
         ),
         (
             "typ",
-            "[a; 10]",
-            T("array_typ").cs(
-                T("basic_typ").cs(T("path", "ident", Tok("a")), None),
-                T("array_length", Tok("10")),
+            "array[a, 10]",
+            T("basic_typ").cs(
+                T("path", "ident", Tok("array")),
+                T("comptime_args").cs(
+                    T("basic_typ").cs(T("path", "ident", Tok("a")), None),
+                    T("int_lit", Tok("10")),
+                ),
             ),
         ),
         (
             "typ",
-            "[**u8; 0]",
-            T("array_typ").cs(
-                T("ptr_typ").cs(
-                    T("mut", Tok(None)),
+            "array[**u8, 0]",
+            T("basic_typ").cs(
+                T("path", "ident", Tok("array")),
+                T("comptime_args").cs(
                     T("ptr_typ").cs(
                         T("mut", Tok(None)),
-                        T("basic_typ").cs(T("path", "ident", Tok("u8")), None),
+                        T("ptr_typ").cs(
+                            T("mut", Tok(None)),
+                            T("basic_typ").cs(T("path", "ident", Tok("u8")), None),
+                        ),
                     ),
+                    T("int_lit", Tok("0")),
                 ),
-                T("array_length", Tok("0")),
             ),
         ),
         (
             "typ",
-            "[[u8; 10]; 5]",
-            T("array_typ").cs(
-                T("array_typ").cs(
-                    T("basic_typ").cs(T("path", "ident", Tok("u8")), None),
-                    T("array_length", Tok("10")),
+            "array[array[u8, 10], 5]",
+            T("basic_typ").cs(
+                T("path", "ident", Tok("array")),
+                T("comptime_args").cs(
+                    T("basic_typ").cs(
+                        T("path", "ident", Tok("array")),
+                        T("comptime_args").cs(
+                            T("basic_typ").cs(T("path", "ident", Tok("u8")), None),
+                            T("int_lit", Tok("10")),
+                        ),
+                    ),
+                    T("int_lit", Tok("5")),
                 ),
-                T("array_length", Tok("5")),
             ),
         ),
         (
             "typ",
-            "*[u8; 1]",
+            "*array[u8, 1]",
             T("ptr_typ").cs(
                 T("mut", Tok(None)),
-                T("array_typ").cs(
-                    T("basic_typ").cs(T("path", "ident", Tok("u8")), None),
-                    T("array_length", Tok("1")),
+                T("basic_typ").cs(
+                    T("path", "ident", Tok("array")),
+                    T("comptime_args").cs(
+                        T("basic_typ").cs(T("path", "ident", Tok("u8")), None),
+                        T("int_lit", Tok("1")),
+                    ),
                 ),
             ),
         ),
         (
             "typ",
-            "[i32; N]",
-            T("array_typ").cs(
-                T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
-                T("array_length").cs(T("path", "ident", Tok("N"))),
+            "array[i32, N]",
+            T("basic_typ").cs(
+                T("path", "ident", Tok("array")),
+                T("comptime_args").cs(
+                    T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                    T("basic_typ").cs(T("path", "ident", Tok("N")), None),
+                ),
             ),
         ),
         (
             "typ",
-            "[i32; 4]",
-            T("array_typ").cs(
-                T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
-                T("array_length", Tok("4")),
+            "array[i32, 4]",
+            T("basic_typ").cs(
+                T("path", "ident", Tok("array")),
+                T("comptime_args").cs(
+                    T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                    T("int_lit", Tok("4")),
+                ),
             ),
         ),
         (
@@ -1132,12 +1175,15 @@ COMMENTED_INTS = [
         ),
         (
             "defn",
-            "impl [Foo; 3] {}",
+            "impl array[Foo, 3] {}",
             T("defn", "impl_defn").cs(
                 None,
-                T("array_typ").cs(
-                    T("basic_typ").cs(T("path", "ident", Tok("Foo")), None),
-                    T("array_length", Tok("3")),
+                T("basic_typ").cs(
+                    T("path", "ident", Tok("array")),
+                    T("comptime_args").cs(
+                        T("basic_typ").cs(T("path", "ident", Tok("Foo")), None),
+                        T("int_lit", Tok("3")),
+                    ),
                 ),
                 None,
             ),

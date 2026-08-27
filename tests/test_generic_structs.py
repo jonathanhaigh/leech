@@ -110,7 +110,7 @@ def test_struct_lowering_uses_typechecked_field_indices(tmp_path):
     fn = asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
     fn_ast = asserts.checked_cast(fn.ast, ast.FnDefn)
     let_stmt = asserts.checked_cast(fn_ast.block.stmts[0], ast.LetStmt)
-    struct_expr = asserts.checked_cast(let_stmt.expr, ast.StructExpr)
+    brace_expr = asserts.checked_cast(let_stmt.expr, ast.BraceExpr)
     result_expr = asserts.checked_cast(fn_ast.block.expr, ast.BinOpExpr)
     field_accesses = (
         asserts.checked_cast(result_expr.lhs, ast.FieldAccessExpr),
@@ -118,7 +118,8 @@ def test_struct_lowering_uses_typechecked_field_indices(tmp_path):
     )
 
     _ = fn.typ_check_results
-    for field_expr in struct_expr.fields:
+    for element in brace_expr.elements:
+        field_expr = asserts.checked_cast(element, ast.StructFieldExpr)
         object.__setattr__(field_expr.ident, "name", "changed_after_type_check")
     for field_access in field_accesses:
         object.__setattr__(field_access.field, "name", "changed_after_type_check")
@@ -186,7 +187,7 @@ def test_generic_struct_array_element(tmp_path):
     src = """
     struct Box[T] { mut val: T }
     pub fn main() i32 {
-        let a = [Box[i32] { val: 1 }, Box[i32] { val: 2 }];
+        let a = array[Box[i32], 2]{Box[i32] { val: 1 }, Box[i32] { val: 2 }};
         return (a.[0].val + a.[1].val) - 3;
     }
     """
@@ -385,7 +386,7 @@ def test_growing_generic_struct_declaration_cycle(tmp_path):
     # The declaration still recurs with a structurally growing argument.
     src = """
     struct L[T] {
-        x: L[[T; 1]],
+        x: L[array[T, 1]],
     }
     pub fn main() i32 { return 0; }
     """
@@ -395,7 +396,7 @@ def test_growing_generic_struct_declaration_cycle(tmp_path):
     assert exc_info.value.message.message == 'Struct "L" has infinite size'
     assert len(exc_info.value.extra) == 1
     assert exc_info.value.extra[0].message == (
-        'Field "x" of struct "L" contains "L[[T; 1]]" by value'
+        'Field "x" of struct "L" contains "L[array[T, 1]]" by value'
     )
 
 
@@ -415,7 +416,7 @@ def test_growing_generic_struct_declaration_cycle_through_pointer_arg(tmp_path):
 def test_mutual_growing_generic_struct_declaration_cycle(tmp_path):
     src = """
     struct A[T] { x: B[T] }
-    struct B[T] { y: A[[T; 1]] }
+    struct B[T] { y: A[array[T, 1]] }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
@@ -423,7 +424,7 @@ def test_mutual_growing_generic_struct_declaration_cycle(tmp_path):
 
     assert [note.message for note in exc_info.value.extra] == [
         'Field "x" of struct "A" contains "B[T]" by value',
-        'Field "y" of struct "B[T]" contains "A[[T; 1]]" by value',
+        'Field "y" of struct "B[T]" contains "A[array[T, 1]]" by value',
     ]
 
 
@@ -960,10 +961,10 @@ def test_impl_on_generic_struct_target_qualified_path(tmp_path):
 def test_struct_value_param_used_in_array_field(tmp_path):
     src = """
     struct Buf[T, N: usize] {
-        data: [T; N],
+        data: array[T, N],
     }
     pub fn main() i32 {
-        let buf = Buf[i32, 3] { data: [1, 2, 3] };
+        let buf = Buf[i32, 3] { data: array[i32, 3]{1, 2, 3} };
         return buf.data.[0] + buf.data.[1] + buf.data.[2] - 6;
     }
     """
@@ -972,9 +973,9 @@ def test_struct_value_param_used_in_array_field(tmp_path):
 
 def test_struct_value_param_mangled_name(tmp_path):
     src = """
-    struct Buf[T, N: usize] { data: [T; N] }
+    struct Buf[T, N: usize] { data: array[T, N] }
     pub fn main() i32 {
-        let buf = Buf[i32, 4] { data: [1, 2, 3, 4] };
+        let buf = Buf[i32, 4] { data: array[i32, 4]{1, 2, 3, 4} };
         return buf.data.[0] - 1;
     }
     """

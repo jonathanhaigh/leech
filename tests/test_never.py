@@ -85,7 +85,7 @@ def test_array_element_diverges(tmp_path):
     # Not the first element - see test_array_first_element_diverges_still_rejected.
     src = """
     pub fn main() i32 {
-        let a = [1, { return 5; }, 3];
+        let a = array[i32, 3]{1, ({ return 5; }), 3};
         return a.[0usize] + 100;
     }
     """
@@ -95,7 +95,7 @@ def test_array_element_diverges(tmp_path):
 def test_array_index_diverges(tmp_path):
     src = """
     pub fn main() i32 {
-        let a = [1, 2, 3];
+        let a = array[i32, 3]{1, 2, 3};
         return a.[{ return 5; }] + 100;
     }
     """
@@ -213,13 +213,11 @@ def test_unannotated_let_diverges_still_works(tmp_path):
 
 
 def test_array_first_element_diverges(tmp_path):
-    # A diverging element says nothing about what type the others should
-    # have, so it doesn't get to decide the element type - the array is
-    # [i32; 3] and the never-typed element coerces into it, wherever it
-    # sits.
+    # A diverging (never-typed) element coerces into the array's declared
+    # element type wherever it sits, first element included.
     src = """
     pub fn main() i32 {
-        let a = [{ return 5; }, 2, 3];
+        let a = array[i32, 3]{({ return 5; }), 2, 3};
         return a.[0usize] + 100;
     }
     """

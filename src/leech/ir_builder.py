@@ -159,12 +159,10 @@ class CfgBuilder:
                 return self._in_context(ir_values.ComptimeBool(expr_ast.value, expr_ast), ctx)
             case ast.VarExpr():
                 return self._build_var_expr(expr_ast, ctx)
-            case ast.ArrayExpr():
-                return self._build_array_expr(expr_ast, ctx, expected_typ)
             case ast.ArrayAccessExpr():
                 return self._build_array_access_expr(expr_ast, ctx)
-            case ast.StructExpr():
-                return self._build_struct_expr(expr_ast, ctx)
+            case ast.BraceExpr():
+                return self._build_brace_expr(expr_ast, ctx)
             case ast.FieldAccessExpr():
                 return self._build_field_access_expr(expr_ast, ctx)
             case ast.DerefExpr():
@@ -705,67 +703,6 @@ class CfgBuilder:
 
         return self._curr_bb.load(var, var_ast)
 
-    def _build_array_expr(
-        self,
-        arr_expr: ast.ArrayExpr,
-        ctx: _ExprContext,
-        expected_typ: Optional[typs.Typ] = None,
-    ) -> ir_values.Value:
-        """Lower an array literal expression.
-
-        An empty array literal has no elements to infer an element type
-        from, so it's only accepted when ``expected_typ`` gives one (e.g.
-        when the array literal is a call argument, a ``return`` value, a
-        struct field's value, or an assignment's right-hand side, all of
-        which have a statically-known target type); otherwise it's
-        rejected. When ``expected_typ`` is known, it's also propagated to
-        each element, so a nested empty array (e.g. one element of a
-        non-empty outer array) can be resolved the same way.
-        """
-        expected_elt_typ = (
-            expected_typ.element_typ if isinstance(expected_typ, typs.ArrayTyp) else None
-        )
-
-        # Two passes, so that a bare integer literal takes its type from
-        # its sibling elements wherever it sits, rather than the first
-        # element deciding for everyone. The deferred elements are all
-        # bare literals, which emit no instructions, so lowering them
-        # second can't reorder any of the others' effects.
-        built: list[Optional[ir_values.Value]] = [None] * len(arr_expr.elements)
-        for i, elt_ast in enumerate(arr_expr.elements):
-            if not typcheck.is_flexible_int_lit(elt_ast):
-                built[i] = self._build_expr(elt_ast, _ExprContext.VALUE, expected_elt_typ)
-
-        # An element type the surrounding context supplied is what the
-        # whole array has to coerce to, so it wins over the elements'
-        # own types; without one, the elements decide among themselves.
-        if expected_elt_typ is not None:
-            elt_typ = expected_elt_typ
-        else:
-            elt_typ = typcheck.resolve_peer_typ([v.typ for v in built if v is not None])
-
-        elts = [
-            v
-            if v is not None
-            else self._build_expr(arr_expr.elements[i], _ExprContext.VALUE, elt_typ)
-            for i, v in enumerate(built)
-        ]
-
-        arr_typ = typs.ArrayTyp.of_length(elt_typ, len(elts))
-        arr = ir_values.ComptimeArray(
-            arr_typ,
-            [ir_values.UndefValue(arr_typ.element_typ, arr_expr)] * len(elts),
-            arr_expr,
-        )
-
-        for i, elt in enumerate(elts):
-            elt_ast = arr_expr.elements[i]
-            coerced = opt_util.opt_unwrap(self._coerce(elt, elt_ast))
-            elt_index = ir_values.ComptimeInt(typs.USIZE, i, elt_ast)
-            arr = self._curr_bb.insert_value(arr, coerced, elt_index, elt_ast)
-
-        return self._in_context(arr, ctx)
-
     def _build_array_access_expr(
         self, aa_expr: ast.ArrayAccessExpr, ctx: _ExprContext
     ) -> ir_values.Value:
@@ -786,21 +723,33 @@ class CfgBuilder:
         elt_ptr = self._curr_bb.gep(arr_ptr, index, aa_expr)
         return self._deref_in_context(elt_ptr, ctx, aa_expr)
 
-    def _build_struct_expr(self, struct_expr: ast.StructExpr, ctx: _ExprContext) -> ir_values.Value:
-        cached_typ = self._typ_check_results.struct_expr_typ(struct_expr)
+    def _build_brace_expr(self, brace_expr: ast.BraceExpr, ctx: _ExprContext) -> ir_values.Value:
+        cached_typ = self._typ_check_results.brace_expr_typ(brace_expr)
+        match cached_typ:
+            case typs.ArrayTyp():
+                return self._build_array_lit_expr(brace_expr, cached_typ, ctx)
+            case typs.StructTyp():
+                return self._build_struct_lit_expr(brace_expr, cached_typ, ctx)
+            case _:
+                raise AssertionError(f"unhandled brace expr type {cached_typ}")
+
+    def _build_struct_lit_expr(
+        self, brace_expr: ast.BraceExpr, cached_typ: typs.StructTyp, ctx: _ExprContext
+    ) -> ir_values.Value:
         struct_typ = asserts.checked_cast(
             cached_typ.substitute_typ_params(self._comptime_arg_mapping), typs.StructTyp
         )
 
         struct = ir_values.ComptimeStruct(
             struct_typ,
-            {f.name: ir_values.UndefValue(f.typ, struct_expr) for f in struct_typ.fields.values()},
-            struct_expr,
+            {f.name: ir_values.UndefValue(f.typ, brace_expr) for f in struct_typ.fields.values()},
+            brace_expr,
         )
 
         field_values: dict[int, ir_values.Value] = {}
         field_value_asts: dict[int, ast.Expr] = {}
-        for field_expr in struct_expr.fields:
+        for element in brace_expr.elements:
+            field_expr = asserts.checked_cast(element, ast.StructFieldExpr)
             field_index = self._typ_check_results.struct_field_index(field_expr)
             field = struct_typ.field_at(field_index)
             field_values[field_index] = self._build_expr(
@@ -817,6 +766,30 @@ class CfgBuilder:
             struct = self._curr_bb.insert_value(struct, coerced, field_index_value, field_value.ast)
 
         return self._in_context(struct, ctx)
+
+    def _build_array_lit_expr(
+        self, brace_expr: ast.BraceExpr, cached_typ: typs.ArrayTyp, ctx: _ExprContext
+    ) -> ir_values.Value:
+        """Lower an array literal.
+
+        Every element's type is always already known from the literal's
+        own explicit ``array[T, N]``, so - unlike a struct literal's
+        by-name field matching - elements are simply lowered positionally.
+        """
+        arr_typ = asserts.checked_cast(
+            cached_typ.substitute_typ_params(self._comptime_arg_mapping), typs.ArrayTyp
+        )
+        arr = ir_values.ComptimeArray(
+            arr_typ,
+            [ir_values.UndefValue(arr_typ.element_typ, brace_expr)] * arr_typ.length_value,
+            brace_expr,
+        )
+        for i, elt_ast in enumerate(brace_expr.elements):
+            elt_value = self._build_expr(elt_ast, _ExprContext.VALUE, arr_typ.element_typ)
+            coerced = opt_util.opt_unwrap(self._coerce(elt_value, elt_ast))
+            elt_index = ir_values.ComptimeInt(typs.USIZE, i, elt_ast)
+            arr = self._curr_bb.insert_value(arr, coerced, elt_index, elt_ast)
+        return self._in_context(arr, ctx)
 
     def _build_field_access_expr(
         self, fa_expr: ast.FieldAccessExpr, ctx: _ExprContext

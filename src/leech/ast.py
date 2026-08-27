@@ -119,8 +119,7 @@ class Expr(Ast):
             "bool_lit": BoolLit,
             "var_expr": VarExpr,
             "array_access_expr": ArrayAccessExpr,
-            "array_expr": ArrayExpr,
-            "struct_expr": StructExpr,
+            "brace_expr": BraceExpr,
             "field_access_expr": FieldAccessExpr,
             "deref_expr": DerefExpr,
             "or_expr": BinOpExpr,
@@ -283,52 +282,6 @@ class IntLit(Expr):
         return f'int literal "{self.token}"'
 
 
-class ArrayLength(Ast):
-    """Base class for a parsed array type's length: a literal, e.g. the
-    ``4`` in ``[i32; 4]``, or a reference to an in-scope value parameter,
-    e.g. the ``N`` in ``[i32; N]``.
-    """
-
-    @staticmethod
-    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> ArrayLength:
-        """Build the array length selected by a parse tree's grammar rule."""
-        asserts.assert_eq(tree.data, "array_length")
-        (child,) = tree.children
-        if isinstance(child, lark.Token):
-            return LiteralArrayLength(file, tree)
-        return PathArrayLength(file, tree)
-
-
-class LiteralArrayLength(ArrayLength):
-    """An array length given as an integer literal, e.g. the ``4`` in ``[i32; 4]``."""
-
-    value: Final[int]
-
-    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        (token,) = tree.children
-        self.value = int(_as_token(token))
-
-    @override
-    def diag_str(self) -> str:
-        return f'array length "{self.value}"'
-
-
-class PathArrayLength(ArrayLength):
-    """An array length given as a value parameter reference, e.g. the ``N`` in ``[i32; N]``."""
-
-    path: Final[Path]
-
-    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        (child,) = tree.children
-        self.path = Path(file, _as_tree(child))
-
-    @override
-    def diag_str(self) -> str:
-        return f'array length "{self.path.str()}"'
-
-
 class BoolLit(Expr):
     """A boolean literal, ``true`` or ``false``."""
 
@@ -393,41 +346,39 @@ class ArrayAccessExpr(PlaceExpr):
         return "array access expression"
 
 
-class ArrayExpr(Expr):
-    """An array literal, e.g. ``[1, 2, 3]``."""
+class BraceExpr(Expr):
+    """A struct or array literal, e.g. ``Point { x: 1, y: 2 }`` or
+    ``array[i32, 3]{1, 2, 3}``.
 
+    ``elements`` mixes ``StructFieldExpr`` (named, ``field: value``) and
+    bare ``Expr`` (positional) entries indiscriminately - the grammar
+    can't tell which shape is intended without knowing whether ``typ`` is
+    a struct or an array (in particular, the empty case ``{}`` is
+    identical either way). Which shape every element must be (and
+    rejecting a mix) is enforced once ``typ`` is resolved - see
+    ``TypCheck._check_brace_expr``.
+    """
+
+    typ: Final[BasicTyp]
     elements: Final[tuple[Expr, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "array_expr")
+        asserts.assert_eq(tree.data, "brace_expr")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        (arg_list,) = map(_as_tree, tree.children)
-        asserts.assert_eq(arg_list.data, "arg_list")
-        self.elements = tuple(Expr.from_tree(file, _as_tree(child)) for child in arg_list.children)
-
-    @override
-    def diag_str(self) -> str:
-        return "array expression"
-
-
-class StructExpr(Expr):
-    """A struct literal, e.g. ``Point { x: 1, y: 2 }``."""
-
-    typ: Final[BasicTyp]
-    fields: Final[tuple[StructFieldExpr, ...]]
-
-    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "struct_expr")
-        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        typ, field_list = map(_as_tree, tree.children)
+        typ, element_list = map(_as_tree, tree.children)
         self.typ = BasicTyp(file, typ)
 
-        asserts.assert_eq(field_list.data, "struct_field_expr_list")
-        self.fields = tuple(StructFieldExpr(file, _as_tree(child)) for child in field_list.children)
+        asserts.assert_eq(element_list.data, "brace_element_list")
+        self.elements = tuple(
+            StructFieldExpr(file, child)
+            if child.data == "struct_field_expr"
+            else Expr.from_tree(file, child)
+            for child in map(_as_tree, element_list.children)
+        )
 
     @override
     def diag_str(self) -> str:
-        return f'struct "{self.typ.path.str()}" expression'
+        return f'struct or array literal of type "{self.typ.path.str()}"'
 
 
 class StructFieldExpr(Expr):
@@ -702,7 +653,6 @@ class Typ(Ast):
         child_classes = {
             "basic_typ": BasicTyp,
             "ptr_typ": PtrTyp,
-            "array_typ": ArrayTyp,
         }
         return child_classes[tree.data](file, tree)
 
@@ -762,24 +712,6 @@ class PtrTyp(Typ):
     @override
     def diag_str(self) -> str:
         return "pointer type specifier"
-
-
-class ArrayTyp(Typ):
-    """A fixed-length array type expression, e.g. ``[i32; 4]``."""
-
-    element_typ: Final[Typ]
-    length: Final[ArrayLength]
-
-    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "array_typ")
-        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        typ, length = tree.children
-        self.element_typ = Typ.from_tree(file, _as_tree(typ))
-        self.length = ArrayLength.from_tree(file, _as_tree(length))
-
-    @override
-    def diag_str(self) -> str:
-        return "array type specifier"
 
 
 class Param(Ast):

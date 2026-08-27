@@ -50,7 +50,7 @@ def test_impl_defn_ptr_typ(tmp_path):
 def test_impl_defn_array_typ(tmp_path):
     src = """
     struct Foo {}
-    impl [Foo; 3] {
+    impl array[Foo, 3] {
         fn helper() i32 { 1 }
     }
     """
@@ -58,11 +58,13 @@ def test_impl_defn_array_typ(tmp_path):
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
-    assert isinstance(impl.typ, ast.ArrayTyp)
-    assert isinstance(impl.typ.element_typ, ast.BasicTyp)
-    assert impl.typ.element_typ.path.str() == "Foo"
-    assert isinstance(impl.typ.length, ast.LiteralArrayLength)
-    assert impl.typ.length.value == 3
+    assert isinstance(impl.typ, ast.BasicTyp)
+    assert impl.typ.path.str() == "array"
+    elt_typ, length = impl.typ.comptime_args
+    assert isinstance(elt_typ, ast.BasicTyp)
+    assert elt_typ.path.str() == "Foo"
+    assert isinstance(length, ast.IntLit)
+    assert length.value == 3
 
 
 def test_impl_defn_empty(tmp_path):
@@ -129,28 +131,32 @@ def test_basic_typ_comptime_args_accepts_int_lit(tmp_path):
 
 def test_array_length_path_is_populated_for_identifier(tmp_path):
     src = """
-    fn f[N](x: [i32; N]) {}
+    fn f[N](x: array[i32, N]) {}
     """
     mod = util.parse_mod(tmp_path, src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
-    assert isinstance(param.typ, ast.ArrayTyp)
-    assert isinstance(param.typ.length, ast.PathArrayLength)
-    assert param.typ.length.path.str() == "N"
+    assert isinstance(param.typ, ast.BasicTyp)
+    assert param.typ.path.str() == "array"
+    _, length = param.typ.comptime_args
+    assert isinstance(length, ast.BasicTyp)
+    assert length.path.str() == "N"
 
 
 def test_array_length_value_is_populated_for_literal(tmp_path):
     src = """
-    fn f(x: [i32; 4]) {}
+    fn f(x: array[i32, 4]) {}
     """
     mod = util.parse_mod(tmp_path, src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
-    assert isinstance(param.typ, ast.ArrayTyp)
-    assert isinstance(param.typ.length, ast.LiteralArrayLength)
-    assert param.typ.length.value == 4
+    assert isinstance(param.typ, ast.BasicTyp)
+    assert param.typ.path.str() == "array"
+    _, length = param.typ.comptime_args
+    assert isinstance(length, ast.IntLit)
+    assert length.value == 4
 
 
 def test_var_expr_generic_args(tmp_path):

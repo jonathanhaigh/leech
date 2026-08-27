@@ -104,6 +104,7 @@ def register(builtin_env: ir_env.Env, loader: ir_loader.ModLoader) -> None:
     builtin_env.add_container("usize", typs.USIZE)
     builtin_env.add_container("isize", typs.ISIZE)
     builtin_env.add_container("bool", typs.BOOL)
+    builtin_env.add_container("array", typs.ARRAY_TEMPLATE)
 
     builtin_env.add_var("__size_of", loader.size_of_intrinsic)
     builtin_env.add_var("__ptr_cast_mut", loader.ptr_cast_mut_intrinsic)

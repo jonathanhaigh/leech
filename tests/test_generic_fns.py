@@ -166,11 +166,11 @@ def test_generic_fn_typ_arg_inferred_through_array_param(tmp_path):
     # Exercises ArrayTyp.infer_typ_args: T must be inferred from the
     # actual argument's element type, not just from a bare-T parameter.
     src = """
-    fn first[T](arr: [T; 3]) T {
+    fn first[T](arr: array[T, 3]) T {
         return arr.[0usize];
     }
     pub fn main() i32 {
-        return first([1, 2, 3]) - 1;
+        return first(array[i32, 3]{1, 2, 3}) - 1;
     }
     """
     util.check_prog_output(tmp_path, src, "", 0)
@@ -1027,9 +1027,9 @@ def test_int_lit_against_bool_value_param_is_rejected(tmp_path):
 
 def test_value_param_inferred_from_array_arg(tmp_path):
     src = """
-    fn first[T, N: usize](x: [T; N]) T { return x.[0]; }
+    fn first[T, N: usize](x: array[T, N]) T { return x.[0]; }
     pub fn main() i32 {
-        return first([7, 8, 9]) - 7;
+        return first(array[i32, 3]{7, 8, 9}) - 7;
     }
     """
     util.check_prog_output(tmp_path, src, "", 0)
@@ -1040,9 +1040,9 @@ def test_value_param_inference_distinguishes_array_lengths(tmp_path):
     # result is compared rather than turned into main's i32 return value -
     # there's no int-to-int cast operator in this language.
     src = """
-    fn len_times_2[T, N: usize](x: [T; N]) usize { return N * 2; }
+    fn len_times_2[T, N: usize](x: array[T, N]) usize { return N * 2; }
     pub fn main() i32 {
-        if (len_times_2([1, 2, 3]) == 6) { return 0; };
+        if (len_times_2(array[i32, 3]{1, 2, 3}) == 6) { return 0; };
         return 1;
     }
     """
@@ -1052,7 +1052,7 @@ def test_value_param_inference_distinguishes_array_lengths(tmp_path):
 def test_first_from_generic_struct_with_value_param(tmp_path):
     src = """
     struct Buf[T, N: usize] {
-        data: [T; N],
+        data: array[T, N],
     }
 
     fn first[T, N: usize](b: *Buf[T, N]) T {
@@ -1060,7 +1060,7 @@ def test_first_from_generic_struct_with_value_param(tmp_path):
     }
 
     pub fn main() i32 {
-        let buf = Buf[i32, 4] { data: [11, 22, 33, 44] };
+        let buf = Buf[i32, 4] { data: array[i32, 4]{11, 22, 33, 44} };
         return first(&buf) - 11;
     }
     """

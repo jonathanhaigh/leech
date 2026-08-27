@@ -50,7 +50,9 @@ KEYWORDS: Final[frozenset[str]] = frozenset(
 
 #: Type names the compiler binds itself. Sized integer types are matched by
 #: spelling instead, being unbounded in number.
-TYP_NAMES: Final[frozenset[str]] = frozenset({SELF_TYP_NAME, "bool", "isize", "never", "usize"})
+TYP_NAMES: Final[frozenset[str]] = frozenset(
+    {SELF_TYP_NAME, "array", "bool", "isize", "never", "usize"}
+)
 
 
 def is_reserved(name: str) -> bool:

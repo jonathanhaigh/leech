@@ -417,34 +417,14 @@ class Typ(abc.ABC):
                     Typ.from_ast(typ_ast.pointee_typ, e),
                     Mutability.from_ast(typ_ast.mut),
                 )
-            case ast.ArrayTyp():
-                return ArrayTyp.get_or_create(
-                    Typ.from_ast(typ_ast.element_typ, e),
-                    Typ._array_length_from_ast(typ_ast.length, e),
-                )
             case _:
                 raise AssertionError(f"unhandled type ast node {typ_ast}")
-
-    @staticmethod
-    def _array_length_from_ast(length_ast: ast.ArrayLength, e: ir_env.Env) -> Typ:
-        """Resolve a parsed array length: a literal, or a value parameter reference."""
-        if isinstance(length_ast, ast.LiteralArrayLength):
-            return ComptimeValueTyp.get_or_create(USIZE, length_ast.value)
-        path_length = asserts.checked_cast(length_ast, ast.PathArrayLength)
-        item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, path_length.path)
-        if isinstance(item, (ValueParamTyp, ComptimeValueTyp)) and item.value_typ is USIZE:
-            return item
-        raise errors.WrongComptimeValueTypError(
-            item.name if isinstance(item, Typ) else path_length.path.str(),
-            USIZE.name,
-            path_length.path.span,
-        )
 
     @staticmethod
     def _basic_typ_from_ast(typ_ast: ast.BasicTyp, e: ir_env.Env) -> Typ:
         """Resolve a named type, applying arguments only to a bare generic template."""
         item = e.resolve_typ(typ_ast.path)
-        if not isinstance(item, StructTypTemplate):
+        if not isinstance(item, GenericTypTemplate):
             if typ_ast.comptime_args:
                 raise errors.ComptimeArgsOnNonGenericItemError(typ_ast.path.str(), typ_ast.span)
             return item
@@ -646,7 +626,7 @@ class PtrTyp(Typ):
 
 
 class ArrayTyp(Typ):
-    """A fixed-length array type, e.g. ``[i32; 4]``."""
+    """A fixed-length array type, e.g. ``array[i32, 4]``."""
 
     element_typ: Final[Typ]
     length: Final[Typ]
@@ -672,12 +652,12 @@ class ArrayTyp(Typ):
     @property
     @override
     def name(self) -> str:
-        return f"[{self.element_typ.name}; {self.length.name}]"
+        return f"array[{self.element_typ.name}, {self.length.name}]"
 
     @property
     @override
     def qualified_name(self) -> str:
-        return f"[{self.element_typ.qualified_name}; {self.length.qualified_name}]"
+        return f"array[{self.element_typ.qualified_name}, {self.length.qualified_name}]"
 
     @override
     def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
@@ -964,7 +944,36 @@ class StructField:
         return self.access == visibility.PUBLIC or self.ast.span.file.path == file.path
 
 
-class StructTypTemplate:
+class GenericTypTemplate(abc.ABC):
+    """Shared surface for an unapplied generic type: a struct declaration
+    or the built-in ``array`` template.
+
+    ``Typ._basic_typ_from_ast`` applies comptime arguments to any
+    instance of this uniformly, using the same arity/bounds-checking
+    path (``resolve_comptime_arg``, ``check_comptime_arg_bounds``)
+    regardless of which kind of template it is.
+    """
+
+    @property
+    @abc.abstractmethod
+    def name(self) -> str:
+        """The declaration's bare source name."""
+
+    @functools.cached_property
+    def comptime_params(self) -> tuple[ComptimeParamTyp, ...]:
+        """The template's formal comptime parameters, in declaration order."""
+        return self.calculate_comptime_params()
+
+    @abc.abstractmethod
+    def calculate_comptime_params(self) -> tuple[ComptimeParamTyp, ...]:
+        """Compute ``comptime_params``; overridden by subclasses."""
+
+    @abc.abstractmethod
+    def instantiate(self, comptime_args: tuple[Typ, ...]) -> Typ:
+        """Return the usable type for applying ``comptime_args``."""
+
+
+class StructTypTemplate(GenericTypTemplate):
     """A struct declaration that owns its usable type instances."""
 
     ast: Final[ast.StructDefn]
@@ -994,8 +1003,8 @@ class StructTypTemplate:
             field_asts[name] = field_ast
 
     @property
+    @override
     def name(self) -> str:
-        """The declaration's bare source name."""
         return self.ast.ident.name
 
     @property
@@ -1003,11 +1012,11 @@ class StructTypTemplate:
         """The source location of the struct declaration."""
         return self.ast.span
 
-    @functools.cached_property
-    def comptime_params(self) -> tuple[ComptimeParamTyp, ...]:
-        """The declaration's interned formal comptime parameters."""
+    @override
+    def calculate_comptime_params(self) -> tuple[ComptimeParamTyp, ...]:
         return comptime_params_from_ast(self.ast, self.ast.comptime_params, self._decl_env)
 
+    @override
     def instantiate(self, comptime_args: tuple[Typ, ...]) -> StructTyp:
         """Return the cached instance for ``comptime_args`` and record its request."""
         asserts.assert_eq(len(comptime_args), len(self.comptime_params))
@@ -1375,3 +1384,28 @@ BOOL = BoolTyp.get_or_create()
 CSTR = PtrTyp.get_or_create(U8, CONST)
 VOID = VoidTyp.get_or_create()
 NEVER = NeverTyp.get_or_create()
+
+
+class ArrayTypTemplate(GenericTypTemplate):
+    """The singleton generic template underlying ``array[T, N]``."""
+
+    @property
+    @override
+    def name(self) -> str:
+        return "array"
+
+    @override
+    def calculate_comptime_params(self) -> tuple[ComptimeParamTyp, ...]:
+        return (
+            TypParamTyp.get_or_create(self, 0, "T"),
+            ValueParamTyp.get_or_create(self, 1, "N", USIZE),
+        )
+
+    @override
+    def instantiate(self, comptime_args: tuple[Typ, ...]) -> ArrayTyp:
+        elt_typ, length = comptime_args
+        return ArrayTyp.get_or_create(elt_typ, length)
+
+
+#: The singleton backing the built-in ``array[T, N]`` type.
+ARRAY_TEMPLATE: Final[ArrayTypTemplate] = ArrayTypTemplate()

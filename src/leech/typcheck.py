@@ -103,7 +103,7 @@ class TypCheckResults:
     _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
     _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
     _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
-    _struct_expr_typs: Final[dict[ast.StructExpr, typs.StructTyp]]
+    _brace_expr_typs: Final[dict[ast.BraceExpr, typs.Typ]]
     _struct_field_indices: Final[dict[ast.FieldAccessExpr | ast.StructFieldExpr, int]]
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
 
@@ -113,7 +113,7 @@ class TypCheckResults:
         self._coercions = {}
         self._generic_calls = {}
         self._generic_var_refs = {}
-        self._struct_expr_typs = {}
+        self._brace_expr_typs = {}
         self._struct_field_indices = {}
         self._let_declared_typs = {}
 
@@ -153,12 +153,17 @@ class TypCheckResults:
     ) -> None:
         self._generic_var_refs[node] = (fn, comptime_args)
 
-    def struct_expr_typ(self, node: ast.StructExpr) -> typs.StructTyp:
-        """Return ``node``'s resolved (possibly still abstract) type."""
-        return self._struct_expr_typs[node]
+    def brace_expr_typ(self, node: ast.BraceExpr) -> typs.Typ:
+        """Return ``node``'s resolved (possibly still abstract) type.
 
-    def _set_struct_expr_typ(self, node: ast.StructExpr, typ: typs.StructTyp) -> None:
-        self._struct_expr_typs[node] = typ
+        A ``StructTyp`` or ``ArrayTyp`` depending on which kind of literal
+        ``node`` turned out to be - callers match on the result to tell
+        which.
+        """
+        return self._brace_expr_typs[node]
+
+    def _set_brace_expr_typ(self, node: ast.BraceExpr, typ: typs.Typ) -> None:
+        self._brace_expr_typs[node] = typ
 
     def struct_field_index(self, node: ast.FieldAccessExpr | ast.StructFieldExpr) -> int:
         """Return the declaration-order index resolved for a struct field expression."""
@@ -276,12 +281,10 @@ class TypCheck:
                 return typs.BOOL
             case ast.VarExpr():
                 return self._check_var_expr(expr_ast, e)
-            case ast.ArrayExpr():
-                return self._check_array_expr(expr_ast, e, expected_typ)
             case ast.ArrayAccessExpr():
                 return self._check_array_access_expr(expr_ast, e)
-            case ast.StructExpr():
-                return self._check_struct_expr(expr_ast, e)
+            case ast.BraceExpr():
+                return self._check_brace_expr(expr_ast, e)
             case ast.FieldAccessExpr():
                 return self._check_field_access_expr(expr_ast, e)
             case ast.DerefExpr():
@@ -767,57 +770,6 @@ class TypCheck:
         substituted = asserts.checked_cast(var.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
         return typs.PtrTyp.get_or_create(substituted, typs.CONST)
 
-    def _check_array_expr(
-        self, arr_expr: ast.ArrayExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
-    ) -> typs.Typ:
-        expected_elt_typ = (
-            expected_typ.element_typ if isinstance(expected_typ, typs.ArrayTyp) else None
-        )
-        if not arr_expr.elements and expected_elt_typ is None:
-            raise errors.EmptyArrayTypUnknownError(arr_expr.span)
-
-        built: list[Optional[typs.Typ]] = [None] * len(arr_expr.elements)
-        for i, elt_ast in enumerate(arr_expr.elements):
-            if not is_flexible_int_lit(elt_ast):
-                built[i] = self._check_expr(elt_ast, e, expected_elt_typ)
-
-        if expected_elt_typ is not None:
-            elt_typ = expected_elt_typ
-        else:
-            elt_typ = resolve_peer_typ([t for t in built if t is not None])
-
-        for i, t in enumerate(built):
-            if t is None:
-                built[i] = self._check_expr(arr_expr.elements[i], e, elt_typ)
-
-        if elt_typ == typs.VOID:
-            first_span = arr_expr.span
-            if arr_expr.elements:
-                first_span = arr_expr.elements[0].span
-            raise errors.VoidArrayElementError(first_span)
-
-        arr_typ = typs.ArrayTyp.of_length(elt_typ, len(arr_expr.elements))
-        for i, elt_ast in enumerate(arr_expr.elements):
-            elt_typ_i = opt_util.opt_unwrap(built[i])
-            # Elements only coerce towards an element type the context
-            # supplied, which is an unambiguous target. When the elements
-            # settled on one between themselves it isn't: coercing to it
-            # would let their order decide whether a narrower element is
-            # accepted, so they have to agree exactly instead. A
-            # diverging element is exempt - it stands in for a value of
-            # any type.
-            if expected_elt_typ is None and elt_typ_i not in (elt_typ, typs.NEVER):
-                raise errors.IncompatibleTypInArrayExprError(
-                    elt_typ_i.name, i, elt_ast.span, arr_typ.name
-                )
-            coercion = self._record_coercion(elt_ast, elt_typ_i, elt_typ)
-            if isinstance(coercion, Invalid):
-                raise errors.IncompatibleTypInArrayExprError(
-                    elt_typ_i.name, i, elt_ast.span, arr_typ.name
-                )
-
-        return arr_typ
-
     def _check_array_access_expr(self, aa_expr: ast.ArrayAccessExpr, e: ir_env.Env) -> typs.Typ:
         arr_typ = self._check_expr(aa_expr.array, e, None)
         if not isinstance(arr_typ, typs.ArrayTyp):
@@ -830,37 +782,47 @@ class TypCheck:
 
         return arr_typ.element_typ
 
-    def _check_struct_expr(self, struct_expr: ast.StructExpr, e: ir_env.Env) -> typs.Typ:
-        struct_typ = typs.Typ.from_ast(struct_expr.typ, e)
-        if not isinstance(struct_typ, typs.StructTyp):
-            raise errors.TypeOfStructExprNotStructError(struct_typ.name, struct_expr.typ.span)
-        self.results._set_struct_expr_typ(struct_expr, struct_typ)
+    def _check_brace_expr(self, brace_expr: ast.BraceExpr, e: ir_env.Env) -> typs.Typ:
+        typ = typs.Typ.from_ast(brace_expr.typ, e)
+        self.results._set_brace_expr_typ(brace_expr, typ)
+        match typ:
+            case typs.ArrayTyp():
+                return self._check_array_lit_expr(brace_expr, typ, e)
+            case typs.StructTyp():
+                return self._check_struct_lit_expr(brace_expr, typ, e)
+            case _:
+                raise errors.TypeOfBraceExprInvalidError(typ.name, brace_expr.typ.span)
 
+    def _check_struct_lit_expr(
+        self, brace_expr: ast.BraceExpr, struct_typ: typs.StructTyp, e: ir_env.Env
+    ) -> typs.Typ:
         field_value_asts: dict[str, ast.Expr] = {}
         field_value_typs: dict[str, typs.Typ] = {}
-        for field_expr in struct_expr.fields:
-            name = field_expr.ident.name
+        for element in brace_expr.elements:
+            if not isinstance(element, ast.StructFieldExpr):
+                raise errors.PositionalElementInStructExprError(struct_typ.name, element.span)
+            name = element.ident.name
             field = struct_typ.fields.get(name)
             if field is None:
                 raise errors.InvalidStructFieldError(
-                    name, field_expr.ident.span, struct_typ.name, struct_typ.span
+                    name, element.ident.span, struct_typ.name, struct_typ.span
                 )
-            self.results._set_struct_field_index(field_expr, field.index)
-            if not field.is_accessible_from(struct_expr.span.file):
+            self.results._set_struct_field_index(element, field.index)
+            if not field.is_accessible_from(brace_expr.span.file):
                 raise errors.PrivateStructFieldAccessError(
-                    field.name, field_expr.ident.span, struct_typ.name, field.ast.span
+                    field.name, element.ident.span, struct_typ.name, field.ast.span
                 )
             if name in field_value_asts:
                 raise errors.DuplicateFieldInStructExprError(
-                    name, field_expr.ident.span, field_value_asts[name].span
+                    name, element.ident.span, field_value_asts[name].span
                 )
-            field_value_asts[name] = field_expr.value
-            field_value_typs[name] = self._check_expr(field_expr.value, e, field.typ)
+            field_value_asts[name] = element.value
+            field_value_typs[name] = self._check_expr(element.value, e, field.typ)
 
         for field in struct_typ.fields.values():
             if field.name not in field_value_asts:
                 raise errors.MissingFieldInStructExprError(
-                    field.name, field.ast.span, struct_typ.name, struct_expr.span
+                    field.name, field.ast.span, struct_typ.name, brace_expr.span
                 )
             value_ast = field_value_asts[field.name]
             value_typ = field_value_typs[field.name]
@@ -876,6 +838,34 @@ class TypCheck:
                 )
 
         return struct_typ
+
+    def _check_array_lit_expr(
+        self, brace_expr: ast.BraceExpr, arr_typ: typs.ArrayTyp, e: ir_env.Env
+    ) -> typs.Typ:
+        elements: list[ast.Expr] = []
+        for element in brace_expr.elements:
+            if isinstance(element, ast.StructFieldExpr):
+                raise errors.NamedFieldInArrayLitError(element.ident.name, element.span)
+            elements.append(element)
+
+        if not isinstance(arr_typ.length, typs.ComptimeValueTyp):
+            raise errors.ArrayLitLengthNotConcreteError(brace_expr.span)
+        expected_len = arr_typ.length_value
+        if len(elements) != expected_len:
+            raise errors.WrongNumberOfArrayLitElementsError(
+                arr_typ.name, len(elements), expected_len, brace_expr.span
+            )
+
+        elt_typ = arr_typ.element_typ
+        for i, elt_ast in enumerate(elements):
+            elt_typ_i = self._check_expr(elt_ast, e, elt_typ)
+            coercion = self._record_coercion(elt_ast, elt_typ_i, elt_typ)
+            if isinstance(coercion, Invalid):
+                raise errors.IncompatibleTypInArrayExprError(
+                    elt_typ_i.name, i, elt_ast.span, arr_typ.name
+                )
+
+        return arr_typ
 
     def _check_field_access_expr(self, fa_expr: ast.FieldAccessExpr, e: ir_env.Env) -> typs.Typ:
         struct_typ = self._check_expr(fa_expr.value, e, None)
