@@ -12,7 +12,19 @@ from typing import Final, Optional
 import networkx as nx
 from llvmlite import ir as ll
 
-from leech import asserts, ir_module, ir_traits, ir_values, mono, naming, signage, typs, visibility
+from leech import (
+    asserts,
+    ir_module,
+    ir_traits,
+    ir_values,
+    ll_typs,
+    mono,
+    naming,
+    signage,
+    target,
+    typs,
+    visibility,
+)
 
 _BIN_OP_LL_METHODS: Final[dict[type[ir_values.BinOpInstr], str]] = {
     ir_values.AddInstr: "add",
@@ -120,7 +132,8 @@ class Compiler:
         Imported functions remain declarations, but imported struct layouts are defined locally.
         Generic templates have no LLVM representation; only their reachable instances do.
         """
-        self.ll_mod.triple = "x86_64-linux-gnu"
+        self.ll_mod.triple = target.TRIPLE
+        self.ll_mod.data_layout = target.DATALAYOUT
 
         for item in self._program_items():
             if isinstance(item.value, typs.StructTyp):
@@ -129,10 +142,6 @@ class Compiler:
         for item in self._program_items():
             if not isinstance(item.value, (typs.StructTyp, typs.StructTypTemplate)):
                 self._declare_mod_item(item)
-
-        for item in self._program_items():
-            if isinstance(item.value, typs.StructTyp):
-                self._compile_mod_struct(item, item.value)
 
         # A generic struct's own fields are never lowered - only an
         # instantiation's are, below - but they're still validated here,
@@ -156,8 +165,6 @@ class Compiler:
         result = mono.discover(self._mod)
         for struct_inst in result.struct_instances:
             self._declare_struct_instance(struct_inst)
-        for struct_inst in result.struct_instances:
-            self._compile_struct_instance(struct_inst)
 
         for inst in result.fn_instances:
             self._declare_fn_instance(inst)
@@ -180,60 +187,10 @@ class Compiler:
                     yield item
 
     def _declare_struct_instance(self, inst: typs.StructTyp) -> None:
-        ll_typ = self.ll_mod.context.get_identified_type(inst.qualified_name)
-        self._ll_mod_items.set(inst, ll_typ)
-
-    def _compile_struct_instance(self, inst: typs.StructTyp) -> None:
-        ll_typ = self.ll_mod.context.get_identified_type(inst.qualified_name)
-        ll_typ.set_body(*(self._ll_mod_items.get(field.typ) for field in inst.fields.values()))
+        self._ll_mod_items.get(inst)
 
     def _ll_typ(self, typ: typs.Typ) -> ll.Type:
-        match typ:
-            case typs.IntTyp():
-                return ll.IntType(typ.width)
-            case typs.BoolTyp():
-                return ll.IntType(1)
-            case typs.FnTyp():
-                # A `never` return type has no LLVM representation of its
-                # own (see the NeverTyp case below): a function declared
-                # to return `never` only ever ends its body in
-                # `unreachable`, so its LLVM signature can say `void`
-                # without a real `ret` instruction ever needing to match
-                # it.
-                ll_ret_typ = (
-                    ll.VoidType()
-                    if isinstance(typ.ret_typ, typs.NeverTyp)
-                    else self._ll_mod_items.get(typ.ret_typ)
-                )
-                return ll.FunctionType(
-                    ll_ret_typ,
-                    (self._ll_mod_items.get(param_typ) for param_typ in typ.param_typs),
-                )
-            case typs.PtrTyp():
-                # Typed pointers are deprecated in llvmlite (and LLVM IR) but
-                # llvmlite seems to rely on pointer types in a bunch of places
-                # (call instruction, gep instruction) that's a pain to try to
-                # work around, so just use typed pointers for now.
-                return ll.PointerType(pointee=self._ll_mod_items.get(typ.pointee_typ))
-            case typs.ArrayTyp():
-                return ll.ArrayType(self._ll_mod_items.get(typ.element_typ), typ.length_value)
-            case typs.VoidTyp():
-                return ll.VoidType()
-            case typs.EnumTyp():
-                # No LLVM type of its own - an enum lowers directly to its
-                # backing integer type's.
-                return asserts.checked_cast(self._ll_mod_items.get(typ.backing_typ), ll.Type)
-            case typs.StructTyp():
-                # Every StructTyp reachable during codegen is declared
-                # (and cached here) by the earlier declare-types phase,
-                # so _LLItems.get() should never fall through to this
-                # method for one - if it does, that phase missed it.
-                assert typ in self._ll_mod_items, f'struct "{typ.name}" was never declared'
-                return asserts.checked_cast(self._ll_mod_items.get(typ), ll.Type)
-            case typs.NeverTyp():
-                raise AssertionError("a never-typed value shouldn't need an LLVM type")
-            case _:
-                raise AssertionError(f"unhandled type {typ}")
+        return ll_typs.ll_typ(self.ll_mod.context, typ)
 
     def _declare_mod_item(self, item: ir_module.ModItem):
         match item.value:
@@ -244,8 +201,7 @@ class Compiler:
             case ir_module.FnSymbol():
                 pass
             case typs.StructTyp():
-                ll_item = self.ll_mod.context.get_identified_type(item.qualified_name)
-                self._ll_mod_items.set(item.value, ll_item)
+                self._ll_mod_items.get(item.value)
             case typs.StructTypTemplate():
                 pass
             case typs.EnumTyp():
@@ -270,8 +226,8 @@ class Compiler:
             case ir_module.FnSymbol():
                 return None
             case typs.StructTyp():
-                # Already compiled, along with every other module's, by
-                # the struct-body phase of compile().
+                # Already fully built by the earlier declare-structs pass
+                # of compile().
                 return None
             case typs.StructTypTemplate():
                 return None
@@ -353,10 +309,6 @@ class Compiler:
 
         for bb in bb_order:
             self._compile_bb(bb, ctx)
-
-    def _compile_mod_struct(self, item: ir_module.ModItem, typ: typs.StructTyp) -> None:
-        ll_typ = self.ll_mod.context.get_identified_type(item.qualified_name)
-        ll_typ.set_body(*(self._ll_mod_items.get(field.typ) for field in typ.fields.values()))
 
     def _compile_bb(self, bb: ir_values.BasicBlock, ctx: Compiler._FnBuilderContext) -> None:
         ctx.ll_builder.position_at_start(ctx.ll_bbs[bb])
@@ -454,19 +406,13 @@ class Compiler:
                 ll_index = ctx.ll_values.get(instr.index)
                 return ctx.ll_builder.gep(ctx.ll_values.get(instr.base), [zero, ll_index])
             case ir_values.SizeOfInstr():
-                # The standard portable idiom for sizeof(T): index one T
-                # past a null T* and read the resulting address, so LLVM's
-                # own (platform-dependent, padding-including) layout rules
-                # compute the size, rather than reimplementing them here.
-                ll_ptr_typ = self._ll_mod_items.get(
-                    typs.PtrTyp.get_or_create(instr.sized_typ, typs.CONST)
-                )
-                null_ptr = ll.Constant(ll_ptr_typ, None)
-                one = ll.Constant(self._ll_mod_items.get(typs.USIZE), 1)
-                elt_ptr = ctx.ll_builder.gep(null_ptr, [one])
-                return ctx.ll_builder.ptrtoint(  # type: ignore
-                    elt_ptr, self._ll_mod_items.get(typs.USIZE)
-                )
+                # instr.sized_typ is always concrete by codegen time (the
+                # same guarantee comptime.py's SizeOfInstr handling
+                # relies on), so its size is already fully known here -
+                # no runtime computation needed.
+                ll_typ = asserts.checked_cast(self._ll_mod_items.get(instr.sized_typ), ll.Type)
+                size = ll_typ.get_abi_size(target.target_data(), context=self.ll_mod.context)
+                return ll.Constant(self._ll_mod_items.get(typs.USIZE), size)
             case ir_values.PtrCastInstr():
                 return ctx.ll_builder.bitcast(  # type: ignore
                     ctx.ll_values.get(instr.operand), self._ll_mod_items.get(instr.target_typ)

@@ -51,26 +51,28 @@ def test_size_of_runtime_unambiguous_typs(tmp_path, typ, expected_size):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-@pytest.mark.parametrize(
-    ("typ", "expected_size"),
-    [
-        # A width that isn't even a whole number of bytes - LLVM rounds up
-        # to the smallest byte count that can hold it, then further up to
-        # its ABI alignment.
-        ("i3", 1),
-        ("i17", 4),
-        # A width that *is* a whole number of bytes (24 bits = 3 bytes)
-        # but not a power of two - still gets padded up to 4, by the same
-        # ABI-alignment rule. This is the case naive `width // 8` silently
-        # gets wrong for both reasons above.
-        ("i24", 4),
-    ],
-)
+# Widths whose byte size isn't target-independent: LLVM's own ABI-alignment
+# rules pad these up rather than using their bit width directly.
+_PADDED_TYPS = [
+    # A width that isn't even a whole number of bytes - LLVM rounds up
+    # to the smallest byte count that can hold it, then further up to
+    # its ABI alignment.
+    ("i3", 1),
+    ("i17", 4),
+    # A width that *is* a whole number of bytes (24 bits = 3 bytes)
+    # but not a power of two - still gets padded up to 4, by the same
+    # ABI-alignment rule. This is the case naive `width // 8` silently
+    # gets wrong for both reasons above.
+    ("i24", 4),
+]
+
+
+@pytest.mark.parametrize(("typ", "expected_size"), _PADDED_TYPS)
 def test_size_of_runtime_padded_typs(tmp_path, typ, expected_size):
     # Confirmed against the real compiled-and-run output by hand, not
-    # derived from any formula in comptime.py - this is the ground truth
-    # comptime.py's own (deliberately more conservative) handling is
-    # checked against below.
+    # derived from any formula - this is the ground truth
+    # test_size_of_padded_typ_at_comptime_matches_runtime checks the
+    # comptime-folded value against below.
     src = f"""
     pub fn main() i32 {{
         if (__size_of[{typ}]() == {expected_size}usize) {{
@@ -84,8 +86,7 @@ def test_size_of_runtime_padded_typs(tmp_path, typ, expected_size):
 
 def test_size_of_struct_is_at_least_sum_of_field_sizes(tmp_path):
     # A loose bound, not exact equality - padding is legitimately
-    # platform-dependent, which is exactly why the GEP idiom is used
-    # rather than a hand-computed size.
+    # platform-dependent.
     src = """
     struct Point { x: i32, y: i32 }
     pub fn main() i32 {
@@ -111,9 +112,9 @@ def test_size_of_wrong_number_of_typ_args(tmp_path):
 
 @pytest.mark.parametrize(("typ", "expected_size"), _UNAMBIGUOUS_TYPS)
 def test_size_of_at_comptime_matches_runtime(tmp_path, typ, expected_size):
-    # Regression guard for the Python-side primitive-size computation
-    # (comptime.py's SizeOfInstr handling) ever drifting from the
-    # GEP-idiom's runtime answer.
+    # Regression guard for comptime.py's and codegen.py's independent
+    # SizeOfInstr call sites (both backed by the same target-data
+    # machinery, but each with its own path to it) ever drifting apart.
     src = f"""
     let comptime_size = __size_of[{typ}]();
     pub fn main() i32 {{
@@ -161,31 +162,87 @@ def test_size_of_ptr_typ_at_comptime_matches_runtime(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-@pytest.mark.parametrize("typ", ["i3", "i17", "i24"])
-def test_size_of_padded_typ_at_comptime_raises(tmp_path, typ):
-    # comptime.py deliberately doesn't try to replicate LLVM's ABI-padding
-    # rules in Python (see test_size_of_runtime_padded_typs) - it raises
-    # rather than risk silently disagreeing with them.
+@pytest.mark.parametrize(("typ", "expected_size"), _PADDED_TYPS)
+def test_size_of_padded_typ_at_comptime_matches_runtime(tmp_path, typ, expected_size):
+    # Regression guard for comptime.py's and codegen.py's independent
+    # SizeOfInstr call sites ever drifting apart, for widths whose byte
+    # size isn't target-independent (see test_size_of_runtime_padded_typs).
     src = f"""
-    let s = __size_of[{typ}]();
+    let comptime_size = __size_of[{typ}]();
     pub fn main() i32 {{
+        if (comptime_size == {expected_size}usize) {{
+            if (comptime_size == __size_of[{typ}]()) {{
+                return 1;
+            }};
+        }};
         return 0;
     }}
     """
-    with pytest.raises(errors.SizeOfNotComptimeEvaluableError):
-        util.compile_str(tmp_path, src)
+    util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_size_of_struct_at_comptime_raises(tmp_path):
+def test_size_of_struct_at_comptime_matches_runtime(tmp_path):
+    # A field layout with a real padding gap (i8 followed by i64 forces 7
+    # bytes of padding before the i64, for 16 bytes total, not the 9 a
+    # naive sum-of-field-sizes would give) - this is the case that would
+    # slip past a comptime implementation that summed field sizes instead
+    # of asking llvmlite's target data for the real ABI-accurate layout.
     src = """
-    struct Point { x: i32, y: i32 }
-    let s = __size_of[Point]();
+    struct Padded { a: i8, b: i64 }
+    let comptime_size = __size_of[Padded]();
+    pub fn main() i32 {
+        if (comptime_size == 16usize) {
+            if (comptime_size == __size_of[Padded]()) {
+                return 1;
+            };
+        };
+        return 0;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 1)
+
+
+def test_size_of_array_typ_at_comptime_matches_runtime(tmp_path):
+    src = """
+    let comptime_size = __size_of[array[i32, 4]]();
+    pub fn main() i32 {
+        if (comptime_size == 16usize) {
+            if (comptime_size == __size_of[array[i32, 4]]()) {
+                return 1;
+            };
+        };
+        return 0;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 1)
+
+
+def test_size_of_enum_typ_at_comptime_matches_runtime(tmp_path):
+    src = """
+    enum Color(u8) { Red, Green, Blue }
+    let comptime_size = __size_of[Color]();
+    pub fn main() i32 {
+        if (comptime_size == 1usize) {
+            if (comptime_size == __size_of[Color]()) {
+                return 1;
+            };
+        };
+        return 0;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 1)
+
+
+def test_compiled_module_carries_nonempty_datalayout(tmp_path):
+    src = """
     pub fn main() i32 {
         return 0;
     }
     """
-    with pytest.raises(errors.SizeOfNotComptimeEvaluableError):
-        util.compile_str(tmp_path, src)
+    ll_path = util.compile_str(tmp_path, src)
+    ir_text = ll_path.read_text()
+    assert 'target datalayout = ""' not in ir_text
+    assert 'target datalayout = "' in ir_text
 
 
 def test_ptr_cast_mut_round_trips_pointer_value(tmp_path):

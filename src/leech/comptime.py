@@ -6,11 +6,16 @@
 
 from typing import Final, Optional
 
-from leech import asserts, errors, ir_module, ir_values, target, typs
+from llvmlite import ir as ll
+
+from leech import asserts, errors, ir_module, ir_values, ll_typs, target, typs
 
 
-def _is_power_of_two(n: int) -> bool:
-    return n & (n - 1) == 0
+def _size_of(sized_typ: typs.Typ) -> int:
+    """Return ``sized_typ``'s real, target-ABI-accurate size in bytes."""
+    ctx = ll.Context()
+    ll_typ = ll_typs.ll_typ(ctx, sized_typ)
+    return ll_typ.get_abi_size(target.target_data(), context=ctx)
 
 
 def _panic_message(args: tuple[ir_values.ComptimeValue, ...]) -> Optional[str]:
@@ -241,30 +246,12 @@ class Interpreter:
             case ir_values.RetInstr():
                 self._ret_value = self._get_comptime_value(instr.value)
             case ir_values.SizeOfInstr():
-                match instr.sized_typ:
-                    case typs.BoolTyp():
-                        size = 1
-                    case typs.IntTyp() if instr.sized_typ.width >= 8 and _is_power_of_two(
-                        instr.sized_typ.width
-                    ):
-                        # Only a width that's itself one of LLVM's own
-                        # primitive integer sizes (8/16/32/64/128/...) has
-                        # an unambiguous, target-independent byte size.
-                        # Anything else - a width that isn't a whole number
-                        # of bytes (e.g. i3), or is but isn't a power of
-                        # two (e.g. i24, confirmed by hand to actually take
-                        # 4 bytes, not 3, under this target's ABI rules) -
-                        # gets padded by LLVM's own (target-dependent)
-                        # alignment rules in a way this compiler doesn't
-                        # replicate in Python, to avoid silently disagreeing
-                        # with the real (GEP-idiom-based) runtime answer.
-                        size = instr.sized_typ.width // 8
-                    case typs.PtrTyp():
-                        size = target.ADDR_SIZE // 8
-                    case _:
-                        raise errors.SizeOfNotComptimeEvaluableError(
-                            instr.sized_typ.name, instr.span
-                        )
+                # Every type the grammar can produce as __size_of[T]'s T
+                # (bool, an integer width, a pointer, a struct, an array,
+                # an enum) is handled by _size_of - nothing reaches this
+                # instruction with a type it can't compute a real,
+                # ABI-accurate size for.
+                size = _size_of(instr.sized_typ)
                 self._registers[instr] = ir_values.ComptimeInt(typs.USIZE, size, instr.ast)
             case ir_values.PtrCastInstr():
                 # The Comptime* value model is value-oriented, not
