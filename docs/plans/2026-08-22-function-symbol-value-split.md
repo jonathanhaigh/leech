@@ -14,7 +14,7 @@ SPDX-License-Identifier: MPL-2.0
 
 **Tech Stack:** Python 3.14, uv, pytest, Ruff, basedpyright, llvmlite.
 
-**Spec:** `docs/superpowers/specs/2026-08-22-function-symbol-value-split-design.md`
+**Spec:** `docs/specs/2026-08-22-function-symbol-value-split-design.md`
 
 ## Global Constraints
 
@@ -177,7 +177,7 @@ Expected: all pass; the full count increases by the new tests.
 Present the unstaged Task 1 diff and verification results. After explicit authorization only:
 
 ```bash
-git add docs/superpowers/plans/2026-08-22-function-symbol-value-split.md src/leech/ir_module.py src/leech/ir_builder.py src/leech/ir_loader.py src/leech/ir_env.py src/leech/comptime.py src/leech/codegen.py tests/test_generic_fns.py tests/test_prelude.py tests/test_vars.py
+git add docs/plans/2026-08-22-function-symbol-value-split.md src/leech/ir_module.py src/leech/ir_builder.py src/leech/ir_loader.py src/leech/ir_env.py src/leech/comptime.py src/leech/codegen.py tests/test_generic_fns.py tests/test_prelude.py tests/test_vars.py
 git commit -m "Introduce function reference values"
 ```
 
@@ -324,7 +324,7 @@ git commit -m "Instantiate extern function declarations"
 - Modify: `src/leech/typcheck.py`
 - Modify: `src/leech/ir_builder.py`
 - Modify: `src/leech/codegen.py`
-- Modify: `docs/superpowers/specs/2026-08-22-function-symbol-value-split-design.md`
+- Modify: `docs/specs/2026-08-22-function-symbol-value-split-design.md`
 - Test: `tests/test_builtins.py`
 - Test: `tests/test_errors.py`
 - Test: `tests/test_generic_fns.py`
@@ -460,7 +460,7 @@ Expected: all pass; `rg -n "GenericFn" src tests` returns no matches.
 After explicit authorization only:
 
 ```bash
-git add docs/superpowers/plans/2026-08-22-function-symbol-value-split.md docs/superpowers/specs/2026-08-22-function-symbol-value-split-design.md src/leech/ir_module.py src/leech/ir_builtins.py src/leech/ir_env.py src/leech/ir_traits.py src/leech/resolve.py src/leech/typcheck.py src/leech/ir_builder.py src/leech/codegen.py tests/test_builtins.py tests/test_errors.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_impl.py tests/test_traits.py
+git add docs/plans/2026-08-22-function-symbol-value-split.md docs/specs/2026-08-22-function-symbol-value-split-design.md src/leech/ir_module.py src/leech/ir_builtins.py src/leech/ir_env.py src/leech/ir_traits.py src/leech/resolve.py src/leech/typcheck.py src/leech/ir_builder.py src/leech/codegen.py tests/test_builtins.py tests/test_errors.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_impl.py tests/test_traits.py
 git commit -m "Bind function declarations as symbols"
 ```
 
@@ -647,6 +647,6 @@ Expected: the Python assertion succeeds and the search returns no matches.
 After explicit authorization only:
 
 ```bash
-git add docs/superpowers/plans/2026-08-22-function-symbol-value-split.md src/leech/ir_module.py src/leech/ir_values.py src/leech/ir_builder.py src/leech/ir_env.py src/leech/comptime.py src/leech/codegen.py src/leech/typcheck.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_prelude.py
+git add docs/plans/2026-08-22-function-symbol-value-split.md src/leech/ir_module.py src/leech/ir_values.py src/leech/ir_builder.py src/leech/ir_env.py src/leech/comptime.py src/leech/codegen.py src/leech/typcheck.py tests/test_generic_fns.py tests/test_generic_structs.py tests/test_prelude.py
 git commit -m "Separate function symbols from values"
 ```

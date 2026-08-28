@@ -25,7 +25,7 @@ instruction it doesn't know, and module-level `let x = match (…);` runs throug
 
 **Tech Stack:** Python 3.14, lark 1.3.1 (LALR, `strict=True`), pytest. No new dependencies.
 
-**Design doc:** `docs/superpowers/specs/2026-08-28-match-expressions-design.md` — read it
+**Design doc:** `docs/specs/2026-08-28-match-expressions-design.md` — read it
 first; it carries the full rationale, the surveyed alternatives for binding syntax, the
 verified-conflict-free grammar, and why `_` must become a reserved word.
 

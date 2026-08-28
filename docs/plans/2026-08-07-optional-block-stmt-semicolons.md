@@ -16,7 +16,7 @@ SPDX-License-Identifier: MPL-2.0
 
 ## Global Constraints
 
-- Design doc: `docs/superpowers/specs/2026-08-07-optional-block-stmt-semicolons-design.md`. Read it before starting — it has the full rationale.
+- Design doc: `docs/specs/2026-08-07-optional-block-stmt-semicolons-design.md`. Read it before starting — it has the full rationale.
 - `let`, `return`, `break`, `continue`, and assignment statements are **not** affected: `;` stays mandatory for them regardless of their operand's shape.
 - `struct_expr` is **not** block-like: its statement-position `;` stays mandatory.
 - Backward compatible: every program that compiles today must keep compiling with an identical AST/behavior.
@@ -268,7 +268,7 @@ Expected: no changes needed, no errors (this task doesn't touch Python source).
 - [ ] **Step 7: Commit — grammar change plus the design doc**
 
 ```bash
-git add src/leech/leech.lark tests/test_parsing.py docs/superpowers/specs/2026-08-07-optional-block-stmt-semicolons-design.md
+git add src/leech/leech.lark tests/test_parsing.py docs/specs/2026-08-07-optional-block-stmt-semicolons-design.md
 git commit -m "Make block_expr's grammar allow semicolon-less block-like statements"
 ```
 

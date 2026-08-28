@@ -42,7 +42,7 @@ doc and the actual diff are authoritative.
 **Tech Stack:** Python 3.14, llvmlite 0.47.0 (`llvmlite.ir` for building, `llvmlite.binding`
 for `parse_assembly`/`TargetData` — the latter's first use in this codebase), pytest.
 
-**Design doc:** `docs/superpowers/specs/2026-08-27-comptime-sizeof-design.md` — read it
+**Design doc:** `docs/specs/2026-08-27-comptime-sizeof-design.md` — read it
 first; it has the full rationale, including why `llvmlite.ir` types can't be queried
 directly and why `StructTyp` is deliberately *not* shared between `codegen.py` and
 `ll_typs.py`.

@@ -14,7 +14,7 @@ SPDX-License-Identifier: MPL-2.0
 
 **Tech Stack:** Python 3.14, uv, pytest, Ruff, basedpyright, llvmlite.
 
-**Spec:** `docs/superpowers/specs/2026-08-20-total-flat-fn-instantiation-design.md`
+**Spec:** `docs/specs/2026-08-20-total-flat-fn-instantiation-design.md`
 
 ## Global Constraints
 

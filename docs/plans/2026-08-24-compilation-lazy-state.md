@@ -14,7 +14,7 @@ SPDX-License-Identifier: MPL-2.0
 
 **Tech Stack:** Python 3.14, pytest, Ruff, basedpyright, REUSE
 
-**Spec:** `docs/superpowers/specs/2026-08-24-compilation-lazy-state-design.md`
+**Spec:** `docs/specs/2026-08-24-compilation-lazy-state-design.md`
 
 ## Global Constraints
 
@@ -611,9 +611,9 @@ Proposed commit subject: `Report recursive impl selection as a cycle`
 ### Task 8: Refresh Stage 5 documentation and run final verification
 
 **Files:**
-- Modify: `docs/superpowers/plans/2026-08-17-fn-hierarchy-restructure-staging.md`
-- Modify: `docs/superpowers/specs/2026-08-24-compilation-lazy-state-design.md`
-- Modify: `docs/superpowers/plans/2026-08-24-compilation-lazy-state.md`
+- Modify: `docs/plans/2026-08-17-fn-hierarchy-restructure-staging.md`
+- Modify: `docs/specs/2026-08-24-compilation-lazy-state-design.md`
+- Modify: `docs/plans/2026-08-24-compilation-lazy-state.md`
 
 **Interfaces:**
 - Consumes: all preceding tasks
