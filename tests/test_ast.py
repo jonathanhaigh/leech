@@ -239,3 +239,94 @@ def test_block_stmt_block_like_no_semicolon(tmp_path):
     assert isinstance(int_stmt, ast.ExprStmt)
     assert isinstance(int_stmt.expr, ast.IntLit)
     assert fn.block.expr is None
+
+
+def test_match_expr_patterns(tmp_path):
+    src = """
+    fn f(x: i32) i32 {
+        match (x) {
+            _ => 0,
+            let mut y => y,
+            let z => z,
+            -2 => 3,
+            2 => 7,
+            true => 4,
+            false => 8,
+            Color::Red => 5,
+            Color::Green | Color::Blue | Color::Yellow => 6,
+        }
+    }
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    match_expr = fn.block.expr
+    assert isinstance(match_expr, ast.MatchExpr)
+    assert isinstance(match_expr.scrutinee, ast.VarExpr)
+    assert match_expr.scrutinee.path.str() == "x"
+
+    (
+        wildcard_arm,
+        mutable_binding_arm,
+        immutable_binding_arm,
+        negative_int_arm,
+        positive_int_arm,
+        true_arm,
+        false_arm,
+        path_arm,
+        or_arm,
+    ) = match_expr.arms
+    assert isinstance(wildcard_arm.pattern, ast.WildcardPattern)
+    assert isinstance(mutable_binding_arm.pattern, ast.BindingPattern)
+    assert mutable_binding_arm.pattern.mut is not None
+    assert mutable_binding_arm.pattern.ident.name == "y"
+    assert isinstance(mutable_binding_arm.body, ast.VarExpr)
+    assert isinstance(immutable_binding_arm.pattern, ast.BindingPattern)
+    assert immutable_binding_arm.pattern.mut is None
+    assert immutable_binding_arm.pattern.ident.name == "z"
+
+    assert isinstance(negative_int_arm.pattern, ast.IntLitPattern)
+    assert negative_int_arm.pattern.negative
+    assert negative_int_arm.pattern.lit.value == 2
+    assert isinstance(negative_int_arm.body, ast.IntLit)
+    assert negative_int_arm.body.value == 3
+    assert isinstance(positive_int_arm.pattern, ast.IntLitPattern)
+    assert not positive_int_arm.pattern.negative
+    assert positive_int_arm.pattern.lit.value == 2
+
+    assert isinstance(true_arm.pattern, ast.BoolLitPattern)
+    assert true_arm.pattern.lit.value
+    assert isinstance(false_arm.pattern, ast.BoolLitPattern)
+    assert not false_arm.pattern.lit.value
+    assert isinstance(path_arm.pattern, ast.PathPattern)
+    assert path_arm.pattern.path.str() == "Color::Red"
+
+    assert isinstance(or_arm.pattern, ast.OrPattern)
+    assert len(or_arm.pattern.alternatives) == 3
+    assert all(isinstance(pattern, ast.PathPattern) for pattern in or_arm.pattern.alternatives)
+    assert [
+        pattern.path.str()
+        for pattern in or_arm.pattern.alternatives
+        if isinstance(pattern, ast.PathPattern)
+    ] == ["Color::Green", "Color::Blue", "Color::Yellow"]
+
+
+def test_match_expr_block_tail_and_statement_forms(tmp_path):
+    src = """
+    fn f(x: i32) i32 {
+        match (x) {}
+        match (x) { _ => 2, };
+        match (x) { _ => 3, }
+    }
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+
+    no_semicolon_stmt, semicolon_stmt = fn.block.stmts
+    assert isinstance(no_semicolon_stmt, ast.ExprStmt)
+    assert isinstance(no_semicolon_stmt.expr, ast.MatchExpr)
+    assert no_semicolon_stmt.expr.arms == ()
+    assert isinstance(semicolon_stmt, ast.ExprStmt)
+    assert isinstance(semicolon_stmt.expr, ast.MatchExpr)
+    assert isinstance(fn.block.expr, ast.MatchExpr)

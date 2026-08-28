@@ -71,7 +71,7 @@ _match_arm_list: match_arm ("," match_arm)* ","?
 match_arm: pattern "=>" expr
 
 ?pattern: or_pattern
-?or_pattern: or_pattern "|" primary_pattern
+?or_pattern: primary_pattern ("|" primary_pattern)+
   | primary_pattern
 ?primary_pattern: wildcard_pattern
   | binding_pattern

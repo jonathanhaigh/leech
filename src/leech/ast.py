@@ -113,6 +113,7 @@ class Expr(Ast):
             "block_expr": BlockExpr,
             "if_expr": IfExpr,
             "while_expr": WhileExpr,
+            "match_expr": MatchExpr,
             "call_expr": CallExpr,
             "int_lit": IntLit,
             "str_lit": StrLit,
@@ -234,6 +235,157 @@ class WhileExpr(Expr):
     @override
     def diag_str(self) -> str:
         return "while expression"
+
+
+class MatchExpr(Expr):
+    """A ``match (scrutinee) { pattern => body, ... }`` expression."""
+
+    scrutinee: Final[Expr]
+    arms: Final[tuple[MatchArm, ...]]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "match_expr")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        scrutinee, arm_list = map(_as_tree, tree.children)
+        self.scrutinee = Expr.from_tree(file, scrutinee)
+        asserts.assert_eq(arm_list.data, "match_arm_list")
+        self.arms = tuple(MatchArm(file, _as_tree(arm)) for arm in arm_list.children)
+
+    @override
+    def diag_str(self) -> str:
+        return "match expression"
+
+
+class MatchArm(Ast):
+    """One pattern and result expression within a ``match``."""
+
+    pattern: Final[Pattern]
+    body: Final[Expr]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "match_arm")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        pattern, body = map(_as_tree, tree.children)
+        self.pattern = Pattern.from_tree(file, pattern)
+        self.body = Expr.from_tree(file, body)
+
+    @override
+    def diag_str(self) -> str:
+        return "match arm"
+
+
+class Pattern(Ast):
+    """Base class for every match pattern."""
+
+    @staticmethod
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Pattern:
+        """Build the pattern selected by a parse tree's grammar rule."""
+        child_classes = {
+            "wildcard_pattern": WildcardPattern,
+            "binding_pattern": BindingPattern,
+            "int_lit_pattern": IntLitPattern,
+            "bool_lit": BoolLitPattern,
+            "path_pattern": PathPattern,
+            "or_pattern": OrPattern,
+        }
+        return child_classes[tree.data](file, tree)
+
+
+class WildcardPattern(Pattern):
+    """The ``_`` wildcard pattern."""
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "wildcard_pattern")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+
+    @override
+    def diag_str(self) -> str:
+        return "wildcard pattern"
+
+
+class BindingPattern(Pattern):
+    """A ``let [mut] name`` binding pattern."""
+
+    mut: Final[Optional[Mutability]]
+    ident: Final[Ident]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "binding_pattern")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        mut, ident = map(_as_tree, tree.children)
+        self.mut = Mutability.from_tree(file, mut)
+        self.ident = Ident.from_tree(file, ident)
+
+    @override
+    def diag_str(self) -> str:
+        return f'pattern binding "{self.ident.name}"'
+
+
+class IntLitPattern(Pattern):
+    """An optionally negative integer literal pattern."""
+
+    lit: Final[IntLit]
+    negative: Final[bool]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "int_lit_pattern")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        negative, lit = tree.children
+        self.negative = negative is not None
+        self.lit = IntLit(file, _as_tree(lit))
+
+    @override
+    def diag_str(self) -> str:
+        sign = "-" if self.negative else ""
+        return f'integer literal pattern "{sign}{self.lit.token}"'
+
+
+class BoolLitPattern(Pattern):
+    """A ``true`` or ``false`` literal pattern."""
+
+    lit: Final[BoolLit]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "bool_lit")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        self.lit = BoolLit(file, tree)
+
+    @override
+    def diag_str(self) -> str:
+        return f'boolean literal pattern "{self.lit.token}"'
+
+
+class PathPattern(Pattern):
+    """A path pattern naming an enum variant."""
+
+    path: Final[Path]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "path_pattern")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        (path,) = map(_as_tree, tree.children)
+        self.path = Path(file, path)
+
+    @override
+    def diag_str(self) -> str:
+        return f'path pattern "{self.path.str()}"'
+
+
+class OrPattern(Pattern):
+    """Alternatives joined by ``|`` within one match arm."""
+
+    alternatives: Final[tuple[Pattern, ...]]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "or_pattern")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        self.alternatives = tuple(
+            Pattern.from_tree(file, _as_tree(alternative)) for alternative in tree.children
+        )
+
+    @override
+    def diag_str(self) -> str:
+        return "or-pattern"
 
 
 class StrLit(Expr):
