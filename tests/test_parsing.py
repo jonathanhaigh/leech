@@ -654,6 +654,62 @@ COMMENTED_INTS = [
             T("while_expr").cs(T("ident", Tok("lbl")), T("bool_lit", Tok("true")), T("block_expr")),
         ),
         (
+            "expr",
+            "match (x) { _ => 1 }",
+            T("match_expr").cs(
+                T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                T("match_arm_list").cs(
+                    T("match_arm").cs(T("wildcard_pattern"), T("int_lit", Tok("1")))
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "match (x) { A | B => 1, let mut y => y, -2 => 3, }",
+            T("match_expr").cs(
+                T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                T("match_arm_list").cs(
+                    T("match_arm").cs(
+                        T("or_pattern").cs(
+                            T("path_pattern", "path", "ident", Tok("A")),
+                            T("path_pattern", "path", "ident", Tok("B")),
+                        ),
+                        T("int_lit", Tok("1")),
+                    ),
+                    T("match_arm").cs(
+                        T("binding_pattern").cs(T("mut", Tok("mut")), T("ident", Tok("y"))),
+                        T("var_expr").cs(T("path", "ident", Tok("y")), None),
+                    ),
+                    T("match_arm").cs(
+                        T("int_lit_pattern").cs("-", T("int_lit", Tok("2"))),
+                        T("int_lit", Tok("3")),
+                    ),
+                ),
+            ),
+        ),
+        (
+            "expr",
+            "match (x) {}",
+            T("match_expr").cs(
+                T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                T("match_arm_list"),
+            ),
+        ),
+        (
+            "expr",
+            "f(match (x) { true => 1, false => 0, })",
+            T("call_expr").cs(
+                T("var_expr").cs(T("path", "ident", Tok("f")), None),
+                T("arg_list", "match_expr").cs(
+                    T("var_expr").cs(T("path", "ident", Tok("x")), None),
+                    T("match_arm_list").cs(
+                        T("match_arm").cs(T("bool_lit", Tok("true")), T("int_lit", Tok("1"))),
+                        T("match_arm").cs(T("bool_lit", Tok("false")), T("int_lit", Tok("0"))),
+                    ),
+                ),
+            ),
+        ),
+        (
             "stmt",
             "x = y;",
             T("stmt", "assignment_stmt").cs(
@@ -1463,6 +1519,8 @@ def test_parse(rule, src, expected):
         ("expr", "1: while (true) {}"),
         ("expr", "lbl lbl: while (true) {}"),
         ("expr", "lbl:: while (true) {}"),
+        ("expr", "match (x) { _ => {} _ => 1 }"),
+        ("expr", "match x { _ => 1 }"),
         ("typ", ""),
         ("typ", "0"),
         ("typ", '"abc"'),

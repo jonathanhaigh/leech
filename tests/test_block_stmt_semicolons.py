@@ -2,10 +2,11 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import lark
 import pytest
 import util
 
-from leech import errors
+from leech import errors, parse
 
 
 def test_while_stmt_no_semicolon(tmp_path):
@@ -45,6 +46,29 @@ def test_block_expr_stmt_no_semicolon(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, src, "", 7)
+
+
+def test_match_stmt_no_semicolon_parses():
+    tree = parse.build_parser("block_expr").parse("{ match (x) { _ => 1, } y }")
+
+    match_expr, var_expr = tree.children
+    assert isinstance(match_expr, lark.Tree)
+    assert isinstance(var_expr, lark.Tree)
+    assert [match_expr.data, var_expr.data] == ["match_expr", "var_expr"]
+
+
+def test_match_stmt_with_semicolon_parses():
+    tree = parse.build_parser("block_expr").parse("{ match (x) { _ => 1, }; y }")
+
+    stmt = tree.children[0]
+    assert isinstance(stmt, lark.Tree)
+    assert stmt.data == "stmt"
+    expr_stmt = stmt.children[0]
+    assert isinstance(expr_stmt, lark.Tree)
+    assert expr_stmt.data == "expr_stmt"
+    match_expr = expr_stmt.children[0]
+    assert isinstance(match_expr, lark.Tree)
+    assert match_expr.data == "match_expr"
 
 
 def test_semicolon_still_required_to_discard_tail_value(tmp_path):

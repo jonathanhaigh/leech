@@ -88,6 +88,7 @@ assignment_stmt: place "=" expr ";"
 ?block_like_expr: block_expr
   | if_expr
   | while_expr
+  | match_expr
 
 block_expr: "{" _stmts "}"
 
@@ -109,6 +110,24 @@ _req_stmts: expr
 if_expr: "if" "(" expr ")" block_expr ("else" block_expr)?
 
 while_expr: [ident ":"] "while" "(" expr ")" block_expr
+
+match_expr: "match" "(" expr ")" "{" match_arm_list "}"
+match_arm_list: _match_arm_list?
+_match_arm_list: match_arm ("," match_arm)* ","?
+match_arm: pattern "=>" expr
+
+?pattern: or_pattern
+?or_pattern: or_pattern "|" primary_pattern
+  | primary_pattern
+?primary_pattern: wildcard_pattern
+  | binding_pattern
+  | int_lit_pattern
+  | bool_lit
+  | path_pattern
+wildcard_pattern: "_"
+binding_pattern: "let" mut ident
+!int_lit_pattern: ["-"] int_lit
+path_pattern: path
 
 ?or_expr: or_expr or_op and_expr
   | and_expr

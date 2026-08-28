@@ -35,6 +35,7 @@ KEYWORDS: Final[frozenset[str]] = frozenset(
         "impl",
         "import",
         "let",
+        "match",
         "mut",
         "not",
         "or",
@@ -45,6 +46,7 @@ KEYWORDS: Final[frozenset[str]] = frozenset(
         "trait",
         "true",
         "while",
+        "_",
     }
 )
 
