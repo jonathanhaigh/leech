@@ -34,6 +34,7 @@ dev = [
 
 [tool.basedpyright]
 typeCheckingMode = "standard"
+reportMatchNotExhaustive = "error"
 
 [tool.pytest.ini_options]
 xfail_strict = true

@@ -841,6 +841,8 @@ class CfgBuilder:
                 self._build_break_stmt(stmt_ast)
             case ast.ContinueStmt():
                 self._build_continue_stmt(stmt_ast)
+            case _:
+                raise AssertionError(f"unhandled statement kind {stmt_ast}")
 
     def _build_ret_stmt(self, ret_ast: ast.RetStmt) -> None:
         assert self._fn is not None

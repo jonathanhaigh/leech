@@ -176,14 +176,16 @@ A new leaf module, `patterns.py`, implements Maranget's usefulness algorithm wit
 `Constructor` abstraction carrying an arity:
 
 ```python
-# Constructors:  VariantCon(discriminant, display_name) | BoolCon(value) | IntCon(value)
-# Patterns:      WildPat() | ConPat(con, subpats) | OrPat(alternatives)
-# ConSpace:      the complete constructor set for a scrutinee type
-#                  enum  -> finite, deduped by discriminant
-#                  bool  -> {true, false}
-#                  int   -> open (a wildcard or binding arm is required)
-#                  never -> empty (so `match (x) {}` is exhaustive)
-#                  other -> open (only wildcards match)
+# Constructors:  VariantConstructor(discriminant, display_name)
+#                | BoolConstructor(value) | IntConstructor(value)
+# Patterns:      WildcardPattern() | ConstructorPattern(constructor, subpatterns)
+#                | OrPattern(alternatives)
+# ConstructorSpace: the complete constructor set for a scrutinee type
+#                      enum  -> finite, deduped by discriminant
+#                      bool  -> {true, false}
+#                      int   -> open (a wildcard or binding arm is required)
+#                      never -> empty (so `match (x) {}` is exhaustive)
+#                      other -> open (only wildcards match)
 
 def is_useful(matrix, row, space) -> bool: ...
 def missing_patterns(matrix, space) -> list[Witness]: ...

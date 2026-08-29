@@ -119,25 +119,25 @@ verified-conflict-free grammar, and why `_` must become a reserved word.
 **Interfaces:**
 - Produces `patterns.is_useful(matrix, row, space) -> bool` and
   `patterns.missing_patterns(matrix, space) -> list[Witness]`.
-- Produces the `Constructor` / `Pat` / `ConSpace` / `Witness` types.
+- Produces the `Constructor` / `Pattern` / `ConstructorSpace` / `Witness` types.
 - Imports neither `leech.ast` nor `leech.typs`.
 
 - [ ] Add the SPDX header.
-- [ ] Define constructors — `VariantCon(discriminant, display_name)`, `BoolCon(value)`,
-  `IntCon(value)` — each with an `arity` (0 throughout this change) and an equality that
-  keys on the *discriminant/value*, not the display name. That is what makes
-  `enum Alias { A = 1, B = 1 }` deduplicate correctly.
-- [ ] Define patterns: `WildPat`, `ConPat(con, subpats)`, `OrPat(alternatives)`. Frozen
-  dataclasses.
-- [ ] Define `ConSpace`: the complete constructor set for a scrutinee type, and whether it is
-  open. Finite for enums (deduped by discriminant) and bools; open for integers and for any
-  type with no constructor patterns yet; empty for an uninhabited type.
-- [ ] Implement `specialize(con, matrix)` and `default(matrix)`. With arity-0 constructors
-  these are degenerate — `specialize` filters rows, `default` keeps wildcard rows — but write
-  them as the general operations over sub-patterns so a later arity > 0 constructor is an
-  extension.
-- [ ] Implement `is_useful` and `missing_patterns` per Maranget, expanding an `OrPat` row
-  into several rows.
+- [ ] Define constructors — `VariantConstructor(discriminant, display_name)`,
+  `BoolConstructor(value)`, `IntConstructor(value)` — each with an `arity` (0 throughout
+  this change) and an equality that keys on the *discriminant/value*, not the display name.
+  That is what makes `enum Alias { A = 1, B = 1 }` deduplicate correctly.
+- [ ] Define patterns: `WildcardPattern`, `ConstructorPattern(constructor, subpatterns)`,
+  `OrPattern(alternatives)`. Frozen dataclasses.
+- [ ] Define `ConstructorSpace`: the complete constructor set for a scrutinee type, and
+  whether it is open. Finite for enums (deduped by discriminant) and bools; open for
+  integers and for any type with no constructor patterns yet; empty for an uninhabited type.
+- [ ] Implement `specialize(constructor, matrix)` and `default(matrix)`. With arity-0
+  constructors these are degenerate — `specialize` filters rows, `default` keeps wildcard
+  rows — but write them as the general operations over sub-patterns so a later arity > 0
+  constructor is an extension.
+- [ ] Implement `is_useful` and `missing_patterns` per Maranget, expanding an `OrPattern`
+  row into several rows.
 - [ ] Implement `Witness` rendering as a source-like pattern string (`Color::Blue`, `true`,
   `_`), naming a variant by the first display name registered for its discriminant.
 - [ ] Unit tests in `tests/test_patterns.py`, with no compiler involvement: exhaustive and
@@ -187,12 +187,12 @@ verified-conflict-free grammar, and why `_` must become a reserved word.
 
 - [ ] Add `case ast.MatchExpr():` to `_check_expr`.
 - [ ] Write `_check_pattern(pat, scrutinee_typ, e)`: type-check each pattern against the
-  scrutinee type and translate it to a `patterns.Pat`. Integer literals go through
+  scrutinee type and translate it to a `patterns.Pattern`. Integer literals go through
   `_infer_int_lit_typ` with the scrutinee type as the hint, the `fits` check
   (`IntLitOverflowError`), and `results._set_int_lit_typ`. Variant paths resolve through
   `ir_env.Env.resolve_path`, following the `EnumTyp` arm of `_resolve_path_segment`. Reject a
   binding inside an `OrPattern`.
-- [ ] Build the `patterns.ConSpace` for the scrutinee type: finite for `EnumTyp` (from
+- [ ] Build the `patterns.ConstructorSpace` for the scrutinee type: finite for `EnumTyp` (from
   `EnumTyp.variants`, deduped by discriminant) and `BoolTyp`; empty for `NeverTyp`; open
   otherwise.
 - [ ] Per-arm scope: `e.new_child()`, with the binding added before the arm body is checked.
