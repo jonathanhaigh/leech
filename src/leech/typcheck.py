@@ -19,6 +19,7 @@ from leech import (
     ir_env,
     ir_values,
     opt_util,
+    patterns,
     reserved,
     resolve,
     signage,
@@ -50,6 +51,58 @@ def resolve_peer_typ(fixed_typs: list[typs.Typ]) -> typs.Typ:
         if typ != typs.NEVER:
             return typ
     return typs.I32
+
+
+def match_arm_check_order(arms: Sequence[ast.MatchArm]) -> tuple[list[int], list[int]]:
+    """Return match-arm indices grouped so flexible literal bodies are checked last."""
+    fixed_indices = [i for i, arm in enumerate(arms) if not is_flexible_int_lit(arm.body)]
+    flexible_indices = [i for i, arm in enumerate(arms) if is_flexible_int_lit(arm.body)]
+    return fixed_indices, flexible_indices
+
+
+def match_constructor_space(scrutinee_typ: typs.Typ) -> patterns.ConstructorSpace:
+    """Return the complete constructor space for a match scrutinee type."""
+    match scrutinee_typ:
+        case typs.EnumTyp():
+            constructors = [
+                patterns.VariantConstructor(
+                    discriminant,
+                    f"{scrutinee_typ.name}::{variant_name}",
+                )
+                for variant_name, discriminant in scrutinee_typ.variants.items()
+            ]
+            return patterns.ConstructorSpace.from_constructors(constructors, False)
+        case typs.BoolTyp():
+            return patterns.ConstructorSpace.from_constructors(
+                [patterns.BoolConstructor(False), patterns.BoolConstructor(True)],
+                False,
+            )
+        case typs.NeverTyp():
+            return patterns.ConstructorSpace.from_constructors([], False)
+        case _:
+            return patterns.ConstructorSpace.from_constructors([], True)
+
+
+def _pattern_constructor_candidates(
+    pattern: patterns.PatternKind,
+) -> tuple[Optional[patterns.ConstructorKind], ...]:
+    """Return one candidate constructor per top-level pattern alternative.
+
+    Wildcards and bindings have no constructor, so their entry is ``None``.
+    """
+    match pattern:
+        case patterns.WildcardPattern():
+            return (None,)
+        case patterns.ConstructorPattern(constructor):
+            return (constructor,)
+        case patterns.OrPattern(alternatives):
+            result: list[Optional[patterns.ConstructorKind]] = []
+            for alternative in alternatives:
+                if isinstance(alternative, patterns.ConstructorPattern):
+                    result.append(alternative.constructor)
+                else:
+                    result.append(None)
+            return tuple(result)
 
 
 def _callable_typ(typ: typs.Typ) -> Optional[typs.CallableTyp]:
@@ -106,6 +159,8 @@ class TypCheckResults:
     _brace_expr_typs: Final[dict[ast.BraceExpr, typs.Typ]]
     _struct_field_indices: Final[dict[ast.FieldAccessExpr | ast.StructFieldExpr, int]]
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
+    _match_scrutinee_typs: Final[dict[ast.MatchExpr, typs.Typ]]
+    _match_arm_patterns: Final[dict[ast.MatchArm, patterns.PatternKind]]
 
     def __init__(self) -> None:
         self.resolutions = resolve.Resolutions()
@@ -116,6 +171,8 @@ class TypCheckResults:
         self._brace_expr_typs = {}
         self._struct_field_indices = {}
         self._let_declared_typs = {}
+        self._match_scrutinee_typs = {}
+        self._match_arm_patterns = {}
 
     def int_lit_typ(self, node: ast.IntLit) -> typs.IntTyp:
         """Return the type chosen and overflow-checked for an integer literal."""
@@ -180,6 +237,26 @@ class TypCheckResults:
 
     def _set_let_declared_typ(self, node: ast.LetStmt, typ: typs.Typ) -> None:
         self._let_declared_typs[node] = typ
+
+    def match_scrutinee_typ(self, node: ast.MatchExpr) -> typs.Typ:
+        """Return ``node``'s checked scrutinee type."""
+        return self._match_scrutinee_typs[node]
+
+    def _set_match_scrutinee_typ(self, node: ast.MatchExpr, typ: typs.Typ) -> None:
+        self._match_scrutinee_typs[node] = typ
+
+    def match_arm_pattern(self, node: ast.MatchArm) -> patterns.PatternKind:
+        """Return ``node``'s checked, translated pattern."""
+        return self._match_arm_patterns[node]
+
+    def _set_match_arm_pattern(self, node: ast.MatchArm, pattern: patterns.PatternKind) -> None:
+        self._match_arm_patterns[node] = pattern
+
+    def match_arm_constructors(
+        self, node: ast.MatchArm
+    ) -> tuple[Optional[patterns.ConstructorKind], ...]:
+        """Return one resolved constructor candidate per pattern alternative."""
+        return _pattern_constructor_candidates(self._match_arm_patterns[node])
 
 
 class TypCheck:
@@ -263,6 +340,8 @@ class TypCheck:
                 return self._check_if_expr(expr_ast, e, expected_typ)
             case ast.WhileExpr():
                 return self._check_while_expr(expr_ast, e)
+            case ast.MatchExpr():
+                return self._check_match_expr(expr_ast, e, expected_typ)
             case ast.CallExpr():
                 return self._check_call_expr(expr_ast, e)
             case ast.BinOpExpr():
@@ -351,6 +430,64 @@ class TypCheck:
             return els_typ
         return typs.NEVER
 
+    def _check_match_expr(
+        self, match_ast: ast.MatchExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
+    ) -> typs.Typ:
+        scrutinee_typ = self._check_expr(match_ast.scrutinee, e, None)
+        self.results._set_match_scrutinee_typ(match_ast, scrutinee_typ)
+        space = match_constructor_space(scrutinee_typ)
+
+        arm_envs: dict[int, ir_env.Env] = {}
+        arm_patterns: dict[int, patterns.PatternKind] = {}
+        for i, arm_ast in enumerate(match_ast.arms):
+            arm_env = e.new_child()
+            arm_envs[i] = arm_env
+            pattern = self._check_pattern(arm_ast.pattern, scrutinee_typ, arm_env)
+            arm_patterns[i] = pattern
+            self.results._set_match_arm_pattern(arm_ast, pattern)
+
+        fixed_indices, flexible_indices = match_arm_check_order(match_ast.arms)
+        arm_typs: dict[int, typs.Typ] = {}
+        for i in fixed_indices:
+            arm_ast = match_ast.arms[i]
+            arm_typs[i] = self._check_expr(arm_ast.body, arm_envs[i], expected_typ)
+
+        peer_hint = (
+            expected_typ
+            if expected_typ is not None
+            else resolve_peer_typ([arm_typs[i] for i in fixed_indices])
+        )
+        for i in flexible_indices:
+            arm_ast = match_ast.arms[i]
+            arm_typs[i] = self._check_expr(arm_ast.body, arm_envs[i], peer_hint)
+
+        result_typ = typs.NEVER
+        result_span: Optional[src.SrcSpan] = None
+        for i, arm_ast in enumerate(match_ast.arms):
+            arm_typ = arm_typs[i]
+            if arm_typ == typs.NEVER:
+                continue
+            if result_typ == typs.NEVER:
+                result_typ = arm_typ
+                result_span = arm_ast.body.span
+            elif arm_typ != result_typ:
+                raise errors.MatchArmTypMismatchError(
+                    result_typ.name,
+                    result_span,
+                    arm_typ.name,
+                    arm_ast.body.span,
+                )
+
+        rows = [arm_patterns[i] for i in range(len(match_ast.arms))]
+        for i, arm_ast in enumerate(match_ast.arms):
+            if not patterns.is_useful(rows[:i], rows[i], space):
+                errors.register_error(errors.UnreachableMatchArmWarning(arm_ast.span))
+        witnesses = patterns.missing_patterns(rows, space)
+        if witnesses:
+            raise errors.NonExhaustiveMatchError(match_ast.span, witnesses)
+
+        return result_typ
+
     def _check_while_expr(self, while_ast: ast.WhileExpr, e: ir_env.Env) -> typs.Typ:
         cond_typ = self._check_expr(while_ast.condition, e, None)
         cond_coercion = self._record_coercion(while_ast.condition, cond_typ, typs.BOOL)
@@ -372,6 +509,99 @@ class TypCheck:
             raise errors.WhileTypNotVoidError(block_typ.name, while_ast.block.span)
 
         return typs.VOID
+
+    def _check_pattern(
+        self, pat: ast.Pattern, scrutinee_typ: typs.Typ, e: ir_env.Env
+    ) -> patterns.PatternKind:
+        match pat:
+            case ast.WildcardPattern():
+                return patterns.WildcardPattern()
+            case ast.BindingPattern():
+                return self._check_binding_pattern(pat, scrutinee_typ, e)
+            case ast.IntLitPattern():
+                return self._check_int_lit_pattern(pat, scrutinee_typ)
+            case ast.BoolLitPattern():
+                return self._check_bool_lit_pattern(pat, scrutinee_typ)
+            case ast.PathPattern():
+                return self._check_path_pattern(pat, scrutinee_typ, e)
+            case ast.OrPattern():
+                return self._check_or_pattern(pat, scrutinee_typ, e)
+            case _:
+                raise AssertionError(f"unhandled pattern kind {pat}")
+
+    def _check_binding_pattern(
+        self, pat: ast.BindingPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
+    ) -> patterns.WildcardPattern:
+        if scrutinee_typ == typs.VOID:
+            raise errors.VoidVarInitializerError(pat.span)
+        mut = typs.Mutability.from_ast(pat.mut)
+        self._local_typs[pat] = typs.PtrTyp.get_or_create(scrutinee_typ, mut)
+        if reserved.is_reserved(pat.ident.name):
+            raise errors.ReservedNameError(pat.ident.name, pat.ident.span)
+        e.add_var(pat.ident.name, pat)
+        return patterns.WildcardPattern()
+
+    def _check_int_lit_pattern(
+        self, pat: ast.IntLitPattern, scrutinee_typ: typs.Typ
+    ) -> patterns.ConstructorPattern:
+        lit_typ = self._infer_int_lit_typ(
+            pat.lit,
+            scrutinee_typ if isinstance(scrutinee_typ, typs.IntTyp) else None,
+        )
+        value = -pat.lit.value if pat.negative else pat.lit.value
+        if not lit_typ.fits(value):
+            raise errors.IntLitOverflowError(value, lit_typ.name, pat.span)
+        if not isinstance(scrutinee_typ, typs.IntTyp) or lit_typ != scrutinee_typ:
+            raise errors.PatternTypMismatchError(
+                pat.diag_str(),
+                lit_typ.name,
+                scrutinee_typ.name,
+                pat.span,
+                None,
+            )
+        self.results._set_int_lit_typ(pat.lit, lit_typ)
+        return patterns.ConstructorPattern(patterns.IntConstructor(value), ())
+
+    def _check_bool_lit_pattern(
+        self, pat: ast.BoolLitPattern, scrutinee_typ: typs.Typ
+    ) -> patterns.ConstructorPattern:
+        if scrutinee_typ != typs.BOOL:
+            raise errors.PatternTypMismatchError(
+                pat.diag_str(),
+                typs.BOOL.name,
+                scrutinee_typ.name,
+                pat.span,
+                None,
+            )
+        return patterns.ConstructorPattern(patterns.BoolConstructor(pat.lit.value), ())
+
+    def _check_path_pattern(
+        self, pat: ast.PathPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
+    ) -> patterns.ConstructorPattern:
+        item = e.resolve_path(ir_env.Env.Namespace.VARS, pat.path)
+        if not isinstance(item, ir_values.ComptimeEnum):
+            raise errors.NotAPatternError(pat.path.str(), pat.span)
+        if item.typ != scrutinee_typ:
+            raise errors.PatternTypMismatchError(
+                pat.diag_str(),
+                item.typ.name,
+                scrutinee_typ.name,
+                pat.span,
+                None,
+            )
+        return patterns.ConstructorPattern(
+            patterns.VariantConstructor(item.value, pat.path.str()), ()
+        )
+
+    def _check_or_pattern(
+        self, pat: ast.OrPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
+    ) -> patterns.OrPattern:
+        alternatives: list[patterns.PatternKind] = []
+        for alternative in pat.alternatives:
+            if isinstance(alternative, ast.BindingPattern):
+                raise errors.BindingInOrPatternError(alternative.span)
+            alternatives.append(self._check_pattern(alternative, scrutinee_typ, e))
+        return patterns.OrPattern(tuple(alternatives))
 
     def _check_call_expr(self, call_ast: ast.CallExpr, e: ir_env.Env) -> typs.Typ:
         fn_typ, recv_ast, recv_typ = self._resolve_callee(call_ast, e)
@@ -749,7 +979,7 @@ class TypCheck:
             # Not a place (same reasoning as the ComptimeEnum case above) -
             # a value parameter has no address to take.
             return var.value_typ
-        if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
+        if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
             return self._local_typs[var].pointee_typ
         return var.typ.pointee_typ
 
@@ -910,7 +1140,7 @@ class TypCheck:
                 and var.comptime_params
             ):
                 return self._generic_var_ref_typ(expr_ast, var, e)
-            if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
+            if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
                 return self._local_typs[var]
             # An enum variant (see Env._resolve_path_segment's EnumTyp
             # case) isn't a place either - it falls through to the
@@ -945,7 +1175,7 @@ class TypCheck:
                     ),
                 ):
                     return typs.CONST
-                if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt)):
+                if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
                     return self._local_typs[var].mut
                 # The only remaining binding is a ModVar.
                 return asserts.checked_cast(var.typ, typs.PtrTyp).mut

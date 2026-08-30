@@ -10,7 +10,7 @@ import sys
 from collections.abc import Collection, Sequence
 from typing import Final, Optional
 
-from leech import asserts, src
+from leech import asserts, patterns, src
 
 
 class Level(enum.IntEnum):
@@ -1140,6 +1140,82 @@ class IfElsTypMismatchError(UserError):
         super().__init__(ERROR, '"if" and "else" have mismatching types', None)
         self._add_extra(NOTE, f'"if" type is "{then_typ}"', then_span)
         self._add_extra(NOTE, f'"else" type is "{els_typ}"', els_span)
+
+
+class NonExhaustiveMatchError(UserError):
+    """Raised when a ``match`` expression doesn't cover every scrutinee value."""
+
+    def __init__(
+        self,
+        match_span: Optional[src.SrcSpan],
+        witnesses: Sequence[patterns.Witness],
+    ) -> None:
+        super().__init__(ERROR, '"match" is not exhaustive', match_span)
+        for witness in witnesses:
+            self._add_extra(NOTE, f'Uncovered pattern "{witness.render()}"', None)
+
+
+class UnreachableMatchArmWarning(UserError):  # noqa: N818 - a warning, not an error
+    """Warns about a match arm an earlier arm already covers."""
+
+    def __init__(self, arm_span: Optional[src.SrcSpan]) -> None:
+        super().__init__(WARNING, "match arm is unreachable", arm_span)
+
+
+class MatchArmTypMismatchError(UserError):
+    """Raised when two non-diverging match arms have differing types."""
+
+    def __init__(
+        self,
+        first_typ: str,
+        first_span: Optional[src.SrcSpan],
+        second_typ: str,
+        second_span: Optional[src.SrcSpan],
+    ) -> None:
+        super().__init__(ERROR, '"match" arms have mismatching types', None)
+        self._add_extra(NOTE, f'Match arm type is "{first_typ}"', first_span)
+        self._add_extra(NOTE, f'Match arm type is "{second_typ}"', second_span)
+
+
+class PatternTypMismatchError(UserError):
+    """Raised when a literal pattern's type cannot match the scrutinee type."""
+
+    def __init__(
+        self,
+        pattern_diag: str,
+        pattern_typ: str,
+        scrutinee_typ: str,
+        pattern_span: Optional[src.SrcSpan],
+        scrutinee_span: Optional[src.SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'{pattern_diag.capitalize()} has type "{pattern_typ}",'
+                f' which cannot match scrutinee of type "{scrutinee_typ}"'
+            ),
+            pattern_span,
+        )
+        if scrutinee_span is not None:
+            self._add_extra(NOTE, f'Scrutinee has type "{scrutinee_typ}"', scrutinee_span)
+
+
+class BindingInOrPatternError(UserError):
+    """Raised when an or-pattern alternative contains a ``let`` binding."""
+
+    def __init__(self, binding_span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            '"let" bindings are not allowed inside or-patterns',
+            binding_span,
+        )
+
+
+class NotAPatternError(UserError):
+    """Raised when a path resolves to something that can't be used as a pattern."""
+
+    def __init__(self, path: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(ERROR, f'Path "{path}" is not a pattern', span)
 
 
 class IfTypNotVoidError(UserError):

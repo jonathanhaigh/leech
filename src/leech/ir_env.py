@@ -31,6 +31,7 @@ type Var = (
     | ast.Param
     | ast.Receiver
     | ast.LetStmt
+    | ast.BindingPattern
     | typs.ValueParamTyp
 )
 """A value, function symbol, local declaration-site AST node, or value parameter.

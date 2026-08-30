@@ -20,6 +20,7 @@ from leech import (
     ir_values,
     naming,
     opt_util,
+    patterns,
     resolve,
     signage,
     typcheck,
@@ -142,6 +143,8 @@ class CfgBuilder:
                 return self._build_if_expr(expr_ast, ctx, expected_typ)
             case ast.WhileExpr():
                 return self._build_while_expr(expr_ast, ctx)
+            case ast.MatchExpr():
+                return self._build_match_expr(expr_ast, ctx, expected_typ)
             case ast.CallExpr():
                 return self._build_call_expr(expr_ast, ctx)
             case ast.BinOpExpr():
@@ -286,6 +289,199 @@ class CfgBuilder:
         if have_value:
             self._branch(end_bb, arm_ast)
         return value, last_bb, have_value
+
+    def _build_match_expr(
+        self,
+        match_ast: ast.MatchExpr,
+        ctx: _ExprContext,
+        expected_typ: Optional[typs.Typ] = None,
+    ) -> ir_values.Value:
+        """Lower a ``match`` as a comparison chain merging arms via a phi."""
+        arm_bbs = [self._add_bb("match_arm") for _ in match_ast.arms]
+        end_bb = self._add_bb("match_end")
+
+        scrutinee_value = self._build_expr(match_ast.scrutinee, _ExprContext.VALUE)
+        propagated = self._propagate_never(scrutinee_value, match_ast.scrutinee, ctx)
+        if propagated is not None:
+            return propagated
+        scrutinee_typ = self._typ_check_results.match_scrutinee_typ(match_ast)
+        scrutinee_typ = scrutinee_typ.substitute_typ_params(self._comptime_arg_mapping)
+        comparison_value, comparison_typ = self._match_comparison_value(
+            scrutinee_value, scrutinee_typ, match_ast
+        )
+
+        rows = [self._typ_check_results.match_arm_pattern(arm_ast) for arm_ast in match_ast.arms]
+        space = typcheck.match_constructor_space(scrutinee_typ)
+        reachable_indices = [
+            i for i, row in enumerate(rows) if patterns.is_useful(rows[:i], row, space)
+        ]
+        if reachable_indices:
+            first_test_bb = self._add_bb("match_test")
+            self._branch(first_test_bb, match_ast)
+            self._build_match_tests(
+                first_test_bb,
+                reachable_indices,
+                arm_bbs,
+                rows,
+                space,
+                comparison_value,
+                comparison_typ,
+                match_ast,
+            )
+        else:
+            self._branch(end_bb, match_ast)
+
+        fixed_indices, flexible_indices = typcheck.match_arm_check_order(match_ast.arms)
+        arm_results: dict[int, tuple[ir_values.Value, ir_values.BasicBlock, bool]] = {}
+        for i in fixed_indices:
+            arm_ast = match_ast.arms[i]
+            self._set_position(arm_bbs[i])
+            self._build_match_binding(arm_ast.pattern, scrutinee_value)
+            arm_results[i] = self._build_if_arm(
+                arm_ast.body, arm_bbs[i], end_bb, _ExprContext.VALUE, expected_typ
+            )
+
+        peer_hint = (
+            expected_typ
+            if expected_typ is not None
+            else typcheck.resolve_peer_typ([arm_results[i][0].typ for i in fixed_indices])
+        )
+        for i in flexible_indices:
+            arm_ast = match_ast.arms[i]
+            self._set_position(arm_bbs[i])
+            self._build_match_binding(arm_ast.pattern, scrutinee_value)
+            arm_results[i] = self._build_if_arm(
+                arm_ast.body, arm_bbs[i], end_bb, _ExprContext.VALUE, peer_hint
+            )
+
+        self._set_position(end_bb)
+        incoming: dict[ir_values.BasicBlock, ir_values.Value] = {}
+        for i in reachable_indices:
+            value, last_bb, reaches_end = arm_results[i]
+            if reaches_end:
+                incoming[last_bb] = value
+
+        if not incoming:
+            return self._curr_bb.unreachable(match_ast)
+        if len(incoming) == 1:
+            return self._in_context(next(iter(incoming.values())), ctx)
+        if all(value.typ == typs.VOID for value in incoming.values()):
+            return ir_values.VoidValue(match_ast)
+        return self._in_context(self._curr_bb.phi(incoming, match_ast), ctx)
+
+    def _build_match_tests(
+        self,
+        start_bb: ir_values.BasicBlock,
+        reachable_indices: list[int],
+        arm_bbs: list[ir_values.BasicBlock],
+        rows: list[patterns.PatternKind],
+        space: patterns.ConstructorSpace,
+        comparison_value: ir_values.Value,
+        comparison_typ: typs.Typ,
+        match_ast: ast.MatchExpr,
+    ) -> None:
+        current_bb = start_bb
+        for arm_index in reachable_indices:
+            arm_ast = match_ast.arms[arm_index]
+            row = rows[arm_index]
+            if self._match_arm_is_wildcard(row):
+                self._set_position(current_bb)
+                self._branch(arm_bbs[arm_index], arm_ast)
+                return
+
+            remaining = patterns.missing_patterns(rows[:arm_index], space)
+            if self._match_arm_covers_remaining(row, remaining, space):
+                self._set_position(current_bb)
+                self._branch(arm_bbs[arm_index], arm_ast)
+                return
+
+            constructors = [
+                constructor
+                for constructor in self._typ_check_results.match_arm_constructors(arm_ast)
+                if constructor is not None
+            ]
+            for constructor in constructors:
+                self._set_position(current_bb)
+                next_bb = self._add_bb("match_test")
+                condition = self._build_match_compare(
+                    comparison_value, constructor, comparison_typ, arm_ast
+                )
+                self._cbranch(condition, arm_bbs[arm_index], next_bb, arm_ast)
+                current_bb = next_bb
+
+        # Type checking makes this fallback unreachable, but it gives the
+        # last generated test block a terminator if something is off.
+        self._set_position(current_bb)
+        self._curr_bb.unreachable(match_ast)
+
+    def _match_arm_is_wildcard(self, row: patterns.PatternKind) -> bool:
+        match row:
+            case patterns.WildcardPattern():
+                return True
+            case patterns.ConstructorPattern():
+                return False
+            case patterns.OrPattern(alternatives):
+                return any(
+                    isinstance(alternative, patterns.WildcardPattern)
+                    for alternative in alternatives
+                )
+
+    def _match_arm_covers_remaining(
+        self,
+        row: patterns.PatternKind,
+        remaining: list[patterns.Witness],
+        space: patterns.ConstructorSpace,
+    ) -> bool:
+        return all(not patterns.is_useful([row], witness.pattern, space) for witness in remaining)
+
+    def _match_comparison_value(
+        self, scrutinee_value: ir_values.Value, scrutinee_typ: typs.Typ, ast_node: ast.Ast
+    ) -> tuple[ir_values.Value, typs.Typ]:
+        if isinstance(scrutinee_typ, typs.EnumTyp):
+            return (
+                self._curr_bb.enum_to_int(scrutinee_value, ast_node),
+                scrutinee_typ.backing_typ,
+            )
+        return scrutinee_value, scrutinee_typ
+
+    def _build_match_compare(
+        self,
+        comparison_value: ir_values.Value,
+        constructor: patterns.ConstructorKind,
+        comparison_typ: typs.Typ,
+        ast_node: ast.Ast,
+    ) -> ir_values.Value:
+        case_value = self._match_case_value(constructor, comparison_typ, ast_node)
+        if isinstance(comparison_typ, typs.BoolTyp):
+            bool_value = asserts.checked_cast(case_value, ir_values.ComptimeBool)
+            if bool_value.value:
+                return comparison_value
+            return self._curr_bb.not_(comparison_value, ast_node)
+        int_typ = asserts.checked_cast(comparison_typ, typs.IntTyp)
+        if int_typ.signage == signage.SIGNED:
+            return self._curr_bb.icmp_signed("==", comparison_value, case_value, ast_node)
+        return self._curr_bb.icmp_unsigned("==", comparison_value, case_value, ast_node)
+
+    def _match_case_value(
+        self, constructor: patterns.ConstructorKind, comparison_typ: typs.Typ, ast_node: ast.Ast
+    ) -> ir_values.Value:
+        match constructor:
+            case patterns.VariantConstructor(discriminant):
+                int_typ = asserts.checked_cast(comparison_typ, typs.IntTyp)
+                return ir_values.ComptimeInt(int_typ, discriminant, ast_node)
+            case patterns.BoolConstructor(value):
+                return ir_values.ComptimeBool(value, ast_node)
+            case patterns.IntConstructor(value):
+                int_typ = asserts.checked_cast(comparison_typ, typs.IntTyp)
+                return ir_values.ComptimeInt(int_typ, value, ast_node)
+
+    def _build_match_binding(self, pattern: ast.Pattern, scrutinee_value: ir_values.Value) -> None:
+        if not isinstance(pattern, ast.BindingPattern):
+            return
+        mut = typs.Mutability.from_ast(pattern.mut)
+        alloca = self._curr_bb.alloca(scrutinee_value.typ, mut, 1, pattern)
+        self._local_values[pattern] = alloca
+        self._curr_bb.store(scrutinee_value, alloca, pattern)
 
     def _build_while_expr(self, while_ast: ast.WhileExpr, _ctx: _ExprContext) -> ir_values.Value:
         cond_bb = self._add_bb("while_cond")
@@ -691,7 +887,7 @@ class CfgBuilder:
                 target.substitute_typ_params(self._comptime_arg_mapping), typs.ComptimeValueTyp
             )
             return self._in_context(concrete.to_comptime_value(var_ast), ctx)
-        if isinstance(target, (ast.Param, ast.Receiver, ast.LetStmt)):
+        if isinstance(target, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
             var = self._local_values[target]
         else:
             # A bare generic declaration can't reach here: TypCheck rejects it

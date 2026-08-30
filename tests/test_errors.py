@@ -621,6 +621,59 @@ def test_if_els_typ_mismatch_message(tmp_path):
     assert (els_note.span.start_line, els_note.span.start_col) == util.find_pos(src, '{ "abc" }')
 
 
+def test_non_exhaustive_match_message(tmp_path):
+    src = """
+    enum Color { Red, Green, Blue }
+    pub fn main() i32 {
+        let c = Color::Green;
+        return match (c) { Color::Red => 0i32, };
+    }
+    """
+    with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"match"' in msg
+    assert "not exhaustive" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "match (c)")
+
+    assert [note.message for note in exc_info.value.extra] == [
+        'Uncovered pattern "Color::Green"',
+        'Uncovered pattern "Color::Blue"',
+    ]
+    assert all(note.span is None for note in exc_info.value.extra)
+
+
+def test_match_arm_typ_mismatch_message(tmp_path):
+    src = """
+    pub fn main() i32 {
+        return match (true) {
+            true => 0i32,
+            false => "no",
+        };
+    }
+    """
+    with pytest.raises(errors.MatchArmTypMismatchError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"match"' in msg
+    assert "mismatching types" in msg
+    assert exc_info.value.message.span is None
+
+    assert len(exc_info.value.extra) == 2
+    first_note, second_note = exc_info.value.extra
+    assert '"i32"' in first_note.message
+    assert first_note.span is not None
+    assert (first_note.span.start_line, first_note.span.start_col) == util.find_pos(src, "0i32")
+    assert '"*u8"' in second_note.message
+    assert second_note.span is not None
+    assert (second_note.span.start_line, second_note.span.start_col) == util.find_pos(src, '"no"')
+
+
 def test_missing_typ_args_message(tmp_path):
     src = """fn id[T](x: T) T { return x; }
 pub fn main() i32 {

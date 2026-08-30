@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     # imports this module.
     from leech import ir_module, ir_traits
 
-type LocalDecl = ast.Param | ast.Receiver | ast.LetStmt
+type LocalDecl = ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern
 """A local binding's declaration-site AST node - its stable cross-phase identity."""
 
 type VarTarget = (
