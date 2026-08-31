@@ -32,20 +32,20 @@ if TYPE_CHECKING:
     from leech import ir_module, ir_traits
 
 
-def is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
+def _is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
     """Return whether an unsuffixed integer literal can take its type from context."""
     if isinstance(expr_ast, ast.IntLit):
         return expr_ast.explicit_width is None
     if isinstance(expr_ast, ast.UnaryOpExpr) and expr_ast.op.name == "-":
-        return is_flexible_int_lit(expr_ast.operand)
+        return _is_flexible_int_lit(expr_ast.operand)
     if isinstance(expr_ast, ast.BlockExpr):
         return (
-            not expr_ast.stmts and expr_ast.expr is not None and is_flexible_int_lit(expr_ast.expr)
+            not expr_ast.stmts and expr_ast.expr is not None and _is_flexible_int_lit(expr_ast.expr)
         )
     return False
 
 
-def resolve_peer_typ(fixed_typs: list[typs.Typ]) -> typs.Typ:
+def _resolve_peer_typ(fixed_typs: list[typs.Typ]) -> typs.Typ:
     """Choose the first non-diverging fixed peer type, defaulting to ``i32``."""
     for typ in fixed_typs:
         if typ != typs.NEVER:
@@ -53,10 +53,10 @@ def resolve_peer_typ(fixed_typs: list[typs.Typ]) -> typs.Typ:
     return typs.I32
 
 
-def match_arm_check_order(arms: Sequence[ast.MatchArm]) -> tuple[list[int], list[int]]:
+def _match_arm_check_order(arms: Sequence[ast.MatchArm]) -> tuple[list[int], list[int]]:
     """Return match-arm indices grouped so flexible literal bodies are checked last."""
-    fixed_indices = [i for i, arm in enumerate(arms) if not is_flexible_int_lit(arm.body)]
-    flexible_indices = [i for i, arm in enumerate(arms) if is_flexible_int_lit(arm.body)]
+    fixed_indices = [i for i, arm in enumerate(arms) if not _is_flexible_int_lit(arm.body)]
+    flexible_indices = [i for i, arm in enumerate(arms) if _is_flexible_int_lit(arm.body)]
     return fixed_indices, flexible_indices
 
 
@@ -404,19 +404,19 @@ class TypCheck:
         els_ast = if_ast.els
         if (
             expected_typ is None
-            and is_flexible_int_lit(if_ast.then)
-            and not is_flexible_int_lit(els_ast)
+            and _is_flexible_int_lit(if_ast.then)
+            and not _is_flexible_int_lit(els_ast)
         ):
             els_typ = self._check_expr(els_ast, e, expected_typ)
             then_hint = expected_typ
             if els_typ != typs.NEVER:
-                then_hint = resolve_peer_typ([els_typ])
+                then_hint = _resolve_peer_typ([els_typ])
             then_typ = self._check_expr(if_ast.then, e, then_hint)
         else:
             then_typ = self._check_expr(if_ast.then, e, expected_typ)
             els_hint = expected_typ
-            if expected_typ is None and then_typ != typs.NEVER and is_flexible_int_lit(els_ast):
-                els_hint = resolve_peer_typ([then_typ])
+            if expected_typ is None and then_typ != typs.NEVER and _is_flexible_int_lit(els_ast):
+                els_hint = _resolve_peer_typ([then_typ])
             els_typ = self._check_expr(els_ast, e, els_hint)
 
         if then_typ != typs.NEVER and els_typ != typs.NEVER and then_typ != els_typ:
@@ -446,7 +446,7 @@ class TypCheck:
             arm_patterns[i] = pattern
             self.results._set_match_arm_pattern(arm_ast, pattern)
 
-        fixed_indices, flexible_indices = match_arm_check_order(match_ast.arms)
+        fixed_indices, flexible_indices = _match_arm_check_order(match_ast.arms)
         arm_typs: dict[int, typs.Typ] = {}
         for i in fixed_indices:
             arm_ast = match_ast.arms[i]
@@ -455,7 +455,7 @@ class TypCheck:
         peer_hint = (
             expected_typ
             if expected_typ is not None
-            else resolve_peer_typ([arm_typs[i] for i in fixed_indices])
+            else _resolve_peer_typ([arm_typs[i] for i in fixed_indices])
         )
         for i in flexible_indices:
             arm_ast = match_ast.arms[i]
@@ -804,7 +804,7 @@ class TypCheck:
         """
         bindings: dict[typs.ComptimeParamTyp, typs.Typ] = {}
         for declared_typ, arg_ast in zip(fn.fn_typ.param_typs, call_ast.args, strict=False):
-            if is_flexible_int_lit(arg_ast):
+            if _is_flexible_int_lit(arg_ast):
                 continue
             arg_typ = self._check_expr(arg_ast, e, None)
             declared_typ.infer_typ_args(arg_typ, bindings)
@@ -822,18 +822,18 @@ class TypCheck:
             return self._check_logic_bin_op_expr(op_ast, e)
 
         # Unreachable operands are still checked; never stands in for either value type.
-        if is_flexible_int_lit(op_ast.lhs) and not is_flexible_int_lit(op_ast.rhs):
+        if _is_flexible_int_lit(op_ast.lhs) and not _is_flexible_int_lit(op_ast.rhs):
             rhs_typ = self._check_expr(op_ast.rhs, e, None)
-            lhs_typ = self._check_expr(op_ast.lhs, e, resolve_peer_typ([rhs_typ]))
+            lhs_typ = self._check_expr(op_ast.lhs, e, _resolve_peer_typ([rhs_typ]))
         else:
             lhs_hint = None
-            if is_flexible_int_lit(op_ast.lhs):
+            if _is_flexible_int_lit(op_ast.lhs):
                 lhs_hint = expected_typ
             lhs_typ = self._check_expr(op_ast.lhs, e, lhs_hint)
 
             rhs_hint = None
-            if is_flexible_int_lit(op_ast.rhs):
-                rhs_hint = resolve_peer_typ([lhs_typ])
+            if _is_flexible_int_lit(op_ast.rhs):
+                rhs_hint = _resolve_peer_typ([lhs_typ])
             rhs_typ = self._check_expr(op_ast.rhs, e, rhs_hint)
 
         if lhs_typ != typs.NEVER and not isinstance(lhs_typ, typs.IntTyp):

@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import signal
+
 import pytest
 import util
 
@@ -130,12 +132,12 @@ def test_binop_flexible_operand_does_not_adopt_non_int_typ(tmp_path):
         util.compile_str(tmp_path, src)
 
 
-# --- Deferring a flexible peer must not reorder anything observable ---
+# --- Evaluation order is left-to-right ---
 
 
-def test_binop_peer_resolution_preserves_effect_order(tmp_path):
-    # The literal is on the left, so its operand is lowered second - but
-    # it emits nothing, so the call still happens exactly once, here.
+def test_binop_evaluation_order_is_left_to_right(tmp_path):
+    # Lowering is plain left-to-right, so the literal is lowered first
+    # here; it emits nothing, so the call still happens exactly once.
     src = """
     extern fn puts(s: *u8) i32;
     fn a() u8 { puts("a"); return 1u8; }
@@ -145,3 +147,25 @@ def test_binop_peer_resolution_preserves_effect_order(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, src, "a\n", 0)
+
+
+def test_binop_double_negation_is_evaluated_before_rhs(tmp_path):
+    # A doubly-negated literal is still treated as a flexible literal by
+    # TypCheck, but lowering only folds a single negation, so the left
+    # operand emits an overflow check before the right-hand call runs.
+    # Left-to-right evaluation means the overflow panic must happen first.
+    src = """
+    extern fn puts(s: *u8) i32;
+    fn a() i32 { puts("a"); return 5; }
+    pub fn main() i32 {
+        let x = - -2147483648 + a();
+        return 0;
+    }
+    """
+    llir = util.compile_modules(tmp_path, main=src)
+    proc = util.link_and_run(tmp_path, llir)
+    assert proc.returncode == -signal.SIGABRT
+    assert proc.stdout.startswith("integer overflow\n")
+    # The side effect would precede the panic if the right operand ran
+    # first; only ignore the crash backtrace that follows the panic text.
+    assert "a\n" not in proc.stdout.split("integer overflow\n", 1)[0]

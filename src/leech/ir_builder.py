@@ -105,7 +105,7 @@ class CfgBuilder:
             self._local_values[param.ast] = alloca
 
         ret_typ = self._fn.fn_typ.ret_typ
-        block = self._build_expr(fn_ast.block, _ExprContext.VALUE, ret_typ)
+        block = self._build_expr(fn_ast.block, _ExprContext.VALUE)
         ret_ast = opt_util.opt_or_default(fn_ast.block.expr, fn_ast.block)
 
         if block.typ != typs.VOID:
@@ -134,23 +134,22 @@ class CfgBuilder:
         self,
         expr_ast: ast.Expr,
         ctx: _ExprContext,
-        expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
         match expr_ast:
             case ast.BlockExpr():
-                return self._build_block_expr(expr_ast, ctx, expected_typ)
+                return self._build_block_expr(expr_ast, ctx)
             case ast.IfExpr():
-                return self._build_if_expr(expr_ast, ctx, expected_typ)
+                return self._build_if_expr(expr_ast, ctx)
             case ast.WhileExpr():
                 return self._build_while_expr(expr_ast, ctx)
             case ast.MatchExpr():
-                return self._build_match_expr(expr_ast, ctx, expected_typ)
+                return self._build_match_expr(expr_ast, ctx)
             case ast.CallExpr():
                 return self._build_call_expr(expr_ast, ctx)
             case ast.BinOpExpr():
-                return self._build_bin_op_expr(expr_ast, ctx, expected_typ)
+                return self._build_bin_op_expr(expr_ast, ctx)
             case ast.UnaryOpExpr():
-                return self._build_unary_op_expr(expr_ast, ctx, expected_typ)
+                return self._build_unary_op_expr(expr_ast, ctx)
             case ast.StrLit():
                 return self._in_context(ir_values.ComptimeCStr(expr_ast.value, expr_ast), ctx)
             case ast.IntLit():
@@ -177,7 +176,6 @@ class CfgBuilder:
         self,
         block_ast: ast.BlockExpr,
         ctx: _ExprContext,
-        expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
         """Lower a ``{ ... }`` block expression: the tail expression's value
         if it has one, otherwise void if its statements complete normally,
@@ -190,13 +188,12 @@ class CfgBuilder:
             if self._curr_bb.terminated:
                 return ir_values.NeverValue(block_ast)
             return ir_values.VoidValue(block_ast)
-        return self._build_expr(block_ast.expr, ctx, expected_typ)
+        return self._build_expr(block_ast.expr, ctx)
 
     def _build_if_expr(
         self,
         if_ast: ast.IfExpr,
         ctx: _ExprContext,
-        expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
         """Lower an ``if``/``else`` expression, merging whichever branch's
         value is taken via a phi instruction when both branches complete
@@ -214,42 +211,14 @@ class CfgBuilder:
             self._cbranch(cond, then_bb, end_bb, if_ast)
 
         if els_bb is None:
-            self._build_if_arm(if_ast.then, then_bb, end_bb, ctx, expected_typ)
+            self._build_if_arm(if_ast.then, then_bb, end_bb, ctx)
             self._set_position(end_bb)
             return ir_values.VoidValue(if_ast)
 
         els_ast = if_ast.els
         assert els_ast is not None
-        # With no type supplied by the context the two arms are peers, so
-        # lower the one whose type is already decided first and let a
-        # bare integer literal in the other take its type from it. Only
-        # one arm ever runs, and they're in separate blocks, so which is
-        # lowered first doesn't change what the program does.
-        if (
-            expected_typ is None
-            and typcheck.is_flexible_int_lit(if_ast.then)
-            and not typcheck.is_flexible_int_lit(els_ast)
-        ):
-            els, els_last_bb, have_els_value = self._build_if_arm(
-                els_ast, els_bb, end_bb, ctx, expected_typ
-            )
-            then, then_last_bb, have_then_value = self._build_if_arm(
-                if_ast.then,
-                then_bb,
-                end_bb,
-                ctx,
-                typcheck.resolve_peer_typ([els.typ]) if have_els_value else expected_typ,
-            )
-        else:
-            then, then_last_bb, have_then_value = self._build_if_arm(
-                if_ast.then, then_bb, end_bb, ctx, expected_typ
-            )
-            els_hint = expected_typ
-            if expected_typ is None and have_then_value and typcheck.is_flexible_int_lit(els_ast):
-                els_hint = typcheck.resolve_peer_typ([then.typ])
-            els, els_last_bb, have_els_value = self._build_if_arm(
-                els_ast, els_bb, end_bb, ctx, els_hint
-            )
+        then, then_last_bb, have_then_value = self._build_if_arm(if_ast.then, then_bb, end_bb, ctx)
+        els, els_last_bb, have_els_value = self._build_if_arm(els_ast, els_bb, end_bb, ctx)
 
         if have_then_value and have_els_value:
             asserts.assert_eq(then.typ, els.typ)
@@ -272,7 +241,6 @@ class CfgBuilder:
         arm_bb: ir_values.BasicBlock,
         end_bb: ir_values.BasicBlock,
         ctx: _ExprContext,
-        expected_typ: Optional[typs.Typ],
     ) -> tuple[ir_values.Value, ir_values.BasicBlock, bool]:
         """Lower one arm of an ``if``/``else`` into its own basic block.
 
@@ -281,7 +249,7 @@ class CfgBuilder:
         and whether control reaches ``end_bb`` from it.
         """
         self._set_position(arm_bb)
-        value = self._build_expr(arm_ast, ctx, expected_typ)
+        value = self._build_expr(arm_ast, ctx)
         last_bb = self._curr_bb
         if value.typ == typs.NEVER and not last_bb.terminated:
             last_bb.unreachable(arm_ast)
@@ -294,7 +262,6 @@ class CfgBuilder:
         self,
         match_ast: ast.MatchExpr,
         ctx: _ExprContext,
-        expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
         """Lower a ``match`` as a comparison chain merging arms via a phi."""
         arm_bbs = [self._add_bb("match_arm") for _ in match_ast.arms]
@@ -331,27 +298,12 @@ class CfgBuilder:
         else:
             self._branch(end_bb, match_ast)
 
-        fixed_indices, flexible_indices = typcheck.match_arm_check_order(match_ast.arms)
         arm_results: dict[int, tuple[ir_values.Value, ir_values.BasicBlock, bool]] = {}
-        for i in fixed_indices:
-            arm_ast = match_ast.arms[i]
+        for i, arm_ast in enumerate(match_ast.arms):
             self._set_position(arm_bbs[i])
             self._build_match_binding(arm_ast.pattern, scrutinee_value)
             arm_results[i] = self._build_if_arm(
-                arm_ast.body, arm_bbs[i], end_bb, _ExprContext.VALUE, expected_typ
-            )
-
-        peer_hint = (
-            expected_typ
-            if expected_typ is not None
-            else typcheck.resolve_peer_typ([arm_results[i][0].typ for i in fixed_indices])
-        )
-        for i in flexible_indices:
-            arm_ast = match_ast.arms[i]
-            self._set_position(arm_bbs[i])
-            self._build_match_binding(arm_ast.pattern, scrutinee_value)
-            arm_results[i] = self._build_if_arm(
-                arm_ast.body, arm_bbs[i], end_bb, _ExprContext.VALUE, peer_hint
+                arm_ast.body, arm_bbs[i], end_bb, _ExprContext.VALUE
             )
 
         self._set_position(end_bb)
@@ -539,16 +491,13 @@ class CfgBuilder:
         else:
             callee = self._build_expr(callee_ast, _ExprContext.VALUE)
 
-        callee_ptr_typ = asserts.checked_cast(callee.typ, typs.PtrTyp)
-        fn_typ = asserts.checked_cast(callee_ptr_typ.pointee_typ, typs.CallableTyp)
-        param_typs = fn_typ.param_typs
-        offset = 1 if recv_ast is not None else 0
+        fn_ptr_typ = asserts.checked_cast(callee.typ, typs.PtrTyp)
+        asserts.checked_cast(fn_ptr_typ.pointee_typ, typs.CallableTyp)
         arg_asts: list[ast.Expr] = ([recv_ast] if recv_ast is not None else []) + list(
             call_ast.args
         )
         lowered_args = tuple(
-            self._build_expr(arg_ast, _ExprContext.VALUE, param_typs[i])
-            for i, arg_ast in enumerate(call_ast.args, start=offset)
+            self._build_expr(arg_ast, _ExprContext.VALUE) for arg_ast in call_ast.args
         )
         args = ((recv_arg,) if recv_arg is not None else ()) + lowered_args
 
@@ -562,54 +511,19 @@ class CfgBuilder:
         self,
         op_ast: ast.BinOpExpr,
         ctx: _ExprContext,
-        expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
-        """Lower a binary operator expression (arithmetic or comparison).
-
-        ``expected_typ`` only matters when both operands are bare integer
-        literals; otherwise the operands are peers, and whichever one's
-        type is already decided is what the other has to match.
-        """
+        """Lower a binary operator expression (arithmetic or comparison)."""
         if op_ast.op.name in ("and", "or"):
             return self._build_logic_bin_op_expr(op_ast, ctx)
 
-        # The operands are peers: whichever one's type is already decided
-        # is what the other has to match, so lower that one first and let
-        # a bare integer literal on either side take its type from it.
-        # The deferred operand is always such a literal, which emits no
-        # instructions, so left-to-right evaluation is unaffected.
-        if typcheck.is_flexible_int_lit(op_ast.lhs) and not typcheck.is_flexible_int_lit(
-            op_ast.rhs
-        ):
-            rhs = self._build_expr(op_ast.rhs, _ExprContext.VALUE)
-            propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
-            if propagated is not None:
-                return propagated
-            # A bare integer literal always ends up with an integer type,
-            # so the left operand needs no separate check here.
-            lhs = self._build_expr(
-                op_ast.lhs, _ExprContext.VALUE, typcheck.resolve_peer_typ([rhs.typ])
-            )
-        else:
-            lhs = self._build_expr(
-                op_ast.lhs,
-                _ExprContext.VALUE,
-                expected_typ if typcheck.is_flexible_int_lit(op_ast.lhs) else None,
-            )
-            propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
-            if propagated is not None:
-                return propagated
-
-            rhs = self._build_expr(
-                op_ast.rhs,
-                _ExprContext.VALUE,
-                typcheck.resolve_peer_typ([lhs.typ])
-                if typcheck.is_flexible_int_lit(op_ast.rhs)
-                else None,
-            )
-            propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
-            if propagated is not None:
-                return propagated
+        lhs = self._build_expr(op_ast.lhs, _ExprContext.VALUE)
+        propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
+        if propagated is not None:
+            return propagated
+        rhs = self._build_expr(op_ast.rhs, _ExprContext.VALUE)
+        propagated = self._propagate_never(rhs, op_ast.rhs, ctx)
+        if propagated is not None:
+            return propagated
 
         # lhs and rhs are already known (by TypCheck) to be equal integer
         # types by this point.
@@ -773,13 +687,8 @@ class CfgBuilder:
         self,
         op_ast: ast.UnaryOpExpr,
         ctx: _ExprContext,
-        expected_typ: Optional[typs.Typ] = None,
     ) -> ir_values.Value:
-        """Lower a unary operator expression (``&``, ``-``, or ``not``).
-
-        Negation preserves its operand's type, so ``expected_typ`` is
-        passed on to the operand; ``&`` and ``not`` ignore it.
-        """
+        """Lower a unary operator expression (``&``, ``-``, or ``not``)."""
         match op_ast.op.name:
             case "&":
                 return self._in_context(self._build_place(op_ast.operand), ctx)
@@ -799,7 +708,7 @@ class CfgBuilder:
                         ctx,
                     )
 
-                operand = self._build_expr(op_ast.operand, _ExprContext.VALUE, expected_typ)
+                operand = self._build_expr(op_ast.operand, _ExprContext.VALUE)
                 propagated = self._propagate_never(operand, op_ast.operand, ctx)
                 if propagated is not None:
                     return propagated
@@ -907,7 +816,7 @@ class CfgBuilder:
         # An index is a coercion point like any other unambiguous target
         # type: a bare literal infers as usize, and a narrower unsigned
         # value widens to it.
-        index = self._build_expr(aa_expr.index, _ExprContext.VALUE, typs.USIZE)
+        index = self._build_expr(aa_expr.index, _ExprContext.VALUE)
         index = opt_util.opt_unwrap(self._coerce(index, aa_expr.index))
 
         array_typ = asserts.checked_cast(arr_ptr.typ, typs.PtrTyp).pointee_typ
@@ -947,10 +856,7 @@ class CfgBuilder:
         for element in brace_expr.elements:
             field_expr = asserts.checked_cast(element, ast.StructFieldExpr)
             field_index = self._typ_check_results.struct_field_index(field_expr)
-            field = struct_typ.field_at(field_index)
-            field_values[field_index] = self._build_expr(
-                field_expr.value, _ExprContext.VALUE, field.typ
-            )
+            field_values[field_index] = self._build_expr(field_expr.value, _ExprContext.VALUE)
             field_value_asts[field_index] = field_expr.value
 
         for field in struct_typ.fields.values():
@@ -981,7 +887,7 @@ class CfgBuilder:
             brace_expr,
         )
         for i, elt_ast in enumerate(brace_expr.elements):
-            elt_value = self._build_expr(elt_ast, _ExprContext.VALUE, arr_typ.element_typ)
+            elt_value = self._build_expr(elt_ast, _ExprContext.VALUE)
             coerced = opt_util.opt_unwrap(self._coerce(elt_value, elt_ast))
             elt_index = ir_values.ComptimeInt(typs.USIZE, i, elt_ast)
             arr = self._curr_bb.insert_value(arr, coerced, elt_index, elt_ast)
@@ -1045,7 +951,7 @@ class CfgBuilder:
         ret_typ = self._fn.fn_typ.ret_typ
 
         if ret_ast.expr is not None:
-            expr = self._build_expr(ret_ast.expr, _ExprContext.VALUE, ret_typ)
+            expr = self._build_expr(ret_ast.expr, _ExprContext.VALUE)
             self._finish_ret(expr, ret_ast, ret_ast.expr)
             return
 
@@ -1077,15 +983,12 @@ class CfgBuilder:
         Rust, Python, and C++17's built-in ``=``). Where the place and
         value expressions both have observable side effects (e.g. a call
         in an array index alongside a call on the right-hand side), the
-        place's side effects happen first. This is also what makes the
-        place's type available as the value expression's ``expected_typ``
-        hint (needed e.g. to resolve an empty array literal assigned into
-        a place of known array type).
+        place's side effects happen first.
         """
         place = self._build_place(ass_ast.place)
         place_typ = place.typ
         assert place_typ.pointee_typ != typs.VOID, "assignment place cannot be void"
-        expr = self._build_expr(ass_ast.expr, _ExprContext.VALUE, place_typ.pointee_typ)
+        expr = self._build_expr(ass_ast.expr, _ExprContext.VALUE)
 
         asserts.assert_eq(place_typ.mut, typs.MUT)
         coerced = opt_util.opt_unwrap(self._coerce(expr, ass_ast.expr))
@@ -1099,10 +1002,7 @@ class CfgBuilder:
         coercion.
         """
         cached_typ = self._typ_check_results.let_declared_typ(let_ast)
-        expected_typ = opt_util.opt_map(
-            cached_typ, lambda t: t.substitute_typ_params(self._comptime_arg_mapping)
-        )
-        expr = self._build_expr(let_ast.expr, ctx, expected_typ)
+        expr = self._build_expr(let_ast.expr, ctx)
         if cached_typ is None:
             return expr
         return opt_util.opt_unwrap(self._coerce(expr, let_ast.expr))
