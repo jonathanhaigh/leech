@@ -11,7 +11,7 @@ This is the checker's interface to lowering, beside the name-resolution facts in
 import dataclasses
 from typing import TYPE_CHECKING, Final, Optional
 
-from leech import ast, patterns, resolve, typs
+from leech import asserts, ast, patterns, resolve, typs
 
 if TYPE_CHECKING:
     # Runtime imports are local because ir_module imports this module.
@@ -51,6 +51,7 @@ class NeverDiverge(Coercion):
     target: typs.Typ
 
 
+@dataclasses.dataclass(frozen=True)
 class PtrMutRelax(Coercion):
     """A ``*mut T`` value given where a ``*T`` is wanted.
 
@@ -65,6 +66,7 @@ class IntExt(Coercion):
     target: typs.IntTyp
 
 
+@dataclasses.dataclass(frozen=True)
 class Invalid(Coercion):
     """The value's type doesn't coerce to the target at all."""
 
@@ -83,6 +85,11 @@ class TypCheckResults:
     _match_scrutinee_typs: Final[dict[ast.MatchExpr, typs.Typ]]
     _match_arm_patterns: Final[dict[ast.MatchArm, patterns.PatternKind]]
     _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
+    _expr_typs: Final[dict[ast.Expr, typs.Typ]]
+    _place_typs: Final[dict[ast.Expr, typs.PtrTyp]]
+    #: False during a speculative comptime-argument probe, when setters for
+    #: context-dependent facts must discard their writes.
+    _recording: bool
 
     def __init__(self) -> None:
         self.resolutions = resolve.Resolutions()
@@ -96,20 +103,23 @@ class TypCheckResults:
         self._match_scrutinee_typs = {}
         self._match_arm_patterns = {}
         self._local_typs = {}
+        self._expr_typs = {}
+        self._place_typs = {}
+        self._recording = True
 
     def int_lit_typ(self, node: ast.IntLit) -> typs.IntTyp:
         """Return the type chosen and overflow-checked for an integer literal."""
         return self._int_lit_typs[node]
 
     def _set_int_lit_typ(self, node: ast.IntLit, typ: typs.IntTyp) -> None:
-        self._int_lit_typs[node] = typ
+        self._set_fact(self._int_lit_typs, node, typ)
 
     def coercion(self, node: ast.Ast) -> Optional[Coercion]:
         """Return ``node``'s coercion, or ``None`` when its type already matched."""
         return self._coercions[node]
 
     def _set_coercion(self, node: ast.Ast, coercion: Optional[Coercion]) -> None:
-        self._coercions[node] = coercion
+        self._set_fact(self._coercions, node, coercion)
 
     def generic_call(
         self, node: ast.CallExpr
@@ -143,7 +153,7 @@ class TypCheckResults:
         return self._brace_expr_typs[node]
 
     def _set_brace_expr_typ(self, node: ast.BraceExpr, typ: typs.Typ) -> None:
-        self._brace_expr_typs[node] = typ
+        self._set_fact(self._brace_expr_typs, node, typ)
 
     def struct_field_index(self, node: ast.FieldAccessExpr | ast.StructFieldExpr) -> int:
         """Return the declaration-order index resolved for a struct field expression."""
@@ -152,28 +162,28 @@ class TypCheckResults:
     def _set_struct_field_index(
         self, node: ast.FieldAccessExpr | ast.StructFieldExpr, index: int
     ) -> None:
-        self._struct_field_indices[node] = index
+        self._set_fact(self._struct_field_indices, node, index)
 
     def let_declared_typ(self, node: ast.LetStmt) -> Optional[typs.Typ]:
         """Return ``node``'s declared type, if any."""
         return self._let_declared_typs.get(node)
 
     def _set_let_declared_typ(self, node: ast.LetStmt, typ: typs.Typ) -> None:
-        self._let_declared_typs[node] = typ
+        self._set_fact(self._let_declared_typs, node, typ)
 
     def match_scrutinee_typ(self, node: ast.MatchExpr) -> typs.Typ:
         """Return ``node``'s checked scrutinee type."""
         return self._match_scrutinee_typs[node]
 
     def _set_match_scrutinee_typ(self, node: ast.MatchExpr, typ: typs.Typ) -> None:
-        self._match_scrutinee_typs[node] = typ
+        self._set_fact(self._match_scrutinee_typs, node, typ)
 
     def match_arm_pattern(self, node: ast.MatchArm) -> patterns.PatternKind:
         """Return ``node``'s checked, translated pattern."""
         return self._match_arm_patterns[node]
 
     def _set_match_arm_pattern(self, node: ast.MatchArm, pattern: patterns.PatternKind) -> None:
-        self._match_arm_patterns[node] = pattern
+        self._set_fact(self._match_arm_patterns, node, pattern)
 
     def match_arm_constructors(
         self, node: ast.MatchArm
@@ -187,3 +197,26 @@ class TypCheckResults:
 
     def _set_local_typ(self, decl: resolve.LocalDecl, typ: typs.PtrTyp) -> None:
         self._local_typs[decl] = typ
+
+    def expr_typ(self, node: ast.Expr) -> Optional[typs.Typ]:
+        """Return ``node``'s checked expression type, if one was recorded."""
+        return self._expr_typs.get(node)
+
+    def _set_expr_typ(self, node: ast.Expr, typ: typs.Typ) -> None:
+        self._set_fact(self._expr_typs, node, typ)
+
+    def place_typ(self, node: ast.Expr) -> Optional[typs.PtrTyp]:
+        """Return ``node``'s checked place type, if one was recorded."""
+        return self._place_typs.get(node)
+
+    def _set_place_typ(self, node: ast.Expr, typ: typs.PtrTyp) -> None:
+        self._set_fact(self._place_typs, node, typ)
+
+    def _set_fact[K, V](self, mapping: dict[K, V], node: K, value: V) -> None:
+        if not self._recording:
+            return
+        missing = object()
+        previous = mapping.get(node, missing)
+        if previous is not missing:
+            asserts.assert_eq(previous, value)
+        mapping[node] = value

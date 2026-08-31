@@ -148,6 +148,15 @@ class CfgBuilder:
         expr_ast: ast.Expr,
         ctx: _ExprContext,
     ) -> ir_values.Value:
+        value = self._build_expr_unchecked(expr_ast, ctx)
+        self._assert_recorded_typ(value, expr_ast, ctx)
+        return value
+
+    def _build_expr_unchecked(
+        self,
+        expr_ast: ast.Expr,
+        ctx: _ExprContext,
+    ) -> ir_values.Value:
         match expr_ast:
             case ast.BlockExpr():
                 return self._build_block_expr(expr_ast, ctx)
@@ -184,6 +193,30 @@ class CfgBuilder:
                 return self._build_deref_expr(expr_ast, ctx)
             case _:
                 raise AssertionError(f"unhandled expression kind {expr_ast}")
+
+    def _assert_recorded_typ(
+        self, value: ir_values.Value, expr_ast: ast.Expr, ctx: _ExprContext
+    ) -> None:
+        recorded = (
+            self._typ_check_results.expr_typ(expr_ast)
+            if ctx == _ExprContext.VALUE
+            else self._typ_check_results.place_typ(expr_ast)
+        )
+        if recorded is None:
+            return
+
+        recorded = recorded.substitute_typ_params(self._comptime_arg_mapping)
+        if ctx == _ExprContext.VALUE:
+            # Lowering discovers divergence structurally, so e.g. `g() + 1i32`
+            # can legitimately lower to `never` where the checker recorded i32.
+            if value.typ == typs.NEVER:
+                return
+        else:
+            ptr_typ = asserts.checked_cast(value.typ, typs.PtrTyp)
+            if ptr_typ.pointee_typ == typs.NEVER:
+                return
+
+        asserts.assert_eq(value.typ, recorded)
 
     def _build_block_expr(
         self,

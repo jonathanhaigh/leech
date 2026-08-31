@@ -8,7 +8,8 @@ Each body is checked completely, including unreachable code, and lowering decisi
 recorded by AST-node identity in ``TypCheckResults``.
 """
 
-from collections.abc import Sequence
+import contextlib
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Final, Optional
 
 from leech import (
@@ -114,6 +115,16 @@ class TypCheck:
         self._fn_name = None
         self._loop_labels = []
 
+    @contextlib.contextmanager
+    def _speculative(self) -> Iterator[None]:
+        """Temporarily suppress recording of context-dependent lowering facts."""
+        previous = self.results._recording
+        self.results._recording = False
+        try:
+            yield
+        finally:
+            self.results._recording = previous
+
     def check_fn(
         self,
         fn_ast: ast.FnDefn,
@@ -167,6 +178,13 @@ class TypCheck:
         return self.results
 
     def _check_expr(
+        self, expr_ast: ast.Expr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
+    ) -> typs.Typ:
+        typ = self._check_expr_inner(expr_ast, e, expected_typ)
+        self.results._set_expr_typ(expr_ast, typ)
+        return typ
+
+    def _check_expr_inner(
         self, expr_ast: ast.Expr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
     ) -> typs.Typ:
         """Return an expression's checked type, using ``expected_typ`` as context."""
@@ -640,11 +658,12 @@ class TypCheck:
         Unsuffixed integer literals are skipped because they need an expected type.
         """
         bindings: dict[typs.ComptimeParamTyp, typs.Typ] = {}
-        for declared_typ, arg_ast in zip(fn.fn_typ.param_typs, call_ast.args, strict=False):
-            if _is_flexible_int_lit(arg_ast):
-                continue
-            arg_typ = self._check_expr(arg_ast, e, None)
-            declared_typ.infer_typ_args(arg_typ, bindings)
+        with self._speculative():
+            for declared_typ, arg_ast in zip(fn.fn_typ.param_typs, call_ast.args, strict=False):
+                if _is_flexible_int_lit(arg_ast):
+                    continue
+                arg_typ = self._check_expr(arg_ast, e, None)
+                declared_typ.infer_typ_args(arg_typ, bindings)
 
         for typ_param in comptime_params:
             if typ_param not in bindings:
@@ -959,6 +978,11 @@ class TypCheck:
         return ptr_typ.pointee_typ
 
     def _check_place(self, expr_ast: ast.Expr, e: ir_env.Env) -> typs.PtrTyp:
+        typ = self._check_place_inner(expr_ast, e)
+        self.results._set_place_typ(expr_ast, typ)
+        return typ
+
+    def _check_place_inner(self, expr_ast: ast.Expr, e: ir_env.Env) -> typs.PtrTyp:
         """Return the pointer type produced by taking ``expr_ast``'s address.
 
         Real places retain their mutability; other values use a const temporary.

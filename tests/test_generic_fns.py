@@ -381,6 +381,32 @@ def test_calling_generic_fn_infers_typ_args_from_argument(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_inferred_generic_arg_block_local_binding_survives_probe(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        let x = id({ let y = 1i32; y });
+        return x - 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_inferred_generic_arg_match_binding_survives_probe(tmp_path):
+    src = """
+    fn id[T](x: T) T { return x; }
+
+    pub fn main() i32 {
+        let x = id(match (1) {
+            let y => y - 0,
+        });
+        return x;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 1)
+
+
 def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
     src = """
     fn id[T](x: T) T { return x; }
