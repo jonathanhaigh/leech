@@ -242,8 +242,8 @@ class CfgBuilder:
         ctx: _ExprContext,
     ) -> ir_values.Value:
         """Lower an ``if``/``else`` expression, merging whichever branch's
-        value is taken via a phi instruction when both branches complete
-        normally.
+        value is taken via a phi when both branches reach ``end_bb`` and the
+        recorded result type isn't void.
         """
         cond = self._build_expr(if_ast.condition, _ExprContext.VALUE)
         cond = opt_util.opt_unwrap(self._coerce(cond, if_ast.condition))
@@ -265,21 +265,28 @@ class CfgBuilder:
         assert els_ast is not None
         then, then_last_bb, have_then_value = self._build_if_arm(if_ast.then, then_bb, end_bb, ctx)
         els, els_last_bb, have_els_value = self._build_if_arm(els_ast, els_bb, end_bb, ctx)
+        self._set_position(end_bb)
+
+        if not have_then_value and not have_els_value:
+            # Neither branch reaches end_bb: it's genuinely unreachable,
+            # not just void, and needs a terminator of its own since
+            # nothing branches into it.
+            return self._curr_bb.unreachable(if_ast)
+
+        result_typ = opt_util.opt_unwrap(self._typ_check_results.expr_typ(if_ast))
+        if result_typ.substitute_typ_params(self._comptime_arg_mapping) == typs.VOID:
+            # A void `if` produces no value, so there is nothing to merge.
+            # A phi over the arm values would crash codegen (a VoidValue
+            # asserts it needs no runtime representation) or emit a
+            # `phi void` that LLVM rejects (e.g. a void-call arm).
+            return ir_values.VoidValue(if_ast)
 
         if have_then_value and have_els_value:
             asserts.assert_eq(then.typ, els.typ)
-            self._set_position(end_bb)
             return self._curr_bb.phi({els_last_bb: els, then_last_bb: then}, if_ast)
-
-        self._set_position(end_bb)
         if have_then_value:
             return then
-        if have_els_value:
-            return els
-        # Neither branch reaches end_bb: it's genuinely unreachable,
-        # not just void, and needs a terminator of its own since
-        # nothing branches into it.
-        return self._curr_bb.unreachable(if_ast)
+        return els
 
     def _build_if_arm(
         self,

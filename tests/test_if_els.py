@@ -180,3 +180,66 @@ def test_void_call_as_if_cond(tmp_path):
     """
     with pytest.raises(errors.IfCondNotBoolError):
         util.compile_str(tmp_path, src)
+
+
+def test_if_els_two_void_branches(tmp_path):
+    src = """
+    pub fn main() i32 {
+        if (true) {
+            let x = 1;
+        } else {
+            let y = 2;
+        };
+        return 0;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_if_els_divergent_and_void_branch(tmp_path):
+    src = """
+    pub fn main() i32 {
+        if (true) {
+            return 0;
+        } else {
+            let y = 2;
+        };
+        return 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_if_els_two_void_call_arms(tmp_path):
+    src = """
+    fn a() { }
+    fn b() { }
+    pub fn main() i32 {
+        let c = true;
+        if (c) {
+            a()
+        } else {
+            b()
+        };
+        return 0;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_if_els_two_void_branches_void_fn(tmp_path):
+    src = """
+    fn f(c: bool) {
+        if (c) {
+            let x = 1;
+        } else {
+            let y = 2;
+        }
+    }
+    pub fn main() i32 {
+        f(true);
+        f(false);
+        return 0;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
