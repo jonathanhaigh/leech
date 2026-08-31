@@ -88,6 +88,18 @@ class CfgBuilder:
         self._loop_ctxs = {}
         self._local_values = {}
 
+    def _local_place_typ(self, decl: resolve.LocalDecl) -> typs.PtrTyp:
+        """Return ``decl``'s recorded local pointer type for this instance."""
+        local_typ = self._typ_check_results.local_typ(decl)
+        return asserts.checked_cast(
+            local_typ.substitute_typ_params(self._comptime_arg_mapping), typs.PtrTyp
+        )
+
+    def _local_alloca(self, decl: resolve.LocalDecl, ast_node: ast.Ast) -> ir_values.Value:
+        """Allocate storage for ``decl`` from its recorded local pointer type."""
+        local_typ = self._local_place_typ(decl)
+        return self._curr_bb.alloca(local_typ.pointee_typ, local_typ.mut, 1, ast_node)
+
     def build_var_initializer(self, defn_ast: ast.VarDefn) -> None:
         """Lower a module-level initializer into ``cfg``."""
         assert self._fn is None
@@ -101,7 +113,7 @@ class CfgBuilder:
 
         for param in self._fn.params:
             assert param.ast is not None
-            alloca = self._curr_bb.alloca(param.typ, typs.CONST, 1, param.ast)
+            alloca = self._local_alloca(param.ast, param.ast)
             self._curr_bb.store(param, alloca, param.ast)
             self._local_values[param.ast] = alloca
 
@@ -431,8 +443,7 @@ class CfgBuilder:
     def _build_match_binding(self, pattern: ast.Pattern, scrutinee_value: ir_values.Value) -> None:
         if not isinstance(pattern, ast.BindingPattern):
             return
-        mut = typs.Mutability.from_ast(pattern.mut)
-        alloca = self._curr_bb.alloca(scrutinee_value.typ, mut, 1, pattern)
+        alloca = self._local_alloca(pattern, pattern)
         self._local_values[pattern] = alloca
         self._curr_bb.store(scrutinee_value, alloca, pattern)
 
@@ -971,10 +982,13 @@ class CfgBuilder:
 
     def _build_let_stmt(self, let_ast: ast.LetStmt) -> None:
         expr = self._build_let_initializer(let_ast, _ExprContext.VALUE)
-        mut = typs.Mutability.from_ast(let_ast.mut)
-        alloca = self._curr_bb.alloca(expr.typ, mut, 1, let_ast)
+        alloca = self._local_alloca(let_ast, let_ast)
         self._local_values[let_ast] = alloca
-        self._curr_bb.store(expr, alloca, let_ast)
+        # A diverging ``and``/``or`` initializer lowers to ``never`` while its
+        # recorded local type is the operator's result type (``bool``). There
+        # is no value to store, and the current block is already terminated.
+        if expr.typ != typs.NEVER:
+            self._curr_bb.store(expr, alloca, let_ast)
 
     def _build_assignment_stmt(self, ass_ast: ast.AssignmentStmt) -> None:
         """Lower an assignment statement (``place = expr``).
@@ -1048,9 +1062,7 @@ class CfgBuilder:
             case check_results.IntExt(target=target):
                 return self._curr_bb.int_ext(value, target, node)
             case check_results.PtrMutRelax():
-                # A *mut T given where a *T is wanted needs nothing
-                # emitted - the two have the same representation.
-                return value
+                return self._curr_bb.ptr_mut_relax(value, node)
             case _:
                 raise AssertionError(f"unhandled coercion {coercion!r}")
 

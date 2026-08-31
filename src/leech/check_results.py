@@ -82,6 +82,7 @@ class TypCheckResults:
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
     _match_scrutinee_typs: Final[dict[ast.MatchExpr, typs.Typ]]
     _match_arm_patterns: Final[dict[ast.MatchArm, patterns.PatternKind]]
+    _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
 
     def __init__(self) -> None:
         self.resolutions = resolve.Resolutions()
@@ -94,6 +95,7 @@ class TypCheckResults:
         self._let_declared_typs = {}
         self._match_scrutinee_typs = {}
         self._match_arm_patterns = {}
+        self._local_typs = {}
 
     def int_lit_typ(self, node: ast.IntLit) -> typs.IntTyp:
         """Return the type chosen and overflow-checked for an integer literal."""
@@ -178,3 +180,10 @@ class TypCheckResults:
     ) -> tuple[Optional[patterns.ConstructorKind], ...]:
         """Return one resolved constructor candidate per pattern alternative."""
         return _pattern_constructor_candidates(self._match_arm_patterns[node])
+
+    def local_typ(self, decl: resolve.LocalDecl) -> typs.PtrTyp:
+        """Return the bound type and mutability for a local declaration."""
+        return self._local_typs[decl]
+
+    def _set_local_typ(self, decl: resolve.LocalDecl, typ: typs.PtrTyp) -> None:
+        self._local_typs[decl] = typ

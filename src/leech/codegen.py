@@ -417,6 +417,8 @@ class Compiler:
                 return ctx.ll_builder.bitcast(  # type: ignore
                     ctx.ll_values.get(instr.operand), self._ll_mod_items.get(instr.target_typ)
                 )
+            case ir_values.PtrMutRelaxInstr():
+                return asserts.checked_cast(ctx.ll_values.get(instr.operand), ll.Value)
             case ir_values.IsNullInstr():
                 null_ptr = ll.Constant(self._ll_mod_items.get(instr.operand.typ), None)
                 return ctx.ll_builder.icmp_unsigned(

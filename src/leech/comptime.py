@@ -261,6 +261,11 @@ class Interpreter:
                 # no sound way to reinterpret a pointer as a different
                 # type - not even a mutability-only change.
                 raise errors.PtrCastNotComptimeEvaluableError(instr.span)
+            case ir_values.PtrMutRelaxInstr():
+                operand = asserts.checked_cast(
+                    self._get_comptime_value(instr.operand), ir_values.ComptimePtr
+                )
+                self._registers[instr] = ir_values.ComptimePtrMutRelax(operand, instr.ast)
             case ir_values.IsNullInstr():
                 # No Comptime* pointer value the interpreter can ever
                 # produce represents "null" - ComptimeAlloc/ComptimeGep/

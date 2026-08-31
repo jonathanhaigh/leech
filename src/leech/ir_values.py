@@ -344,6 +344,37 @@ class ComptimeGep(ComptimePtr):
         return self.base.is_temporary()
 
 
+class ComptimePtrMutRelax(ComptimePtr):
+    """A compile-time pointer viewed under its const-mutability type.
+
+    The pointee is unchanged; only the pointer's mutability is erased.
+    """
+
+    base: Final[ComptimePtr]
+
+    @override
+    def __init__(self, base: ComptimePtr, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(ast_node)
+        self.base = base
+
+    @override
+    def calculate_typ(self) -> typs.PtrTyp:
+        base_typ = asserts.checked_cast(self.base.typ, typs.PtrTyp)
+        return typs.PtrTyp.get_or_create(base_typ.pointee_typ, typs.CONST)
+
+    @override
+    def load(self) -> ComptimeValue:
+        return self.base.load()
+
+    @override
+    def store(self, value: ComptimeValue) -> None:
+        self.base.store(value)
+
+    @override
+    def is_temporary(self) -> bool:
+        return self.base.is_temporary()
+
+
 class VoidValue(ComptimeValue[typs.VoidTyp]):
     """The single, valueless result of a void-typed expression."""
 
@@ -624,6 +655,29 @@ class IntExtInstr(Instr[typs.IntTyp]):
     @override
     def calculate_typ(self) -> typs.IntTyp:
         return self._typ
+
+
+class PtrMutRelaxInstr(Instr[typs.PtrTyp]):
+    """Erases a pointer's mutability from ``*mut T`` to ``*T``.
+
+    The two pointer types share an LLVM representation, so this is a
+    no-op at codegen; it exists so the IR's Leech type tracks the
+    coercion that ``PtrMutRelax`` represents.
+    """
+
+    operand: Final[Value]
+
+    @override
+    def __init__(self, bb: BasicBlock, operand: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
+        operand_typ = asserts.checked_cast(operand.typ, typs.PtrTyp)
+        assert operand_typ.mut == typs.MUT, "PtrMutRelax requires a *mut T operand"
+        self.operand = operand
+
+    @override
+    def calculate_typ(self) -> typs.PtrTyp:
+        operand_typ = asserts.checked_cast(self.operand.typ, typs.PtrTyp)
+        return typs.PtrTyp.get_or_create(operand_typ.pointee_typ, typs.CONST)
 
 
 class AllocaInstr(Instr[typs.PtrTyp]):
@@ -1039,6 +1093,9 @@ class BasicBlock:
 
     def int_ext(self, value: Value, typ: typs.IntTyp, ast_node: Optional[ast.Ast]) -> IntExtInstr:
         return self._add_instr(IntExtInstr(self, value, typ, ast_node))
+
+    def ptr_mut_relax(self, value: Value, ast_node: Optional[ast.Ast]) -> PtrMutRelaxInstr:
+        return self._add_instr(PtrMutRelaxInstr(self, value, ast_node))
 
     def alloca(
         self, typ: typs.Typ, mut: typs.Mutability, count: int, ast_node: Optional[ast.Ast]

@@ -336,6 +336,16 @@ def test_widening_int_coercion_let_initializer(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
+def test_let_widening_int_initializer_stores_into_declared_type(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x: i64 = 1i32;
+        return if (x == 1i64) { 5 } else { 0 };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 5)
+
+
 def test_narrowing_int_coercion_let_rejected(tmp_path):
     src = """
     pub fn main() i32 {
@@ -356,6 +366,17 @@ def test_mut_ptr_coerces_to_const_ptr_let_initializer(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, src, "", 42)
+
+
+def test_let_mut_ptr_initializer_stores_into_declared_const_ptr(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let mut a = 5i32;
+        let p: *i32 = &a;
+        return p.*;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 5)
 
 
 def test_comptime_widening_int_coercion_let(tmp_path):

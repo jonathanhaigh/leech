@@ -106,8 +106,6 @@ class TypCheck:
     _fn_name: Optional[str]
     #: Enclosing while loops' labels and own AST nodes, innermost last.
     _loop_labels: Final[list[tuple[Optional[str], ast.WhileExpr]]]
-    #: Local bindings' pointer types, keyed by their declaration-site AST node.
-    _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
 
     def __init__(self) -> None:
         self.results = check_results.TypCheckResults()
@@ -115,7 +113,6 @@ class TypCheck:
         self._ret_typ_span = None
         self._fn_name = None
         self._loop_labels = []
-        self._local_typs = {}
 
     def check_fn(
         self,
@@ -134,7 +131,7 @@ class TypCheck:
         for param in params:
             assert param.ast is not None
             param_typ = typs.PtrTyp.get_or_create(param.typ, typs.CONST)
-            self._local_typs[param.ast] = param_typ
+            self.results._set_local_typ(param.ast, param_typ)
             e.add_var(param.ast.name.name, param.ast)
         block_typ = self._check_expr(fn_ast.block, e, ret_typ)
         ret_ast = opt_util.opt_or_default(fn_ast.block.expr, fn_ast.block)
@@ -375,7 +372,7 @@ class TypCheck:
         if scrutinee_typ == typs.VOID:
             raise errors.VoidVarInitializerError(pat.span)
         mut = typs.Mutability.from_ast(pat.mut)
-        self._local_typs[pat] = typs.PtrTyp.get_or_create(scrutinee_typ, mut)
+        self.results._set_local_typ(pat, typs.PtrTyp.get_or_create(scrutinee_typ, mut))
         if reserved.is_reserved(pat.ident.name):
             raise errors.ReservedNameError(pat.ident.name, pat.ident.span)
         e.add_var(pat.ident.name, pat)
@@ -820,7 +817,7 @@ class TypCheck:
             # a value parameter has no address to take.
             return var.value_typ
         if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
-            return self._local_typs[var].pointee_typ
+            return self.results.local_typ(var).pointee_typ
         return var.typ.pointee_typ
 
     def _generic_var_ref_typ(
@@ -981,7 +978,7 @@ class TypCheck:
             ):
                 return self._generic_var_ref_typ(expr_ast, var, e)
             if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
-                return self._local_typs[var]
+                return self.results.local_typ(var)
             # An enum variant (see Env._resolve_path_segment's EnumTyp
             # case) isn't a place either - it falls through to the
             # general, value-copying case below, same as any other
@@ -1016,7 +1013,7 @@ class TypCheck:
                 ):
                     return typs.CONST
                 if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
-                    return self._local_typs[var].mut
+                    return self.results.local_typ(var).mut
                 # The only remaining binding is a ModVar.
                 return asserts.checked_cast(var.typ, typs.PtrTyp).mut
             case ast.ArrayAccessExpr():
@@ -1116,7 +1113,7 @@ class TypCheck:
         bound_typ = opt_util.opt_or_default(declared_typ, expr_typ)
         mut = typs.Mutability.from_ast(let_ast.mut)
         place_typ = typs.PtrTyp.get_or_create(bound_typ, mut)
-        self._local_typs[let_ast] = place_typ
+        self.results._set_local_typ(let_ast, place_typ)
         if reserved.is_reserved(let_ast.ident.name):
             raise errors.ReservedNameError(let_ast.ident.name, let_ast.ident.span)
         e.add_var(let_ast.ident.name, let_ast)
