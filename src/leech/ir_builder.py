@@ -174,10 +174,8 @@ class CfgBuilder:
             case ast.StrLit():
                 return self._in_context(ir_values.ComptimeCStr(expr_ast.value, expr_ast), ctx)
             case ast.IntLit():
-                return self._in_context(
-                    self._build_int_lit(expr_ast, False),
-                    ctx,
-                )
+                typ, value = opt_util.opt_unwrap(self._typ_check_results.folded_int_lit(expr_ast))
+                return self._in_context(ir_values.ComptimeInt(typ, value, expr_ast), ctx)
             case ast.BoolLit():
                 return self._in_context(ir_values.ComptimeBool(expr_ast.value, expr_ast), ctx)
             case ast.VarExpr():
@@ -694,9 +692,11 @@ class CfgBuilder:
                 # that a signed type's minimum value can be written: the
                 # positive half of the range stops one short of it, so
                 # e.g. the 128 in -128i8 would overflow on its own.
-                if isinstance(op_ast.operand, ast.IntLit):
+                folded = self._typ_check_results.folded_int_lit(op_ast)
+                if folded is not None:
+                    typ, value = folded
                     return self._in_context(
-                        self._build_int_lit(op_ast.operand, True),
+                        ir_values.ComptimeInt(typ, value, op_ast.operand),
                         ctx,
                     )
 
@@ -1001,16 +1001,6 @@ class CfgBuilder:
         if cached_typ is None:
             return expr
         return opt_util.opt_unwrap(self._coerce(expr, let_ast.expr))
-
-    def _build_int_lit(self, lit_ast: ast.IntLit, negated: bool) -> ir_values.Value:
-        """Lower an integer literal to a compile-time-known value.
-
-        ``negated`` means the literal is the operand of a unary minus, and
-        so denotes the negation of its written value.
-        """
-        typ = self._typ_check_results.int_lit_typ(lit_ast)
-        value = -lit_ast.value if negated else lit_ast.value
-        return ir_values.ComptimeInt(typ, value, lit_ast)
 
     def _coerce(self, value: ir_values.Value, node: ast.Ast) -> Optional[ir_values.Value]:
         """Convert ``value`` to the type its context expects, if allowed.

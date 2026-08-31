@@ -53,7 +53,7 @@ class TypCheckResults:
     """Lowering facts for one checked body, keyed by AST-node identity."""
 
     resolutions: Final[resolve.Resolutions]
-    _int_lit_typs: Final[dict[ast.IntLit, typs.IntTyp]]
+    _folded_int_lits: Final[dict[ast.IntLit | ast.UnaryOpExpr, tuple[typs.IntTyp, int]]]
     _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
     _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
     _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
@@ -71,7 +71,7 @@ class TypCheckResults:
 
     def __init__(self) -> None:
         self.resolutions = resolve.Resolutions()
-        self._int_lit_typs = {}
+        self._folded_int_lits = {}
         self._coercions = {}
         self._generic_calls = {}
         self._generic_var_refs = {}
@@ -85,12 +85,20 @@ class TypCheckResults:
         self._place_typs = {}
         self._recording = True
 
-    def int_lit_typ(self, node: ast.IntLit) -> typs.IntTyp:
-        """Return the type chosen and overflow-checked for an integer literal."""
-        return self._int_lit_typs[node]
+    def folded_int_lit(
+        self, node: ast.IntLit | ast.UnaryOpExpr
+    ) -> Optional[tuple[typs.IntTyp, int]]:
+        """Return the checked type and folded value for an integer literal, if recorded.
 
-    def _set_int_lit_typ(self, node: ast.IntLit, typ: typs.IntTyp) -> None:
-        self._set_fact(self._int_lit_typs, node, typ)
+        Keyed by the ``IntLit`` itself, or by the ``UnaryOpExpr`` when a
+        unary minus folded into it.
+        """
+        return self._folded_int_lits.get(node)
+
+    def _set_folded_int_lit(
+        self, node: ast.IntLit | ast.UnaryOpExpr, typ: typs.IntTyp, value: int
+    ) -> None:
+        self._set_fact(self._folded_int_lits, node, (typ, value))
 
     def coercion(self, node: ast.Ast) -> Optional[Coercion]:
         """Return ``node``'s coercion, or ``None`` when its type already matched."""

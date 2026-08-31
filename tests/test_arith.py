@@ -301,6 +301,26 @@ def test_comptime_negated_int_lit_at_signed_typ_min(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
+def test_negated_int_lit_at_i32_min(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = -2147483648i32;
+        return if (x == 0i32 - 2147483647 - 1) { 7 } else { 0 };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 7)
+
+
+def test_bare_negated_int_lit_in_peer_position(tmp_path):
+    src = """
+    pub fn main() i32 {
+        let x = -1 + 10i8;
+        return if (x == 9) { 7 } else { 0 };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 7)
+
+
 def test_negated_int_lit_overflow(tmp_path):
     src = """
     pub fn main() i32 {

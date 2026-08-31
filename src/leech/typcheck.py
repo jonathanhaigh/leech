@@ -209,7 +209,7 @@ class TypCheck:
                 typ = self._infer_int_lit_typ(expr_ast, expected_typ)
                 if not typ.fits(expr_ast.value):
                     raise errors.IntLitOverflowError(expr_ast.value, typ.name, expr_ast.span)
-                self.results._set_int_lit_typ(expr_ast, typ)
+                self.results._set_folded_int_lit(expr_ast, typ, expr_ast.value)
                 return typ
             case ast.BoolLit():
                 return typs.BOOL
@@ -413,7 +413,6 @@ class TypCheck:
                 pat.span,
                 None,
             )
-        self.results._set_int_lit_typ(pat.lit, lit_typ)
         return patterns.ConstructorPattern(patterns.IntConstructor(value), ())
 
     def _check_bool_lit_pattern(
@@ -786,7 +785,7 @@ class TypCheck:
             value = -op_ast.operand.value
             if not typ.fits(value):
                 raise errors.IntLitOverflowError(value, typ.name, op_ast.span)
-            self.results._set_int_lit_typ(op_ast.operand, typ)
+            self.results._set_folded_int_lit(op_ast, typ, value)
             return typ
 
         operand_typ = self._check_expr(op_ast.operand, e, expected_typ)

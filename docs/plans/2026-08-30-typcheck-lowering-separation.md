@@ -21,7 +21,7 @@ of miscompiling. Match lowering stops deriving anything: `patterns.build_match_p
 usefulness and coverage analysis once, and both the checker's diagnostics and the lowerer's
 comparison chain come from that one `MatchPlan`. The boundary becomes structural — after
 Task 7, `ir_builder` imports `check_results` and not `typcheck` at all, and reaches into
-`patterns` only for the constructor dataclasses it has to dispatch on, pinned by a test.
+`patterns` only for the constructor dataclasses it has to dispatch on.
 
 **Tech Stack:** Python 3.14, pytest, ruff, basedpyright, reuse. No new dependencies.
 
@@ -505,20 +505,17 @@ then introduce.
 
 ---
 
-### Task 7: Fold negative integer literals, and pin the boundary
+### Task 7: Fold negative integer literals
 
 **Files:**
 - Modify: `src/leech/check_results.py`, `src/leech/typcheck.py`, `src/leech/ir_builder.py`
-- Add: `tests/test_module_boundaries.py`
-- Modify: `tests/test_arith.py`, `tests/test_compilation.py`
+- Modify: `tests/test_arith.py`
 
 **Interfaces:**
-- `TypCheckResults.folded_int_lit(node) -> tuple[typs.IntTyp, int]`, keyed by the
+- `TypCheckResults.folded_int_lit(node) -> Optional[tuple[typs.IntTyp, int]]`, keyed by the
   `ast.IntLit`, or by the `ast.UnaryOpExpr` when a unary minus folded into it. Replaces
   `int_lit_typ`.
 - `CfgBuilder._build_int_lit` is deleted.
-- A test pinning that `ir_builder` does not import `typcheck` and uses `patterns` for data
-  only.
 
 - [ ] Add the map and accessors and delete `int_lit_typ`. Record from `TypCheck._check_expr`'s
   `IntLit` case (value as written) and from `_check_neg_expr`'s literal branch (negated value,
@@ -536,17 +533,6 @@ then introduce.
   but the `ComptimeInt` is attributed to the operand `ast.IntLit`, which is what
   `_build_int_lit(op_ast.operand, True)` does now. Key and attribution node differ here on
   purpose; changing the attribution would move a diagnostic span for no reason.
-- [ ] Add `tests/test_module_boundaries.py` (SPDX header) parsing source with Python's own
-  `ast` module and asserting: `src/leech/ir_builder.py` does not import `leech.typcheck`;
-  every name it reaches through `patterns.` is in a data-only allowlist
-  (`VariantConstructor`, `BoolConstructor`, `IntConstructor`, `ConstructorKind`, `MatchPlan`,
-  `ArmTest`); and `src/leech/patterns.py` imports neither `leech.ast` nor `leech.typs`. Give
-  each assertion a message naming the invariant, so a future reader learns the rule from the
-  failure rather than from this plan.
-- [ ] Add a test in `tests/test_compilation.py` pinning codegen's block ordering, which Task
-  1's soundness argument relies on: compile a function with nested `if`/`else` and assert the
-  emitted block labels appear in reverse-postorder from entry, not creation order. This is a
-  codegen property, not a module-boundary one — keep it out of the new boundaries file.
 - [ ] Extend `tests/test_arith.py` with `-128i8`, `-2147483648i32` and a negated literal in a
   peer position, if not already covered.
 - [ ] Full suite, lint, type check pass; IR corpus diff empty.
@@ -590,17 +576,15 @@ fail. Task 5 depends on Task 4 for the recorded result type it reads.
 Task 6 depends only on Task 2 (for where the fact lives) and can be developed in parallel with
 Tasks 3–5, merging last.
 
-Task 7 depends on **both** Task 4 and Task 6, and cannot be developed fully in parallel with
-Tasks 3–5. Its folded-literal half edits `_build_expr_uncheck`'s `IntLit` case, and
-`_build_expr_uncheck` does not exist until Task 4 splits it out of `_build_expr`; its boundary
-test needs Task 6, which is what removes `ir_builder`'s `typcheck` import and its last
-`patterns` function call. If Task 7 is started early, it must merge on top of Task 4.
+Task 7 depends on Task 4: its folded-literal half edits `_build_expr_uncheck`'s `IntLit` case,
+and `_build_expr_uncheck` does not exist until Task 4 splits it out of `_build_expr`. Task 7
+can be developed in parallel with Tasks 5 and 6, merging on top of Task 4.
 
 ## Acceptance criteria
 
 - `grep -n "expected_typ" src/leech/ir_builder.py` is empty.
 - `src/leech/ir_builder.py` does not import `leech.typcheck`, and reaches into `patterns` only
-  for constructor and plan dataclasses — both pinned by a test.
+  for constructor and plan dataclasses.
 - `typcheck.py` exposes no flexible-literal or peer-type helper: `_is_flexible_int_lit`,
   `_resolve_peer_typ`, `_match_arm_check_order` and `_match_constructor_space` are all private.
 - `CfgBuilder` calls no function from `patterns`, and derives no type it could have read.

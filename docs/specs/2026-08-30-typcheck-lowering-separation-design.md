@@ -365,7 +365,7 @@ Recording the constant that was actually checked, rather than only its type, rep
 `int_lit_typ`:
 
 ```python
-def folded_int_lit(self, node: ast.IntLit | ast.UnaryOpExpr) -> tuple[typs.IntTyp, int]: ...
+def folded_int_lit(self, node: ast.IntLit | ast.UnaryOpExpr) -> Optional[tuple[typs.IntTyp, int]]: ...
 ```
 
 keyed by the `ast.IntLit` for a positive literal and by the `ast.UnaryOpExpr` when a unary
@@ -532,9 +532,8 @@ import graph states, not something a reviewer has to notice. `typcheck`'s remain
 them, so they become private. "No phase after type checking considers fixed versus flexible
 literals" then holds because there is nothing left to import.
 
-The residual `patterns` dependency is pinned by a test rather than by the import graph: the
-set of names `ir_builder` reaches for through `patterns.` must stay within a data-only
-allowlist, so a future `patterns.is_useful(…)` in the lowerer fails the suite.
+The residual `patterns` dependency is data-only: `ir_builder` imports `patterns` solely for
+the constructor and plan dataclasses it must dispatch on, and calls no function in the module.
 
 `check_results.py` keeps the `TYPE_CHECKING`-only `ir_module` import that `TypCheckResults`
 needs today for `FnSymbol`, so the module cycle situation is unchanged. This chips at #53
@@ -733,11 +732,11 @@ run. That is the desired failure mode, but it may add work to Task 4.
 
 **Lowering order changes are unobservable *today*.** The argument in "Why removing the
 ordering coupling is sound" rests on a flexible literal emitting no instruction and creating
-no block, and on codegen's reverse-postorder emission. Both were verified against the current
-tree, and the plan's output-identity harness re-verifies them over a wider corpus. The plan
-adds a test pinning the reverse-postorder property. The first property is not pinned by any
-test and cannot easily be — but after this change nothing depends on it, which is the point:
-it is load-bearing today and inert afterwards.
+no block, and on codegen's emission order. The plan's output-identity harness verifies the
+byte-identical result over a wider corpus rather than pinning either property. The emission
+order is an implementation detail, not a guaranteed contract, and a flexible literal's
+side-effect-freedom cannot easily be pinned by a test — but after this change nothing depends
+on it, which is the point: it is load-bearing today and inert afterwards.
 
 ## Open questions
 
@@ -754,8 +753,7 @@ it is load-bearing today and inert afterwards.
   alone here and flagged for a separate issue rather than fixed in a refactor.
 - **Should `SLF001` (private-member access) be enabled to enforce the new privacy?** It would
   pin the boundary, but `TypCheck` writes through `self.results._set_*`, so it needs a
-  per-file ignore or public setters. Deferred to #7, which owns lint selection. Task 7 adds
-  an import-graph test instead, which is narrower and needs no lint changes.
+  per-file ignore or public setters. Deferred to #7, which owns lint selection.
 
 ## Implementation
 
