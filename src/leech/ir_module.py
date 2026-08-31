@@ -13,6 +13,7 @@ from typing import Final, Optional, override
 from leech import (
     asserts,
     ast,
+    check_results,
     compilation,
     comptime,
     errors,
@@ -213,7 +214,7 @@ class LowerableFn(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def typ_check_results(self) -> typcheck.TypCheckResults:
+    def typ_check_results(self) -> check_results.TypCheckResults:
         """Unsubstituted lowering facts shared by every instance."""
 
     @abc.abstractmethod
@@ -265,12 +266,12 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
         return typs.comptime_params_from_ast(fn_ast, fn_ast.comptime_params, self.env)
 
     @property
-    def typ_check_results(self) -> typcheck.TypCheckResults:
+    def typ_check_results(self) -> check_results.TypCheckResults:
         """The unsubstituted lowering facts shared by all instances."""
         return self._typ_check_results
 
     @functools.cached_property
-    def _typ_check_results(self) -> typcheck.TypCheckResults:
+    def _typ_check_results(self) -> check_results.TypCheckResults:
         return typcheck.TypCheck().check_fn(
             opt_util.opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
         )
@@ -580,14 +581,14 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
         return self._fn_name
 
     @property
-    def typ_check_results(self) -> typcheck.TypCheckResults:
+    def typ_check_results(self) -> check_results.TypCheckResults:
         """The intrinsic's empty type-checking results."""
         return self._typ_check_results
 
     @functools.cached_property
-    def _typ_check_results(self) -> typcheck.TypCheckResults:
+    def _typ_check_results(self) -> check_results.TypCheckResults:
         # Intrinsics emit directly and therefore need no type-checking facts.
-        return typcheck.TypCheckResults()
+        return check_results.TypCheckResults()
 
     @property
     def _qualified_name_prefix(self) -> str:
@@ -659,7 +660,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
             return comptime.Interpreter(self.cfg, (), (), self.env.panic_ref).eval()
 
     @functools.cached_property
-    def typ_check_results(self) -> typcheck.TypCheckResults:
+    def typ_check_results(self) -> check_results.TypCheckResults:
         """This variable's initializer, type-checked into a side table.
 
         Built lazily, on first access; forced by ``cfg`` before

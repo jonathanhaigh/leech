@@ -8,13 +8,13 @@ Each body is checked completely, including unreachable code, and lowering decisi
 recorded by AST-node identity in ``TypCheckResults``.
 """
 
-import dataclasses
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Final, Optional
 
 from leech import (
     asserts,
     ast,
+    check_results,
     errors,
     ir_env,
     ir_values,
@@ -83,28 +83,6 @@ def match_constructor_space(scrutinee_typ: typs.Typ) -> patterns.ConstructorSpac
             return patterns.ConstructorSpace.from_constructors([], True)
 
 
-def _pattern_constructor_candidates(
-    pattern: patterns.PatternKind,
-) -> tuple[Optional[patterns.ConstructorKind], ...]:
-    """Return one candidate constructor per top-level pattern alternative.
-
-    Wildcards and bindings have no constructor, so their entry is ``None``.
-    """
-    match pattern:
-        case patterns.WildcardPattern():
-            return (None,)
-        case patterns.ConstructorPattern(constructor):
-            return (constructor,)
-        case patterns.OrPattern(alternatives):
-            result: list[Optional[patterns.ConstructorKind]] = []
-            for alternative in alternatives:
-                if isinstance(alternative, patterns.ConstructorPattern):
-                    result.append(alternative.constructor)
-                else:
-                    result.append(None)
-            return tuple(result)
-
-
 def _callable_typ(typ: typs.Typ) -> Optional[typs.CallableTyp]:
     """Return the callable behind a pointer type, if present."""
     if isinstance(typ, typs.PtrTyp) and isinstance(typ.pointee_typ, typs.CallableTyp):
@@ -119,150 +97,10 @@ def _struct_field(typ: typs.Typ, name: str) -> Optional[typs.StructField]:
     return typ.fields.get(name)
 
 
-class Coercion:
-    """A required conversion to the type an expression's context expects."""
-
-
-@dataclasses.dataclass(frozen=True)
-class NeverDiverge(Coercion):
-    """Replace an unreachable ``never`` value with a placeholder of ``target``."""
-
-    target: typs.Typ
-
-
-class PtrMutRelax(Coercion):
-    """A ``*mut T`` value given where a ``*T`` is wanted.
-
-    The two share a representation, so nothing needs to be emitted.
-    """
-
-
-@dataclasses.dataclass(frozen=True)
-class IntExt(Coercion):
-    """Zero/sign-extend an integer value to a wider integer type."""
-
-    target: typs.IntTyp
-
-
-class Invalid(Coercion):
-    """The value's type doesn't coerce to the target at all."""
-
-
-class TypCheckResults:
-    """Lowering facts for one checked body, keyed by AST-node identity."""
-
-    resolutions: Final[resolve.Resolutions]
-    _int_lit_typs: Final[dict[ast.IntLit, typs.IntTyp]]
-    _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
-    _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
-    _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
-    _brace_expr_typs: Final[dict[ast.BraceExpr, typs.Typ]]
-    _struct_field_indices: Final[dict[ast.FieldAccessExpr | ast.StructFieldExpr, int]]
-    _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
-    _match_scrutinee_typs: Final[dict[ast.MatchExpr, typs.Typ]]
-    _match_arm_patterns: Final[dict[ast.MatchArm, patterns.PatternKind]]
-
-    def __init__(self) -> None:
-        self.resolutions = resolve.Resolutions()
-        self._int_lit_typs = {}
-        self._coercions = {}
-        self._generic_calls = {}
-        self._generic_var_refs = {}
-        self._brace_expr_typs = {}
-        self._struct_field_indices = {}
-        self._let_declared_typs = {}
-        self._match_scrutinee_typs = {}
-        self._match_arm_patterns = {}
-
-    def int_lit_typ(self, node: ast.IntLit) -> typs.IntTyp:
-        """Return the type chosen and overflow-checked for an integer literal."""
-        return self._int_lit_typs[node]
-
-    def _set_int_lit_typ(self, node: ast.IntLit, typ: typs.IntTyp) -> None:
-        self._int_lit_typs[node] = typ
-
-    def coercion(self, node: ast.Ast) -> Optional[Coercion]:
-        """Return ``node``'s coercion, or ``None`` when its type already matched."""
-        return self._coercions[node]
-
-    def _set_coercion(self, node: ast.Ast, coercion: Optional[Coercion]) -> None:
-        self._coercions[node] = coercion
-
-    def generic_call(
-        self, node: ast.CallExpr
-    ) -> Optional[tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]:
-        """Return a generic call's resolved function and comptime arguments, if any."""
-        return self._generic_calls.get(node)
-
-    def _set_generic_call(
-        self, node: ast.CallExpr, fn: ir_module.FnSymbol, comptime_args: tuple[typs.Typ, ...]
-    ) -> None:
-        self._generic_calls[node] = (fn, comptime_args)
-
-    def generic_var_ref(
-        self, node: ast.VarExpr
-    ) -> Optional[tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]:
-        """Return an applied generic function reference and its arguments, if any."""
-        return self._generic_var_refs.get(node)
-
-    def _set_generic_var_ref(
-        self, node: ast.VarExpr, fn: ir_module.FnSymbol, comptime_args: tuple[typs.Typ, ...]
-    ) -> None:
-        self._generic_var_refs[node] = (fn, comptime_args)
-
-    def brace_expr_typ(self, node: ast.BraceExpr) -> typs.Typ:
-        """Return ``node``'s resolved (possibly still abstract) type.
-
-        A ``StructTyp`` or ``ArrayTyp`` depending on which kind of literal
-        ``node`` turned out to be - callers match on the result to tell
-        which.
-        """
-        return self._brace_expr_typs[node]
-
-    def _set_brace_expr_typ(self, node: ast.BraceExpr, typ: typs.Typ) -> None:
-        self._brace_expr_typs[node] = typ
-
-    def struct_field_index(self, node: ast.FieldAccessExpr | ast.StructFieldExpr) -> int:
-        """Return the declaration-order index resolved for a struct field expression."""
-        return self._struct_field_indices[node]
-
-    def _set_struct_field_index(
-        self, node: ast.FieldAccessExpr | ast.StructFieldExpr, index: int
-    ) -> None:
-        self._struct_field_indices[node] = index
-
-    def let_declared_typ(self, node: ast.LetStmt) -> Optional[typs.Typ]:
-        """Return ``node``'s declared type, if any."""
-        return self._let_declared_typs.get(node)
-
-    def _set_let_declared_typ(self, node: ast.LetStmt, typ: typs.Typ) -> None:
-        self._let_declared_typs[node] = typ
-
-    def match_scrutinee_typ(self, node: ast.MatchExpr) -> typs.Typ:
-        """Return ``node``'s checked scrutinee type."""
-        return self._match_scrutinee_typs[node]
-
-    def _set_match_scrutinee_typ(self, node: ast.MatchExpr, typ: typs.Typ) -> None:
-        self._match_scrutinee_typs[node] = typ
-
-    def match_arm_pattern(self, node: ast.MatchArm) -> patterns.PatternKind:
-        """Return ``node``'s checked, translated pattern."""
-        return self._match_arm_patterns[node]
-
-    def _set_match_arm_pattern(self, node: ast.MatchArm, pattern: patterns.PatternKind) -> None:
-        self._match_arm_patterns[node] = pattern
-
-    def match_arm_constructors(
-        self, node: ast.MatchArm
-    ) -> tuple[Optional[patterns.ConstructorKind], ...]:
-        """Return one resolved constructor candidate per pattern alternative."""
-        return _pattern_constructor_candidates(self._match_arm_patterns[node])
-
-
 class TypCheck:
     """Type-check a function body or module-variable initializer."""
 
-    results: Final[TypCheckResults]
+    results: Final[check_results.TypCheckResults]
     _ret_typ: Optional[typs.Typ]
     _ret_typ_span: Optional[src.SrcSpan]
     _fn_name: Optional[str]
@@ -272,7 +110,7 @@ class TypCheck:
     _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
 
     def __init__(self) -> None:
-        self.results = TypCheckResults()
+        self.results = check_results.TypCheckResults()
         self._ret_typ = None
         self._ret_typ_span = None
         self._fn_name = None
@@ -285,7 +123,7 @@ class TypCheck:
         e: ir_env.Env,
         ret_typ: typs.Typ,
         params: tuple[ir_values.Param, ...],
-    ) -> TypCheckResults:
+    ) -> check_results.TypCheckResults:
         """Type-check a function body and return its lowering facts."""
         self._ret_typ = ret_typ
         # Missing-return diagnostics concern the whole function.
@@ -307,7 +145,7 @@ class TypCheck:
             # but that's never Invalid, matching CfgBuilder's own
             # never-typed early return, which skips coercion entirely.
             coercion = self._record_coercion(ret_ast, block_typ, ret_typ)
-            if isinstance(coercion, Invalid):
+            if isinstance(coercion, check_results.Invalid):
                 raise errors.InvalidRetTypError(
                     self._fn_name,
                     ret_typ.name,
@@ -320,7 +158,9 @@ class TypCheck:
 
         return self.results
 
-    def check_var_initializer(self, defn_ast: ast.VarDefn, e: ir_env.Env) -> TypCheckResults:
+    def check_var_initializer(
+        self, defn_ast: ast.VarDefn, e: ir_env.Env
+    ) -> check_results.TypCheckResults:
         """Type-check a module-level initializer and return its lowering facts."""
         self._ret_typ = None
         self._ret_typ_span = None
@@ -388,7 +228,7 @@ class TypCheck:
     ) -> typs.Typ:
         cond_typ = self._check_expr(if_ast.condition, e, None)
         cond_coercion = self._record_coercion(if_ast.condition, cond_typ, typs.BOOL)
-        if isinstance(cond_coercion, Invalid):
+        if isinstance(cond_coercion, check_results.Invalid):
             raise errors.IfCondNotBoolError(
                 if_ast.condition.diag_str(),
                 cond_typ.name,
@@ -491,7 +331,7 @@ class TypCheck:
     def _check_while_expr(self, while_ast: ast.WhileExpr, e: ir_env.Env) -> typs.Typ:
         cond_typ = self._check_expr(while_ast.condition, e, None)
         cond_coercion = self._record_coercion(while_ast.condition, cond_typ, typs.BOOL)
-        if isinstance(cond_coercion, Invalid):
+        if isinstance(cond_coercion, check_results.Invalid):
             raise errors.WhileCondNotBoolError(
                 while_ast.condition.diag_str(),
                 cond_typ.name,
@@ -622,7 +462,7 @@ class TypCheck:
 
         if recv_ast is not None and recv_typ is not None:
             recv_coercion = self._record_coercion(recv_ast, recv_typ, param_typs[0])
-            if isinstance(recv_coercion, Invalid):
+            if isinstance(recv_coercion, check_results.Invalid):
                 raise errors.InvalidArgTypError(
                     callee_diag_str,
                     1,
@@ -635,7 +475,7 @@ class TypCheck:
         for i, arg_ast in enumerate(call_ast.args, start=offset):
             arg_typ = self._check_expr(arg_ast, e, param_typs[i])
             arg_coercion = self._record_coercion(arg_ast, arg_typ, param_typs[i])
-            if isinstance(arg_coercion, Invalid):
+            if isinstance(arg_coercion, check_results.Invalid):
                 raise errors.InvalidArgTypError(
                     callee_diag_str,
                     i + 1,
@@ -863,7 +703,7 @@ class TypCheck:
         # Both operands are checked; never coerces to bool without a special case.
         lhs_typ = self._check_expr(op_ast.lhs, e, None)
         lhs_coercion = self._record_coercion(op_ast.lhs, lhs_typ, typs.BOOL)
-        if isinstance(lhs_coercion, Invalid):
+        if isinstance(lhs_coercion, check_results.Invalid):
             raise errors.InvalidBinOpArgTypError(
                 op_ast.op.name,
                 op_ast.op.span,
@@ -875,7 +715,7 @@ class TypCheck:
 
         rhs_typ = self._check_expr(op_ast.rhs, e, None)
         rhs_coercion = self._record_coercion(op_ast.rhs, rhs_typ, typs.BOOL)
-        if isinstance(rhs_coercion, Invalid):
+        if isinstance(rhs_coercion, check_results.Invalid):
             raise errors.InvalidBinOpArgTypError(
                 op_ast.op.name,
                 op_ast.op.span,
@@ -905,7 +745,7 @@ class TypCheck:
     def _check_not_expr(self, op_ast: ast.UnaryOpExpr, e: ir_env.Env) -> typs.Typ:
         operand_typ = self._check_expr(op_ast.operand, e, None)
         coercion = self._record_coercion(op_ast.operand, operand_typ, typs.BOOL)
-        if isinstance(coercion, Invalid):
+        if isinstance(coercion, check_results.Invalid):
             raise errors.InvalidUnaryOpArgTypError(
                 op_ast.op.name,
                 op_ast.op.span,
@@ -1007,7 +847,7 @@ class TypCheck:
 
         index_typ = self._check_expr(aa_expr.index, e, typs.USIZE)
         index_coercion = self._record_coercion(aa_expr.index, index_typ, typs.USIZE)
-        if isinstance(index_coercion, Invalid):
+        if isinstance(index_coercion, check_results.Invalid):
             raise errors.InvalidIndexTypError(index_typ.name, aa_expr.index.span)
 
         return arr_typ.element_typ
@@ -1057,7 +897,7 @@ class TypCheck:
             value_ast = field_value_asts[field.name]
             value_typ = field_value_typs[field.name]
             coercion = self._record_coercion(value_ast, value_typ, field.typ)
-            if isinstance(coercion, Invalid):
+            if isinstance(coercion, check_results.Invalid):
                 raise errors.IncompatibleStructFieldTypError(
                     field.name,
                     struct_typ.name,
@@ -1090,7 +930,7 @@ class TypCheck:
         for i, elt_ast in enumerate(elements):
             elt_typ_i = self._check_expr(elt_ast, e, elt_typ)
             coercion = self._record_coercion(elt_ast, elt_typ_i, elt_typ)
-            if isinstance(coercion, Invalid):
+            if isinstance(coercion, check_results.Invalid):
                 raise errors.IncompatibleTypInArrayExprError(
                     elt_typ_i.name, i, elt_ast.span, arr_typ.name
                 )
@@ -1233,7 +1073,7 @@ class TypCheck:
             # matching CfgBuilder._build_ret_stmt's own never-typed early
             # return, which skips coercion entirely.
             coercion = self._record_coercion(ret_ast.expr, expr_typ, ret_typ)
-            if isinstance(coercion, Invalid):
+            if isinstance(coercion, check_results.Invalid):
                 raise errors.InvalidRetTypError(
                     fn_name,
                     ret_typ.name,
@@ -1297,7 +1137,7 @@ class TypCheck:
         assert declared_typ is not None
         self.results._set_let_declared_typ(let_ast, declared_typ)
         coercion = self._record_coercion(let_ast.expr, expr_typ, declared_typ)
-        if isinstance(coercion, Invalid):
+        if isinstance(coercion, check_results.Invalid):
             raise errors.IncompatibleLetTypError(
                 let_ast.ident.name,
                 declared_typ.name,
@@ -1316,7 +1156,7 @@ class TypCheck:
             raise errors.AssignToConstError(ass_ast.place.span)
 
         coercion = self._record_coercion(ass_ast.expr, expr_typ, place_typ)
-        if isinstance(coercion, Invalid):
+        if isinstance(coercion, check_results.Invalid):
             raise errors.IncompatibleAssignmentTypError(
                 expr_typ.name, place_typ.name, ass_ast.expr.span, ass_ast.place.span
             )
@@ -1335,17 +1175,17 @@ class TypCheck:
 
     def _record_coercion(
         self, node: ast.Ast, value_typ: typs.Typ, target: typs.Typ
-    ) -> Optional[Coercion]:
+    ) -> Optional[check_results.Coercion]:
         """Decide and record how ``node`` converts from ``value_typ`` to ``target``."""
         if value_typ == target:
             coercion = None
         elif value_typ == typs.NEVER:
-            coercion = NeverDiverge(target)
+            coercion = check_results.NeverDiverge(target)
         elif not value_typ.coerces_to(target):
-            coercion = Invalid()
+            coercion = check_results.Invalid()
         elif isinstance(target, typs.IntTyp):
-            coercion = IntExt(target)
+            coercion = check_results.IntExt(target)
         else:
-            coercion = PtrMutRelax()
+            coercion = check_results.PtrMutRelax()
         self.results._set_coercion(node, coercion)
         return coercion

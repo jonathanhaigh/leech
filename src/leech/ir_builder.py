@@ -15,6 +15,7 @@ from typing import Final, Optional, cast
 from leech import (
     asserts,
     ast,
+    check_results,
     ir_module,
     ir_traits,
     ir_values,
@@ -50,7 +51,7 @@ class CfgBuilder:
         end_bb: ir_values.BasicBlock
 
     _fn: Final[Optional[ir_module.FnInstance]]
-    _typ_check_results: Final[typcheck.TypCheckResults]
+    _typ_check_results: Final[check_results.TypCheckResults]
     _impl_registry: Final[ir_traits.ImplRegistry]
     _panic_ref: Final[Optional[ir_module.FnRef]]
     _comptime_arg_mapping: Final[Mapping[typs.ComptimeParamTyp, typs.Typ]]
@@ -66,7 +67,7 @@ class CfgBuilder:
 
     def __init__(
         self,
-        typ_check_results: typcheck.TypCheckResults,
+        typ_check_results: check_results.TypCheckResults,
         impl_registry: ir_traits.ImplRegistry,
         panic_ref: Optional[ir_module.FnRef],
         fn: Optional[ir_module.FnInstance] = None,
@@ -1028,9 +1029,9 @@ class CfgBuilder:
         match coercion:
             case None:
                 return value
-            case typcheck.Invalid():
+            case check_results.Invalid():
                 return None
-            case typcheck.NeverDiverge(target=target):
+            case check_results.NeverDiverge(target=target):
                 # A diverging expression never actually produces a value,
                 # so it coerces to any type - by the time a real value
                 # would be read here, control can't have reached this
@@ -1044,9 +1045,9 @@ class CfgBuilder:
                 return ir_values.UndefValue(
                     target.substitute_typ_params(self._comptime_arg_mapping), node
                 )
-            case typcheck.IntExt(target=target):
+            case check_results.IntExt(target=target):
                 return self._curr_bb.int_ext(value, target, node)
-            case typcheck.PtrMutRelax():
+            case check_results.PtrMutRelax():
                 # A *mut T given where a *T is wanted needs nothing
                 # emitted - the two have the same representation.
                 return value
