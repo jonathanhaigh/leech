@@ -275,26 +275,20 @@ then introduce.
 - [ ] `build_fn`'s parameter loop: allocate from the recorded parameter type rather than
   `param.typ` with a hardcoded `typs.CONST`, so the two phases agree on parameter mutability
   too.
-- [ ] **Relax `StoreInstr` first — otherwise this task crashes on its own regression test.**
-  `_coerce`'s `PtrMutRelax` case returns the value untouched, so a coerced `&a` still has type
-  `*mut i32` while the recorded local type is `*i32`. Allocating from the recorded type makes
-  `StoreInstr.__init__`'s `asserts.assert_eq(value.typ, dest_typ.pointee_typ)`
-  (`src/leech/ir_values.py:667`) fail for exactly the case this task exists to fix. Before
-  changing any alloca:
-  - Widen `StoreInstr`'s check to accept a value whose type differs from the destination
-    pointee *only* by a mut-to-const pointer relaxation: both `typs.PtrTyp`, equal
-    `pointee_typ`, source `MUT`, destination `CONST`.
-  - Do **not** express this as `value.typ.coerces_to(dest_typ.pointee_typ)` — that also admits
-    `IntExt`, where the representations genuinely differ and an instruction is required. The
-    assertion would then stop catching a real class of bug.
-  - Give it a comment saying why it is sound: `PtrMutRelax` exists precisely because the two
-    share a representation and nothing is emitted.
+- [ ] **Give `PtrMutRelax` a representation-preserving retype first — otherwise this task
+  crashes on its own regression test.** `_coerce`'s `PtrMutRelax` case returns the value
+  untouched, so a coerced `&a` still has type `*mut i32` while the recorded local type is
+  `*i32`. Allocating from the recorded type makes `StoreInstr.__init__`'s
+  `asserts.assert_eq(value.typ, dest_typ.pointee_typ)` fail for exactly the case this task
+  exists to fix. Before changing any alloca:
+  - Add a `PtrMutRelaxInstr` (and a comptime counterpart) that returns a `*T`-typed value
+    over the same storage, so the IR's Leech type tracks the coercion; the two pointer types
+    share an LLVM representation, so codegen emits nothing for it.
+  - Keep `StoreInstr`'s strict `asserts.assert_eq(value.typ, dest_typ.pointee_typ)` rather
+    than teaching it a mut-to-const special case, so it still reports both types on a genuine
+    mismatch.
   - This affects `_build_assignment_stmt` too, which stores into a place whose pointee now
     comes from the recorded type.
-  - `StoreInstr` is the only affected assertion — `CallInstr` does not check arguments against
-    parameter types, and the remaining `assert_eq`s in `ir_values.py` (`BinOpInstr` operands,
-    `PhiInstr` incoming values, `ComptimeArray` elements) are not on a coercion path that can
-    produce this mismatch. Re-confirm that before widening anything else.
 - [ ] Where the stored value must be coerced before the store, keep the existing `_coerce`
   call; only the *storage* type changes.
 - [ ] Add a regression test for the divergence this fixes:
@@ -588,7 +582,8 @@ can be developed in parallel with Tasks 5 and 6, merging on top of Task 4.
 - `typcheck.py` exposes no flexible-literal or peer-type helper: `_is_flexible_int_lit`,
   `_resolve_peer_typ`, `_match_arm_check_order` and `_match_constructor_space` are all private.
 - `CfgBuilder` calls no function from `patterns`, and derives no type it could have read.
-- Every value `_build_expr` produces is asserted against a recorded type, or is `never`.
+- Every value `_build_expr` produces in `VALUE` context is asserted against a recorded type,
+  or is `never`; `PLACE` context is asserted only where a `place_typ` was recorded.
 - `patterns.build_match_plan` is the only place usefulness or coverage is computed.
 - Every IR corpus entry that existed at the `2cb0d4b` baseline is byte-identical to it. The
   one entry added after Task 5 is the void-`if` program that could not compile at baseline,

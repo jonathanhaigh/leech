@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Final, Optional
 from leech import asserts, ast, patterns, resolve, typs
 
 if TYPE_CHECKING:
-    # Runtime imports are local because ir_module imports this module.
+    # ir_module imports this module, so it can only be imported here for
+    # type annotations.
     from leech import ir_module
 
 
@@ -133,8 +134,7 @@ class TypCheckResults:
         """Return ``node``'s resolved (possibly still abstract) type.
 
         A ``StructTyp`` or ``ArrayTyp`` depending on which kind of literal
-        ``node`` turned out to be - callers match on the result to tell
-        which.
+        ``node`` turned out to be; the result must be matched to tell which.
         """
         return self._brace_expr_typs[node]
 

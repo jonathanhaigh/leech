@@ -245,17 +245,11 @@ that can produce this mismatch; `ComptimeArray`'s element check and `ComptimeStr
 check run at construction, where every value is a freshly-built `UndefValue` of the declared
 type — the *coerced* values arrive later through `insert_value`, which asserts nothing.
 
-The resolution is to let `StoreInstr` accept a value whose type differs from the destination
-pointee *only* by a mut-to-const pointer relaxation. That is not a weakening: it writes down
-an invariant the codebase already relies on, stated in `PtrMutRelax`'s own docstring. The
-predicate must be exactly that relaxation — same pointee type, `MUT` source, `CONST`
-destination — and must not be spelled as `value.typ.coerces_to(...)`, which would also admit
-`IntExt`, where the representations genuinely differ and a real instruction is required.
-
-The alternative — giving `_coerce` a representation-preserving retype value so the static type
-tracks the coercion target — is cleaner in principle and rejected here for cost: it is new
-`ir_values` machinery needing `codegen` and `comptime.Interpreter` arms, for one assertion
-site. If a second site ever needs the same relaxation, that trade flips.
+The resolution is to give `_coerce` a representation-preserving retype value — a
+`PtrMutRelaxInstr` with a comptime counterpart — so the IR's Leech type tracks the coercion.
+The two pointer types share an LLVM representation, so codegen emits nothing for it, and
+`StoreInstr` keeps its strict `asserts.assert_eq(value.typ, dest_typ.pointee_typ)`, which
+continues to report both types on a genuine mismatch.
 
 **3. The match plan.** A `match` expression's whole pattern analysis is done once, in
 `patterns.py`, and recorded:

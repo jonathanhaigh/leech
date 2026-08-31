@@ -4,7 +4,8 @@
 
 """AST-to-IR lowering for already type-checked programs.
 
-Lowering trusts and reuses the decisions recorded in ``TypCheckResults``.
+Walks the AST in source order and emits instructions, reading every
+semantic decision from ``check_results`` rather than re-deriving it.
 """
 
 import dataclasses
@@ -350,7 +351,7 @@ class CfgBuilder:
             # values uncovered, so a recorded plan always ends with an
             # unconditional test: the loop above breaks and test_bb is
             # already terminated.
-            assert test_bb.terminated
+            assert test_bb.terminated, "a recorded match plan must end with an unconditional test"
         else:
             self._branch(end_bb, match_ast)
 

@@ -4,8 +4,10 @@
 
 """Type checking before LLVM lowering.
 
-Each body is checked completely, including unreachable code, and lowering decisions are
-recorded by AST-node identity in ``TypCheckResults``.
+Type checking is the sole semantic decider: it checks each body
+completely, including unreachable code, and records every decision by
+AST-node identity in its ``check_results.TypCheckResults``, the interface
+to lowering.
 """
 
 import contextlib
