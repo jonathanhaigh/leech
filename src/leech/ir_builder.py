@@ -24,7 +24,6 @@ from leech import (
     patterns,
     resolve,
     signage,
-    typcheck,
     typs,
 )
 
@@ -330,24 +329,30 @@ class CfgBuilder:
             scrutinee_value, scrutinee_typ, match_ast
         )
 
-        rows = [self._typ_check_results.match_arm_pattern(arm_ast) for arm_ast in match_ast.arms]
-        space = typcheck.match_constructor_space(scrutinee_typ)
-        reachable_indices = [
-            i for i, row in enumerate(rows) if patterns.is_useful(rows[:i], row, space)
-        ]
-        if reachable_indices:
-            first_test_bb = self._add_bb("match_test")
-            self._branch(first_test_bb, match_ast)
-            self._build_match_tests(
-                first_test_bb,
-                reachable_indices,
-                arm_bbs,
-                rows,
-                space,
-                comparison_value,
-                comparison_typ,
-                match_ast,
-            )
+        plan = self._typ_check_results.match_plan(match_ast)
+        if plan.tests:
+            test_bb = self._add_bb("match_test")
+            self._branch(test_bb, match_ast)
+            for test in plan.tests:
+                arm_ast = match_ast.arms[test.arm_index]
+                if test.constructors == ():
+                    # Entered unconditionally, and always the final test.
+                    self._set_position(test_bb)
+                    self._branch(arm_bbs[test.arm_index], arm_ast)
+                    break
+                for constructor in test.constructors:
+                    self._set_position(test_bb)
+                    next_bb = self._add_bb("match_test")
+                    condition = self._build_match_compare(
+                        comparison_value, constructor, comparison_typ, arm_ast
+                    )
+                    self._cbranch(condition, arm_bbs[test.arm_index], next_bb, arm_ast)
+                    test_bb = next_bb
+            # The checker rejects a match whose last reachable arm leaves
+            # values uncovered, so a recorded plan always ends with an
+            # unconditional test: the loop above breaks and test_bb is
+            # already terminated.
+            assert test_bb.terminated
         else:
             self._branch(end_bb, match_ast)
 
@@ -361,7 +366,7 @@ class CfgBuilder:
 
         self._set_position(end_bb)
         incoming: dict[ir_values.BasicBlock, ir_values.Value] = {}
-        for i in reachable_indices:
+        for i in plan.reachable_arms:
             value, last_bb, reaches_end = arm_results[i]
             if reaches_end:
                 incoming[last_bb] = value
@@ -373,71 +378,6 @@ class CfgBuilder:
         if all(value.typ == typs.VOID for value in incoming.values()):
             return ir_values.VoidValue(match_ast)
         return self._in_context(self._curr_bb.phi(incoming, match_ast), ctx)
-
-    def _build_match_tests(
-        self,
-        start_bb: ir_values.BasicBlock,
-        reachable_indices: list[int],
-        arm_bbs: list[ir_values.BasicBlock],
-        rows: list[patterns.PatternKind],
-        space: patterns.ConstructorSpace,
-        comparison_value: ir_values.Value,
-        comparison_typ: typs.Typ,
-        match_ast: ast.MatchExpr,
-    ) -> None:
-        current_bb = start_bb
-        for arm_index in reachable_indices:
-            arm_ast = match_ast.arms[arm_index]
-            row = rows[arm_index]
-            if self._match_arm_is_wildcard(row):
-                self._set_position(current_bb)
-                self._branch(arm_bbs[arm_index], arm_ast)
-                return
-
-            remaining = patterns.missing_patterns(rows[:arm_index], space)
-            if self._match_arm_covers_remaining(row, remaining, space):
-                self._set_position(current_bb)
-                self._branch(arm_bbs[arm_index], arm_ast)
-                return
-
-            constructors = [
-                constructor
-                for constructor in self._typ_check_results.match_arm_constructors(arm_ast)
-                if constructor is not None
-            ]
-            for constructor in constructors:
-                self._set_position(current_bb)
-                next_bb = self._add_bb("match_test")
-                condition = self._build_match_compare(
-                    comparison_value, constructor, comparison_typ, arm_ast
-                )
-                self._cbranch(condition, arm_bbs[arm_index], next_bb, arm_ast)
-                current_bb = next_bb
-
-        # Type checking makes this fallback unreachable, but it gives the
-        # last generated test block a terminator if something is off.
-        self._set_position(current_bb)
-        self._curr_bb.unreachable(match_ast)
-
-    def _match_arm_is_wildcard(self, row: patterns.PatternKind) -> bool:
-        match row:
-            case patterns.WildcardPattern():
-                return True
-            case patterns.ConstructorPattern():
-                return False
-            case patterns.OrPattern(alternatives):
-                return any(
-                    isinstance(alternative, patterns.WildcardPattern)
-                    for alternative in alternatives
-                )
-
-    def _match_arm_covers_remaining(
-        self,
-        row: patterns.PatternKind,
-        remaining: list[patterns.Witness],
-        space: patterns.ConstructorSpace,
-    ) -> bool:
-        return all(not patterns.is_useful([row], witness.pattern, space) for witness in remaining)
 
     def _match_comparison_value(
         self, scrutinee_value: ir_values.Value, scrutinee_typ: typs.Typ, ast_node: ast.Ast

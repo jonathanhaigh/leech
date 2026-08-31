@@ -437,6 +437,24 @@ def test_match_non_exhaustive_error(tmp_path):
         util.compile_str(tmp_path, src)
 
 
+def test_match_non_exhaustive_with_redundant_arm_warns(tmp_path, monkeypatch):
+    monkeypatch.setattr(errors, "_errors", [])
+    monkeypatch.setattr(errors, "_error_level", errors.NOTE)
+    src = """
+    enum Color { Red, Green, Blue }
+    pub fn main() i32 {
+        let c = Color::Red;
+        return match (c) {
+            Color::Red => 0i32,
+            Color::Red => 1i32,
+        };
+    }
+    """
+    with pytest.raises(errors.NonExhaustiveMatchError):
+        util.compile_str(tmp_path, src)
+    assert [type(err) for err in errors.all_errors()] == [errors.UnreachableMatchArmWarning]
+
+
 def test_match_arm_typ_mismatch_error(tmp_path):
     src = """
     pub fn main() i32 {

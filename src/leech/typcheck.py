@@ -61,7 +61,7 @@ def _match_arm_check_order(arms: Sequence[ast.MatchArm]) -> tuple[list[int], lis
     return fixed_indices, flexible_indices
 
 
-def match_constructor_space(scrutinee_typ: typs.Typ) -> patterns.ConstructorSpace:
+def _match_constructor_space(scrutinee_typ: typs.Typ) -> patterns.ConstructorSpace:
     """Return the complete constructor space for a match scrutinee type."""
     match scrutinee_typ:
         case typs.EnumTyp():
@@ -290,16 +290,14 @@ class TypCheck:
     ) -> typs.Typ:
         scrutinee_typ = self._check_expr(match_ast.scrutinee, e, None)
         self.results._set_match_scrutinee_typ(match_ast, scrutinee_typ)
-        space = match_constructor_space(scrutinee_typ)
+        space = _match_constructor_space(scrutinee_typ)
 
         arm_envs: dict[int, ir_env.Env] = {}
-        arm_patterns: dict[int, patterns.PatternKind] = {}
+        arm_patterns: list[patterns.PatternKind] = []
         for i, arm_ast in enumerate(match_ast.arms):
             arm_env = e.new_child()
             arm_envs[i] = arm_env
-            pattern = self._check_pattern(arm_ast.pattern, scrutinee_typ, arm_env)
-            arm_patterns[i] = pattern
-            self.results._set_match_arm_pattern(arm_ast, pattern)
+            arm_patterns.append(self._check_pattern(arm_ast.pattern, scrutinee_typ, arm_env))
 
         fixed_indices, flexible_indices = _match_arm_check_order(match_ast.arms)
         arm_typs: dict[int, typs.Typ] = {}
@@ -333,13 +331,14 @@ class TypCheck:
                     arm_ast.body.span,
                 )
 
-        rows = [arm_patterns[i] for i in range(len(match_ast.arms))]
+        plan = patterns.build_match_plan(arm_patterns, space)
+        reachable_arms = set(plan.reachable_arms)
         for i, arm_ast in enumerate(match_ast.arms):
-            if not patterns.is_useful(rows[:i], rows[i], space):
+            if i not in reachable_arms:
                 errors.register_error(errors.UnreachableMatchArmWarning(arm_ast.span))
-        witnesses = patterns.missing_patterns(rows, space)
-        if witnesses:
-            raise errors.NonExhaustiveMatchError(match_ast.span, witnesses)
+        if plan.missing:
+            raise errors.NonExhaustiveMatchError(match_ast.span, plan.missing)
+        self.results._set_match_plan(match_ast, plan)
 
         return result_typ
 

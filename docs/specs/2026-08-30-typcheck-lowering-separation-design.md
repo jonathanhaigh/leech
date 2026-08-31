@@ -276,7 +276,6 @@ class MatchPlan:
     tests: tuple[ArmTest, ...]
     reachable_arms: tuple[int, ...]
     missing: tuple[Witness, ...]
-    falls_through: bool
 
 
 def build_match_plan(rows: Sequence[PatternKind], space: ConstructorSpace) -> MatchPlan: ...
@@ -300,9 +299,6 @@ contract, asserted in `build_match_plan` and tested directly:
   the same thing, so `build_match_plan` never emits a non-final empty entry.
 - An or-pattern with a wildcard alternative yields `constructors == ()`, matching today's
   `_match_arm_is_wildcard`, which treats *any* wildcard alternative as covering everything.
-- `falls_through` is `True` exactly when `tests` has no unconditional final entry. Lowering
-  then emits `unreachable` on the last test's false edge; when it is `False`, the last entry's
-  branch is unconditional and there is no dangling edge.
 - `tests == ()` means no arm is reachable at all, and lowering branches straight to the merge
   block.
 
@@ -315,14 +311,14 @@ after it are unreachable arms whose bodies are still lowered, not reachable arms
 test. An implementation that truncates `tests` under some "already covered" condition is
 solving a problem that cannot arise.
 
-`falls_through` is defensive and unreachable for any accepted program. A match that reaches
-lowering is exhaustive, and exhaustiveness over a closed space means the last reachable arm
-covers the remainder, while an open space (integers) can only be exhausted by a wildcard —
-either way the final entry is unconditional. The zero-reachable-arm case, such as a `never`
-scrutinee, is handled by `tests == ()` instead. This mirrors the existing comment in
-`_build_match_tests`, which already calls its fallback unreachable and keeps it only so the
-last generated test block has a terminator. It is therefore exercised by direct
-`build_match_plan` unit tests on hand-built matrices, never by a compiled program.
+The unconditional final entry is guaranteed for any recorded plan. A match that reaches
+lowering is exhaustive: over a closed space that means the last reachable arm covers the
+remainder, and an open space (integers) can only be exhausted by a wildcard — either way the
+final test is unconditional. The zero-reachable-arm case (a `never` scrutinee) goes through
+`tests == ()` instead. Lowering asserts this guarantee instead of carrying it as a field: it
+walks `plan.tests`, breaks at the unconditional entry, and asserts the block it ended in is
+already terminated, so a non-exhaustive plan reaching lowering fails loudly rather than
+silently falling off the end of the test chain.
 
 **Unreachable arms' bodies must still be lowered.** Today `_build_match_expr` lowers every
 arm's body while emitting tests only for the reachable ones; the unreachable blocks end up
@@ -718,7 +714,8 @@ extensibility boundary, because it would be easy to overclaim here:
   `patterns.py`, and the plan carries whatever `ConstructorKind` is.
 - **Guards (#62)** need a new field. A guarded arm must count as covering nothing while still
   being tested, which no combination of the current fields expresses — `ArmTest` would gain a
-  guard marker and `falls_through` would have to account for a guard failing.
+  guard marker, and lowering's assumption that the final test is unconditional would have to
+  account for a guard failing.
 - **Struct patterns (#65)** need a different *shape*. Constructors gain arity, so tests nest,
   and a flat `tests` chain cannot express a tree.
 

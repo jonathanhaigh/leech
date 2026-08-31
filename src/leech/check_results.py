@@ -18,28 +18,6 @@ if TYPE_CHECKING:
     from leech import ir_module
 
 
-def _pattern_constructor_candidates(
-    pattern: patterns.PatternKind,
-) -> tuple[Optional[patterns.ConstructorKind], ...]:
-    """Return one candidate constructor per top-level pattern alternative.
-
-    Wildcards and bindings have no constructor, so their entry is ``None``.
-    """
-    match pattern:
-        case patterns.WildcardPattern():
-            return (None,)
-        case patterns.ConstructorPattern(constructor):
-            return (constructor,)
-        case patterns.OrPattern(alternatives):
-            result: list[Optional[patterns.ConstructorKind]] = []
-            for alternative in alternatives:
-                if isinstance(alternative, patterns.ConstructorPattern):
-                    result.append(alternative.constructor)
-                else:
-                    result.append(None)
-            return tuple(result)
-
-
 class Coercion:
     """A required conversion to the type an expression's context expects."""
 
@@ -83,7 +61,7 @@ class TypCheckResults:
     _struct_field_indices: Final[dict[ast.FieldAccessExpr | ast.StructFieldExpr, int]]
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
     _match_scrutinee_typs: Final[dict[ast.MatchExpr, typs.Typ]]
-    _match_arm_patterns: Final[dict[ast.MatchArm, patterns.PatternKind]]
+    _match_plans: Final[dict[ast.MatchExpr, patterns.MatchPlan]]
     _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
     _expr_typs: Final[dict[ast.Expr, typs.Typ]]
     _place_typs: Final[dict[ast.Expr, typs.PtrTyp]]
@@ -101,7 +79,7 @@ class TypCheckResults:
         self._struct_field_indices = {}
         self._let_declared_typs = {}
         self._match_scrutinee_typs = {}
-        self._match_arm_patterns = {}
+        self._match_plans = {}
         self._local_typs = {}
         self._expr_typs = {}
         self._place_typs = {}
@@ -178,18 +156,12 @@ class TypCheckResults:
     def _set_match_scrutinee_typ(self, node: ast.MatchExpr, typ: typs.Typ) -> None:
         self._set_fact(self._match_scrutinee_typs, node, typ)
 
-    def match_arm_pattern(self, node: ast.MatchArm) -> patterns.PatternKind:
-        """Return ``node``'s checked, translated pattern."""
-        return self._match_arm_patterns[node]
+    def match_plan(self, node: ast.MatchExpr) -> patterns.MatchPlan:
+        """Return ``node``'s recorded match plan."""
+        return self._match_plans[node]
 
-    def _set_match_arm_pattern(self, node: ast.MatchArm, pattern: patterns.PatternKind) -> None:
-        self._set_fact(self._match_arm_patterns, node, pattern)
-
-    def match_arm_constructors(
-        self, node: ast.MatchArm
-    ) -> tuple[Optional[patterns.ConstructorKind], ...]:
-        """Return one resolved constructor candidate per pattern alternative."""
-        return _pattern_constructor_candidates(self._match_arm_patterns[node])
+    def _set_match_plan(self, node: ast.MatchExpr, plan: patterns.MatchPlan) -> None:
+        self._set_fact(self._match_plans, node, plan)
 
     def local_typ(self, decl: resolve.LocalDecl) -> typs.PtrTyp:
         """Return the bound type and mutability for a local declaration."""

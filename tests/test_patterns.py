@@ -163,3 +163,70 @@ def test_witness_rendering():
     assert patterns.Witness(_bool(True)).render() == "true"
     assert patterns.Witness(_bool(False)).render() == "false"
     assert patterns.Witness(_wildcard()).render() == "_"
+
+
+def test_build_match_plan_wildcard_terminated_chain():
+    space = _enum_space((0, "Red"), (1, "Green"), (2, "Blue"))
+    rows = [_variant(0, "Red"), _variant(1, "Green"), _wildcard()]
+    plan = patterns.build_match_plan(rows, space)
+    assert plan.reachable_arms == (0, 1, 2)
+    assert plan.missing == ()
+    assert [test.arm_index for test in plan.tests] == [0, 1, 2]
+    assert [test.constructors for test in plan.tests] == [
+        (patterns.VariantConstructor(0, "Red"),),
+        (patterns.VariantConstructor(1, "Green"),),
+        (),
+    ]
+
+
+def test_build_match_plan_last_arm_covers_remainder():
+    space = _enum_space((0, "Red"), (1, "Green"), (2, "Blue"))
+    rows = [_or(_variant(0, "Red"), _variant(1, "Green")), _variant(2, "Blue")]
+    plan = patterns.build_match_plan(rows, space)
+    assert plan.reachable_arms == (0, 1)
+    assert plan.missing == ()
+    assert [test.arm_index for test in plan.tests] == [0, 1]
+    assert plan.tests[0].constructors == (
+        patterns.VariantConstructor(0, "Red"),
+        patterns.VariantConstructor(1, "Green"),
+    )
+    assert plan.tests[1].constructors == ()
+
+
+def test_build_match_plan_non_exhaustive_matrix():
+    space = _enum_space((0, "Red"), (1, "Green"), (2, "Blue"))
+    rows = [_variant(0, "Red"), _variant(1, "Green")]
+    plan = patterns.build_match_plan(rows, space)
+    assert plan.reachable_arms == (0, 1)
+    assert [test.arm_index for test in plan.tests] == [0, 1]
+    assert plan.tests[0].constructors == (patterns.VariantConstructor(0, "Red"),)
+    assert plan.tests[1].constructors == (patterns.VariantConstructor(1, "Green"),)
+    assert [witness.render() for witness in plan.missing] == ["Blue"]
+
+
+def test_build_match_plan_unreachable_arm():
+    space = _enum_space((0, "Red"), (1, "Green"), (2, "Blue"))
+    rows = [_wildcard(), _variant(0, "Red")]
+    plan = patterns.build_match_plan(rows, space)
+    assert plan.reachable_arms == (0,)
+    assert plan.missing == ()
+    assert [test.arm_index for test in plan.tests] == [0]
+    assert plan.tests[0].constructors == ()
+
+
+def test_build_match_plan_or_pattern_with_wildcard_alternative():
+    space = _enum_space((0, "Red"), (1, "Green"))
+    rows = [_or(_variant(0, "Red"), _wildcard())]
+    plan = patterns.build_match_plan(rows, space)
+    assert plan.reachable_arms == (0,)
+    assert plan.missing == ()
+    assert [test.arm_index for test in plan.tests] == [0]
+    assert plan.tests[0].constructors == ()
+
+
+def test_build_match_plan_empty_arm_list():
+    space = _never_space()
+    plan = patterns.build_match_plan([], space)
+    assert plan.reachable_arms == ()
+    assert plan.tests == ()
+    assert plan.missing == ()

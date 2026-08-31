@@ -444,8 +444,7 @@ then introduce.
 - [ ] Add `build_match_plan(rows, space) -> MatchPlan`, moving in, unchanged, the logic
   currently split across `TypCheck._check_match_expr`'s usefulness loop and exhaustiveness
   call, and `CfgBuilder._build_match_tests`, `_match_arm_is_wildcard` and
-  `_match_arm_covers_remaining`. It returns `tests`, `reachable_arms`, `missing` and
-  `falls_through`.
+  `_match_arm_covers_remaining`. It returns `tests`, `reachable_arms` and `missing`.
 - [ ] **Move the constructor-candidate extraction into `patterns.py` as a private helper.**
   `ArmTest.constructors` is what `TypCheckResults.match_arm_constructors` produces today via
   `typcheck._pattern_constructor_candidates` (dropping the `None` entries). `patterns.py`
@@ -455,28 +454,28 @@ then introduce.
   exactly one `ArmTest` per arm in `reachable_arms`, in ascending `arm_index`, and none for
   any other arm; `constructors == ()` only as the final entry, meaning "entered
   unconditionally"; an or-pattern with a wildcard alternative yielding `constructors == ()`;
-  `falls_through` true exactly when there is no unconditional final entry; `tests == ()`
-  meaning no arm is reachable.
+  `tests == ()` meaning no arm is reachable.
 - [ ] Do **not** write an invariant saying `tests` may be a proper prefix of `reachable_arms`.
   It cannot be: once an arm is entered unconditionally, every later arm fails `is_useful` and
   so is absent from `reachable_arms` entirely. Arms after the unconditional one are unreachable
   arms whose bodies are still lowered, not reachable arms lacking a test. Truncating `tests`
   would be solving a problem that cannot arise.
-- [ ] Cover `falls_through` **only** in the `build_match_plan` unit tests, on a hand-built
-  non-exhaustive matrix. It is unreachable for any accepted program: an exhaustive match over a
-  closed space ends with an arm covering the remainder, and an open space can only be exhausted
-  by a wildcard, so the final entry is always unconditional. The zero-reachable-arm case (a
-  `never` scrutinee) goes through `tests == ()` instead. This matches the existing comment in
-  `_build_match_tests` calling its own fallback unreachable.
+- [ ] **Have lowering assume the final test is unconditional.** The checker rejects a
+  non-exhaustive match before recording, so a recorded plan's last reachable arm always covers
+  the remainder and the test chain always ends with a `constructors == ()` entry. Lowering
+  breaks at that entry and asserts the block it ended in is already terminated, so a
+  non-exhaustive plan reaching lowering fails loudly instead of needing an `unreachable`
+  fallback. The non-exhaustive shape (missing witnesses, no unconditional final entry) is
+  covered directly in the `build_match_plan` unit tests.
 - [ ] `TypCheck._check_match_expr` calls it once. Raise `NonExhaustiveMatchError` when
   `plan.missing` is non-empty; emit `UnreachableMatchArmWarning` for each arm index not in
   `plan.reachable_arms`; record the plan only after both. Delete the separate `is_useful` loop
   and `missing_patterns` call.
 - [ ] `CfgBuilder._build_match_expr` reads `results.match_plan(match_ast)`: branch to `end_bb`
   when `plan.tests` is empty; otherwise walk `plan.tests`, emitting an unconditional branch
-  for an empty `constructors` tuple and a comparison chain otherwise, and an `unreachable` at
-  the end when `plan.falls_through`. Delete `_build_match_tests`, `_match_arm_is_wildcard` and
-  `_match_arm_covers_remaining`.
+  for an empty `constructors` tuple and a comparison chain otherwise, and assert afterwards
+  that the final test block is already terminated. Delete `_build_match_tests`,
+  `_match_arm_is_wildcard` and `_match_arm_covers_remaining`.
 - [ ] **Keep lowering every arm's body, including unreachable arms', exactly as today.** It
   looks like free dead-code elimination to lower only `plan.reachable_arms`, and it is not:
   `_add_bb` draws names from a per-basename counter (`naming.VarNamer`), so blocks an
@@ -498,8 +497,8 @@ then introduce.
   `MatchPlan` / `ArmTest`; confirm no `patterns.<function>` call remains.
 - [ ] Add `tests/test_patterns.py` cases for `build_match_plan` directly — no compiler, just
   rows and spaces: a wildcard-terminated chain, a chain whose last arm covers the remainder, a
-  chain that falls through, an unreachable arm, an or-pattern with a wildcard alternative, and
-  an empty arm list.
+  non-exhaustive matrix (missing witnesses, no unconditional final entry), an unreachable arm,
+  an or-pattern with a wildcard alternative, and an empty arm list.
 - [ ] Confirm `tests/test_match.py` passes unchanged; if any test needed editing, the
   behaviour was not preserved — stop.
 - [ ] Full suite, lint, type check pass; IR corpus diff empty.

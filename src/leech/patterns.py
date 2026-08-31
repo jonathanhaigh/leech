@@ -21,6 +21,8 @@ import dataclasses
 from collections.abc import Sequence
 from typing import ClassVar
 
+from leech import asserts
+
 
 @dataclasses.dataclass(frozen=True)
 class Constructor:
@@ -137,6 +139,27 @@ class Witness:
         return _render_pattern(self.pattern)
 
 
+@dataclasses.dataclass(frozen=True)
+class ArmTest:
+    """One arm's entry in a match's test chain.
+
+    ``constructors == ()`` means the arm is entered unconditionally, in
+    which case it is always the final test.
+    """
+
+    arm_index: int
+    constructors: tuple[ConstructorKind, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class MatchPlan:
+    """How to lower one match, and what its arms cover."""
+
+    tests: tuple[ArmTest, ...]
+    reachable_arms: tuple[int, ...]
+    missing: tuple[Witness, ...]
+
+
 type Matrix = Sequence[tuple[PatternKind, ...]]
 """A pattern matrix: one row (a pattern per column) per match arm."""
 
@@ -154,6 +177,81 @@ def missing_patterns(matrix: Sequence[PatternKind], space: ConstructorSpace) -> 
     """Return one witness per uncovered value of a non-exhaustive matrix."""
     witnesses = _missing(tuple((pattern,) for pattern in matrix), space, 1)
     return [Witness(w[0]) for w in witnesses]
+
+
+def build_match_plan(rows: Sequence[PatternKind], space: ConstructorSpace) -> MatchPlan:
+    """Analyse one match's arm matrix into everything lowering needs.
+
+    ``tests`` holds one entry per reachable arm, in arm order, ending
+    unconditionally (``constructors == ()``) when some arm covers the
+    remaining values. ``missing`` is the witness patterns a
+    non-exhaustive match leaves uncovered, in which case ``tests`` ends
+    without an unconditional entry.
+    """
+    rows = tuple(rows)
+    reachable_arms = tuple(i for i, row in enumerate(rows) if is_useful(rows[:i], row, space))
+    missing = tuple(missing_patterns(rows, space))
+
+    tests_list: list[ArmTest] = []
+    for arm_index in reachable_arms:
+        row = rows[arm_index]
+        if _is_wildcard_row(row):
+            tests_list.append(ArmTest(arm_index, ()))
+            break
+        remaining = missing_patterns(rows[:arm_index], space)
+        if _covers_remaining(row, remaining, space):
+            tests_list.append(ArmTest(arm_index, ()))
+            break
+        tests_list.append(ArmTest(arm_index, _arm_constructors(row)))
+
+    tests = tuple(tests_list)
+    # Once an arm is entered unconditionally every later arm is
+    # unreachable, so the test chain is never a proper prefix of the
+    # reachable arms.
+    asserts.assert_eq([test.arm_index for test in tests], list(reachable_arms))
+    assert all(test.constructors != () for test in tests[:-1]), (
+        "only the final test may be entered unconditionally"
+    )
+
+    return MatchPlan(tests, reachable_arms, missing)
+
+
+def _is_wildcard_row(row: PatternKind) -> bool:
+    """Return whether ``row`` matches every value of the scrutinee."""
+    match row:
+        case WildcardPattern():
+            return True
+        case ConstructorPattern():
+            return False
+        case OrPattern(alternatives):
+            return any(isinstance(alternative, WildcardPattern) for alternative in alternatives)
+
+
+def _arm_constructors(row: PatternKind) -> tuple[ConstructorKind, ...]:
+    """Return the constructors one arm's test chain compares against.
+
+    Wildcard alternatives contribute nothing to the comparison.
+    """
+    match row:
+        case WildcardPattern():
+            # Unreachable from build_match_plan, which handles wildcard
+            # rows before asking for constructors; kept for a total match.
+            return ()
+        case ConstructorPattern(constructor):
+            return (constructor,)
+        case OrPattern(alternatives):
+            return tuple(
+                alternative.constructor
+                for alternative in alternatives
+                if isinstance(alternative, ConstructorPattern)
+            )
+
+
+def _covers_remaining(
+    row: PatternKind, remaining: Sequence[Witness], space: ConstructorSpace
+) -> bool:
+    """Return whether ``row`` matches every witness earlier arms miss."""
+    return all(not is_useful([row], witness.pattern, space) for witness in remaining)
 
 
 def specialize(constructor: ConstructorKind, matrix: Matrix) -> list[tuple[PatternKind, ...]]:
