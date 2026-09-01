@@ -50,15 +50,22 @@ class Invalid(Coercion):
     """The value's type doesn't coerce to the target at all."""
 
 
+type CoercionKind = NeverDiverge | PtrMutRelax | IntExt | Invalid
+"""Every coercion type checking can record for lowering."""
+
+type BraceExprTyp = typs.ArrayTyp | typs.StructTyp
+"""The resolved type of an array or struct brace literal."""
+
+
 class TypCheckResults:
     """Lowering facts for one checked body, keyed by AST-node identity."""
 
     resolutions: Final[resolve.Resolutions]
     _folded_int_lits: Final[dict[ast.IntLit | ast.UnaryOpExpr, tuple[typs.IntTyp, int]]]
-    _coercions: Final[dict[ast.Ast, Optional[Coercion]]]
+    _coercions: Final[dict[ast.Ast, Optional[CoercionKind]]]
     _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
     _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
-    _brace_expr_typs: Final[dict[ast.BraceExpr, typs.Typ]]
+    _brace_expr_typs: Final[dict[ast.BraceExpr, BraceExprTyp]]
     _struct_field_indices: Final[dict[ast.FieldAccessExpr | ast.StructFieldExpr, int]]
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
     _match_scrutinee_typs: Final[dict[ast.MatchExpr, typs.Typ]]
@@ -101,11 +108,11 @@ class TypCheckResults:
     ) -> None:
         self._set_fact(self._folded_int_lits, node, (typ, value))
 
-    def coercion(self, node: ast.Ast) -> Optional[Coercion]:
+    def coercion(self, node: ast.Ast) -> Optional[CoercionKind]:
         """Return ``node``'s coercion, or ``None`` when its type already matched."""
         return self._coercions[node]
 
-    def _set_coercion(self, node: ast.Ast, coercion: Optional[Coercion]) -> None:
+    def _set_coercion(self, node: ast.Ast, coercion: Optional[CoercionKind]) -> None:
         self._set_fact(self._coercions, node, coercion)
 
     def generic_call(
@@ -130,7 +137,7 @@ class TypCheckResults:
     ) -> None:
         self._generic_var_refs[node] = (fn, comptime_args)
 
-    def brace_expr_typ(self, node: ast.BraceExpr) -> typs.Typ:
+    def brace_expr_typ(self, node: ast.BraceExpr) -> BraceExprTyp:
         """Return ``node``'s resolved (possibly still abstract) type.
 
         A ``StructTyp`` or ``ArrayTyp`` depending on which kind of literal
@@ -138,7 +145,7 @@ class TypCheckResults:
         """
         return self._brace_expr_typs[node]
 
-    def _set_brace_expr_typ(self, node: ast.BraceExpr, typ: typs.Typ) -> None:
+    def _set_brace_expr_typ(self, node: ast.BraceExpr, typ: BraceExprTyp) -> None:
         self._set_fact(self._brace_expr_typs, node, typ)
 
     def struct_field_index(self, node: ast.FieldAccessExpr | ast.StructFieldExpr) -> int:

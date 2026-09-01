@@ -145,7 +145,7 @@ class CfgBuilder:
 
     def _build_expr(
         self,
-        expr_ast: ast.Expr,
+        expr_ast: ast.ExprKind,
         ctx: _ExprContext,
     ) -> ir_values.Value:
         value = self._build_expr_unchecked(expr_ast, ctx)
@@ -154,7 +154,7 @@ class CfgBuilder:
 
     def _build_expr_unchecked(
         self,
-        expr_ast: ast.Expr,
+        expr_ast: ast.ExprKind,
         ctx: _ExprContext,
     ) -> ir_values.Value:
         match expr_ast:
@@ -189,11 +189,9 @@ class CfgBuilder:
                 return self._build_field_access_expr(expr_ast, ctx)
             case ast.DerefExpr():
                 return self._build_deref_expr(expr_ast, ctx)
-            case _:
-                raise AssertionError(f"unhandled expression kind {expr_ast}")
 
     def _assert_recorded_typ(
-        self, value: ir_values.Value, expr_ast: ast.Expr, ctx: _ExprContext
+        self, value: ir_values.Value, expr_ast: ast.ExprKind, ctx: _ExprContext
     ) -> None:
         recorded = (
             self._typ_check_results.expr_typ(expr_ast)
@@ -288,7 +286,7 @@ class CfgBuilder:
 
     def _build_if_arm(
         self,
-        arm_ast: ast.Expr,
+        arm_ast: ast.ExprKind,
         arm_bb: ir_values.BasicBlock,
         end_bb: ir_values.BasicBlock,
         ctx: _ExprContext,
@@ -450,7 +448,7 @@ class CfgBuilder:
     def _build_call_expr(self, call_ast: ast.CallExpr, ctx: _ExprContext) -> ir_values.Value:
         """Lower a call, including method receivers and generic instances."""
         callee_ast = call_ast.callee
-        recv_ast: Optional[ast.Expr] = None
+        recv_ast: Optional[ast.ExprKind] = None
         recv_arg: Optional[ir_values.Value] = None
 
         generic_call = self._typ_check_results.generic_call(call_ast)
@@ -484,7 +482,7 @@ class CfgBuilder:
 
         fn_ptr_typ = asserts.checked_cast(callee.typ, typs.PtrTyp)
         asserts.checked_cast(fn_ptr_typ.pointee_typ, typs.CallableTyp)
-        arg_asts: list[ast.Expr] = ([recv_ast] if recv_ast is not None else []) + list(
+        arg_asts: list[ast.ExprKind] = ([recv_ast] if recv_ast is not None else []) + list(
             call_ast.args
         )
         lowered_args = tuple(
@@ -504,9 +502,18 @@ class CfgBuilder:
         ctx: _ExprContext,
     ) -> ir_values.Value:
         """Lower a binary operator expression (arithmetic or comparison)."""
-        if op_ast.op.name in ("and", "or"):
-            return self._build_logic_bin_op_expr(op_ast, ctx)
+        match op_ast.op.name:
+            case "and" | "or":
+                return self._build_logic_bin_op_expr(op_ast, ctx)
+            case "<" | "<=" | "==" | "!=" | ">=" | ">" | "+" | "-" | "*" | "/" as op:
+                return self._build_numeric_bin_op_expr(op_ast, op, ctx)
 
+    def _build_numeric_bin_op_expr(
+        self,
+        op_ast: ast.BinOpExpr,
+        op: ast.CmpOpName | ast.ArithmeticOpName,
+        ctx: _ExprContext,
+    ) -> ir_values.Value:
         lhs = self._build_expr(op_ast.lhs, _ExprContext.VALUE)
         propagated = self._propagate_never(lhs, op_ast.lhs, ctx)
         if propagated is not None:
@@ -519,7 +526,6 @@ class CfgBuilder:
         # lhs and rhs are already known (by TypCheck) to be equal integer
         # types by this point.
         lhs_typ = asserts.checked_cast(lhs.typ, typs.IntTyp)
-        op = op_ast.op.name
         match op:
             case "<" | "<=" | "==" | "!=" | ">=" | ">":
                 if lhs_typ.signage == signage.SIGNED:
@@ -527,15 +533,16 @@ class CfgBuilder:
                 else:
                     res = self._curr_bb.icmp_unsigned(op, lhs, rhs, op_ast)
             case "+":
-                res = self._build_checked_bin_op("add", lhs, rhs, op_ast)
+                checked = self._curr_bb.checked_add(lhs, rhs, op_ast)
+                res = self._build_checked_bin_op(checked, op_ast)
             case "-":
-                res = self._build_checked_bin_op("sub", lhs, rhs, op_ast)
+                checked = self._curr_bb.checked_sub(lhs, rhs, op_ast)
+                res = self._build_checked_bin_op(checked, op_ast)
             case "*":
-                res = self._build_checked_bin_op("mul", lhs, rhs, op_ast)
+                checked = self._curr_bb.checked_mul(lhs, rhs, op_ast)
+                res = self._build_checked_bin_op(checked, op_ast)
             case "/":
                 res = self._build_checked_div(lhs, rhs, lhs_typ, op_ast)
-            case _:
-                raise AssertionError(f"unhandled binary operator {op!r}")
 
         return self._in_context(res, ctx)
 
@@ -551,16 +558,12 @@ class CfgBuilder:
 
     def _build_checked_bin_op(
         self,
-        op: str,
-        lhs: ir_values.Value,
-        rhs: ir_values.Value,
+        res: ir_values.CheckedBinOpInstr,
         op_ast: ast.Ast,
     ) -> ir_values.Value:
-        """Lower ``add``/``sub``/``mul`` (``op``, used to call the matching
-        ``BasicBlock.checked_*`` method), panicking if the exact result
-        overflows ``lhs``/``rhs``'s type.
+        """Panic when ``res``'s exact result overflows its operand type.
 
-        Builds a CheckedAddInstr/CheckedSubInstr/CheckedMulInstr - a plain
+        ``res`` is a CheckedAddInstr/CheckedSubInstr/CheckedMulInstr - a plain
         BinOpInstr subclass, computing the operation's own (possibly
         wrapped) result exactly like the corresponding unchecked
         instruction, but paired with an OverflowFlagInstr that reports
@@ -573,7 +576,6 @@ class CfgBuilder:
         instruction reports whether it did - so ``_panic_if``'s ``panic``
         call is what reports overflow both at runtime and at compile time.
         """
-        res = getattr(self._curr_bb, f"checked_{op}")(lhs, rhs, op_ast)
         overflowed = self._curr_bb.overflow_flag(res, op_ast)
         self._panic_if(overflowed, "integer overflow", op_ast)
         return res
@@ -717,8 +719,6 @@ class CfgBuilder:
                 is_min = self._is_typ_min(operand, operand_typ, op_ast)
                 self._panic_if(is_min, "integer overflow", op_ast)
                 return self._in_context(res, ctx)
-            case _:
-                raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
     def _instantiate_src_fn(self, target: ir_module.SrcFnSymbol) -> ir_module.FnRef:
         """Return a reference to the source function selected by this lowering.
@@ -828,8 +828,6 @@ class CfgBuilder:
                 return self._build_array_lit_expr(brace_expr, cached_typ, ctx)
             case typs.StructTyp():
                 return self._build_struct_lit_expr(brace_expr, cached_typ, ctx)
-            case _:
-                raise AssertionError(f"unhandled brace expr type {cached_typ}")
 
     def _build_struct_lit_expr(
         self, brace_expr: ast.BraceExpr, cached_typ: typs.StructTyp, ctx: _ExprContext
@@ -845,7 +843,7 @@ class CfgBuilder:
         )
 
         field_values: dict[int, ir_values.Value] = {}
-        field_value_asts: dict[int, ast.Expr] = {}
+        field_value_asts: dict[int, ast.ExprKind] = {}
         for element in brace_expr.elements:
             field_expr = asserts.checked_cast(element, ast.StructFieldExpr)
             field_index = self._typ_check_results.struct_field_index(field_expr)
@@ -880,6 +878,8 @@ class CfgBuilder:
             brace_expr,
         )
         for i, elt_ast in enumerate(brace_expr.elements):
+            if isinstance(elt_ast, ast.StructFieldExpr):
+                raise AssertionError("type checking accepted a named field in an array literal")
             elt_value = self._build_expr(elt_ast, _ExprContext.VALUE)
             coerced = opt_util.opt_unwrap(self._coerce(elt_value, elt_ast))
             elt_index = ir_values.ComptimeInt(typs.USIZE, i, elt_ast)
@@ -917,7 +917,7 @@ class CfgBuilder:
         ptr = self._build_expr(d_expr.ptr, _ExprContext.VALUE)
         return self._deref_in_context(ptr, ctx, d_expr)
 
-    def _build_stmt(self, stmt_ast: ast.Stmt) -> None:
+    def _build_stmt(self, stmt_ast: ast.StmtKind) -> None:
         """Lower any statement, dispatching to the ``build_*_stmt`` method
         matching its AST node kind.
         """
@@ -936,8 +936,6 @@ class CfgBuilder:
                 self._build_break_stmt(stmt_ast)
             case ast.ContinueStmt():
                 self._build_continue_stmt(stmt_ast)
-            case _:
-                raise AssertionError(f"unhandled statement kind {stmt_ast}")
 
     def _build_ret_stmt(self, ret_ast: ast.RetStmt) -> None:
         assert self._fn is not None
@@ -1034,8 +1032,6 @@ class CfgBuilder:
                 return self._curr_bb.int_ext(value, target, node)
             case check_results.PtrMutRelax():
                 return self._curr_bb.ptr_mut_relax(value, node)
-            case _:
-                raise AssertionError(f"unhandled coercion {coercion!r}")
 
     def _propagate_never(
         self, value: ir_values.Value, ast_node: ast.Ast, ctx: _ExprContext
@@ -1047,7 +1043,7 @@ class CfgBuilder:
             self._curr_bb.unreachable(ast_node)
         return self._in_context(ir_values.NeverValue(ast_node), ctx)
 
-    def _build_place(self, expr_ast: ast.Expr) -> ir_values.Value[typs.PtrTyp]:
+    def _build_place(self, expr_ast: ast.ExprKind) -> ir_values.Value[typs.PtrTyp]:
         """Lower ``expr_ast`` for its address rather than its value."""
         value = self._build_expr(expr_ast, _ExprContext.PLACE)
         asserts.checked_cast(value.typ, typs.PtrTyp)

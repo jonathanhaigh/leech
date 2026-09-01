@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from leech import ir_module, ir_traits
 
 
-def _is_flexible_int_lit(expr_ast: ast.Expr) -> bool:
+def _is_flexible_int_lit(expr_ast: ast.ExprKind) -> bool:
     """Return whether an unsuffixed integer literal can take its type from context."""
     if isinstance(expr_ast, ast.IntLit):
         return expr_ast.explicit_width is None
@@ -83,6 +83,7 @@ def _match_constructor_space(scrutinee_typ: typs.Typ) -> patterns.ConstructorSpa
         case typs.NeverTyp():
             return patterns.ConstructorSpace.from_constructors([], False)
         case _:
+            # All other current and future types have an open constructor space.
             return patterns.ConstructorSpace.from_constructors([], True)
 
 
@@ -180,14 +181,14 @@ class TypCheck:
         return self.results
 
     def _check_expr(
-        self, expr_ast: ast.Expr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
+        self, expr_ast: ast.ExprKind, e: ir_env.Env, expected_typ: Optional[typs.Typ]
     ) -> typs.Typ:
         typ = self._check_expr_inner(expr_ast, e, expected_typ)
         self.results._set_expr_typ(expr_ast, typ)
         return typ
 
     def _check_expr_inner(
-        self, expr_ast: ast.Expr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
+        self, expr_ast: ast.ExprKind, e: ir_env.Env, expected_typ: Optional[typs.Typ]
     ) -> typs.Typ:
         """Return an expression's checked type, using ``expected_typ`` as context."""
         match expr_ast:
@@ -225,8 +226,6 @@ class TypCheck:
                 return self._check_field_access_expr(expr_ast, e)
             case ast.DerefExpr():
                 return self._check_deref_expr(expr_ast, e)
-            case _:
-                raise AssertionError(f"unhandled expression kind {expr_ast}")
 
     def _check_block_expr(
         self, block_ast: ast.BlockExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
@@ -367,7 +366,7 @@ class TypCheck:
         return typs.VOID
 
     def _check_pattern(
-        self, pat: ast.Pattern, scrutinee_typ: typs.Typ, e: ir_env.Env
+        self, pat: ast.PatternKind, scrutinee_typ: typs.Typ, e: ir_env.Env
     ) -> patterns.PatternKind:
         match pat:
             case ast.WildcardPattern():
@@ -382,8 +381,6 @@ class TypCheck:
                 return self._check_path_pattern(pat, scrutinee_typ, e)
             case ast.OrPattern():
                 return self._check_or_pattern(pat, scrutinee_typ, e)
-            case _:
-                raise AssertionError(f"unhandled pattern kind {pat}")
 
     def _check_binding_pattern(
         self, pat: ast.BindingPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
@@ -503,7 +500,7 @@ class TypCheck:
 
     def _resolve_callee(
         self, call_ast: ast.CallExpr, e: ir_env.Env
-    ) -> tuple[typs.CallableTyp, Optional[ast.Expr], Optional[typs.Typ]]:
+    ) -> tuple[typs.CallableTyp, Optional[ast.ExprKind], Optional[typs.Typ]]:
         """Resolve a callee and its optional pointer-typed method receiver.
 
         ``x.name`` prefers a method and otherwise falls back to field access.
@@ -674,9 +671,19 @@ class TypCheck:
     def _check_bin_op_expr(
         self, op_ast: ast.BinOpExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
     ) -> typs.Typ:
-        if op_ast.op.name in ("and", "or"):
-            return self._check_logic_bin_op_expr(op_ast, e)
+        match op_ast.op.name:
+            case "and" | "or":
+                return self._check_logic_bin_op_expr(op_ast, e)
+            case "<" | "<=" | "==" | "!=" | ">=" | ">" | "+" | "-" | "*" | "/" as op:
+                return self._check_numeric_bin_op_expr(op_ast, op, e, expected_typ)
 
+    def _check_numeric_bin_op_expr(
+        self,
+        op_ast: ast.BinOpExpr,
+        op: ast.CmpOpName | ast.ArithmeticOpName,
+        e: ir_env.Env,
+        expected_typ: Optional[typs.Typ],
+    ) -> typs.Typ:
         # Unreachable operands are still checked; never stands in for either value type.
         if _is_flexible_int_lit(op_ast.lhs) and not _is_flexible_int_lit(op_ast.rhs):
             rhs_typ = self._check_expr(op_ast.rhs, e, None)
@@ -694,7 +701,7 @@ class TypCheck:
 
         if lhs_typ != typs.NEVER and not isinstance(lhs_typ, typs.IntTyp):
             raise errors.InvalidBinOpArgTypError(
-                op_ast.op.name,
+                op,
                 op_ast.op.span,
                 "left",
                 lhs_typ.name,
@@ -703,7 +710,7 @@ class TypCheck:
             )
         if lhs_typ != typs.NEVER and rhs_typ != typs.NEVER and lhs_typ != rhs_typ:
             raise errors.IncompatibleBinOpArgTypsError(
-                op_ast.op.name,
+                op,
                 op_ast.op.span,
                 lhs_typ.name,
                 op_ast.lhs.span,
@@ -711,9 +718,11 @@ class TypCheck:
                 op_ast.rhs.span,
             )
 
-        if op_ast.op.name in ("<", "<=", "==", "!=", ">=", ">"):
-            return typs.BOOL
-        return lhs_typ if lhs_typ != typs.NEVER else rhs_typ
+        match op:
+            case "<" | "<=" | "==" | "!=" | ">=" | ">":
+                return typs.BOOL
+            case "+" | "-" | "*" | "/":
+                return lhs_typ if lhs_typ != typs.NEVER else rhs_typ
 
     def _check_logic_bin_op_expr(self, op_ast: ast.BinOpExpr, e: ir_env.Env) -> typs.Typ:
         # Both operands are checked; never coerces to bool without a special case.
@@ -752,8 +761,6 @@ class TypCheck:
                 return self._check_not_expr(op_ast, e)
             case "-":
                 return self._check_neg_expr(op_ast, e, expected_typ)
-            case _:
-                raise AssertionError(f"unhandled unary operator {op_ast.op.name!r}")
 
     def _check_addr_of_expr(self, op_ast: ast.UnaryOpExpr, e: ir_env.Env) -> typs.Typ:
         return self._check_place(op_ast.operand, e)
@@ -870,19 +877,21 @@ class TypCheck:
 
     def _check_brace_expr(self, brace_expr: ast.BraceExpr, e: ir_env.Env) -> typs.Typ:
         typ = typs.Typ.from_ast(brace_expr.typ, e)
-        self.results._set_brace_expr_typ(brace_expr, typ)
         match typ:
             case typs.ArrayTyp():
+                self.results._set_brace_expr_typ(brace_expr, typ)
                 return self._check_array_lit_expr(brace_expr, typ, e)
             case typs.StructTyp():
+                self.results._set_brace_expr_typ(brace_expr, typ)
                 return self._check_struct_lit_expr(brace_expr, typ, e)
             case _:
+                # Brace expressions reject every other current or future type.
                 raise errors.TypeOfBraceExprInvalidError(typ.name, brace_expr.typ.span)
 
     def _check_struct_lit_expr(
         self, brace_expr: ast.BraceExpr, struct_typ: typs.StructTyp, e: ir_env.Env
     ) -> typs.Typ:
-        field_value_asts: dict[str, ast.Expr] = {}
+        field_value_asts: dict[str, ast.ExprKind] = {}
         field_value_typs: dict[str, typs.Typ] = {}
         for element in brace_expr.elements:
             if not isinstance(element, ast.StructFieldExpr):
@@ -928,7 +937,7 @@ class TypCheck:
     def _check_array_lit_expr(
         self, brace_expr: ast.BraceExpr, arr_typ: typs.ArrayTyp, e: ir_env.Env
     ) -> typs.Typ:
-        elements: list[ast.Expr] = []
+        elements: list[ast.ExprKind] = []
         for element in brace_expr.elements:
             if isinstance(element, ast.StructFieldExpr):
                 raise errors.NamedFieldInArrayLitError(element.ident.name, element.span)
@@ -977,12 +986,12 @@ class TypCheck:
             raise errors.DerefInvalidTypError(ptr_typ.name, d_expr.ptr.span)
         return ptr_typ.pointee_typ
 
-    def _check_place(self, expr_ast: ast.Expr, e: ir_env.Env) -> typs.PtrTyp:
+    def _check_place(self, expr_ast: ast.ExprKind, e: ir_env.Env) -> typs.PtrTyp:
         typ = self._check_place_inner(expr_ast, e)
         self.results._set_place_typ(expr_ast, typ)
         return typ
 
-    def _check_place_inner(self, expr_ast: ast.Expr, e: ir_env.Env) -> typs.PtrTyp:
+    def _check_place_inner(self, expr_ast: ast.ExprKind, e: ir_env.Env) -> typs.PtrTyp:
         """Return the pointer type produced by taking ``expr_ast``'s address.
 
         Real places retain their mutability; other values use a const temporary.
@@ -1015,7 +1024,7 @@ class TypCheck:
         value_typ = self._check_expr(expr_ast, e, None)
         return typs.PtrTyp.get_or_create(value_typ, self._place_mut(expr_ast, e))
 
-    def _place_mut(self, expr_ast: ast.Expr, e: ir_env.Env) -> typs.Mutability:
+    def _place_mut(self, expr_ast: ast.ExprKind, e: ir_env.Env) -> typs.Mutability:
         """Return the mutability of ``expr_ast``'s place."""
         match expr_ast:
             case ast.VarExpr():
@@ -1059,9 +1068,10 @@ class TypCheck:
                 ptr_typ = self._check_expr(expr_ast.ptr, e, None)
                 return asserts.checked_cast(ptr_typ, typs.PtrTyp).mut
             case _:
+                # A non-place expression's temporary is always const.
                 return typs.CONST
 
-    def _check_stmt(self, stmt_ast: ast.Stmt, e: ir_env.Env) -> bool:
+    def _check_stmt(self, stmt_ast: ast.StmtKind, e: ir_env.Env) -> bool:
         """Check a statement and return whether control cannot fall through it."""
         match stmt_ast:
             case ast.ExprStmt():
@@ -1079,8 +1089,6 @@ class TypCheck:
             case ast.ContinueStmt():
                 self._check_continue_stmt(stmt_ast)
                 return True
-            case _:
-                raise AssertionError(f"unhandled statement kind {stmt_ast}")
 
     def _check_ret_stmt(self, ret_ast: ast.RetStmt, e: ir_env.Env) -> None:
         if self._ret_typ is None:

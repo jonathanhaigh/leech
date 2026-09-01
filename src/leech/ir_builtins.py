@@ -7,7 +7,7 @@
 Import this module lazily because its intrinsic classes require ``ir_module`` to be loaded.
 """
 
-from typing import override
+from typing import cast, override
 
 from leech import ir_builder, ir_env, ir_loader, ir_module, typs
 
@@ -26,7 +26,7 @@ class SizeOfIntrinsicFn(ir_module.IntrinsicFnSymbol):
     def _build_body(
         self, builder: ir_builder.CfgBuilder, comptime_args: tuple[typs.Typ, ...]
     ) -> None:
-        size = builder._curr_bb.size_of(comptime_args[0], None)
+        size = builder._curr_bb.size_of(cast(typs.TypKind, comptime_args[0]), None)
         builder._curr_bb.ret(size, None)
 
 

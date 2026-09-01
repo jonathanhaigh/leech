@@ -407,7 +407,7 @@ class Typ(abc.ABC):
         return self.name
 
     @staticmethod
-    def from_ast(typ_ast: ast.Typ, e: ir_env.Env) -> Typ:
+    def from_ast(typ_ast: ast.TypKind, e: ir_env.Env) -> TypKind:
         """Resolve a parsed type expression in ``e``."""
         match typ_ast:
             case ast.BasicTyp():
@@ -417,11 +417,9 @@ class Typ(abc.ABC):
                     Typ.from_ast(typ_ast.pointee_typ, e),
                     Mutability.from_ast(typ_ast.mut),
                 )
-            case _:
-                raise AssertionError(f"unhandled type ast node {typ_ast}")
 
     @staticmethod
-    def _basic_typ_from_ast(typ_ast: ast.BasicTyp, e: ir_env.Env) -> Typ:
+    def _basic_typ_from_ast(typ_ast: ast.BasicTyp, e: ir_env.Env) -> TypKind:
         """Resolve a named type, applying arguments only to a bare generic template."""
         item = e.resolve_typ(typ_ast.path)
         if not isinstance(item, GenericTypTemplate):
@@ -529,13 +527,17 @@ class BoolTyp(Typ):
         return "bool"
 
 
+type ComptimeLiteralTyp = IntTyp | BoolTyp
+"""A type that can back a literal comptime value parameter or argument."""
+
+
 class CallableTyp(Typ):
     """Base class for types of things that can be called."""
 
-    ret_typ: Final[Typ]
-    param_typs: Final[tuple[Typ, ...]]
+    ret_typ: Final[TypKind]
+    param_typs: Final[tuple[TypKind, ...]]
 
-    def __init__(self, ret_typ: Typ, param_typs: tuple[Typ, ...]) -> None:
+    def __init__(self, ret_typ: TypKind, param_typs: tuple[TypKind, ...]) -> None:
         self.ret_typ = ret_typ
         self.param_typs = param_typs
 
@@ -574,10 +576,10 @@ class FnTyp(CallableTyp):
 class PtrTyp(Typ):
     """A pointer type, e.g. ``*i32`` or ``*mut i32``."""
 
-    pointee_typ: Final[Typ]
+    pointee_typ: Final[TypKind]
     mut: Final[Mutability]
 
-    def __init__(self, pointee_typ: Typ, mut: Mutability) -> None:
+    def __init__(self, pointee_typ: TypKind, mut: Mutability) -> None:
         self.pointee_typ = pointee_typ
         self.mut = mut
 
@@ -628,15 +630,15 @@ class PtrTyp(Typ):
 class ArrayTyp(Typ):
     """A fixed-length array type, e.g. ``array[i32, 4]``."""
 
-    element_typ: Final[Typ]
-    length: Final[Typ]
+    element_typ: Final[TypKind]
+    length: Final[TypKind]
 
-    def __init__(self, element_typ: Typ, length: Typ) -> None:
+    def __init__(self, element_typ: TypKind, length: TypKind) -> None:
         self.element_typ = element_typ
         self.length = length
 
     @staticmethod
-    def of_length(element_typ: Typ, length: int) -> ArrayTyp:
+    def of_length(element_typ: TypKind, length: int) -> ArrayTyp:
         """Return the cached instance for a concrete literal ``length``."""
         return ArrayTyp.get_or_create(element_typ, ComptimeValueTyp.get_or_create(USIZE, length))
 
@@ -781,9 +783,11 @@ class ValueParamTyp(ComptimeParamTyp):
         or ``BOOL``.
     """
 
-    value_typ: Final[Typ]
+    value_typ: Final[ComptimeLiteralTyp]
 
-    def __init__(self, owner: Hashable, index: int, name: str, value_typ: Typ) -> None:
+    def __init__(
+        self, owner: Hashable, index: int, name: str, value_typ: ComptimeLiteralTyp
+    ) -> None:
         super().__init__(owner, index, name)
         self.value_typ = value_typ
 
@@ -799,10 +803,10 @@ class ComptimeValueTyp(Typ):
     :param value_typ: This value's type - an ``IntTyp`` or ``BOOL``.
     """
 
-    value_typ: Final[Typ]
+    value_typ: Final[ComptimeLiteralTyp]
     value: Final[int | bool]
 
-    def __init__(self, value_typ: Typ, value: int | bool) -> None:
+    def __init__(self, value_typ: ComptimeLiteralTyp, value: int | bool) -> None:
         assert (value_typ is BOOL) == isinstance(value, bool), (
             f"{value!r} does not match declared type {value_typ.name}"
         )
@@ -846,8 +850,6 @@ class ComptimeValueTyp(Typ):
                 return ir_values.ComptimeInt(
                     self.value_typ, asserts.checked_cast(self.value, int), ast_node
                 )
-            case _:
-                raise AssertionError(f"unsupported comptime value typ {self.value_typ.name}")
 
 
 def comptime_params_from_ast(
@@ -879,7 +881,7 @@ def comptime_params_from_ast(
 
     result: list[ComptimeParamTyp] = []
     for index, param_ast in enumerate(comptime_params):
-        value_typ: Optional[Typ] = None
+        value_typ: Optional[ComptimeLiteralTyp] = None
         if len(param_ast.bounds) == 1:
             (bound,) = param_ast.bounds
             try:
@@ -921,7 +923,7 @@ class StructField:
         return self.ast.ident.name
 
     @functools.cached_property
-    def typ(self) -> Typ:
+    def typ(self) -> TypKind:
         """The field's type."""
         return Typ.from_ast(self.ast.typ, self._env)
 
@@ -969,7 +971,7 @@ class GenericTypTemplate(abc.ABC):
         """Compute ``comptime_params``; overridden by subclasses."""
 
     @abc.abstractmethod
-    def instantiate(self, comptime_args: tuple[Typ, ...]) -> Typ:
+    def instantiate(self, comptime_args: tuple[Typ, ...]) -> TypKind:
         """Return the usable type for applying ``comptime_args``."""
 
 
@@ -1370,6 +1372,23 @@ class NeverTyp(Typ):
     @override
     def coerces_to(self, target_typ: Typ) -> bool:
         return True
+
+
+type TypKind = (
+    IntTyp
+    | BoolTyp
+    | FnTyp
+    | PtrTyp
+    | ArrayTyp
+    | ComptimeParamTyp
+    | ComptimeValueTyp
+    | StructTyp
+    | EnumTyp
+    | EnumBackingTyp
+    | VoidTyp
+    | NeverTyp
+)
+"""Every instantiable Typ implementation used by the compiler."""
 
 
 #: The built-in numeric, boolean, string, and control-flow type singletons.

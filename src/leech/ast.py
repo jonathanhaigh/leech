@@ -8,7 +8,7 @@ import abc
 import ast as python_ast
 import re
 from collections.abc import Callable
-from typing import Any, Final, Optional, override
+from typing import Any, Final, Literal, Optional, cast, override
 
 import lark
 import lark.tree
@@ -44,6 +44,7 @@ class Ast(abc.ABC):
                 )
                 return f"{indent * level}{child_name}:{elts}"
             case _:
+                # Children may be parser tokens or other dynamic values.
                 return f"{indent * level}{child_val!r}"
 
     def pretty(self, indent: str = "  ", level: int = 0) -> str:
@@ -108,7 +109,7 @@ class Expr(Ast):
     """Base class for every expression node."""
 
     @staticmethod
-    def _child_ctors() -> dict[str, Callable[[src.SrcFile, lark.tree.Tree], Expr]]:
+    def _child_ctors() -> dict[str, Callable[[src.SrcFile, lark.tree.Tree], ExprKind]]:
         return {
             "block_expr": BlockExpr,
             "if_expr": IfExpr,
@@ -138,7 +139,7 @@ class Expr(Ast):
         return tree.data in Expr._child_ctors()
 
     @staticmethod
-    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Expr:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> ExprKind:
         """Build the expression selected by a parse tree's grammar rule."""
         return Expr._child_ctors()[tree.data](file, tree)
 
@@ -147,16 +148,17 @@ class PlaceExpr(Expr):
     """Base class for expressions that can appear on the left of ``=``."""
 
     @staticmethod
-    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> PlaceExpr:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> PlaceExprKind:
         """Build a place expression, asserting that the parsed expression is assignable."""
-        return asserts.checked_cast(Expr.from_tree(file, tree), PlaceExpr)
+        expr = asserts.checked_cast(Expr.from_tree(file, tree), PlaceExpr)
+        return cast(PlaceExprKind, expr)
 
 
 class BlockExpr(Expr):
     """A ``{ stmt; ...; tail_expr }`` block expression."""
 
-    stmts: Final[tuple[Stmt, ...]]
-    expr: Final[Optional[Expr]]
+    stmts: Final[tuple[StmtKind, ...]]
+    expr: Final[Optional[ExprKind]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "block_expr")
@@ -179,7 +181,7 @@ class BlockExpr(Expr):
             self.expr = None
 
     @staticmethod
-    def _stmt_from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Stmt:
+    def _stmt_from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> StmtKind:
         """Build a block-body statement, which may be a ``;``-terminated ``stmt``
         or a bare block-like expression used without one."""
         if tree.data == "stmt":
@@ -194,7 +196,7 @@ class BlockExpr(Expr):
 class IfExpr(Expr):
     """An ``if (condition) { ... } else { ... }`` expression."""
 
-    condition: Final[Expr]
+    condition: Final[ExprKind]
     then: Final[BlockExpr]
     els: Final[Optional[BlockExpr]]
 
@@ -221,7 +223,7 @@ class WhileExpr(Expr):
     """A ``[label:] while (condition) { ... }`` loop expression."""
 
     label: Final[Optional[Ident]]
-    condition: Final[Expr]
+    condition: Final[ExprKind]
     block: Final[BlockExpr]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
@@ -240,7 +242,7 @@ class WhileExpr(Expr):
 class MatchExpr(Expr):
     """A ``match (scrutinee) { pattern => body, ... }`` expression."""
 
-    scrutinee: Final[Expr]
+    scrutinee: Final[ExprKind]
     arms: Final[tuple[MatchArm, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
@@ -259,8 +261,8 @@ class MatchExpr(Expr):
 class MatchArm(Ast):
     """One pattern and result expression within a ``match``."""
 
-    pattern: Final[Pattern]
-    body: Final[Expr]
+    pattern: Final[PatternKind]
+    body: Final[ExprKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "match_arm")
@@ -278,7 +280,7 @@ class Pattern(Ast):
     """Base class for every match pattern."""
 
     @staticmethod
-    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Pattern:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> PatternKind:
         """Build the pattern selected by a parse tree's grammar rule."""
         child_classes = {
             "wildcard_pattern": WildcardPattern,
@@ -374,7 +376,7 @@ class PathPattern(Pattern):
 class OrPattern(Pattern):
     """Alternatives joined by ``|`` within one match arm."""
 
-    alternatives: Final[tuple[Pattern, ...]]
+    alternatives: Final[tuple[PatternKind, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "or_pattern")
@@ -483,8 +485,8 @@ class VarExpr(PlaceExpr):
 class ArrayAccessExpr(PlaceExpr):
     """An array indexing expression, ``array[index]``."""
 
-    array: Final[Expr]
-    index: Final[Expr]
+    array: Final[ExprKind]
+    index: Final[ExprKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "array_access_expr")
@@ -512,7 +514,7 @@ class BraceExpr(Expr):
     """
 
     typ: Final[BasicTyp]
-    elements: Final[tuple[Expr, ...]]
+    elements: Final[tuple[BraceElement, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "brace_expr")
@@ -537,7 +539,7 @@ class StructFieldExpr(Expr):
     """A single ``field: value`` entry in a struct literal."""
 
     ident: Final[Ident]
-    value: Final[Expr]
+    value: Final[ExprKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "struct_field_expr")
@@ -560,7 +562,7 @@ class FieldAccessExpr(PlaceExpr):
     struct.
     """
 
-    value: Final[Expr]
+    value: Final[ExprKind]
     field: Final[Ident]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
@@ -578,7 +580,7 @@ class FieldAccessExpr(PlaceExpr):
 class DerefExpr(PlaceExpr):
     """A pointer dereference expression, ``ptr.*``."""
 
-    ptr: Final[Expr]
+    ptr: Final[ExprKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "deref_expr")
@@ -594,8 +596,8 @@ class DerefExpr(PlaceExpr):
 class CallExpr(Expr):
     """A function call expression, ``callee(args...)``."""
 
-    callee: Final[Expr]
-    args: Final[tuple[Expr, ...]]
+    callee: Final[ExprKind]
+    args: Final[tuple[ExprKind, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "call_expr")
@@ -611,15 +613,55 @@ class CallExpr(Expr):
         return "call expression"
 
 
-class Op(Ast):
+type CmpOpName = Literal["<", "<=", "==", "!=", ">=", ">"]
+"""A source-level integer comparison operator."""
+
+type ArithmeticOpName = Literal["+", "-", "*", "/"]
+"""A source-level arithmetic operator."""
+
+type LogicOpName = Literal["and", "or"]
+"""A source-level short-circuiting boolean operator."""
+
+type BinOpName = CmpOpName | ArithmeticOpName | LogicOpName
+"""Every source-level binary operator."""
+
+type UnaryOpName = Literal["&", "not", "-"]
+"""Every source-level unary operator."""
+
+
+def _op_name(tree: lark.tree.ParseTree) -> str:
+    asserts.assert_eq(len(tree.children), 1)
+    return _as_token(tree.children[0])
+
+
+def _bin_op_name(tree: lark.tree.ParseTree) -> BinOpName:
+    name = _op_name(tree)
+    match name:
+        case "<" | "<=" | "==" | "!=" | ">=" | ">" | "+" | "-" | "*" | "/" | "and" | "or":
+            return name
+        case _:
+            # Lark exposes token text as an unrestricted string.
+            raise AssertionError(f"invalid binary operator {name!r}")
+
+
+def _unary_op_name(tree: lark.tree.ParseTree) -> UnaryOpName:
+    name = _op_name(tree)
+    match name:
+        case "&" | "not" | "-":
+            return name
+        case _:
+            # Lark exposes token text as an unrestricted string.
+            raise AssertionError(f"invalid unary operator {name!r}")
+
+
+class Op[NameT: str](Ast):
     """A binary or unary operator token, e.g. ``+`` or ``&``."""
 
-    name: Final[str]
+    name: Final[NameT]
 
-    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree, name: NameT) -> None:
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        asserts.assert_eq(len(tree.children), 1)
-        self.name = _as_token(tree.children[0])
+        self.name = name
 
     @override
     def diag_str(self) -> str:
@@ -629,15 +671,15 @@ class Op(Ast):
 class BinOpExpr(Expr):
     """A binary operator expression, ``lhs op rhs``."""
 
-    lhs: Final[Expr]
-    op: Final[Op]
-    rhs: Final[Expr]
+    lhs: Final[ExprKind]
+    op: Final[Op[BinOpName]]
+    rhs: Final[ExprKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         lhs, op, rhs = map(_as_tree, tree.children)
         self.lhs = Expr.from_tree(file, lhs)
-        self.op = Op(file, op)
+        self.op = Op(file, op, _bin_op_name(op))
         self.rhs = Expr.from_tree(file, rhs)
 
     @override
@@ -648,13 +690,13 @@ class BinOpExpr(Expr):
 class UnaryOpExpr(Expr):
     """A unary operator expression, ``op operand`` (``&operand`` or ``-operand``)."""
 
-    op: Final[Op]
-    operand: Final[Expr]
+    op: Final[Op[UnaryOpName]]
+    operand: Final[ExprKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         op, operand = map(_as_tree, tree.children)
-        self.op = Op(file, op)
+        self.op = Op(file, op, _unary_op_name(op))
         self.operand = Expr.from_tree(file, operand)
 
     @override
@@ -666,7 +708,7 @@ class Stmt(Ast):
     """Base class for every statement node."""
 
     @staticmethod
-    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Stmt:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> StmtKind:
         """Build the statement selected by a parse tree's grammar rule."""
         asserts.assert_eq(tree.data, "stmt")
         (child,) = map(_as_tree, tree.children)
@@ -685,9 +727,9 @@ class Stmt(Ast):
 class ExprStmt(Stmt):
     """An expression evaluated for its side effects, with or without a trailing ``;``."""
 
-    expr: Final[Expr]
+    expr: Final[ExprKind]
 
-    def __init__(self, span: src.SrcSpan, expr: Expr) -> None:
+    def __init__(self, span: src.SrcSpan, expr: ExprKind) -> None:
         super().__init__(span)
         self.expr = expr
 
@@ -699,7 +741,7 @@ class ExprStmt(Stmt):
         return ExprStmt(span, Expr.from_tree(file, _as_tree(child)))
 
     @staticmethod
-    def _synthetic(expr: Expr) -> ExprStmt:
+    def _synthetic(expr: ExprKind) -> ExprStmt:
         """Construct a statement for a block-like expression used without a trailing ``;``."""
         return ExprStmt(expr.span, expr)
 
@@ -711,7 +753,7 @@ class ExprStmt(Stmt):
 class RetStmt(Stmt):
     """A ``return`` statement, with or without a value."""
 
-    expr: Final[Optional[Expr]]
+    expr: Final[Optional[ExprKind]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "ret_stmt")
@@ -761,8 +803,8 @@ class LetStmt(Stmt):
 
     mut: Final[Optional[Mutability]]
     ident: Final[Ident]
-    typ: Final[Optional[Typ]]
-    expr: Final[Expr]
+    typ: Final[Optional[TypKind]]
+    expr: Final[ExprKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "let_stmt")
@@ -781,8 +823,8 @@ class LetStmt(Stmt):
 class AssignmentStmt(Stmt):
     """An assignment statement, ``place = expr``."""
 
-    place: Final[PlaceExpr]
-    expr: Final[Expr]
+    place: Final[PlaceExprKind]
+    expr: Final[ExprKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "assignment_stmt")
@@ -800,17 +842,13 @@ class Typ(Ast):
     """Base class for parsed, unresolved type expressions."""
 
     @staticmethod
-    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Typ:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> TypKind:
         """Build the type expression selected by a parse tree's grammar rule."""
         child_classes = {
             "basic_typ": BasicTyp,
             "ptr_typ": PtrTyp,
         }
         return child_classes[tree.data](file, tree)
-
-
-type ComptimeArg = Typ | IntLit | BoolLit
-"""A parsed comptime argument: a type, or a literal value."""
 
 
 def _comptime_arg_from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> ComptimeArg:
@@ -852,7 +890,7 @@ class PtrTyp(Typ):
     """A pointer type expression, e.g. ``*i32`` or ``*mut i32``."""
 
     mut: Final[Optional[Mutability]]
-    pointee_typ: Final[Typ]
+    pointee_typ: Final[TypKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "ptr_typ")
@@ -866,11 +904,15 @@ class PtrTyp(Typ):
         return "pointer type specifier"
 
 
+type ComptimeArg = BasicTyp | PtrTyp | IntLit | BoolLit
+"""A parsed comptime argument: a type, or a literal value."""
+
+
 class Param(Ast):
     """A single formal parameter in a function declaration or definition."""
 
     name: Final[Ident]
-    typ: Final[Typ]
+    typ: Final[TypKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "param")
@@ -936,7 +978,7 @@ class Defn(Ast):
     """Base class for every top-level module item definition."""
 
     @staticmethod
-    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Defn:
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> DefnKind:
         """Build the definition selected by a parse tree's grammar rule."""
         asserts.assert_eq(tree.data, "defn")
         (child,) = map(_as_tree, tree.children)
@@ -961,7 +1003,7 @@ class FnDecl(Defn):
     comptime_params: Final[tuple[ComptimeParam, ...]]
     receiver: Final[Optional[Receiver]]
     params: Final[tuple[Param, ...]]
-    ret_typ: Final[Optional[Typ]]
+    ret_typ: Final[Optional[TypKind]]
 
     def __init__(
         self,
@@ -1117,7 +1159,7 @@ class StructFieldDefn(Ast):
     access: Final[Optional[Access]]
     mut: Final[Optional[Mutability]]
     ident: Final[Ident]
-    typ: Final[Typ]
+    typ: Final[TypKind]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "struct_field_defn")
@@ -1139,7 +1181,7 @@ class EnumDefn(Defn):
     access: Final[Optional[Access]]
     ident: Final[Ident]
     #: The explicit backing integer type in parentheses, if written.
-    backing_typ: Final[Optional[Typ]]
+    backing_typ: Final[Optional[TypKind]]
     variants: Final[tuple[EnumVariantDefn, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
@@ -1225,8 +1267,8 @@ class ImplDefn(Defn):
 
     #: Empty for a non-generic impl block.
     comptime_params: Final[tuple[ComptimeParam, ...]]
-    typ: Final[Typ]
-    for_typ: Final[Optional[Typ]]
+    typ: Final[TypKind]
+    for_typ: Final[Optional[TypKind]]
     fn_defns: Final[tuple[FnDefn, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
@@ -1318,7 +1360,7 @@ class Mutability(Ast):
 class Mod(Ast):
     """A parsed module: the top-level sequence of definitions in a source file."""
 
-    defns: Final[tuple[Defn, ...]]
+    defns: Final[tuple[DefnKind, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "mod")
@@ -1328,6 +1370,48 @@ class Mod(Ast):
     @override
     def diag_str(self) -> str:
         return "module"
+
+
+type ExprKind = (
+    BlockExpr
+    | IfExpr
+    | WhileExpr
+    | MatchExpr
+    | StrLit
+    | IntLit
+    | BoolLit
+    | VarExpr
+    | ArrayAccessExpr
+    | BraceExpr
+    | FieldAccessExpr
+    | DerefExpr
+    | CallExpr
+    | BinOpExpr
+    | UnaryOpExpr
+)
+"""Every expression node Expr.from_tree can construct."""
+
+type PlaceExprKind = VarExpr | ArrayAccessExpr | FieldAccessExpr | DerefExpr
+"""Every place expression node PlaceExpr.from_tree can construct."""
+
+type BraceElement = ExprKind | StructFieldExpr
+"""A positional value or named field within a brace expression."""
+
+type PatternKind = (
+    WildcardPattern | BindingPattern | IntLitPattern | BoolLitPattern | PathPattern | OrPattern
+)
+"""Every pattern node Pattern.from_tree can construct."""
+
+type StmtKind = ExprStmt | RetStmt | BreakStmt | ContinueStmt | LetStmt | AssignmentStmt
+"""Every statement node Stmt.from_tree can construct."""
+
+type TypKind = BasicTyp | PtrTyp
+"""Every parsed type node Typ.from_tree can construct."""
+
+type DefnKind = (
+    FnDefn | ExternFnDecl | VarDefn | StructDefn | EnumDefn | TraitDefn | ImplDefn | Import
+)
+"""Every module definition node Defn.from_tree can construct."""
 
 
 def _opt_ast(obj: Any) -> Optional[Ast]:

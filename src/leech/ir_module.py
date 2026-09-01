@@ -38,7 +38,7 @@ class ModItem:
     mod: Final[Mod]
     name: Final[str]
     access: Final[visibility.Access]
-    value: Final[ir_values.Value[typs.PtrTyp] | ir_env.Container | FnSymbol]
+    value: Final[ModItemValue]
     qualify_name: Final[bool] = True
 
     @property
@@ -767,7 +767,7 @@ class Mod:
         """Return the item named ``name`` in ``ns``, if declared."""
         return self._items.get((ns, name))
 
-    def _build_defn(self, defn_ast: ast.Defn, src_fn_symbols: list[SrcFnSymbol]) -> None:
+    def _build_defn(self, defn_ast: ast.DefnKind, src_fn_symbols: list[SrcFnSymbol]) -> None:
         match defn_ast:
             case ast.VarDefn():
                 self._add_item(
@@ -824,9 +824,9 @@ class Mod:
                 )
                 mod = self.loader.load(mod_path, qualified_name)
                 self._add_item(last_ident.name, visibility.PRIVATE, mod, span=last_ident.span)
-            case _:
+            case ast.ImplDefn():
                 # Impl blocks are handled separately.
-                raise AssertionError(f"unhandled definition {defn_ast}")
+                raise AssertionError("impl block reached ordinary definition building")
 
     def _build_impl_defn(self, impl_ast: ast.ImplDefn, src_fn_symbols: list[SrcFnSymbol]) -> None:
         # The impl's own comptime parameters, if any, are bound here - before
@@ -959,7 +959,7 @@ class Mod:
         self,
         name: str,
         access: visibility.Access,
-        value: ir_values.Value[typs.PtrTyp] | ir_env.Container | FnSymbol,
+        value: ModItemValue,
         qualify_name: bool = True,
         span: Optional[src.SrcSpan] = None,
     ) -> None:
@@ -972,3 +972,15 @@ class Mod:
         # different item.
         self.env.add(item._ns, name, value, span)
         self._items[(item._ns, name)] = item
+
+
+type ModItemValue = (
+    ModVar
+    | FnSymbol
+    | typs.StructTyp
+    | typs.StructTypTemplate
+    | typs.EnumTyp
+    | Mod
+    | ir_traits.Trait
+)
+"""Every value a ModItem can bind in a module namespace."""

@@ -6,7 +6,7 @@
 
 import collections
 import enum
-from typing import Any, Final, Optional
+from typing import Any, Final, Optional, cast
 
 from leech import (
     asserts,
@@ -217,7 +217,7 @@ class Env:
 
         return res
 
-    def resolve_typ(self, path: ast.Path) -> typs.Typ | typs.GenericTypTemplate:
+    def resolve_typ(self, path: ast.Path) -> typs.TypKind | typs.GenericTypTemplate:
         """Resolve a qualified path whose final segment must be a type."""
         item = self.resolve_path(Env.Namespace.CONTAINERS, path)
         if isinstance(item, ir_module.Mod):
@@ -227,7 +227,7 @@ class Env:
         if isinstance(item, (typs.ValueParamTyp, typs.ComptimeValueTyp)):
             raise errors.ValueUsedAsTypError(item.name, path.idents[-1].span)
         assert isinstance(item, (typs.Typ, typs.GenericTypTemplate))
-        return item
+        return cast(typs.TypKind | typs.GenericTypTemplate, item)
 
     def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:
         """Resolve container path segments, then look up the final segment in ``ns``."""

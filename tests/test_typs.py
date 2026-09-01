@@ -2,13 +2,29 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import inspect
 import pathlib
+import typing
 
 import pytest
 import util
 
 from leech import ast, compilation, errors, ir_env, ir_traits, parse, typs
 from leech import src as leech_src
+
+
+def test_typ_kind_covers_every_concrete_typ_subclass():
+    subclasses: set[type[typs.Typ]] = set()
+    pending = [typs.Typ]
+    while pending:
+        children = pending.pop().__subclasses__()
+        subclasses.update(children)
+        pending.extend(children)
+
+    members = typing.get_args(typs.TypKind.__value__)
+    for cls in subclasses:
+        if not inspect.isabstract(cls):
+            assert any(issubclass(cls, member) for member in members), cls.__name__
 
 
 @pytest.mark.parametrize(

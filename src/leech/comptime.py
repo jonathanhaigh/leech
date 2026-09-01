@@ -11,7 +11,7 @@ from llvmlite import ir as ll
 from leech import asserts, errors, ir_module, ir_values, ll_typs, target, typs
 
 
-def _size_of(sized_typ: typs.Typ) -> int:
+def _size_of(sized_typ: typs.TypKind) -> int:
     """Return ``sized_typ``'s real, target-ABI-accurate size in bytes."""
     ctx = ll.Context()
     ll_typ = ll_typs.ll_typ(ctx, sized_typ)
@@ -87,7 +87,7 @@ class Interpreter:
             for elt in value.values():
                 self._check_not_temporary(elt)
 
-    def _eval_instr(self, instr: ir_values.Instr) -> None:
+    def _eval_instr(self, instr: ir_values.InstrKind) -> None:
         match instr:
             case ir_values.BinOpInstr():
                 lhs = asserts.checked_cast(
@@ -120,8 +120,6 @@ class Interpreter:
                     case ir_values.UdivInstr():
                         assert rhs.value != 0
                         ret = lhs.value // rhs.value
-                    case _:
-                        raise AssertionError(f"invalid bin op instr {instr}")
                 self._registers[instr] = ir_values.ComptimeInt(
                     lhs.typ, _wrap(ret, lhs.typ), instr.ast
                 )
@@ -161,8 +159,6 @@ class Interpreter:
                         ret = lhs.value >= rhs.value
                     case ">":
                         ret = lhs.value > rhs.value
-                    case _:
-                        raise AssertionError(f"invalid icmp op {instr.op!r}")
                 # ComptimeInt.value already holds each operand's canonical
                 # mathematical value (negative for signed types, always >= 0
                 # for unsigned ones - see ComptimeInt), so plain Python
@@ -282,5 +278,3 @@ class Interpreter:
                 self._registers[instr] = ir_values.ComptimeInt(instr.typ, operand.value, instr.ast)
             case ir_values.UnreachableInstr():
                 raise AssertionError("Should never reach unreachable instruction")
-            case _:
-                raise AssertionError(f"Invalid instruction {instr}")

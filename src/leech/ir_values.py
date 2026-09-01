@@ -37,6 +37,7 @@ def _gep_typ(base_typ: typs.PtrTyp, index: Value) -> typs.PtrTyp:
                 mut = typs.CONST
             typ = field.typ
         case _:
+            # Pointers can target non-indexable current or future types.
             raise AssertionError(f"can't index into pointee type {typ}")
 
     return typs.PtrTyp.get_or_create(typ, mut)
@@ -539,13 +540,13 @@ class NotInstr(Instr):
 class IcmpInstr(Instr):
     """Base class for integer comparison instructions (``op`` is e.g. ``"<"`` or ``"=="``)."""
 
-    op: Final[str]
+    op: Final[ast.CmpOpName]
     lhs: Final[Value]
     rhs: Final[Value]
 
     @override
     def __init__(
-        self, bb: BasicBlock, op: str, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
+        self, bb: BasicBlock, op: ast.CmpOpName, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
     ) -> None:
         super().__init__(bb, ast_node)
         self.op = op
@@ -769,10 +770,12 @@ class SizeOfInstr(Instr[typs.IntTyp]):
     size.
     """
 
-    sized_typ: Final[typs.Typ]
+    sized_typ: Final[typs.TypKind]
 
     @override
-    def __init__(self, bb: BasicBlock, sized_typ: typs.Typ, ast_node: Optional[ast.Ast]) -> None:
+    def __init__(
+        self, bb: BasicBlock, sized_typ: typs.TypKind, ast_node: Optional[ast.Ast]
+    ) -> None:
         super().__init__(bb, ast_node)
         self.sized_typ = sized_typ
 
@@ -995,6 +998,37 @@ class UnreachableInstr(Instr[typs.NeverTyp]):
         return typs.NEVER
 
 
+type BinOpInstrKind = AddInstr | SubInstr | MulInstr | SdivInstr | UdivInstr
+"""Every binary arithmetic instruction the IR can contain."""
+
+type InstrKind = (
+    BinOpInstrKind
+    | NegInstr
+    | NotInstr
+    | IcmpSignedInstr
+    | IcmpUnsignedInstr
+    | OverflowFlagInstr
+    | LoadInstr
+    | IntExtInstr
+    | PtrMutRelaxInstr
+    | AllocaInstr
+    | StoreInstr
+    | GepInstr
+    | SizeOfInstr
+    | PtrCastInstr
+    | EnumToIntInstr
+    | IsNullInstr
+    | InsertValueInstr
+    | CallInstr
+    | PhiInstr
+    | BranchInstr
+    | CbranchInstr
+    | RetInstr
+    | UnreachableInstr
+)
+"""Every instruction a BasicBlock can contain."""
+
+
 class BasicBlock:
     """A straight-line sequence of instructions ending in at most one terminator.
 
@@ -1010,7 +1044,7 @@ class BasicBlock:
     """
 
     name: Final[str]
-    instrs: Final[list[Instr]]
+    instrs: Final[list[InstrKind]]
     terminated: bool
     _warned_unreachable: bool
 
@@ -1025,7 +1059,7 @@ class BasicBlock:
         instrs = "".join(f"\n{instr}" for instr in self.instrs)
         return f"{self.name}:{instrs}"
 
-    def _add_instr[T: Instr](self, instr: T, terminate: bool = False) -> T:
+    def _add_instr[T: InstrKind](self, instr: T, terminate: bool = False) -> T:
         if self.terminated:
             if not self._warned_unreachable:
                 assert instr.ast is not None, "Shouldn't get unreachable code in builtins"
@@ -1071,12 +1105,12 @@ class BasicBlock:
         return self._add_instr(NotInstr(self, operand, ast_node))
 
     def icmp_signed(
-        self, op: str, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
+        self, op: ast.CmpOpName, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
     ) -> IcmpSignedInstr:
         return self._add_instr(IcmpSignedInstr(self, op, lhs, rhs, ast_node))
 
     def icmp_unsigned(
-        self, op: str, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
+        self, op: ast.CmpOpName, lhs: Value, rhs: Value, ast_node: Optional[ast.Ast]
     ) -> IcmpUnsignedInstr:
         return self._add_instr(IcmpUnsignedInstr(self, op, lhs, rhs, ast_node))
 
@@ -1108,7 +1142,7 @@ class BasicBlock:
     def gep(self, base: Value, index: Value, ast_node: Optional[ast.Ast]) -> GepInstr:
         return self._add_instr(GepInstr(self, base, index, ast_node))
 
-    def size_of(self, sized_typ: typs.Typ, ast_node: Optional[ast.Ast]) -> SizeOfInstr:
+    def size_of(self, sized_typ: typs.TypKind, ast_node: Optional[ast.Ast]) -> SizeOfInstr:
         return self._add_instr(SizeOfInstr(self, sized_typ, ast_node))
 
     def ptr_cast(

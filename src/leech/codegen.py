@@ -7,7 +7,7 @@
 import collections
 import dataclasses
 from collections.abc import Iterator
-from typing import Final, Optional
+from typing import Final, Optional, cast
 
 import networkx as nx
 from llvmlite import ir as ll
@@ -26,28 +26,6 @@ from leech import (
     visibility,
 )
 
-_BIN_OP_LL_METHODS: Final[dict[type[ir_values.BinOpInstr], str]] = {
-    ir_values.AddInstr: "add",
-    ir_values.SubInstr: "sub",
-    ir_values.MulInstr: "mul",
-    ir_values.SdivInstr: "sdiv",
-    ir_values.UdivInstr: "udiv",
-}
-
-_UNARY_OP_LL_METHODS: Final[dict[type[ir_values.Instr], str]] = {
-    ir_values.NegInstr: "neg",
-    ir_values.NotInstr: "not_",
-}
-
-_OVERFLOW_INTRINSIC_PREFIXES: Final[dict[tuple[type[ir_values.Instr], signage.Signage], str]] = {
-    (ir_values.CheckedAddInstr, signage.SIGNED): "sadd",
-    (ir_values.CheckedAddInstr, signage.UNSIGNED): "uadd",
-    (ir_values.CheckedSubInstr, signage.SIGNED): "ssub",
-    (ir_values.CheckedSubInstr, signage.UNSIGNED): "usub",
-    (ir_values.CheckedMulInstr, signage.SIGNED): "smul",
-    (ir_values.CheckedMulInstr, signage.UNSIGNED): "umul",
-}
-
 
 def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: visibility.Access) -> None:
     """Set an LLVM global's linkage from a Leech access level."""
@@ -55,6 +33,11 @@ def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: visibility.
         ll_global.linkage = "private"
     else:
         asserts.assert_eq(access, visibility.PUBLIC)
+
+
+def _checked_builder_value(value: Optional[ll.Value]) -> ll.Value:
+    # Some llvmlite instruction builders are annotated as optionally returning a value.
+    return asserts.checked_cast(value, ll.Value)
 
 
 class Compiler:
@@ -101,7 +84,7 @@ class Compiler:
                 if isinstance(item, ir_values.ComptimeValue):
                     compiled = self._compiler._compile_comptime_value(item)
                 elif isinstance(item, typs.Typ):
-                    compiled = self._compiler._ll_typ(item)
+                    compiled = self._compiler._ll_typ(cast(typs.TypKind, item))
                 else:
                     raise
                 self._items[item] = compiled
@@ -189,7 +172,7 @@ class Compiler:
     def _declare_struct_instance(self, inst: typs.StructTyp) -> None:
         self._ll_mod_items.get(inst)
 
-    def _ll_typ(self, typ: typs.Typ) -> ll.Type:
+    def _ll_typ(self, typ: typs.TypKind) -> ll.Type:
         return ll_typs.ll_typ(self.ll_mod.context, typ)
 
     def _declare_mod_item(self, item: ir_module.ModItem):
@@ -213,11 +196,9 @@ class Compiler:
                 # own to declare - only a trait impl's methods, registered
                 # as their own ordinary items, need one.
                 pass
-            case _:
-                # An import (ir_module.Mod) is the only other possible
-                # item value, and _program_items() - the only source of
-                # items passed here - filters those out.
-                raise AssertionError(f"unhandled module item {item}")
+            case ir_module.Mod():
+                # _program_items() filters imports before this method.
+                raise AssertionError(f"import reached module-item declaration: {item}")
 
     def _compile_mod_item(self, item: ir_module.ModItem) -> None:
         match item.value:
@@ -241,8 +222,6 @@ class Compiler:
             case ir_traits.Trait():
                 # A declaration, not a value with a body to compile.
                 return None
-            case _:
-                raise AssertionError(f"unhandled module item {item}")
 
     def _declare_mod_var(self, item: ir_module.ModItem, var: ir_module.ModVar) -> ll.Value:
         ll_val = ll.GlobalVariable(
@@ -316,10 +295,10 @@ class Compiler:
             ctx.ll_values.set(instr, self._compile_instr(instr, ctx))
 
     def _overflow_intrinsic(
-        self, instr_typ: type[ir_values.Instr], typ: typs.IntTyp
+        self, instr: ir_values.CheckedBinOpInstr, typ: typs.IntTyp
     ) -> ll.Function:
         """Get (declaring, and caching, on first use) the LLVM intrinsic
-        function that computes ``instr_typ``'s operation on ``typ`` and
+        function that computes ``instr``'s operation on ``typ`` and
         detects overflow in one call.
 
         Declared to return ``{typ, i1}``: the operation's own result
@@ -329,7 +308,18 @@ class Compiler:
         both back out (via ``extractvalue``, once each, from its shared
         call result) rather than computing the operation separately.
         """
-        prefix = _OVERFLOW_INTRINSIC_PREFIXES[(instr_typ, typ.signage)]
+        match instr:
+            case ir_values.CheckedAddInstr():
+                op = "add"
+            case ir_values.CheckedSubInstr():
+                op = "sub"
+            case ir_values.CheckedMulInstr():
+                op = "mul"
+        match typ.signage:
+            case signage.Signage.SIGNED:
+                prefix = f"s{op}"
+            case signage.Signage.UNSIGNED:
+                prefix = f"u{op}"
         name = f"llvm.{prefix}.with.overflow.i{typ.width}"
         intrinsic = self._overflow_intrinsics.get(name)
         if intrinsic is None:
@@ -341,7 +331,9 @@ class Compiler:
             self._overflow_intrinsics[name] = intrinsic
         return intrinsic
 
-    def _compile_instr(self, instr: ir_values.Instr, ctx: Compiler._FnBuilderContext) -> ll.Value:
+    def _compile_instr(
+        self, instr: ir_values.InstrKind, ctx: Compiler._FnBuilderContext
+    ) -> ll.Value:
         match instr:
             case (
                 ir_values.CheckedAddInstr()
@@ -349,18 +341,36 @@ class Compiler:
                 | ir_values.CheckedMulInstr()
             ):
                 typ = asserts.checked_cast(instr.lhs.typ, typs.IntTyp)
-                intrinsic = self._overflow_intrinsic(type(instr), typ)
+                intrinsic = self._overflow_intrinsic(instr, typ)
                 call = ctx.ll_builder.call(
                     intrinsic, [ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs)]
                 )
                 ctx.overflow_calls[instr] = call
                 return ctx.ll_builder.extract_value(call, 0)  # type: ignore
-            case ir_values.BinOpInstr():
-                ll_method = getattr(ctx.ll_builder, _BIN_OP_LL_METHODS[type(instr)])
-                return ll_method(ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs))
-            case ir_values.NegInstr() | ir_values.NotInstr():
-                ll_method = getattr(ctx.ll_builder, _UNARY_OP_LL_METHODS[type(instr)])
-                return ll_method(ctx.ll_values.get(instr.operand))
+            case ir_values.AddInstr():
+                return _checked_builder_value(
+                    ctx.ll_builder.add(ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs))
+                )
+            case ir_values.SubInstr():
+                return _checked_builder_value(
+                    ctx.ll_builder.sub(ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs))
+                )
+            case ir_values.MulInstr():
+                return _checked_builder_value(
+                    ctx.ll_builder.mul(ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs))
+                )
+            case ir_values.SdivInstr():
+                return _checked_builder_value(
+                    ctx.ll_builder.sdiv(ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs))
+                )
+            case ir_values.UdivInstr():
+                return _checked_builder_value(
+                    ctx.ll_builder.udiv(ctx.ll_values.get(instr.lhs), ctx.ll_values.get(instr.rhs))
+                )
+            case ir_values.NegInstr():
+                return _checked_builder_value(ctx.ll_builder.neg(ctx.ll_values.get(instr.operand)))
+            case ir_values.NotInstr():
+                return _checked_builder_value(ctx.ll_builder.not_(ctx.ll_values.get(instr.operand)))
             case ir_values.IcmpSignedInstr():
                 return ctx.ll_builder.icmp_signed(
                     instr.op,
@@ -457,8 +467,6 @@ class Compiler:
                 return ctx.ll_builder.ret(ctx.ll_values.get(instr.value))
             case ir_values.UnreachableInstr():
                 return ctx.ll_builder.unreachable()
-            case _:
-                raise AssertionError(f"unhandled instruction {instr}")
 
     def _compile_comptime_value(self, value: ir_values.ComptimeValue) -> ll.Value:
         match value:

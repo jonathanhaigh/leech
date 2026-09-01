@@ -10,6 +10,7 @@ circular import (``codegen.py`` -> ``ir_module.py`` -> ``comptime.py``).
 """
 
 import weakref
+from typing import assert_never
 
 from llvmlite import ir as ll
 
@@ -26,7 +27,7 @@ from leech import typs
 _building: weakref.WeakKeyDictionary[ll.Context, set[str]] = weakref.WeakKeyDictionary()
 
 
-def ll_typ(ctx: ll.Context, typ: typs.Typ) -> ll.Type:
+def ll_typ(ctx: ll.Context, typ: typs.TypKind) -> ll.Type:
     """Map ``typ`` to its LLVM counterpart in ``ctx``.
 
     A struct instance's identified type is built at most once per ``(ctx, qualified name)``
@@ -69,8 +70,17 @@ def ll_typ(ctx: ll.Context, typ: typs.Typ) -> ll.Type:
             return _struct_ll_typ(ctx, typ)
         case typs.NeverTyp():
             raise AssertionError("a never-typed value shouldn't need an LLVM type")
-        case _:
-            raise AssertionError(f"unhandled type {typ}")
+        case typs.TypParamTyp():
+            raise AssertionError("a type parameter has no LLVM representation")
+        case typs.ValueParamTyp():
+            raise AssertionError("a value parameter has no LLVM representation")
+        case typs.ComptimeParamTyp():
+            raise AssertionError("a comptime parameter has no LLVM representation")
+        case typs.ComptimeValueTyp():
+            raise AssertionError("a comptime value has no LLVM type representation")
+        case typs.EnumBackingTyp():
+            raise AssertionError("an unresolved enum backing type has no LLVM representation")
+    assert_never(typ)
 
 
 def _struct_ll_typ(ctx: ll.Context, typ: typs.StructTyp) -> ll.Type:
