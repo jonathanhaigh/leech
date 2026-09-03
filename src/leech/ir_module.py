@@ -110,6 +110,43 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
         """Return the cached instance for ``args``, creating it if needed."""
 
 
+@dataclasses.dataclass(frozen=True)
+class FnCandidate:
+    """A path-selected function and its resolved or deferred comptime arguments.
+
+    ``explicit_fn_args`` is empty for a non-generic function, populated for an
+    explicitly applied generic function, and ``None`` when its arguments must
+    be inferred.
+    """
+
+    fn: FnSymbol
+    impl_args: tuple[typs.Typ, ...]
+    explicit_fn_args: Optional[tuple[typs.Typ, ...]]
+
+    def apply(self, fn_args: tuple[typs.Typ, ...]) -> AppliedFn:
+        """Append the function arguments after the associated impl arguments.
+
+        The arguments must match the function's arity and any arguments already
+        recorded as explicit.
+        """
+        asserts.assert_eq(len(fn_args), len(self.fn.comptime_params))
+        if self.explicit_fn_args is not None:
+            asserts.assert_eq(fn_args, self.explicit_fn_args)
+        return AppliedFn(self.fn, (*self.impl_args, *fn_args))
+
+
+@dataclasses.dataclass(frozen=True)
+class AppliedFn:
+    """A function with all impl and function comptime arguments applied.
+
+    ``args`` contains the impl arguments first, followed by the function's own
+    arguments.
+    """
+
+    fn: FnSymbol
+    args: tuple[typs.Typ, ...]
+
+
 class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
     """A source-declared function resolved in its own child scope."""
 

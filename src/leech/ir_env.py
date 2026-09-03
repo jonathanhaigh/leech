@@ -221,7 +221,7 @@ class Env:
         if not seg.comptime_args:
             return res
         if isinstance(res, typs.GenericTypTemplate):
-            return typs.instantiate_generic_typ(res, seg.comptime_args, self, seg.span)
+            return typs.apply_generic_typ(res, seg.comptime_args, self, seg.span)
         if isinstance(res, (ir_traits.Trait, ir_module.FnSymbol)) and res.comptime_params:
             return res
         raise errors.ComptimeArgsOnNonGenericItemError(ident.name, seg.span)

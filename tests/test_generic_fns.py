@@ -99,6 +99,14 @@ def test_uncalled_public_generic_fn_has_no_instance_to_emit(tmp_path):
     assert "unused_generic[" not in llir_path.read_text()
 
 
+def test_fn_candidate_applies_impl_args_before_fn_args(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { x }")
+    fn = _get_generic_fn(mod, "id")
+    candidate = ir_module.FnCandidate(fn, (typs.BOOL,), (typs.I32,))
+
+    assert candidate.apply((typs.I32,)) == ir_module.AppliedFn(fn, (typs.BOOL, typs.I32))
+
+
 def test_function_instance_symbols_and_linkage(tmp_path):
     src = """
     trait Show { fn show(*self) i32; }

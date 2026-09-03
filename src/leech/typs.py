@@ -76,29 +76,8 @@ def resolve_trait_comptime_args(
     e: ir_env.Env,
     span: src.SrcSpan,
 ) -> tuple[Typ, ...]:
-    """Resolve and bounds-check comptime arguments applied to ``trait``.
-
-    Applies the same arity rules as ``instantiate_generic_typ`` and checks
-    the resolved arguments against the trait's own parameter bounds. Shared
-    by a bound's own trait reference (``T: Container[i32]``) and a trait
-    impl's (``impl Sized[N] for Buf[N]``).
-    """
-    if not trait.comptime_params:
-        if args_ast:
-            raise errors.ComptimeArgsOnNonGenericItemError(trait.name, span)
-        return ()
-    if not args_ast:
-        raise errors.MissingComptimeArgsError(trait.name, span)
-    if len(args_ast) != len(trait.comptime_params):
-        raise errors.WrongNumberOfComptimeArgsError(
-            trait.name, len(args_ast), len(trait.comptime_params), span
-        )
-    comptime_args = tuple(
-        resolve_comptime_arg(param, arg_ast, e)
-        for param, arg_ast in zip(trait.comptime_params, args_ast, strict=True)
-    )
-    check_comptime_arg_bounds(trait.comptime_params, comptime_args, e, span)
-    return comptime_args
+    """Resolve and bounds-check comptime arguments applied to ``trait``."""
+    return resolve_explicit_comptime_args(trait.name, trait.comptime_params, args_ast, e, span)
 
 
 def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[ComptimeParamTyp, Typ]]:
@@ -293,22 +272,50 @@ def resolve_comptime_arg(param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: i
     return Typ.from_ast(arg_ast, e)
 
 
-def instantiate_generic_typ(
+def resolve_explicit_comptime_args(
+    item_name: str,
+    comptime_params: Sequence[ComptimeParamTyp],
+    args_ast: Sequence[ast.ComptimeArg],
+    e: ir_env.Env,
+    span: Optional[src.SrcSpan],
+    *,
+    bounds_span: Optional[src.SrcSpan] = None,
+) -> tuple[Typ, ...]:
+    """Resolve and bounds-check an item's explicitly supplied comptime arguments.
+
+    ``span`` locates application errors. When supplied, ``bounds_span`` instead
+    locates only errors produced by checking the resolved arguments' bounds.
+    """
+    if not comptime_params:
+        if args_ast:
+            raise errors.ComptimeArgsOnNonGenericItemError(item_name, span)
+        return ()
+    if not args_ast:
+        raise errors.MissingComptimeArgsError(item_name, span)
+    if len(args_ast) != len(comptime_params):
+        raise errors.WrongNumberOfComptimeArgsError(
+            item_name, len(args_ast), len(comptime_params), span
+        )
+    comptime_args = tuple(
+        resolve_comptime_arg(param, arg_ast, e)
+        for param, arg_ast in zip(comptime_params, args_ast, strict=True)
+    )
+    if bounds_span is None:
+        bounds_span = span
+    check_comptime_arg_bounds(comptime_params, comptime_args, e, bounds_span)
+    return comptime_args
+
+
+def apply_generic_typ(
     template: GenericTypTemplate,
     args_ast: tuple[ast.ComptimeArg, ...],
     e: ir_env.Env,
     span: src.SrcSpan,
 ) -> TypKind:
     """Resolve, bounds-check, and apply one generic type path segment."""
-    if len(args_ast) != len(template.comptime_params):
-        raise errors.WrongNumberOfComptimeArgsError(
-            template.name, len(args_ast), len(template.comptime_params), span
-        )
-    comptime_args = tuple(
-        resolve_comptime_arg(param, arg_ast, e)
-        for param, arg_ast in zip(template.comptime_params, args_ast, strict=True)
+    comptime_args = resolve_explicit_comptime_args(
+        template.name, template.comptime_params, args_ast, e, span
     )
-    check_comptime_arg_bounds(template.comptime_params, comptime_args, e, span)
     return template.instantiate(comptime_args)
 
 
@@ -952,7 +959,7 @@ class GenericTypTemplate(abc.ABC):
     """Shared surface for an unapplied generic type: a struct declaration
     or the built-in ``array`` template.
 
-    ``instantiate_generic_typ`` applies comptime arguments to any instance
+    ``apply_generic_typ`` applies comptime arguments to any instance
     uniformly, regardless of which kind of template it is.
     """
 

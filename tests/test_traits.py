@@ -986,6 +986,24 @@ def test_trait_method_call_span(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "double_show(n)")
 
 
+def test_explicit_generic_fn_bound_error_uses_call_span(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    fn double_show[T: Show](x: T) i32 {
+        return x.show() + x.show();
+    }
+    pub fn main() i32 {
+        let n: bool = true;
+        return double_show[bool](n);
+    }
+    """
+    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "double_show[bool](n)")
+
+
 def test_cross_module_trait_and_impl(tmp_path):
     a_src = """
     pub trait Show { fn show(*self) i32; }
@@ -1035,6 +1053,18 @@ def test_non_generic_trait_has_no_typ_params(tmp_path):
     assert item is not None
     assert isinstance(item.value, ir_traits.Trait)
     assert item.value.comptime_params == ()
+
+
+def test_trait_application_keeps_argument_order(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "trait Convert[From, To] { fn convert(*self) To; }")
+    item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Convert")
+    assert item is not None
+    trait = asserts.checked_cast(item.value, ir_traits.Trait)
+
+    application = ir_traits.TraitApplication(trait, (typs.BOOL, typs.I32))
+
+    assert application.trait is trait
+    assert application.args == (typs.BOOL, typs.I32)
 
 
 def test_bound_with_generic_args_on_non_generic_trait(tmp_path):

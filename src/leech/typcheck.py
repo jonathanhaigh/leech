@@ -611,38 +611,25 @@ class TypCheck:
         comptime_args_ast = callee_ast.path.segs[-1].comptime_args
 
         if comptime_args_ast:
-            mapping = self._resolve_explicit_comptime_args(
-                fn, comptime_params, comptime_args_ast, callee_ast.span, e
+            comptime_args = typs.resolve_explicit_comptime_args(
+                fn.name,
+                comptime_params,
+                comptime_args_ast,
+                e,
+                callee_ast.span,
+                bounds_span=call_ast.span,
             )
+            mapping = dict(zip(comptime_params, comptime_args, strict=True))
         else:
             mapping = self._infer_comptime_args(fn, call_ast, e, comptime_params)
-
-        comptime_args = tuple(mapping[comptime_param] for comptime_param in comptime_params)
-        typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, call_ast.span)
+            comptime_args = tuple(mapping[param] for param in comptime_params)
+            typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, call_ast.span)
         self.results._set_generic_call(call_ast, fn, comptime_args)
         return asserts.checked_cast(fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
 
     def _comptime_params_of(self, fn: ir_module.FnSymbol) -> list[typs.ComptimeParamTyp]:
         """Return ``fn``'s interned comptime parameters in declaration order."""
         return list(fn.comptime_params)
-
-    def _resolve_explicit_comptime_args(
-        self,
-        fn: ir_module.FnSymbol,
-        comptime_params: Sequence[typs.ComptimeParamTyp],
-        comptime_args: Sequence[ast.ComptimeArg],
-        span: Optional[src.SrcSpan],
-        e: ir_env.Env,
-    ) -> dict[typs.ComptimeParamTyp, typs.Typ]:
-        """Resolve explicit comptime arguments against parameters positionally."""
-        if len(comptime_args) != len(comptime_params):
-            raise errors.WrongNumberOfComptimeArgsError(
-                fn.name, len(comptime_args), len(comptime_params), span
-            )
-        return {
-            param: typs.resolve_comptime_arg(param, arg_ast, e)
-            for param, arg_ast in zip(comptime_params, comptime_args, strict=True)
-        }
 
     def _infer_comptime_args(
         self,
@@ -854,11 +841,10 @@ class TypCheck:
             raise errors.MissingComptimeArgsError(var.name, var_ast.span)
         # An uncalled reference has no arguments from which to infer types.
         comptime_params = self._comptime_params_of(var)
-        mapping = self._resolve_explicit_comptime_args(
-            var, comptime_params, comptime_args_ast, var_ast.span, e
+        comptime_args = typs.resolve_explicit_comptime_args(
+            var.name, comptime_params, comptime_args_ast, e, var_ast.span
         )
-        comptime_args = tuple(mapping[comptime_param] for comptime_param in comptime_params)
-        typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, var_ast.span)
+        mapping = dict(zip(comptime_params, comptime_args, strict=True))
         self.results._set_generic_var_ref(var_ast, var, comptime_args)
         substituted = asserts.checked_cast(var.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
         return typs.PtrTyp.get_or_create(substituted, typs.CONST)
