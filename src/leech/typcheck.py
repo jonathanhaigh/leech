@@ -804,7 +804,7 @@ class TypCheck:
         try:
             return self.results.resolutions.var(var_ast)
         except KeyError:
-            target = e.resolve_path(ir_env.Env.Namespace.VARS, var_ast.path)
+            target = e.resolve_var(var_ast.path)
             self.results.resolutions.set_var(var_ast, target)
             return target
 
@@ -822,7 +822,7 @@ class TypCheck:
             return var.ptr_typ
         if isinstance(var, ir_values.ComptimeEnum):
             # An enum variant has no address - see
-            # `Env._resolve_path_seg`'s `EnumTyp` case.
+            # `Env._lookup_path_seg`'s `EnumTyp` case.
             return var.typ
         if isinstance(var, typs.ValueParamTyp):
             # Not a place (same reasoning as the ComptimeEnum case above) -
@@ -998,7 +998,7 @@ class TypCheck:
                 return self._generic_var_ref_typ(expr_ast, var, e)
             if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
                 return self.results.local_typ(var)
-            # An enum variant (see Env._resolve_path_seg's EnumTyp
+            # An enum variant (see Env._lookup_path_seg's EnumTyp
             # case) isn't a place either - it falls through to the
             # general, value-copying case below, same as any other
             # non-place expression.

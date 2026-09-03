@@ -372,6 +372,43 @@ def test_generic_struct_assoc_fn_scope_forwards_value_param(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
+def test_generic_struct_assoc_fn_scope_forwards_typ_param(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    impl[T] Box[T] {
+        fn make(v: T) Box[T] { Box[T] { val: v } }
+    }
+    fn make_box[T](v: T) Box[T] { Box[T]::make(v) }
+    pub fn main() i32 {
+        let box = make_box[i32](42);
+        return box.val;
+    }
+    """
+
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
+def test_comptime_args_on_non_generic_assoc_fn_scope(tmp_path):
+    src = """
+    struct Foo { val: i32 }
+    impl Foo {
+        fn make(v: i32) Foo { Foo { val: v } }
+    }
+    pub fn main() i32 {
+        let foo = Foo[i32]::make(42);
+        return foo.val;
+    }
+    """
+
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert '"Foo"' in str(exc_info.value)
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "Foo[i32]::make")
+
+
 def test_wrong_number_of_typ_args_on_generic_struct(tmp_path):
     src = """
     struct Pair[A, B] { first: A, second: B }

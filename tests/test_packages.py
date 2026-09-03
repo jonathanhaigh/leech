@@ -117,6 +117,9 @@ def test_module_path_seg_rejects_comptime_args(tmp_path):
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
         util.compile_modules(tmp_path, main=main_src, a=a_src)
     assert '"a"' in str(exc_info.value)
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(main_src, "a[i32]::f")
 
 
 def test_same_stem_modules_in_different_subdirectories(tmp_path):

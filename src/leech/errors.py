@@ -79,6 +79,13 @@ class ItemNotFoundError(UserError):
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
 
 
+class ItemCannotQualifyPathError(UserError):
+    """Raised when a resolved item appears before the end of a path but is not a scope."""
+
+    def __init__(self, item_kind: str, name: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" cannot qualify a path', span)
+
+
 class MissingComptimeArgsError(UserError):
     """Raised when a generic item is used as a value without required comptime arguments."""
 

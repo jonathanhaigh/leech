@@ -92,6 +92,7 @@ def test_inherent_impl_is_registered(tmp_path):
         """,
     )
     foo = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Foo")
+    assert isinstance(foo, typs.Typ)
     inherent_impls = mod.env.impl_registry.find_inherent_impls(foo)
     assert len(inherent_impls) == 1
     assert inherent_impls[0].trait is None
@@ -111,6 +112,7 @@ def test_fn_points_at_its_impl_block(tmp_path):
         """,
     )
     foo = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Foo")
+    assert isinstance(foo, typs.Typ)
     selection = mod.env.impl_registry.lookup_member(foo, "show", None)
     assert selection is not None
     method = selection.fn
@@ -688,6 +690,17 @@ def test_bound_names_non_trait_via_method_call(tmp_path):
     assert '"NotATrait"' in str(exc_info.value)
 
 
+def test_bound_names_unapplied_generic_non_trait(tmp_path):
+    src = """
+    struct NotATrait[T] { value: T }
+    fn f[T: NotATrait](x: T) i32 { return 0; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"NotATrait"' in str(exc_info.value)
+
+
 def test_bound_names_non_trait_on_generic_fn_call(tmp_path):
     # Here the generic body never uses the bound, so nothing catches the
     # non-trait bound until the function is actually instantiated -
@@ -941,6 +954,16 @@ def test_impl_foreign_trait_for_local_typ_not_orphan(tmp_path):
 def test_impl_for_non_trait(tmp_path):
     src = """
     struct NotATrait { a: i32 }
+    impl NotATrait for i32 { fn f() i32 { 1 } }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ImplForNonTraitError):
+        util.compile_str(tmp_path, src)
+
+
+def test_impl_for_unapplied_generic_non_trait(tmp_path):
+    src = """
+    struct NotATrait[T] { value: T }
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """

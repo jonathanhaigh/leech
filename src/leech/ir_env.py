@@ -6,7 +6,7 @@
 
 import collections
 import enum
-from typing import Any, Final, Optional, cast
+from typing import Final, Optional, cast
 
 from leech import (
     asserts,
@@ -17,6 +17,7 @@ from leech import (
     ir_traits,
     ir_values,
     opt_util,
+    resolve,
     src,
     typs,
     visibility,
@@ -39,6 +40,22 @@ type Var = (
 Every bound ``ir_values.Value`` is ``PtrTyp``-typed; this isn't
 checked, since binding is a hot path.
 """
+
+type PathScope = Env | ir_module.Mod | typs.StructTyp | typs.EnumTyp
+"""A scope that may qualify another path segment."""
+
+type PathTarget = (
+    typs.Typ
+    | ir_module.Mod
+    | ir_traits.Trait
+    | Var
+    | ir_traits.ImplFnSelection
+    | ir_values.ComptimeEnum
+)
+"""A fully applied item produced by path resolution."""
+
+type PathLookup = PathTarget | typs.GenericTypTemplate
+"""An item produced by lookup before its segment's comptime arguments are applied."""
 
 
 class Env:
@@ -89,7 +106,7 @@ class Env:
         """Create a child scope inheriting this scope's bindings."""
         return Env(self.ctx, self.impl_registry, self.panic_ref, self)
 
-    def get(self, ns: Env.Namespace, name: str) -> Any:
+    def get(self, ns: Env.Namespace, name: str) -> Optional[Container | Var]:
         """Look up ``name`` outward through ``ns``, creating integer types on demand."""
         key = (ns, name)
         try:
@@ -109,7 +126,7 @@ class Env:
         self,
         ns: Env.Namespace,
         name: str,
-        item: Any,
+        item: Container | Var,
         span: Optional[src.SrcSpan] = None,
     ) -> None:
         """Bind ``name`` in this scope, using ``span`` for duplicate diagnostics."""
@@ -156,14 +173,12 @@ class Env:
             return "trait", value.span
         return None
 
-    def _resolve_path_seg(
+    def _lookup_path_seg(
         self,
         ns: Env.Namespace,
-        scope: Env | ir_module.Mod | typs.StructTypTemplate | typs.StructTyp | typs.EnumTyp,
-        seg: ast.PathSeg,
-        scope_span: Optional[src.SrcSpan],
-    ) -> Any:
-        ident = seg.ident
+        scope: PathScope,
+        ident: ast.Ident,
+    ) -> PathLookup:
         match scope:
             case Env():
                 res = scope.get(ns, ident.name)
@@ -180,8 +195,6 @@ class Env:
                         raise errors.PrivateItemAccessError(
                             item_kind, ident.name, ident.span, defn_span
                         )
-            case typs.StructTypTemplate():
-                raise errors.MissingComptimeArgsError(scope.name, opt_util.opt_unwrap(scope_span))
             case typs.StructTyp():
                 # Only associated functions are reachable by path:
                 # `SomeStruct::x` is not a way to name a field.
@@ -212,19 +225,79 @@ class Env:
                     if ns == Env.Namespace.VARS and ident.name in scope.variants
                     else None
                 )
-            case _:
-                res = None
 
         if res is None:
             raise errors.ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
+        return res
+
+    def _apply_path_seg(self, item: PathLookup, seg: ast.PathSeg) -> PathLookup:
+        if isinstance(item, typs.GenericTypTemplate):
+            if seg.comptime_args:
+                return typs.apply_generic_typ(item, seg.comptime_args, self, seg.span)
+            return item
 
         if not seg.comptime_args:
-            return res
-        if isinstance(res, typs.GenericTypTemplate):
-            return typs.apply_generic_typ(res, seg.comptime_args, self, seg.span)
-        if isinstance(res, (ir_traits.Trait, ir_module.FnSymbol)) and res.comptime_params:
-            return res
-        raise errors.ComptimeArgsOnNonGenericItemError(ident.name, seg.span)
+            return item
+        if isinstance(item, (ir_traits.Trait, ir_module.FnSymbol)) and item.comptime_params:
+            return item
+        raise errors.ComptimeArgsOnNonGenericItemError(seg.ident.name, seg.span)
+
+    def _resolve_path_seg(
+        self,
+        ns: Env.Namespace,
+        scope: PathScope,
+        seg: ast.PathSeg,
+    ) -> PathLookup:
+        item = self._lookup_path_seg(ns, scope, seg.ident)
+        return self._apply_path_seg(item, seg)
+
+    @staticmethod
+    def _path_target_kind(target: PathTarget) -> str:
+        match target:
+            case typs.TypParamTyp():
+                return "type parameter"
+            case typs.ValueParamTyp() | typs.ComptimeValueTyp():
+                return "value"
+            case typs.Typ():
+                return "type"
+            case ir_traits.Trait():
+                return "trait"
+            case ir_module.FnSymbol() | ir_traits.ImplFnSelection():
+                return "function"
+            case ir_module.Mod():
+                return "module"
+            case (
+                ir_values.Value()
+                | ast.Param()
+                | ast.Receiver()
+                | ast.LetStmt()
+                | ast.BindingPattern()
+            ):
+                return "variable"
+
+    @staticmethod
+    def _require_path_scope(target: PathLookup, seg: ast.PathSeg) -> PathScope:
+        match target:
+            case ir_module.Mod() | typs.StructTyp() | typs.EnumTyp():
+                return target
+            case typs.GenericTypTemplate():
+                raise errors.MissingComptimeArgsError(target.name, seg.span)
+            case (
+                typs.Typ()
+                | ir_traits.Trait()
+                | ir_module.FnSymbol()
+                | ir_traits.ImplFnSelection()
+                | ir_values.Value()
+                | ast.Param()
+                | ast.Receiver()
+                | ast.LetStmt()
+                | ast.BindingPattern()
+            ):
+                raise errors.ItemCannotQualifyPathError(
+                    Env._path_target_kind(target),
+                    target.name if isinstance(target, typs.Typ) else seg.ident.name,
+                    seg.span,
+                )
 
     def resolve_typ(self, path: ast.Path) -> typs.TypKind:
         """Resolve a qualified path whose final segment must be a type."""
@@ -240,14 +313,33 @@ class Env:
         assert isinstance(item, typs.Typ)
         return cast(typs.TypKind, item)
 
-    def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:
+    def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> PathLookup:
         """Resolve container path segments, then look up the final segment in ``ns``."""
         asserts.assert_ge(len(path.segs), 1)
 
-        scope: Env | ir_module.Mod | typs.StructTypTemplate | typs.StructTyp | typs.EnumTyp = self
-        scope_span: Optional[src.SrcSpan] = None
+        scope: PathScope = self
         for seg in path.segs[:-1]:
-            scope = self._resolve_path_seg(Env.Namespace.CONTAINERS, scope, seg, scope_span)
-            scope_span = seg.span
+            target = self._resolve_path_seg(Env.Namespace.CONTAINERS, scope, seg)
+            scope = self._require_path_scope(target, seg)
 
-        return self._resolve_path_seg(ns, scope, path.segs[-1], scope_span)
+        return self._resolve_path_seg(ns, scope, path.segs[-1])
+
+    def resolve_var(self, path: ast.Path) -> resolve.VarTarget:
+        """Resolve a variable path and verify its namespace's result invariant."""
+        target = self.resolve_path(Env.Namespace.VARS, path)
+        if isinstance(
+            target,
+            (
+                ir_module.ModVar,
+                ir_module.FnSymbol,
+                ir_traits.ImplFnSelection,
+                ir_values.ComptimeEnum,
+                typs.ValueParamTyp,
+                ast.Param,
+                ast.Receiver,
+                ast.LetStmt,
+                ast.BindingPattern,
+            ),
+        ):
+            return target
+        raise AssertionError(f"invalid variable path target: {target!r}")

@@ -11,7 +11,7 @@ import re
 import types
 import weakref
 from collections.abc import Callable, Hashable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Optional, Self, override
+from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
 
 from leech import (
     asserts,
@@ -894,7 +894,9 @@ def comptime_params_from_ast(
         if len(param_ast.bounds) == 1:
             (bound,) = param_ast.bounds
             try:
-                item: Optional[Any] = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
+                item: Optional[ir_env.PathLookup] = e.resolve_path(
+                    ir_env.Env.Namespace.CONTAINERS, bound.path
+                )
             except errors.ItemNotFoundError:
                 # Not yet declared in this module - defer to a type parameter;
                 # resolve_bound raises later if it never resolves to a trait.

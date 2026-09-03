@@ -756,6 +756,46 @@ pub fn main() i32 {
     assert (span.start_line, span.start_col) == util.find_pos(src, "f[i32](5)")
 
 
+@pytest.mark.parametrize(
+    ("src", "qualifier", "item_kind", "item_name"),
+    [
+        ("pub fn main() i32 { return i32::x; }", "i32::x", "Type", "i32"),
+        (
+            "pub fn main() i32 { return array[i32, 3]::x; }",
+            "array[i32, 3]::x",
+            "Type",
+            "array[i32, 3]",
+        ),
+        (
+            "trait Show { fn show(*self) i32; } pub fn main() i32 { return Show::x; }",
+            "Show::x",
+            "Trait",
+            "Show",
+        ),
+        (
+            "fn f[T]() i32 { return T::x; } pub fn main() i32 { return 0; }",
+            "T::x",
+            "Type parameter",
+            "T",
+        ),
+        (
+            "fn f[N: usize]() i32 { return N::x; } pub fn main() i32 { return 0; }",
+            "N::x",
+            "Value",
+            "N",
+        ),
+    ],
+)
+def test_non_scope_item_cannot_qualify_path(tmp_path, src, qualifier, item_kind, item_name):
+    with pytest.raises(errors.ItemCannotQualifyPathError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert str(exc_info.value) == f'{item_kind} "{item_name}" cannot qualify a path'
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, qualifier)
+
+
 def test_unconstrained_impl_typ_param_message(tmp_path):
     src = """struct Box[T] { val: T }
 impl[T, U] Box[T] {
