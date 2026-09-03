@@ -591,7 +591,7 @@ class TypCheck:
                 raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
             method = item.get_trait_method(name)
             if method is not None:
-                if bound.comptime_args:
+                if bound.path.segs[-1].comptime_args:
                     # The signature would still name the trait's own type
                     # parameters, not the bound's arguments; substituting
                     # them needs generic traits.
@@ -608,10 +608,11 @@ class TypCheck:
         """Resolve and record a generic call's concrete function type."""
         callee_ast = asserts.checked_cast(call_ast.callee, ast.VarExpr)
         comptime_params = self._comptime_params_of(fn)
+        comptime_args_ast = callee_ast.path.segs[-1].comptime_args
 
-        if callee_ast.comptime_args:
+        if comptime_args_ast:
             mapping = self._resolve_explicit_comptime_args(
-                fn, comptime_params, callee_ast.comptime_args, callee_ast.span, e
+                fn, comptime_params, comptime_args_ast, callee_ast.span, e
             )
         else:
             mapping = self._infer_comptime_args(fn, call_ast, e, comptime_params)
@@ -830,13 +831,11 @@ class TypCheck:
             and var.comptime_params
         ):
             return self._generic_var_ref_typ(var_ast, var, e)
-        if var_ast.comptime_args:
-            raise errors.ComptimeArgsOnNonGenericItemError(var_ast.path.str(), var_ast.span)
         if isinstance(var, (ir_traits.ImplFnSelection, ir_module.FnSymbol)):
             return var.ptr_typ
         if isinstance(var, ir_values.ComptimeEnum):
             # An enum variant has no address - see
-            # `Env._resolve_path_segment`'s `EnumTyp` case.
+            # `Env._resolve_path_seg`'s `EnumTyp` case.
             return var.typ
         if isinstance(var, typs.ValueParamTyp):
             # Not a place (same reasoning as the ComptimeEnum case above) -
@@ -850,12 +849,13 @@ class TypCheck:
         self, var_ast: ast.VarExpr, var: ir_module.FnSymbol, e: ir_env.Env
     ) -> typs.PtrTyp:
         """Return an explicitly applied generic function reference's pointer type."""
-        if not var_ast.comptime_args:
+        comptime_args_ast = var_ast.path.segs[-1].comptime_args
+        if not comptime_args_ast:
             raise errors.MissingComptimeArgsError(var.name, var_ast.span)
         # An uncalled reference has no arguments from which to infer types.
         comptime_params = self._comptime_params_of(var)
         mapping = self._resolve_explicit_comptime_args(
-            var, comptime_params, var_ast.comptime_args, var_ast.span, e
+            var, comptime_params, comptime_args_ast, var_ast.span, e
         )
         comptime_args = tuple(mapping[comptime_param] for comptime_param in comptime_params)
         typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, var_ast.span)
@@ -1012,7 +1012,7 @@ class TypCheck:
                 return self._generic_var_ref_typ(expr_ast, var, e)
             if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
                 return self.results.local_typ(var)
-            # An enum variant (see Env._resolve_path_segment's EnumTyp
+            # An enum variant (see Env._resolve_path_seg's EnumTyp
             # case) isn't a place either - it falls through to the
             # general, value-copying case below, same as any other
             # non-place expression.

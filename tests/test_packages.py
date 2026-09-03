@@ -86,6 +86,39 @@ def test_nested_import_does_not_exist(tmp_path):
     assert "sub::nope" in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    ("import_path", "offending_seg"),
+    [("a[i32]", "a"), ("sub::a[i32]", "a"), ("sub[i32]::a", "sub")],
+)
+def test_import_path_rejects_comptime_args_before_missing_module_lookup(
+    tmp_path, import_path, offending_seg
+):
+    main_src = f"""
+    import {import_path};
+    pub fn main() i32 {{ return 0; }}
+    """
+
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+        util.compile_modules(tmp_path, main=main_src)
+
+    assert f'"{offending_seg}"' in str(exc_info.value)
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(main_src, f"{offending_seg}[i32]")
+
+
+def test_module_path_seg_rejects_comptime_args(tmp_path):
+    main_src = """
+    import a;
+    pub fn main() i32 { return a[i32]::f(); }
+    """
+    a_src = "pub fn f() i32 { 0 }"
+
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
+    assert '"a"' in str(exc_info.value)
+
+
 def test_same_stem_modules_in_different_subdirectories(tmp_path):
     # Two files both named mem.leech, in different packages, each
     # reached only through one intermediate wrapper module (so neither

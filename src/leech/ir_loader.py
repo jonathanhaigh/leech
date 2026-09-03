@@ -87,7 +87,13 @@ class ModLoader:
         self, importing_file: src.SrcFile, path: ast.Path
     ) -> tuple[pathlib.Path, str]:
         """Resolve an import to its first matching file and qualified name."""
-        idents = [ident.name for ident in path.idents]
+        seg_with_args = next((seg for seg in path.segs if seg.comptime_args), None)
+        if seg_with_args is not None:
+            raise errors.ComptimeArgsOnNonGenericItemError(
+                seg_with_args.ident.name, seg_with_args.span
+            )
+
+        idents = [seg.ident.name for seg in path.segs]
         roots = (importing_file.path.parent, _BUNDLED_ROOT, *self._extra_search_roots)
         for root in roots:
             candidate = root.joinpath(*idents[:-1], f"{idents[-1]}.leech")

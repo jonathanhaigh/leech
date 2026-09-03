@@ -307,6 +307,71 @@ def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "Box::make")
 
 
+def test_generic_struct_assoc_fn_scope_accepts_args_on_struct_seg(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    impl[T] Box[T] {
+        fn make(v: T) Box[T] { Box[T] { val: v } }
+    }
+    pub fn main() i32 {
+        let box = Box[i32]::make(42);
+        return box.val;
+    }
+    """
+
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
+def test_cross_module_generic_struct_assoc_fn_scope(tmp_path):
+    a_src = """
+    pub struct Box[T] { pub val: T }
+    impl[T] Box[T] {
+        pub fn make(v: T) Box[T] { Box[T] { val: v } }
+    }
+    """
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        let box = a::Box[i32]::make(7);
+        return box.val;
+    }
+    """
+
+    util.check_prog_output(tmp_path, main_src, "", 7, a=a_src)
+
+
+def test_generic_struct_assoc_fn_scope_checks_arg_arity(tmp_path):
+    src = """
+    struct Box[T] { val: T }
+    impl[T] Box[T] {
+        fn make(v: T) Box[T] { Box[T] { val: v } }
+    }
+    pub fn main() i32 {
+        let box = Box[i32, bool]::make(42);
+        return box.val;
+    }
+    """
+
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError):
+        util.compile_str(tmp_path, src)
+
+
+def test_generic_struct_assoc_fn_scope_forwards_value_param(tmp_path):
+    src = """
+    struct Buf[N: usize] { val: i32 }
+    impl[N: usize] Buf[N] {
+        fn make(v: i32) Buf[N] { Buf[N] { val: v } }
+    }
+    fn make_buf[N: usize](v: i32) Buf[N] { Buf[N]::make(v) }
+    pub fn main() i32 {
+        let buf = make_buf[4](42);
+        return buf.val;
+    }
+    """
+
+    util.check_prog_output(tmp_path, src, "", 42)
+
+
 def test_wrong_number_of_typ_args_on_generic_struct(tmp_path):
     src = """
     struct Pair[A, B] { first: A, second: B }

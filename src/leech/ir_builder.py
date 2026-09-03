@@ -779,7 +779,7 @@ class CfgBuilder:
         if isinstance(target, ir_module.ExternFnSymbol):
             return target.instantiate(()).ref
         if isinstance(target, ir_values.ComptimeEnum):
-            # Not a place (see Env._resolve_path_segment's EnumTyp case)
+            # Not a place (see Env._resolve_path_seg's EnumTyp case)
             # - in PLACE context, copy it into a temporary and address
             # that, the same as any other non-place value (see
             # _in_context/_value_to_ptr).

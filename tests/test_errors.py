@@ -414,15 +414,15 @@ def test_recursive_trait_bound_message(tmp_path):
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
 
-    assert exc_info.value.message.message == 'Trait bound "Y" is part of a recursive bound cycle'
+    assert exc_info.value.message.message == 'Trait bound "Y[T]" is part of a recursive bound cycle'
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == util.find_pos(src, "Y[T]] { fn x")
 
     assert [note.message for note in exc_info.value.extra] == [
-        'Trait bound "Y" participates in this cycle',
-        'Trait bound "Z" participates in this cycle',
-        'Trait bound "X" participates in this cycle',
+        'Trait bound "Y[T]" participates in this cycle',
+        'Trait bound "Z[T]" participates in this cycle',
+        'Trait bound "X[T]" participates in this cycle',
     ]
     expected_spans = [
         util.find_pos(src, text) for text in ("Y[T]] { fn x", "Z[T]] { fn y", "X[T]] { fn z")

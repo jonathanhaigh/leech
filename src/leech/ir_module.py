@@ -818,7 +818,7 @@ class Mod:
                     ir_traits.Trait(defn_ast, self.env, self.name),
                 )
             case ast.Import():
-                last_ident = defn_ast.path.idents[-1]
+                last_ident = defn_ast.path.segs[-1].ident
                 mod_path, qualified_name = self.loader.resolve_import(
                     defn_ast.span.file, defn_ast.path
                 )
@@ -868,7 +868,7 @@ class Mod:
         if not isinstance(typ, typs.StructTyp):
             raise errors.ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
-        if len(impl_typ_ast.path.idents) > 1:
+        if len(impl_typ_ast.path.segs) > 1:
             raise errors.ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         impl = ir_traits.Impl(impl_ast, None, typ, impl_comptime_params, impl_env, self.name)
@@ -906,7 +906,10 @@ class Mod:
         # `T: Container[i32]`): the impl supplies concrete arguments for
         # the trait's own comptime parameters, if it declares any.
         trait_args = typs.resolve_trait_comptime_args(
-            trait, trait_typ_ast.comptime_args, impl_env, trait_typ_ast.span
+            trait,
+            trait_typ_ast.path.segs[-1].comptime_args,
+            impl_env,
+            trait_typ_ast.span,
         )
 
         self_typ = typs.Typ.from_ast(opt_util.opt_unwrap(impl_ast.for_typ), impl_env)

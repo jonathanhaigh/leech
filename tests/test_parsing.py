@@ -30,17 +30,39 @@ class T(lark.Tree):
                 new_leaf = T(d)
                 self.leaf.children.append(new_leaf)
                 self.leaf = new_leaf
+        self._update_path_shape()
 
     def cs(self, *children):
         assert self.leaf is not None
         self.leaf.children.extend(children)
         self.leaf = None
+        self._update_path_shape()
         return self
+
+    def _update_path_shape(self):
+        if self.data == "path":
+            self.children = [
+                T("path_seg").cs(child, None)
+                if isinstance(child, lark.Tree) and child.data == "ident"
+                else child
+                for child in self.children
+            ]
+            return
+        if self.data not in {"basic_typ", "var_expr"} or len(self.children) != 2:
+            return
+        path, comptime_args = self.children
+        if not isinstance(path, lark.Tree) or path.data != "path":
+            return
+        last_seg = path.children[-1]
+        assert isinstance(last_seg, lark.Tree) and last_seg.data == "path_seg"
+        last_seg.children[-1] = comptime_args
+        self.children = [path]
 
 
 def check_parse(rule, src, expected):
     p = parse.build_parser(rule)
     tree = p.parse(src)
+    _update_expected_path_shapes(expected)
 
     if tree != expected:
         got_str = tree.pretty()
@@ -62,11 +84,51 @@ def check_parse(rule, src, expected):
         assert tree == expected
 
 
+def _update_expected_path_shapes(tree):
+    for child in tree.children:
+        if isinstance(child, lark.Tree):
+            _update_expected_path_shapes(child)
+    if isinstance(tree, T):
+        tree._update_path_shape()
+
+
 def check_parse_fails(rule, src):
     p = parse.build_parser(rule)
     with pytest.raises((lark.UnexpectedToken, lark.UnexpectedCharacters)):
         tree = p.parse(src)
         print(tree)
+
+
+def test_comptime_args_attach_to_each_path_seg():
+    check_parse(
+        "expr",
+        "Option[i32]::Some[bool]",
+        T("var_expr").cs(
+            T("path").cs(
+                T("path_seg").cs(
+                    T("ident", Tok("Option")),
+                    T("comptime_args").cs(T("basic_typ").cs(T("path", "ident", Tok("i32")), None)),
+                ),
+                T("path_seg").cs(
+                    T("ident", Tok("Some")),
+                    T("comptime_args").cs(T("basic_typ").cs(T("path", "ident", Tok("bool")), None)),
+                ),
+            )
+        ),
+    )
+    check_parse(
+        "path_pattern",
+        "Option[i32]::Some",
+        T("path_pattern").cs(
+            T("path").cs(
+                T("path_seg").cs(
+                    T("ident", Tok("Option")),
+                    T("comptime_args").cs(T("basic_typ").cs(T("path", "ident", Tok("i32")), None)),
+                ),
+                T("path_seg").cs(T("ident", Tok("Some")), None),
+            )
+        ),
+    )
 
 
 INT_LITS = [

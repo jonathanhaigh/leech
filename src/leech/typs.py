@@ -55,12 +55,9 @@ def resolve_bound(
     bound: ast.BasicTyp,
     e: ir_env.Env,
 ) -> tuple[ir_traits.Trait, tuple[Typ, ...]]:
-    """Resolve a bound to its trait and its resolved comptime arguments.
+    """Resolve a bound's trait and bounds-checked comptime arguments.
 
-    Applies the same arity rules to a bound's trait reference that
-    ``Typ._basic_typ_from_ast`` applies to a type reference, and checks the
-    resolved arguments against the trait's own parameter bounds. Whether any
-    particular type *satisfies* the bound is left to callers.
+    Whether any particular type satisfies the bound is left to callers.
     """
     # This must be local because ir_traits imports this module.
     from leech import ir_traits  # noqa: PLC0415
@@ -68,7 +65,9 @@ def resolve_bound(
     trait = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
     if not isinstance(trait, ir_traits.Trait):
         raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
-    return trait, resolve_trait_comptime_args(trait, bound.comptime_args, e, bound.span)
+    return trait, resolve_trait_comptime_args(
+        trait, bound.path.segs[-1].comptime_args, e, bound.span
+    )
 
 
 def resolve_trait_comptime_args(
@@ -79,11 +78,10 @@ def resolve_trait_comptime_args(
 ) -> tuple[Typ, ...]:
     """Resolve and bounds-check comptime arguments applied to ``trait``.
 
-    Applies the same arity rules ``Typ._basic_typ_from_ast`` applies to
-    a generic struct reference, and checks the resolved arguments against
-    the trait's own parameter bounds. Shared by a bound's own trait
-    reference (``T: Container[i32]``) and a trait impl's (``impl
-    Sized[N] for Buf[N]``).
+    Applies the same arity rules as ``instantiate_generic_typ`` and checks
+    the resolved arguments against the trait's own parameter bounds. Shared
+    by a bound's own trait reference (``T: Container[i32]``) and a trait
+    impl's (``impl Sized[N] for Buf[N]``).
     """
     if not trait.comptime_params:
         if args_ast:
@@ -281,7 +279,9 @@ def resolve_comptime_arg(param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: i
         return ComptimeValueTyp.get_or_create(lit_typ, arg_ast.value)
     if isinstance(arg_ast, ast.BoolLit):
         return ComptimeValueTyp.get_or_create(BOOL, arg_ast.value)
-    if isinstance(arg_ast, ast.BasicTyp) and not arg_ast.comptime_args:
+    if isinstance(arg_ast, ast.BasicTyp) and all(
+        not seg.comptime_args for seg in arg_ast.path.segs
+    ):
         # A bare name here may forward a value parameter, or the concrete
         # value substituted for one (e.g. `Sized[N]`, forwarding an
         # enclosing impl's own value parameter as a trait argument) -
@@ -291,6 +291,25 @@ def resolve_comptime_arg(param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: i
         if isinstance(item, (ValueParamTyp, ComptimeValueTyp)):
             return item
     return Typ.from_ast(arg_ast, e)
+
+
+def instantiate_generic_typ(
+    template: GenericTypTemplate,
+    args_ast: tuple[ast.ComptimeArg, ...],
+    e: ir_env.Env,
+    span: src.SrcSpan,
+) -> TypKind:
+    """Resolve, bounds-check, and apply one generic type path segment."""
+    if len(args_ast) != len(template.comptime_params):
+        raise errors.WrongNumberOfComptimeArgsError(
+            template.name, len(args_ast), len(template.comptime_params), span
+        )
+    comptime_args = tuple(
+        resolve_comptime_arg(param, arg_ast, e)
+        for param, arg_ast in zip(template.comptime_params, args_ast, strict=True)
+    )
+    check_comptime_arg_bounds(template.comptime_params, comptime_args, e, span)
+    return template.instantiate(comptime_args)
 
 
 def check_comptime_arg_bounds(
@@ -420,25 +439,8 @@ class Typ(abc.ABC):
 
     @staticmethod
     def _basic_typ_from_ast(typ_ast: ast.BasicTyp, e: ir_env.Env) -> TypKind:
-        """Resolve a named type, applying arguments only to a bare generic template."""
-        item = e.resolve_typ(typ_ast.path)
-        if not isinstance(item, GenericTypTemplate):
-            if typ_ast.comptime_args:
-                raise errors.ComptimeArgsOnNonGenericItemError(typ_ast.path.str(), typ_ast.span)
-            return item
-
-        if not typ_ast.comptime_args:
-            raise errors.MissingComptimeArgsError(item.name, typ_ast.span)
-        if len(typ_ast.comptime_args) != len(item.comptime_params):
-            raise errors.WrongNumberOfComptimeArgsError(
-                item.name, len(typ_ast.comptime_args), len(item.comptime_params), typ_ast.span
-            )
-        comptime_args = tuple(
-            resolve_comptime_arg(param, arg_ast, e)
-            for param, arg_ast in zip(item.comptime_params, typ_ast.comptime_args, strict=True)
-        )
-        check_comptime_arg_bounds(item.comptime_params, comptime_args, e, typ_ast.span)
-        return item.instantiate(comptime_args)
+        """Resolve a named type, including applications on its path segments."""
+        return e.resolve_typ(typ_ast.path)
 
 
 class IntTyp(Typ):
@@ -950,10 +952,8 @@ class GenericTypTemplate(abc.ABC):
     """Shared surface for an unapplied generic type: a struct declaration
     or the built-in ``array`` template.
 
-    ``Typ._basic_typ_from_ast`` applies comptime arguments to any
-    instance of this uniformly, using the same arity/bounds-checking
-    path (``resolve_comptime_arg``, ``check_comptime_arg_bounds``)
-    regardless of which kind of template it is.
+    ``instantiate_generic_typ`` applies comptime arguments to any instance
+    uniformly, regardless of which kind of template it is.
     """
 
     @property

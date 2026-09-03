@@ -156,13 +156,14 @@ class Env:
             return "trait", value.span
         return None
 
-    def _resolve_path_segment(
+    def _resolve_path_seg(
         self,
         ns: Env.Namespace,
         scope: Env | ir_module.Mod | typs.StructTypTemplate | typs.StructTyp | typs.EnumTyp,
-        ident: ast.Ident,
+        seg: ast.PathSeg,
         scope_span: Optional[src.SrcSpan],
     ) -> Any:
+        ident = seg.ident
         match scope:
             case Env():
                 res = scope.get(ns, ident.name)
@@ -211,32 +212,42 @@ class Env:
                     if ns == Env.Namespace.VARS and ident.name in scope.variants
                     else None
                 )
+            case _:
+                res = None
 
         if res is None:
             raise errors.ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
 
-        return res
+        if not seg.comptime_args:
+            return res
+        if isinstance(res, typs.GenericTypTemplate):
+            return typs.instantiate_generic_typ(res, seg.comptime_args, self, seg.span)
+        if isinstance(res, (ir_traits.Trait, ir_module.FnSymbol)) and res.comptime_params:
+            return res
+        raise errors.ComptimeArgsOnNonGenericItemError(ident.name, seg.span)
 
-    def resolve_typ(self, path: ast.Path) -> typs.TypKind | typs.GenericTypTemplate:
+    def resolve_typ(self, path: ast.Path) -> typs.TypKind:
         """Resolve a qualified path whose final segment must be a type."""
         item = self.resolve_path(Env.Namespace.CONTAINERS, path)
         if isinstance(item, ir_module.Mod):
-            raise errors.ModUsedAsTypError(item.name, path.idents[-1].span)
+            raise errors.ModUsedAsTypError(item.name, path.segs[-1].span)
         if isinstance(item, ir_traits.Trait):
-            raise errors.TraitUsedAsTypError(item.name, path.idents[-1].span)
+            raise errors.TraitUsedAsTypError(item.name, path.segs[-1].span)
         if isinstance(item, (typs.ValueParamTyp, typs.ComptimeValueTyp)):
-            raise errors.ValueUsedAsTypError(item.name, path.idents[-1].span)
-        assert isinstance(item, (typs.Typ, typs.GenericTypTemplate))
-        return cast(typs.TypKind | typs.GenericTypTemplate, item)
+            raise errors.ValueUsedAsTypError(item.name, path.segs[-1].span)
+        if isinstance(item, typs.GenericTypTemplate):
+            raise errors.MissingComptimeArgsError(item.name, path.segs[-1].span)
+        assert isinstance(item, typs.Typ)
+        return cast(typs.TypKind, item)
 
     def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> Any:
         """Resolve container path segments, then look up the final segment in ``ns``."""
-        asserts.assert_ge(len(path.idents), 1)
+        asserts.assert_ge(len(path.segs), 1)
 
         scope: Env | ir_module.Mod | typs.StructTypTemplate | typs.StructTyp | typs.EnumTyp = self
         scope_span: Optional[src.SrcSpan] = None
-        for ident in path.idents[:-1]:
-            scope = self._resolve_path_segment(Env.Namespace.CONTAINERS, scope, ident, scope_span)
-            scope_span = ident.span
+        for seg in path.segs[:-1]:
+            scope = self._resolve_path_seg(Env.Namespace.CONTAINERS, scope, seg, scope_span)
+            scope_span = seg.span
 
-        return self._resolve_path_segment(ns, scope, path.idents[-1], scope_span)
+        return self._resolve_path_seg(ns, scope, path.segs[-1], scope_span)

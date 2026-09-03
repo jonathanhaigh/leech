@@ -58,7 +58,7 @@ _comptime_arg_list: comptime_arg ("," comptime_arg)* ","?
 ?typ: basic_typ
   | ptr_typ
 
-basic_typ: path [comptime_args]
+basic_typ: path
 ptr_typ: "*" mut typ
 
 stmt: expr_stmt
@@ -197,8 +197,9 @@ deref_expr: atom_expr ".*"
 str_lit: STR_LIT
 int_lit: INT_LIT
 !bool_lit: "true" | "false"
-var_expr: path [comptime_args]
-path: ident ("::" ident)*
+var_expr: path
+path: path_seg ("::" path_seg)*
+path_seg: ident [comptime_args]
 ident: IDENT
 
 INT_LIT: NONNEG_INT (("i"|"u") (POS_INT | "size"))?

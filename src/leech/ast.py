@@ -85,24 +85,55 @@ class Ident(Ast):
         return f"identifier {self.name}"
 
 
-class Path(Ast):
-    """A (possibly ``::``-qualified) sequence of identifiers, e.g. ``some_mod::Foo``."""
+class PathSeg(Ast):
+    """One identifier in a path and the comptime arguments applied to it."""
 
-    idents: Final[tuple[Ident, ...]]
+    ident: Final[Ident]
+    comptime_args: Final[tuple[ComptimeArg, ...]]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "path_seg")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        ident, comptime_args = tree.children
+        self.ident = Ident.from_tree(file, _as_tree(ident))
+        if comptime_args is None:
+            self.comptime_args = ()
+        else:
+            self.comptime_args = tuple(
+                _comptime_arg_from_tree(file, _as_tree(child))
+                for child in _as_tree(comptime_args).children
+            )
+
+    @override
+    def diag_str(self) -> str:
+        return f'path segment "{self.ident.name}"'
+
+
+class Path(Ast):
+    """A (possibly ``::``-qualified) sequence of path segments."""
+
+    segs: Final[tuple[PathSeg, ...]]
 
     @override
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "path")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        self.idents = tuple(Ident.from_tree(file, _as_tree(ident)) for ident in tree.children)
+        self.segs = tuple(PathSeg(file, _as_tree(seg)) for seg in tree.children)
 
     @override
     def diag_str(self) -> str:
         return f"path {self.str()}"
 
     def str(self) -> str:
-        """This path rendered back as ``::``-separated source text."""
-        return "::".join(ident.name for ident in self.idents)
+        """Render the path, including each segment's comptime arguments."""
+        rendered_segs: list[str] = []
+        for seg in self.segs:
+            rendered = seg.ident.name
+            if seg.comptime_args:
+                args = ", ".join(_comptime_arg_str(arg) for arg in seg.comptime_args)
+                rendered = f"{rendered}[{args}]"
+            rendered_segs.append(rendered)
+        return "::".join(rendered_segs)
 
 
 class Expr(Ast):
@@ -456,26 +487,14 @@ class BoolLit(Expr):
 
 
 class VarExpr(PlaceExpr):
-    """A (possibly qualified) variable or function reference, e.g. ``some_mod::x``.
-
-    ``comptime_args`` holds an explicit comptime application, e.g. the
-    ``[i32]`` in ``f[i32](x)`` or the ``[4]`` in ``f[4](x)``; empty when
-    the callee's comptime parameters (if any) are left to be inferred.
-    """
+    """A (possibly qualified) variable or function reference, e.g. ``some_mod::x``."""
 
     path: Final[Path]
-    comptime_args: Final[tuple[ComptimeArg, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        path, comptime_args = tree.children
+        (path,) = tree.children
         self.path = Path(file, _as_tree(path))
-        if comptime_args is not None:
-            self.comptime_args = tuple(
-                _comptime_arg_from_tree(file, _as_tree(c)) for c in _as_tree(comptime_args).children
-            )
-        else:
-            self.comptime_args = ()
 
     @override
     def diag_str(self) -> str:
@@ -861,25 +880,15 @@ def _comptime_arg_from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> Com
 
 
 class BasicTyp(Typ):
-    """A named type, e.g. ``i32`` or ``some_mod::Foo``, optionally applied to
-    generic arguments, e.g. ``Vec[i32]``. ``comptime_args`` is empty for a
-    non-generic type.
-    """
+    """A named type, e.g. ``i32``, ``some_mod::Foo``, or ``Vec[i32]``."""
 
     path: Final[Path]
-    comptime_args: Final[tuple[ComptimeArg, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "basic_typ")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        path, comptime_args = tree.children
+        (path,) = tree.children
         self.path = Path(file, _as_tree(path))
-        if comptime_args is not None:
-            self.comptime_args = tuple(
-                _comptime_arg_from_tree(file, _as_tree(c)) for c in _as_tree(comptime_args).children
-            )
-        else:
-            self.comptime_args = ()
 
     @override
     def diag_str(self) -> str:
@@ -906,6 +915,18 @@ class PtrTyp(Typ):
 
 type ComptimeArg = BasicTyp | PtrTyp | IntLit | BoolLit
 """A parsed comptime argument: a type, or a literal value."""
+
+
+def _comptime_arg_str(arg: ComptimeArg) -> str:
+    if isinstance(arg, BasicTyp):
+        return arg.path.str()
+    if isinstance(arg, PtrTyp):
+        mut = ""
+        if arg.mut is not None:
+            mut = "mut "
+        return f"*{mut}{_comptime_arg_str(arg.pointee_typ)}"
+    assert isinstance(arg, (IntLit, BoolLit))
+    return str(arg.token)
 
 
 class Param(Ast):

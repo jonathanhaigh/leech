@@ -59,8 +59,8 @@ def test_impl_defn_array_typ(tmp_path):
     assert isinstance(impl, ast.ImplDefn)
 
     assert isinstance(impl.typ, ast.BasicTyp)
-    assert impl.typ.path.str() == "array"
-    elt_typ, length = impl.typ.comptime_args
+    assert impl.typ.path.str() == "array[Foo, 3]"
+    elt_typ, length = impl.typ.path.segs[-1].comptime_args
     assert isinstance(elt_typ, ast.BasicTyp)
     assert elt_typ.path.str() == "Foo"
     assert isinstance(length, ast.IntLit)
@@ -111,7 +111,9 @@ def test_basic_typ_generic_args(tmp_path):
 
     (param,) = fn.params
     assert isinstance(param.typ, ast.BasicTyp)
-    arg_names = [t.path.str() for t in param.typ.comptime_args if isinstance(t, ast.BasicTyp)]
+    arg_names = [
+        t.path.str() for t in param.typ.path.segs[-1].comptime_args if isinstance(t, ast.BasicTyp)
+    ]
     assert arg_names == ["i32", "bool"]
 
 
@@ -124,7 +126,7 @@ def test_basic_typ_comptime_args_accepts_int_lit(tmp_path):
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
     assert isinstance(param.typ, ast.BasicTyp)
-    _, int_arg = param.typ.comptime_args
+    _, int_arg = param.typ.path.segs[-1].comptime_args
     assert isinstance(int_arg, ast.IntLit)
     assert int_arg.value == 4
 
@@ -138,8 +140,8 @@ def test_array_length_path_is_populated_for_identifier(tmp_path):
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
     assert isinstance(param.typ, ast.BasicTyp)
-    assert param.typ.path.str() == "array"
-    _, length = param.typ.comptime_args
+    assert param.typ.path.str() == "array[i32, N]"
+    _, length = param.typ.path.segs[-1].comptime_args
     assert isinstance(length, ast.BasicTyp)
     assert length.path.str() == "N"
 
@@ -153,8 +155,8 @@ def test_array_length_value_is_populated_for_literal(tmp_path):
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
     assert isinstance(param.typ, ast.BasicTyp)
-    assert param.typ.path.str() == "array"
-    _, length = param.typ.comptime_args
+    assert param.typ.path.str() == "array[i32, 4]"
+    _, length = param.typ.path.segs[-1].comptime_args
     assert isinstance(length, ast.IntLit)
     assert length.value == 4
 
@@ -172,30 +174,70 @@ def test_var_expr_generic_args(tmp_path):
     call = stmt.expr
     assert isinstance(call, ast.CallExpr)
     assert isinstance(call.callee, ast.VarExpr)
-    (arg,) = call.callee.comptime_args
+    (arg,) = call.callee.path.segs[-1].comptime_args
     assert isinstance(arg, ast.BasicTyp)
     assert arg.path.str() == "i32"
 
 
-def test_import_single_segment_path(tmp_path):
+def test_comptime_args_are_stored_on_path_segs(tmp_path):
+    src = """
+    fn f(x: pkg::Outer[i32]::Inner[bool]) {
+        pkg::Outer[i32]::make[bool];
+    }
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+
+    (param,) = fn.params
+    assert isinstance(param.typ, ast.BasicTyp)
+    assert [seg.ident.name for seg in param.typ.path.segs] == [
+        "pkg",
+        "Outer",
+        "Inner",
+    ]
+    assert [len(seg.comptime_args) for seg in param.typ.path.segs] == [0, 1, 1]
+    assert param.typ.path.str() == "pkg::Outer[i32]::Inner[bool]"
+
+    stmt = fn.block.stmts[0]
+    assert isinstance(stmt, ast.ExprStmt)
+    assert isinstance(stmt.expr, ast.VarExpr)
+    assert [len(seg.comptime_args) for seg in stmt.expr.path.segs] == [0, 1, 1]
+    assert stmt.expr.path.str() == "pkg::Outer[i32]::make[bool]"
+
+
+def test_path_str_renders_nested_comptime_args(tmp_path):
+    src = """
+    fn f(x: pkg::Outer[array[*mut i32, 4], true]::Inner[false]) {}
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    (param,) = fn.params
+    assert isinstance(param.typ, ast.BasicTyp)
+
+    assert param.typ.path.str() == "pkg::Outer[array[*mut i32, 4], true]::Inner[false]"
+
+
+def test_import_single_seg_path(tmp_path):
     src = """
     import xyz;
     """
     mod = util.parse_mod(tmp_path, src)
     (imp,) = mod.defns
     assert isinstance(imp, ast.Import)
-    assert [ident.name for ident in imp.path.idents] == ["xyz"]
+    assert [seg.ident.name for seg in imp.path.segs] == ["xyz"]
     assert imp.path.str() == "xyz"
 
 
-def test_import_multi_segment_path(tmp_path):
+def test_import_multi_seg_path(tmp_path):
     src = """
     import std::mem;
     """
     mod = util.parse_mod(tmp_path, src)
     (imp,) = mod.defns
     assert isinstance(imp, ast.Import)
-    assert [ident.name for ident in imp.path.idents] == ["std", "mem"]
+    assert [seg.ident.name for seg in imp.path.segs] == ["std", "mem"]
     assert imp.path.str() == "std::mem"
 
 

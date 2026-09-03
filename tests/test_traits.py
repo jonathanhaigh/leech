@@ -1210,7 +1210,7 @@ def test_self_referential_trait_bound(tmp_path):
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
-    _assert_recursive_trait_bound_error(exc_info, "Foo", ["Foo"])
+    _assert_recursive_trait_bound_error(exc_info, "Foo[T]", ["Foo[T]"])
 
     span = exc_info.value.message.span
     assert span is not None
@@ -1229,7 +1229,7 @@ def test_mutually_recursive_trait_bounds(tmp_path):
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
-    _assert_recursive_trait_bound_error(exc_info, "B", ["B", "A"])
+    _assert_recursive_trait_bound_error(exc_info, "B[T]", ["B[T]", "A[T]"])
 
 
 def test_growing_recursive_trait_bound_via_pointer(tmp_path):
@@ -1244,7 +1244,7 @@ def test_growing_recursive_trait_bound_via_pointer(tmp_path):
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
-    _assert_recursive_trait_bound_error(exc_info, "Foo", ["Foo"])
+    _assert_recursive_trait_bound_error(exc_info, "Foo[*T]", ["Foo[*T]"])
 
 
 def test_growing_recursive_trait_bound_via_array(tmp_path):
@@ -1258,7 +1258,7 @@ def test_growing_recursive_trait_bound_via_array(tmp_path):
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
-    _assert_recursive_trait_bound_error(exc_info, "Bar", ["Bar"])
+    _assert_recursive_trait_bound_error(exc_info, "Bar[array[T, 2]]", ["Bar[array[T, 2]]"])
 
 
 def test_growing_mutually_recursive_trait_bounds(tmp_path):
@@ -1273,7 +1273,7 @@ def test_growing_mutually_recursive_trait_bounds(tmp_path):
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
-    _assert_recursive_trait_bound_error(exc_info, "Q", ["Q", "P"])
+    _assert_recursive_trait_bound_error(exc_info, "Q[*T]", ["Q[*T]", "P[*T]"])
 
 
 def _assert_recursive_impl_selection_error(
