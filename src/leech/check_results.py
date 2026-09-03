@@ -63,8 +63,7 @@ class TypCheckResults:
     resolutions: Final[resolve.Resolutions]
     _folded_int_lits: Final[dict[ast.IntLit | ast.UnaryOpExpr, tuple[typs.IntTyp, int]]]
     _coercions: Final[dict[ast.Ast, Optional[CoercionKind]]]
-    _generic_calls: Final[dict[ast.CallExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
-    _generic_var_refs: Final[dict[ast.VarExpr, tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]]
+    _applied_fns: Final[dict[ast.VarExpr, ir_module.AppliedFn]]
     _brace_expr_typs: Final[dict[ast.BraceExpr, BraceExprTyp]]
     _struct_field_indices: Final[dict[ast.FieldAccessExpr | ast.StructFieldExpr, int]]
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
@@ -81,8 +80,7 @@ class TypCheckResults:
         self.resolutions = resolve.Resolutions()
         self._folded_int_lits = {}
         self._coercions = {}
-        self._generic_calls = {}
-        self._generic_var_refs = {}
+        self._applied_fns = {}
         self._brace_expr_typs = {}
         self._struct_field_indices = {}
         self._let_declared_typs = {}
@@ -115,27 +113,12 @@ class TypCheckResults:
     def _set_coercion(self, node: ast.Ast, coercion: Optional[CoercionKind]) -> None:
         self._set_fact(self._coercions, node, coercion)
 
-    def generic_call(
-        self, node: ast.CallExpr
-    ) -> Optional[tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]:
-        """Return a generic call's resolved function and comptime arguments, if any."""
-        return self._generic_calls.get(node)
+    def applied_fn(self, node: ast.VarExpr) -> Optional[ir_module.AppliedFn]:
+        """Return the function application recorded for ``node``, if it names one."""
+        return self._applied_fns.get(node)
 
-    def _set_generic_call(
-        self, node: ast.CallExpr, fn: ir_module.FnSymbol, comptime_args: tuple[typs.Typ, ...]
-    ) -> None:
-        self._generic_calls[node] = (fn, comptime_args)
-
-    def generic_var_ref(
-        self, node: ast.VarExpr
-    ) -> Optional[tuple[ir_module.FnSymbol, tuple[typs.Typ, ...]]]:
-        """Return an applied generic function reference and its arguments, if any."""
-        return self._generic_var_refs.get(node)
-
-    def _set_generic_var_ref(
-        self, node: ast.VarExpr, fn: ir_module.FnSymbol, comptime_args: tuple[typs.Typ, ...]
-    ) -> None:
-        self._generic_var_refs[node] = (fn, comptime_args)
+    def _set_applied_fn(self, node: ast.VarExpr, applied: ir_module.AppliedFn) -> None:
+        self._set_fact(self._applied_fns, node, applied)
 
     def brace_expr_typ(self, node: ast.BraceExpr) -> BraceExprTyp:
         """Return ``node``'s resolved (possibly still abstract) type.

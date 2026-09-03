@@ -451,11 +451,7 @@ class CfgBuilder:
         recv_ast: Optional[ast.ExprKind] = None
         recv_arg: Optional[ir_values.Value] = None
 
-        generic_call = self._typ_check_results.generic_call(call_ast)
-        if generic_call is not None:
-            # TypCheck recorded the resolved function and comptime arguments.
-            callee: ir_values.Value = self._resolve_fn_ref(*generic_call)
-        elif isinstance(callee_ast, ast.FieldAccessExpr):
+        if isinstance(callee_ast, ast.FieldAccessExpr):
             recv_place = self._build_place(callee_ast.value)
             cached = self._typ_check_results.resolutions.callee(call_ast)
             if cached is resolve.CalleeResolution.FIELD_ACCESS:
@@ -720,25 +716,10 @@ class CfgBuilder:
                 self._panic_if(is_min, "integer overflow", op_ast)
                 return self._in_context(res, ctx)
 
-    def _instantiate_src_fn(self, target: ir_module.SrcFnSymbol) -> ir_module.FnRef:
-        """Return a reference to the source function selected by this lowering.
+    def _resolve_fn_ref(self, applied: ir_module.AppliedFn) -> ir_module.FnRef:
+        """Return a reference to the instance identified by ``applied``.
 
-        A sibling in a generic impl inherits the current impl arguments;
-        every other non-generic source function has an empty argument tuple.
-        Emission ownership is decided later by monomorphization.
-        """
-        if self._fn is not None:
-            sibling = self._fn.sibling_instance(target)
-            if sibling is not None:
-                return sibling.ref
-        return target.instantiate(()).ref
-
-    def _resolve_fn_ref(
-        self, fn: ir_module.FnSymbol, comptime_args: tuple[typs.Typ, ...]
-    ) -> ir_module.FnRef:
-        """Return a reference to the instance identified by ``fn`` and ``comptime_args``.
-
-        ``comptime_args`` is recorded against ``fn``'s own declaration, so
+        Its arguments are recorded against the function's own declaration, so
         it may still contain a comptime parameter (e.g. a generic function
         recursing on its own comptime parameter, or naming another generic
         item applied to its own comptime parameter); it's substituted here
@@ -747,9 +728,9 @@ class CfgBuilder:
         for the instance itself.
         """
         concrete_comptime_args = tuple(
-            typ_arg.substitute_typ_params(self._comptime_arg_mapping) for typ_arg in comptime_args
+            typ_arg.substitute_typ_params(self._comptime_arg_mapping) for typ_arg in applied.args
         )
-        return fn.instantiate(concrete_comptime_args).ref
+        return applied.fn.instantiate(concrete_comptime_args).ref
 
     def _selection_ref(self, selection: ir_traits.ImplFnSelection) -> ir_module.FnRef:
         """Instantiate an impl-function selection for this concrete body."""
@@ -764,20 +745,11 @@ class CfgBuilder:
         ``ctx`` is ignored for function references, which are always
         returned as-is.
         """
-        generic_ref = self._typ_check_results.generic_var_ref(var_ast)
-        if generic_ref is not None:
-            # TypCheck already resolved which generic function this names
-            # and its explicit comptime arguments; this just has to get the
-            # reference belonging to the instance they name.
-            return self._resolve_fn_ref(*generic_ref)
+        applied_fn = self._typ_check_results.applied_fn(var_ast)
+        if applied_fn is not None:
+            return self._resolve_fn_ref(applied_fn)
 
         target = self._typ_check_results.resolutions.var(var_ast)
-        if isinstance(target, ir_traits.ImplFnSelection):
-            return self._selection_ref(target)
-        if isinstance(target, ir_module.SrcFnSymbol):
-            return self._instantiate_src_fn(target)
-        if isinstance(target, ir_module.ExternFnSymbol):
-            return target.instantiate(()).ref
         if isinstance(target, ir_values.ComptimeEnum):
             # Not a place (see Env._lookup_path_seg's EnumTyp case)
             # - in PLACE context, copy it into a temporary and address
@@ -792,8 +764,6 @@ class CfgBuilder:
         if isinstance(target, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
             var = self._local_values[target]
         else:
-            # A bare generic declaration can't reach here: TypCheck rejects it
-            # unless generic_ref above already handled it.
             var = asserts.checked_cast(target, ir_module.ModVar)
 
         if ctx == _ExprContext.PLACE:

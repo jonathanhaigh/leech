@@ -285,9 +285,8 @@ def test_generic_trait_impl_method_calls_sibling_for_non_struct_self_typ(tmp_pat
 
 
 def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(tmp_path):
-    # Resolving a sibling instantiates it, and an instance exists to be
-    # lowered and emitted - so instantiating a whole block at once would
-    # emit methods the program never reaches.
+    # A selected method is instantiated only when lowering reaches its
+    # reference, so resolving the impl must not emit every method in it.
     src = """
     trait Show { fn used(*self) i32; fn unused(*self) i32; }
     struct Box[T] { mut val: T }
@@ -307,9 +306,8 @@ def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(tmp_path):
 
 
 def test_generic_trait_impl_method_calls_free_fn(tmp_path):
-    # Sibling remapping is consulted for every resolved function
-    # reference in an instantiated body, not just genuine sibling calls,
-    # so an ordinary free-function call goes through it too.
+    # Substituting an enclosing impl's arguments while lowering a function
+    # reference must remain a no-op for an ordinary free function.
     src = """
     trait Show { fn show(*self) i32; }
     fn helper() i32 { return 4; }
@@ -1009,7 +1007,7 @@ def test_trait_method_call_span(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "double_show(n)")
 
 
-def test_explicit_generic_fn_bound_error_uses_call_span(tmp_path):
+def test_explicit_generic_fn_bound_error_uses_path_span(tmp_path):
     src = """
     trait Show { fn show(*self) i32; }
     fn double_show[T: Show](x: T) i32 {
@@ -1025,6 +1023,7 @@ def test_explicit_generic_fn_bound_error_uses_call_span(tmp_path):
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == util.find_pos(src, "double_show[bool](n)")
+    assert span.file.src[span.start : span.end] == "double_show[bool]"
 
 
 def test_cross_module_trait_and_impl(tmp_path):

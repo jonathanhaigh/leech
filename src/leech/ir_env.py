@@ -26,20 +26,18 @@ from leech import (
 type Container = typs.Typ | typs.GenericTypTemplate | ir_module.Mod | ir_traits.Trait
 """A type, module, or trait bound in the shared container namespace."""
 
-type Var = (
+type NonFnVar = (
     ir_values.Value[typs.PtrTyp]
-    | ir_module.FnSymbol
     | ast.Param
     | ast.Receiver
     | ast.LetStmt
     | ast.BindingPattern
     | typs.ValueParamTyp
 )
-"""A value, function symbol, local declaration-site AST node, or value parameter.
+"""A non-function binding in the variable namespace."""
 
-Every bound ``ir_values.Value`` is ``PtrTyp``-typed; this isn't
-checked, since binding is a hot path.
-"""
+type Var = NonFnVar | ir_module.FnSymbol
+"""A variable-namespace binding before path application."""
 
 type PathScope = Env | ir_module.Mod | typs.StructTyp | typs.EnumTyp
 """A scope that may qualify another path segment."""
@@ -48,13 +46,16 @@ type PathTarget = (
     typs.Typ
     | ir_module.Mod
     | ir_traits.Trait
-    | Var
-    | ir_traits.ImplFnSelection
+    | NonFnVar
+    | ir_module.FnCandidate
     | ir_values.ComptimeEnum
 )
 """A fully applied item produced by path resolution."""
 
-type PathLookup = PathTarget | typs.GenericTypTemplate
+type PathResult = PathTarget | typs.GenericTypTemplate
+"""A path result, including a final unapplied generic type template."""
+
+type PathLookup = PathResult | ir_module.FnSymbol | ir_traits.ImplFnSelection
 """An item produced by lookup before its segment's comptime arguments are applied."""
 
 
@@ -230,15 +231,42 @@ class Env:
             raise errors.ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
         return res
 
-    def _apply_path_seg(self, item: PathLookup, seg: ast.PathSeg) -> PathLookup:
+    def _apply_fn_path_seg(
+        self,
+        fn: ir_module.FnSymbol,
+        impl_args: tuple[typs.Typ, ...],
+        seg: ast.PathSeg,
+    ) -> ir_module.FnCandidate:
+        if not fn.comptime_params:
+            if seg.comptime_args:
+                raise errors.ComptimeArgsOnNonGenericItemError(fn.name, seg.span)
+            explicit_fn_args: Optional[tuple[typs.Typ, ...]] = ()
+        elif seg.comptime_args:
+            explicit_fn_args = typs.resolve_explicit_comptime_args(
+                fn.name, fn.comptime_params, seg.comptime_args, self, seg.span
+            )
+        else:
+            explicit_fn_args = None
+        return ir_module.FnCandidate(fn, impl_args, explicit_fn_args)
+
+    def _apply_path_seg(self, item: PathLookup, seg: ast.PathSeg) -> PathResult:
         if isinstance(item, typs.GenericTypTemplate):
             if seg.comptime_args:
                 return typs.apply_generic_typ(item, seg.comptime_args, self, seg.span)
             return item
 
+        if isinstance(item, ir_traits.ImplFnSelection):
+            return self._apply_fn_path_seg(item.fn, item.impl_args, seg)
+
+        if isinstance(item, ir_module.FnSymbol):
+            impl_args: tuple[typs.Typ, ...] = ()
+            if isinstance(item, ir_module.SrcFnSymbol) and item.impl is not None:
+                impl_args = item.impl.comptime_params
+            return self._apply_fn_path_seg(item, impl_args, seg)
+
         if not seg.comptime_args:
             return item
-        if isinstance(item, (ir_traits.Trait, ir_module.FnSymbol)) and item.comptime_params:
+        if isinstance(item, ir_traits.Trait) and item.comptime_params:
             return item
         raise errors.ComptimeArgsOnNonGenericItemError(seg.ident.name, seg.span)
 
@@ -247,7 +275,7 @@ class Env:
         ns: Env.Namespace,
         scope: PathScope,
         seg: ast.PathSeg,
-    ) -> PathLookup:
+    ) -> PathResult:
         item = self._lookup_path_seg(ns, scope, seg.ident)
         return self._apply_path_seg(item, seg)
 
@@ -262,7 +290,7 @@ class Env:
                 return "type"
             case ir_traits.Trait():
                 return "trait"
-            case ir_module.FnSymbol() | ir_traits.ImplFnSelection():
+            case ir_module.FnCandidate():
                 return "function"
             case ir_module.Mod():
                 return "module"
@@ -276,7 +304,7 @@ class Env:
                 return "variable"
 
     @staticmethod
-    def _require_path_scope(target: PathLookup, seg: ast.PathSeg) -> PathScope:
+    def _require_path_scope(target: PathResult, seg: ast.PathSeg) -> PathScope:
         match target:
             case ir_module.Mod() | typs.StructTyp() | typs.EnumTyp():
                 return target
@@ -285,8 +313,7 @@ class Env:
             case (
                 typs.Typ()
                 | ir_traits.Trait()
-                | ir_module.FnSymbol()
-                | ir_traits.ImplFnSelection()
+                | ir_module.FnCandidate()
                 | ir_values.Value()
                 | ast.Param()
                 | ast.Receiver()
@@ -313,7 +340,7 @@ class Env:
         assert isinstance(item, typs.Typ)
         return cast(typs.TypKind, item)
 
-    def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> PathLookup:
+    def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> PathResult:
         """Resolve container path segments, then look up the final segment in ``ns``."""
         asserts.assert_ge(len(path.segs), 1)
 
@@ -327,13 +354,15 @@ class Env:
     def resolve_var(self, path: ast.Path) -> resolve.VarTarget:
         """Resolve a variable path and verify its namespace's result invariant."""
         target = self.resolve_path(Env.Namespace.VARS, path)
+        if isinstance(target, ir_values.ComptimeEnum):
+            return target
+        if isinstance(target, ir_values.Value):
+            asserts.checked_cast(target.typ, typs.PtrTyp)
+            return asserts.checked_cast(target, ir_module.ModVar)
         if isinstance(
             target,
             (
-                ir_module.ModVar,
-                ir_module.FnSymbol,
-                ir_traits.ImplFnSelection,
-                ir_values.ComptimeEnum,
+                ir_module.FnCandidate,
                 typs.ValueParamTyp,
                 ast.Param,
                 ast.Receiver,

@@ -511,11 +511,8 @@ class TypCheck:
             from leech import ir_module  # noqa: PLC0415
 
             var = self._resolve_var(callee_ast, e)
-            if (
-                isinstance(var, (ir_module.SrcFnSymbol, ir_module.IntrinsicFnSymbol))
-                and var.comptime_params
-            ):
-                return self._resolve_generic_call(var, call_ast, e), None, None
+            if isinstance(var, ir_module.FnCandidate):
+                return self._resolve_fn_call(var, call_ast, e), None, None
 
         if not isinstance(callee_ast, ast.FieldAccessExpr):
             callee_typ = self._check_expr(callee_ast, e, None)
@@ -602,34 +599,21 @@ class TypCheck:
                 matches.append(method)
         return ir_traits.disambiguate(matches, name, typ_param.name, span)
 
-    def _resolve_generic_call(
-        self, fn: ir_module.FnSymbol, call_ast: ast.CallExpr, e: ir_env.Env
+    def _resolve_fn_call(
+        self, candidate: ir_module.FnCandidate, call_ast: ast.CallExpr, e: ir_env.Env
     ) -> typs.FnTyp:
-        """Resolve and record a generic call's concrete function type."""
+        """Complete and record a path-selected function call."""
         callee_ast = asserts.checked_cast(call_ast.callee, ast.VarExpr)
-        comptime_params = self._comptime_params_of(fn)
-        comptime_args_ast = callee_ast.path.segs[-1].comptime_args
-
-        if comptime_args_ast:
-            comptime_args = typs.resolve_explicit_comptime_args(
-                fn.name,
-                comptime_params,
-                comptime_args_ast,
-                e,
-                callee_ast.span,
-                bounds_span=call_ast.span,
-            )
-            mapping = dict(zip(comptime_params, comptime_args, strict=True))
+        comptime_params = candidate.fn.comptime_params
+        if candidate.explicit_fn_args is None:
+            mapping = self._infer_comptime_args(candidate.fn, call_ast, e, comptime_params)
+            fn_args = tuple(mapping[param] for param in comptime_params)
+            typs.check_comptime_arg_bounds(comptime_params, fn_args, e, call_ast.span)
         else:
-            mapping = self._infer_comptime_args(fn, call_ast, e, comptime_params)
-            comptime_args = tuple(mapping[param] for param in comptime_params)
-            typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, call_ast.span)
-        self.results._set_generic_call(call_ast, fn, comptime_args)
-        return asserts.checked_cast(fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
-
-    def _comptime_params_of(self, fn: ir_module.FnSymbol) -> list[typs.ComptimeParamTyp]:
-        """Return ``fn``'s interned comptime parameters in declaration order."""
-        return list(fn.comptime_params)
+            fn_args = candidate.explicit_fn_args
+        applied = candidate.apply(fn_args)
+        self.results._set_applied_fn(callee_ast, applied)
+        return applied.fn_typ
 
     def _infer_comptime_args(
         self,
@@ -810,16 +794,11 @@ class TypCheck:
 
     def _check_var_expr(self, var_ast: ast.VarExpr, e: ir_env.Env) -> typs.Typ:
         # Local because runtime isinstance checks cannot use the TYPE_CHECKING import.
-        from leech import ir_module, ir_traits  # noqa: PLC0415
+        from leech import ir_module  # noqa: PLC0415
 
         var = self._resolve_var(var_ast, e)
-        if (
-            isinstance(var, (ir_module.SrcFnSymbol, ir_module.IntrinsicFnSymbol))
-            and var.comptime_params
-        ):
-            return self._generic_var_ref_typ(var_ast, var, e)
-        if isinstance(var, (ir_traits.ImplFnSelection, ir_module.FnSymbol)):
-            return var.ptr_typ
+        if isinstance(var, ir_module.FnCandidate):
+            return self._fn_candidate_ptr_typ(var_ast, var)
         if isinstance(var, ir_values.ComptimeEnum):
             # An enum variant has no address - see
             # `Env._lookup_path_seg`'s `EnumTyp` case.
@@ -832,22 +811,15 @@ class TypCheck:
             return self.results.local_typ(var).pointee_typ
         return var.typ.pointee_typ
 
-    def _generic_var_ref_typ(
-        self, var_ast: ast.VarExpr, var: ir_module.FnSymbol, e: ir_env.Env
+    def _fn_candidate_ptr_typ(
+        self, var_ast: ast.VarExpr, candidate: ir_module.FnCandidate
     ) -> typs.PtrTyp:
-        """Return an explicitly applied generic function reference's pointer type."""
-        comptime_args_ast = var_ast.path.segs[-1].comptime_args
-        if not comptime_args_ast:
-            raise errors.MissingComptimeArgsError(var.name, var_ast.span)
-        # An uncalled reference has no arguments from which to infer types.
-        comptime_params = self._comptime_params_of(var)
-        comptime_args = typs.resolve_explicit_comptime_args(
-            var.name, comptime_params, comptime_args_ast, e, var_ast.span
-        )
-        mapping = dict(zip(comptime_params, comptime_args, strict=True))
-        self.results._set_generic_var_ref(var_ast, var, comptime_args)
-        substituted = asserts.checked_cast(var.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
-        return typs.PtrTyp.get_or_create(substituted, typs.CONST)
+        """Complete and record a function used without call inference context."""
+        if candidate.explicit_fn_args is None:
+            raise errors.MissingComptimeArgsError(candidate.fn.name, var_ast.span)
+        applied = candidate.apply(candidate.explicit_fn_args)
+        self.results._set_applied_fn(var_ast, applied)
+        return applied.ptr_typ
 
     def _check_array_access_expr(self, aa_expr: ast.ArrayAccessExpr, e: ir_env.Env) -> typs.Typ:
         arr_typ = self._check_expr(aa_expr.array, e, None)
@@ -984,26 +956,19 @@ class TypCheck:
         """
         if isinstance(expr_ast, ast.VarExpr):
             # Local to avoid the ir_module import cycle.
-            from leech import ir_module, ir_traits  # noqa: PLC0415
+            from leech import ir_module  # noqa: PLC0415
 
-            # Function symbols produce their function-pointer type directly:
+            # Function applications produce their function-pointer type directly:
             # taking their address is a no-op rather than another indirection.
-            # Explicitly applied generic symbols delegate to
-            # _generic_var_ref_typ, including its MissingComptimeArgsError.
             var = self._resolve_var(expr_ast, e)
-            if (
-                isinstance(var, (ir_module.SrcFnSymbol, ir_module.IntrinsicFnSymbol))
-                and var.comptime_params
-            ):
-                return self._generic_var_ref_typ(expr_ast, var, e)
+            if isinstance(var, ir_module.FnCandidate):
+                return self._fn_candidate_ptr_typ(expr_ast, var)
             if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
                 return self.results.local_typ(var)
             # An enum variant (see Env._lookup_path_seg's EnumTyp
             # case) isn't a place either - it falls through to the
             # general, value-copying case below, same as any other
             # non-place expression.
-            if isinstance(var, (ir_traits.ImplFnSelection, ir_module.FnSymbol)):
-                return var.ptr_typ
             if not isinstance(var, (ir_values.ComptimeEnum, typs.ValueParamTyp)):
                 return var.typ
 
@@ -1015,17 +980,16 @@ class TypCheck:
         match expr_ast:
             case ast.VarExpr():
                 # Local to avoid the ir_module import cycle.
-                from leech import ir_module, ir_traits  # noqa: PLC0415
+                from leech import ir_module  # noqa: PLC0415
 
                 var = self._resolve_var(expr_ast, e)
-                # Function symbols and selections are const, while an enum
+                # Function applications are const, while an enum
                 # variant or a value parameter is a temporary rather than
                 # a place.
                 if isinstance(
                     var,
                     (
-                        ir_module.FnSymbol,
-                        ir_traits.ImplFnSelection,
+                        ir_module.FnCandidate,
                         ir_values.ComptimeEnum,
                         typs.ValueParamTyp,
                     ),

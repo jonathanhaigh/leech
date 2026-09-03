@@ -146,6 +146,24 @@ class AppliedFn:
     fn: FnSymbol
     args: tuple[typs.Typ, ...]
 
+    @property
+    def fn_typ(self) -> typs.FnTyp:
+        """The signature after substituting every impl and function argument."""
+        impl = self.fn.impl if isinstance(self.fn, SrcFnSymbol) else None
+        all_params = (
+            (*impl.comptime_params, *self.fn.comptime_params)
+            if impl is not None
+            else self.fn.comptime_params
+        )
+        asserts.assert_eq(len(self.args), len(all_params))
+        mapping = dict(zip(all_params, self.args, strict=True))
+        return asserts.checked_cast(self.fn.fn_typ.substitute_typ_params(mapping), typs.FnTyp)
+
+    @property
+    def ptr_typ(self) -> typs.PtrTyp:
+        """A const function-pointer type for the substituted signature."""
+        return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
+
 
 class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
     """A source-declared function resolved in its own child scope."""
@@ -513,27 +531,6 @@ class FnInstance:
     def ref(self) -> FnRef:
         """The unique function-address value for this instance."""
         return FnRef(self)
-
-    @functools.cached_property
-    def _siblings(self) -> frozenset[SrcFnSymbol]:
-        """Return functions from this instance's declaring ``impl`` block.
-
-        A free function has no parent ``impl`` and therefore no siblings.
-        """
-        impl = self._fn.impl if isinstance(self._fn, SrcFnSymbol) else None
-        return frozenset() if impl is None else frozenset(impl.fn_symbols)
-
-    def sibling_instance(self, target: SrcFnSymbol) -> Optional[FnInstance]:
-        """Instantiate ``target`` if it belongs to this instance's impl.
-
-        Resolved one at a time rather than as a map of the whole block,
-        so that a method nothing calls is never instantiated - an
-        instance exists to be lowered and emitted, so building one
-        speculatively emits a function the program never reaches.
-        """
-        if target not in self._siblings:
-            return None
-        return target.instantiate(self.impl_args)
 
     @functools.cached_property
     def cfg(self) -> ir_values.Cfg:

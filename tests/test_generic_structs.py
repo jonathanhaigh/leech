@@ -881,9 +881,8 @@ def test_free_generic_fn_dot_calls_generic_impl_method_through_typ_param(tmp_pat
 def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
     # A generic-impl method's body can call a sibling method from the same
     # impl block by bare name, not just via `self.method()`. The sibling is
-    # bound in the impl block's environment, so that reference must resolve to
-    # the sibling's own instance for the same concrete receiver, not the
-    # still-generic original.
+    # bound in the impl block's environment with the impl's abstract arguments;
+    # lowering substitutes the concrete receiver arguments before instantiation.
     src = """
     struct Box[T] { mut val: T }
     impl[T] Box[T] {
@@ -940,9 +939,8 @@ def test_generic_impl_block_sibling_method_calls_by_dot_call(tmp_path):
 
 
 def test_generic_impl_block_sibling_method_calls_across_instantiations(tmp_path):
-    # Each concrete instantiation must get its own sibling-resolution
-    # mapping - a leak would make one instantiation's bare `helper` call
-    # resolve to a different instantiation's `helper`.
+    # Each concrete body must substitute its own arguments into the sibling
+    # application; sharing them would call a different `helper` instance.
     src = """
     struct Box[T] { mut val: T }
     impl[T] Box[T] {

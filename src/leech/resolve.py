@@ -25,13 +25,11 @@ type LocalDecl = ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern
 type VarTarget = (
     LocalDecl
     | ir_module.ModVar
-    | ir_module.FnSymbol
-    | ir_traits.ImplFnSelection
+    | ir_module.FnCandidate
     | ir_values.ComptimeEnum
     | typs.ValueParamTyp
 )
-"""What a ``VarExpr`` resolves to: a local binding, a shared module item, or
-a comptime value parameter."""
+"""A local, module value, function candidate, enum variant, or value parameter."""
 
 type Callee = ir_traits.ImplFnSelection
 """A callable a dot-call's member lookup found."""

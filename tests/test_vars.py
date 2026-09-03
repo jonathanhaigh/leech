@@ -2,10 +2,31 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+from typing import cast
+
 import pytest
 import util
 
-from leech import asserts, errors, ir_env, ir_module
+from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, ir_values, typs
+
+
+def test_env_rejects_bound_value_without_pointer_typ(tmp_path):
+    ctx = compilation.Ctx()
+    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    value = cast(
+        ir_values.Value[typs.PtrTyp],
+        ir_values.ComptimeInt(typs.I32, 1, None),
+    )
+    env.add_var("value", value)
+    mod_ast = util.parse_mod(tmp_path, "let result = value;")
+    (defn_ast,) = mod_ast.defns
+    var_ast = asserts.checked_cast(
+        asserts.checked_cast(defn_ast, ast.VarDefn).let_stmt.expr,
+        ast.VarExpr,
+    )
+
+    with pytest.raises(AssertionError):
+        env.resolve_var(var_ast.path)
 
 
 def test_int_mod_var_ref_in_fn(tmp_path):

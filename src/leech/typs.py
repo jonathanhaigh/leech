@@ -278,14 +278,8 @@ def resolve_explicit_comptime_args(
     args_ast: Sequence[ast.ComptimeArg],
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
-    *,
-    bounds_span: Optional[src.SrcSpan] = None,
 ) -> tuple[Typ, ...]:
-    """Resolve and bounds-check an item's explicitly supplied comptime arguments.
-
-    ``span`` locates application errors. When supplied, ``bounds_span`` instead
-    locates only errors produced by checking the resolved arguments' bounds.
-    """
+    """Resolve and bounds-check an item's explicitly supplied comptime arguments."""
     if not comptime_params:
         if args_ast:
             raise errors.ComptimeArgsOnNonGenericItemError(item_name, span)
@@ -300,9 +294,7 @@ def resolve_explicit_comptime_args(
         resolve_comptime_arg(param, arg_ast, e)
         for param, arg_ast in zip(comptime_params, args_ast, strict=True)
     )
-    if bounds_span is None:
-        bounds_span = span
-    check_comptime_arg_bounds(comptime_params, comptime_args, e, bounds_span)
+    check_comptime_arg_bounds(comptime_params, comptime_args, e, span)
     return comptime_args
 
 
@@ -894,7 +886,7 @@ def comptime_params_from_ast(
         if len(param_ast.bounds) == 1:
             (bound,) = param_ast.bounds
             try:
-                item: Optional[ir_env.PathLookup] = e.resolve_path(
+                item: Optional[ir_env.PathResult] = e.resolve_path(
                     ir_env.Env.Namespace.CONTAINERS, bound.path
                 )
             except errors.ItemNotFoundError:

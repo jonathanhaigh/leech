@@ -5,7 +5,7 @@
 import pytest
 import util
 
-from leech import asserts, errors, ir_env, ir_module, ir_values, mono, typs
+from leech import asserts, ast, errors, ir_env, ir_module, ir_values, mono, typs
 
 
 def _get_fn(mod, name: str) -> ir_module.SrcFnSymbol:
@@ -105,6 +105,28 @@ def test_fn_candidate_applies_impl_args_before_fn_args(tmp_path):
     candidate = ir_module.FnCandidate(fn, (typs.BOOL,), (typs.I32,))
 
     assert candidate.apply((typs.I32,)) == ir_module.AppliedFn(fn, (typs.BOOL, typs.I32))
+
+
+def test_explicit_fn_application_is_recorded_before_instantiation(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        "fn id[T](x: T) T { x } pub fn main() i32 { id[i32](1) }",
+    )
+    fn = _get_generic_fn(mod, "id")
+    main = _get_fn(mod, "main")
+    main_ast = asserts.checked_cast(main.ast, ast.FnDefn)
+    call_ast = asserts.checked_cast(main_ast.block.expr, ast.CallExpr)
+    callee_ast = asserts.checked_cast(call_ast.callee, ast.VarExpr)
+
+    candidate = main.typ_check_results.resolutions.var(callee_ast)
+    assert candidate == ir_module.FnCandidate(fn, (), (typs.I32,))
+    assert main.typ_check_results.applied_fn(callee_ast) == ir_module.AppliedFn(fn, (typs.I32,))
+    assert all(inst.src_fn is not fn for inst in mod.loader.ctx.requested_fn_instances())
+
+    _ = main.instantiate(()).cfg
+
+    instances = [inst for inst in mod.loader.ctx.requested_fn_instances() if inst.src_fn is fn]
+    assert [inst.args for inst in instances] == [(typs.I32,)]
 
 
 def test_function_instance_symbols_and_linkage(tmp_path):
