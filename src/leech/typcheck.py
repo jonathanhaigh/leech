@@ -798,12 +798,10 @@ class TypCheck:
         if isinstance(var, ir_module.FnCandidate):
             return self._fn_candidate_ptr_typ(var_ast, var)
         if isinstance(var, ir_values.ComptimeEnum):
-            # An enum variant has no address - see
-            # `Env._lookup_path_seg`'s `EnumTyp` case.
+            # An enum variant is an immediate value with no address.
             return var.typ
         if isinstance(var, typs.ValueParamTyp):
-            # Not a place (same reasoning as the ComptimeEnum case above) -
-            # a value parameter has no address to take.
+            # A value parameter is an immediate value with no address.
             return var.value_typ
         if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
             return self.results.local_typ(var).pointee_typ
@@ -963,10 +961,7 @@ class TypCheck:
                 return self._fn_candidate_ptr_typ(expr_ast, var)
             if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
                 return self.results.local_typ(var)
-            # An enum variant (see Env._lookup_path_seg's EnumTyp
-            # case) isn't a place either - it falls through to the
-            # general, value-copying case below, same as any other
-            # non-place expression.
+            # Immediate values fall through to a const temporary.
             if not isinstance(var, ir_values.ComptimeEnum | typs.ValueParamTyp):
                 return var.typ
 

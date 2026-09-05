@@ -826,13 +826,10 @@ def comptime_params_from_ast(
     denotes a ``Trait`` declares a type parameter with that bound (as a
     multi-entry bound list always does); a name that denotes an
     ``IntTyp`` or ``BOOL`` declares a value parameter of that
-    type instead. This declaration is called eagerly (e.g. from a
-    function's or trait's own ``__init__``), so a single bound that
-    doesn't yet resolve - e.g. a trait declared later in the same module,
-    as in mutually recursive trait bounds - is left unresolved here and
-    always yields a type parameter; the deferred ``resolve_bound``
-    call that checks it later (after the whole module is loaded) raises
-    if it still doesn't name a trait.
+    type instead. Parameter representations are created before every
+    declaration is necessarily available. A single bound that does not yet
+    resolve therefore yields a type parameter whose bound remains unresolved
+    until semantic work needs it.
 
     :param e: The scope enclosing the declaration, in which parameters'
         bounds are resolved. See ``TypParamTyp.decl_env``.
@@ -849,8 +846,8 @@ def comptime_params_from_ast(
             try:
                 item = e.resolve_comptime_param_bound(bound.path)
             except errors.ItemNotFoundError:
-                # Not yet declared in this module - defer to a type parameter;
-                # resolve_bound raises later if it never resolves to a trait.
+                # An unavailable declaration cannot denote one of the built-in
+                # value types, so retain the bound on a type parameter.
                 pass
             else:
                 if isinstance(item, IntTyp | BoolTyp):

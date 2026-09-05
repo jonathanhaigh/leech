@@ -219,15 +219,8 @@ class Env:
                         "function", ident.name, ident.span, selected_fn.span
                     )
             case typs.EnumTyp():
-                # An enum's variants are reachable by path, e.g.
-                # `SomeEnum::A`; there's nothing else to reach in the
-                # CONTAINERS namespace. A variant's visibility follows its
-                # enum's own - there's no separate per-variant access
-                # specifier - so no extra check is needed here. Unlike
-                # every other VARS-namespace binding, this isn't a place
-                # (a variant has no address) - it's a bare value, handled
-                # like a function-reference value (see
-                # `TypCheck._check_var_expr`/`CfgBuilder._build_var_expr`).
+                # Variants inherit the enum's visibility and are immediate
+                # values in the variable namespace rather than places.
                 res = (
                     ir_values.ComptimeEnum(scope, scope.variants[ident.name], None)
                     if ns == Env.Namespace.VARS and ident.name in scope.variants
@@ -384,10 +377,11 @@ class Env:
         raise AssertionError(f"invalid container path target: {target!r}")
 
     def resolve_comptime_param_bound(self, path: ast.Path) -> ComptimeParamBound:
-        """Classify a single comptime-parameter bound without applying a final trait.
+        """Classify a currently resolvable single comptime-parameter bound.
 
-        Trait application is deferred until declarations and impls have all been registered.
-        Other final items are applied normally before classification.
+        A trait is returned without applying its arguments because only its
+        declaration kind is relevant here. This does not validate a stored
+        type-parameter bound.
         """
         item, final_seg = self._lookup_final_path_seg(Env.Namespace.CONTAINERS, path)
         if isinstance(item, ir_traits.Trait):

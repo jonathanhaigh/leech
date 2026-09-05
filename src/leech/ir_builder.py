@@ -719,13 +719,8 @@ class CfgBuilder:
     def _resolve_fn_ref(self, applied: ir_module.AppliedFn) -> ir_module.FnRef:
         """Return a reference to the instance identified by ``applied``.
 
-        Its arguments are recorded against the function's own declaration, so
-        it may still contain a comptime parameter (e.g. a generic function
-        recursing on its own comptime parameter, or naming another generic
-        item applied to its own comptime parameter); it's substituted here
-        against this lowering's own comptime arguments (a no-op outside a
-        generic instance) to resolve down to concrete types before asking
-        for the instance itself.
+        Arguments may refer to parameters of the body being lowered and are
+        substituted before selecting the concrete instance.
         """
         concrete_comptime_args = tuple(
             typ_arg.substitute_typ_params(self._comptime_arg_mapping) for typ_arg in applied.args
@@ -751,10 +746,7 @@ class CfgBuilder:
 
         target = self._typ_check_results.resolutions.var(var_ast)
         if isinstance(target, ir_values.ComptimeEnum):
-            # Not a place (see Env._lookup_path_seg's EnumTyp case)
-            # - in PLACE context, copy it into a temporary and address
-            # that, the same as any other non-place value (see
-            # _in_context/_value_to_ptr).
+            # In place context, materialize the immediate value in a temporary.
             return self._in_context(target, ctx)
         if isinstance(target, typs.ValueParamTyp):
             concrete = asserts.checked_cast(
