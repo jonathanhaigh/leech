@@ -966,33 +966,65 @@ class Receiver(Ast):
 
 
 class ComptimeParam(Ast):
-    """A generic comptime parameter and its bounds.
+    """Base class for a declared comptime parameter.
 
-    ``bounds`` is parsed the same way regardless of which kind of
-    parameter this turns out to be: a type parameter's bounds are trait
-    references (``T: Trait1 + Trait2``); a value parameter instead has
-    exactly one bound naming its value type (``N: usize``). Which one
-    ``bounds`` actually names is only resolved later, once the referenced
-    names are in scope - see ``typs.comptime_params_from_ast``.
+    Which kind of parameter a declaration introduces is fixed by its
+    syntax alone: ``T`` or ``T: Trait`` is a ``TypParam``, ``value N:
+    usize`` a ``ValueParam``.
     """
 
     ident: Final[Ident]
+
+    def __init__(
+        self, file: src.SrcFile, tree: lark.tree.ParseTree, ident: lark.tree.ParseTree
+    ) -> None:
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        self.ident = Ident.from_tree(file, ident)
+
+    @staticmethod
+    def from_tree(file: src.SrcFile, tree: lark.tree.ParseTree) -> ComptimeParamKind:
+        """Build the comptime parameter selected by a parse tree's grammar rule."""
+        child_classes = {"typ_param": TypParam, "value_param": ValueParam}
+        return child_classes[tree.data](file, tree)
+
+
+class TypParam(ComptimeParam):
+    """A comptime type parameter and its trait bounds."""
+
     bounds: Final[tuple[BasicTyp, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
-        asserts.assert_eq(tree.data, "comptime_param")
-        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        ident, *rest = list(map(_as_tree, tree.children))
-        self.ident = Ident.from_tree(file, ident)
-        if rest:
-            (bound_list,) = rest
-            self.bounds = tuple(BasicTyp(file, _as_tree(b)) for b in bound_list.children)
-        else:
+        asserts.assert_eq(tree.data, "typ_param")
+        ident, bound_list = tree.children
+        super().__init__(file, tree, _as_tree(ident))
+        if bound_list is None:
             self.bounds = ()
+        else:
+            self.bounds = tuple(BasicTyp(file, _as_tree(b)) for b in _as_tree(bound_list).children)
 
     @override
     def diag_str(self) -> str:
-        return f'generic parameter "{self.ident.name}"'
+        return f'type parameter "{self.ident.name}"'
+
+
+class ValueParam(ComptimeParam):
+    """A comptime value parameter and its declared type."""
+
+    typ: Final[TypKind]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "value_param")
+        ident, typ = tree.children
+        super().__init__(file, tree, _as_tree(ident))
+        self.typ = Typ.from_tree(file, _as_tree(typ))
+
+    @override
+    def diag_str(self) -> str:
+        return f'value parameter "{self.ident.name}"'
+
+
+type ComptimeParamKind = TypParam | ValueParam
+"""Every kind of comptime parameter a declaration can introduce."""
 
 
 class Defn(Ast):
@@ -1021,7 +1053,7 @@ class FnDecl(Defn):
 
     name: Final[Ident]
     #: Empty for a non-generic function.
-    comptime_params: Final[tuple[ComptimeParam, ...]]
+    comptime_params: Final[tuple[ComptimeParamKind, ...]]
     receiver: Final[Optional[Receiver]]
     params: Final[tuple[Param, ...]]
     ret_typ: Final[Optional[TypKind]]
@@ -1039,7 +1071,7 @@ class FnDecl(Defn):
         self.name = Ident.from_tree(file, ident)
         if comptime_params is not None:
             self.comptime_params = tuple(
-                ComptimeParam(file, _as_tree(c)) for c in comptime_params.children
+                ComptimeParam.from_tree(file, _as_tree(c)) for c in comptime_params.children
             )
         else:
             self.comptime_params = ()
@@ -1147,7 +1179,7 @@ class StructDefn(Defn):
     access: Final[Optional[Access]]
     ident: Final[Ident]
     #: Empty for a non-generic struct.
-    comptime_params: Final[tuple[ComptimeParam, ...]]
+    comptime_params: Final[tuple[ComptimeParamKind, ...]]
     fields: Final[tuple[StructFieldDefn, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
@@ -1158,7 +1190,8 @@ class StructDefn(Defn):
         self.ident = Ident.from_tree(file, _as_tree(ident))
         if comptime_params is not None:
             self.comptime_params = tuple(
-                ComptimeParam(file, _as_tree(c)) for c in _as_tree(comptime_params).children
+                ComptimeParam.from_tree(file, _as_tree(c))
+                for c in _as_tree(comptime_params).children
             )
         else:
             self.comptime_params = ()
@@ -1259,7 +1292,7 @@ class TraitDefn(Defn):
     access: Final[Optional[Access]]
     ident: Final[Ident]
     #: Empty for a non-generic trait.
-    comptime_params: Final[tuple[ComptimeParam, ...]]
+    comptime_params: Final[tuple[ComptimeParamKind, ...]]
     fn_decls: Final[tuple[TraitFnDecl, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
@@ -1270,7 +1303,8 @@ class TraitDefn(Defn):
         self.ident = Ident.from_tree(file, _as_tree(ident))
         if comptime_params is not None:
             self.comptime_params = tuple(
-                ComptimeParam(file, _as_tree(c)) for c in _as_tree(comptime_params).children
+                ComptimeParam.from_tree(file, _as_tree(c))
+                for c in _as_tree(comptime_params).children
             )
         else:
             self.comptime_params = ()
@@ -1287,7 +1321,7 @@ class ImplDefn(Defn):
     """An inherent impl or trait impl, distinguished by ``for_typ``."""
 
     #: Empty for a non-generic impl block.
-    comptime_params: Final[tuple[ComptimeParam, ...]]
+    comptime_params: Final[tuple[ComptimeParamKind, ...]]
     typ: Final[TypKind]
     for_typ: Final[Optional[TypKind]]
     fn_defns: Final[tuple[FnDefn, ...]]
@@ -1298,7 +1332,8 @@ class ImplDefn(Defn):
         comptime_params, typ, for_typ, *fn_defn_trees = tree.children
         if comptime_params is not None:
             self.comptime_params = tuple(
-                ComptimeParam(file, _as_tree(c)) for c in _as_tree(comptime_params).children
+                ComptimeParam.from_tree(file, _as_tree(c))
+                for c in _as_tree(comptime_params).children
             )
         else:
             self.comptime_params = ()

@@ -779,7 +779,7 @@ pub fn main() i32 {
             "T",
         ),
         (
-            "fn f[N: usize]() i32 { return N::x; } pub fn main() i32 { return 0; }",
+            "fn f[value N: usize]() i32 { return N::x; } pub fn main() i32 { return 0; }",
             "N::x",
             "Value",
             "N",

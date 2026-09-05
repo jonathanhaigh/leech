@@ -62,9 +62,6 @@ type _ContainerResult = (
     typs.Typ | typs.GenericTypTemplate | ir_module.Mod | ir_traits.TraitApplication
 )
 
-type ComptimeParamBound = typs.ComptimeLiteralTyp | ir_traits.Trait
-"""A declaration that determines whether a comptime parameter is a value or type."""
-
 
 class Env:
     """A chained lexical scope with separate variable and container namespaces.
@@ -375,23 +372,6 @@ class Env:
         ):
             return target
         raise AssertionError(f"invalid container path target: {target!r}")
-
-    def resolve_comptime_param_bound(self, path: ast.Path) -> ComptimeParamBound:
-        """Classify a currently resolvable single comptime-parameter bound.
-
-        A trait is returned without applying its arguments because only its
-        declaration kind is relevant here. This does not validate a stored
-        type-parameter bound.
-        """
-        item, final_seg = self._lookup_final_path_seg(Env.Namespace.CONTAINERS, path)
-        if isinstance(item, ir_traits.Trait):
-            if final_seg.comptime_args and not item.comptime_params:
-                raise errors.ComptimeArgsOnNonGenericItemError(item.name, final_seg.span)
-            return item
-        target = self._apply_path_seg(item, final_seg)
-        if isinstance(target, typs.IntTyp | typs.BoolTyp):
-            return target
-        raise errors.InvalidComptimeBoundError(path.str(), path.span)
 
     def resolve_trait(self, path: ast.Path) -> ir_traits.TraitApplication:
         """Resolve a trait application and reject any other container kind."""

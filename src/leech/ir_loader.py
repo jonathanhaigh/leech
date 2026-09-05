@@ -125,7 +125,14 @@ class ModLoader:
         return mod
 
     def check_declarations(self) -> None:
-        """Type-check every declaration after the complete module graph is loaded."""
+        """Type-check every declaration after the complete module graph is loaded.
+
+        Comptime parameter declarations are validated first: a bound or a
+        declared value type may name any item in the graph, including one
+        declared after the parameter using it.
+        """
+        for comptime_param in self.ctx.declared_comptime_params():
+            comptime_param.check_declaration()
         for mod in self._mods.values():
             mod.check_declarations()
 

@@ -46,7 +46,9 @@ import: "import" path ";"
 
 comptime_params: "[" _comptime_param_list "]"
 _comptime_param_list: comptime_param ("," comptime_param)* ","?
-comptime_param: ident (":" bound_list)?
+?comptime_param: typ_param | value_param
+typ_param: ident [":" bound_list]
+value_param: "value" ident ":" typ
 bound_list: basic_typ ("+" basic_typ)*
 
 comptime_args: "[" _comptime_arg_list "]"

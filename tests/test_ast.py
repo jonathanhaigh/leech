@@ -87,8 +87,25 @@ def test_fn_defn_generic_params(tmp_path):
     assert isinstance(fn, ast.FnDefn)
 
     (param,) = fn.comptime_params
+    assert isinstance(param, ast.TypParam)
     assert param.ident.name == "T"
     assert [b.path.str() for b in param.bounds] == ["Show"]
+
+
+def test_fn_defn_value_param(tmp_path):
+    src = """
+    fn f[T, value N: usize]() {}
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+
+    typ_param, value_param = fn.comptime_params
+    assert isinstance(typ_param, ast.TypParam)
+    assert isinstance(value_param, ast.ValueParam)
+    assert value_param.ident.name == "N"
+    assert isinstance(value_param.typ, ast.BasicTyp)
+    assert value_param.typ.path.str() == "usize"
 
 
 def test_fn_defn_no_generic_params(tmp_path):

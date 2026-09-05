@@ -605,7 +605,7 @@ def test_array_typ_of_length_wraps_comptime_value_typ():
 
 
 def test_array_typ_length_substitutes_value_param(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[N: usize]() {}")
+    mod = util.parse_mod(tmp_path, "fn f[value N: usize]() {}")
     (fn,) = mod.defns
     n = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)
     four = typs.ComptimeValueTyp.get_or_create(typs.USIZE, 4)
@@ -616,7 +616,7 @@ def test_array_typ_length_substitutes_value_param(tmp_path):
 
 
 def test_array_typ_infers_symbolic_length_from_actual(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[N: usize]() {}")
+    mod = util.parse_mod(tmp_path, "fn f[value N: usize]() {}")
     (fn,) = mod.defns
     n = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)
     declared = typs.ArrayTyp.get_or_create(typs.I32, n)
@@ -628,7 +628,7 @@ def test_array_typ_infers_symbolic_length_from_actual(tmp_path):
 
 
 def test_typs_overlap_treats_array_length_as_unifiable(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[N: usize]() {}")
+    mod = util.parse_mod(tmp_path, "fn f[value N: usize]() {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     n = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)

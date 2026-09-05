@@ -219,10 +219,10 @@ def test_overlapping_generic_inherent_impls_with_same_fn_name_rejected_at_declar
     src = """
     struct Box[T] {}
     impl[T] Box[T] {
-        fn value() i32 { 1 }
+        fn get() i32 { 1 }
     }
     impl[U] Box[U] {
-        fn value() i32 { 2 }
+        fn get() i32 { 2 }
     }
     pub fn main() i32 { return 0; }
     """
@@ -577,8 +577,8 @@ def test_comptime_cross_module_private_assoc_fn_call(tmp_path):
 
 def test_impl_value_param_used_in_method_body(tmp_path):
     src = """
-    struct Box[N: i32] {}
-    impl[N: i32] Box[N] {
+    struct Box[value N: i32] {}
+    impl[value N: i32] Box[N] {
         fn get(*self) i32 { return N; }
     }
     pub fn main() i32 {

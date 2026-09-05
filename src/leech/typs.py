@@ -661,6 +661,14 @@ class ComptimeParamTyp(Typ):
         self._index = index
         self._name = name
 
+    @abc.abstractmethod
+    def check_declaration(self) -> None:
+        """Resolve and validate what this parameter's declaration names.
+
+        Deferred until the whole module graph is built, so a bound or a
+        declared type may name an item declared after this parameter.
+        """
+
     @override
     @classmethod
     def cache_key(cls, *args: Hashable) -> Hashable:
@@ -692,10 +700,11 @@ class TypParamTyp(ComptimeParamTyp):
     It has no LLVM representation and stores only its display name, trait
     bounds and the scope those bounds are written in.
 
-    :param decl_env: The scope enclosing this parameter's declaration, in
-        which its bounds' trait names are spelled. Not part of the cache
-        key, which the owner alone determines - a parameter is declared
-        in exactly one place, so the first interning fixes it.
+    :param decl_env: The scope this parameter's bounds are resolved in,
+        holding every sibling parameter - see
+        ``comptime_params_from_ast``. Not part of the cache key, which
+        the owner alone determines: a parameter is declared in exactly
+        one place, so the first interning fixes it.
     """
 
     bounds: Final[tuple[ast.BasicTyp, ...]]
@@ -725,6 +734,12 @@ class TypParamTyp(ComptimeParamTyp):
             for bound in self.bounds
         )
 
+    @override
+    def check_declaration(self) -> None:
+        decl_env = opt_util.opt_unwrap(self.decl_env)
+        for bound in self.bounds:
+            decl_env.resolve_trait(bound.path)
+
     @property
     def is_declared_by_trait(self) -> bool:
         """Whether this parameter belongs to a trait declaration.
@@ -744,17 +759,54 @@ class ValueParamTyp(ComptimeParamTyp):
     It has no LLVM representation of its own; a concrete argument
     substitutes to a ``ComptimeValueTyp`` of the same ``value_typ``.
 
-    :param value_typ: This parameter's declared type - an ``IntTyp``
-        or ``BOOL``.
+    :param declared_typ: The already-resolved value type, for a parameter
+        the compiler declares itself, such as ``array``'s length.
+    :param param_ast: The source declaration, whose written type is
+        resolved on demand rather than at construction, so it may name a
+        type declared later. Mutually exclusive with ``declared_typ``.
+    :param decl_env: The scope this parameter's written type is resolved
+        in - see ``TypParamTyp.decl_env``.
     """
 
-    value_typ: Final[ComptimeLiteralTyp]
+    _declared_typ: Final[Optional[ComptimeLiteralTyp]]
+    _param_ast: Final[Optional[ast.ValueParam]]
+    _decl_env: Final[Optional[ir_env.Env]]
 
     def __init__(
-        self, owner: Hashable, index: int, name: str, value_typ: ComptimeLiteralTyp
+        self,
+        owner: Hashable,
+        index: int,
+        name: str,
+        declared_typ: Optional[ComptimeLiteralTyp] = None,
+        param_ast: Optional[ast.ValueParam] = None,
+        decl_env: Optional[ir_env.Env] = None,
     ) -> None:
+        assert declared_typ is None or param_ast is None, (
+            f"{name}: a resolved declared type excludes a source-written one"
+        )
         super().__init__(owner, index, name)
-        self.value_typ = value_typ
+        self._declared_typ = declared_typ
+        self._param_ast = param_ast
+        self._decl_env = decl_env
+
+    @functools.cached_property
+    def value_typ(self) -> ComptimeLiteralTyp:
+        """This parameter's declared type - an ``IntTyp`` or ``BOOL``.
+
+        Resolving it is what rejects a declaration naming a type no
+        comptime value can have.
+        """
+        if self._declared_typ is not None:
+            return self._declared_typ
+        typ_ast = opt_util.opt_unwrap(self._param_ast).typ
+        typ = Typ.from_ast(typ_ast, opt_util.opt_unwrap(self._decl_env))
+        if not isinstance(typ, IntTyp | BoolTyp):
+            raise errors.InvalidValueParamTypError(typ.name, typ_ast.span)
+        return typ
+
+    @override
+    def check_declaration(self) -> None:
+        _ = self.value_typ
 
 
 class ComptimeValueTyp(Typ):
@@ -818,48 +870,41 @@ class ComptimeValueTyp(Typ):
 
 
 def comptime_params_from_ast(
-    owner: Hashable, comptime_params: Sequence[ast.ComptimeParam], e: ir_env.Env
+    owner: Hashable, comptime_params: Sequence[ast.ComptimeParamKind], e: ir_env.Env
 ) -> tuple[ComptimeParamTyp, ...]:
     """Intern parsed comptime parameters under ``owner``, preserving declaration order.
 
-    A single-entry bound list is resolved against ``e``: a name that
-    denotes a ``Trait`` declares a type parameter with that bound (as a
-    multi-entry bound list always does); a name that denotes an
-    ``IntTyp`` or ``BOOL`` declares a value parameter of that
-    type instead. Parameter representations are created before every
-    declaration is necessarily available. A single bound that does not yet
-    resolve therefore yields a type parameter whose bound remains unresolved
-    until semantic work needs it.
+    Each parameter's kind comes from its own syntax, so no name is looked
+    up here. What its bounds or declared type name is validated later
+    instead, by ``ComptimeParamTyp.check_declaration``, driven by the
+    record this leaves on ``e.ctx``.
 
-    :param e: The scope enclosing the declaration, in which parameters'
-        bounds are resolved. See ``TypParamTyp.decl_env``.
+    The parameters resolve their own bounds and declared types in a
+    dedicated child of ``e`` holding all of them, so a bound may name a
+    sibling declared either side of it.
     """
     for param_ast in comptime_params:
         if reserved.is_reserved(param_ast.ident.name):
             raise errors.ReservedNameError(param_ast.ident.name, param_ast.ident.span)
 
+    param_env = e.new_child()
     result: list[ComptimeParamTyp] = []
     for index, param_ast in enumerate(comptime_params):
-        value_typ: Optional[ComptimeLiteralTyp] = None
-        if len(param_ast.bounds) == 1:
-            (bound,) = param_ast.bounds
-            try:
-                item = e.resolve_comptime_param_bound(bound.path)
-            except errors.ItemNotFoundError:
-                # An unavailable declaration cannot denote one of the built-in
-                # value types, so retain the bound on a type parameter.
-                pass
-            else:
-                if isinstance(item, IntTyp | BoolTyp):
-                    value_typ = item
-        if value_typ is not None:
-            result.append(
-                ValueParamTyp.get_or_create(owner, index, param_ast.ident.name, value_typ)
-            )
-        else:
-            result.append(
-                TypParamTyp.get_or_create(owner, index, param_ast.ident.name, param_ast.bounds, e)
-            )
+        param: ComptimeParamTyp
+        match param_ast:
+            case ast.TypParam():
+                param = TypParamTyp.get_or_create(
+                    owner, index, param_ast.ident.name, param_ast.bounds, param_env
+                )
+            case ast.ValueParam():
+                param = ValueParamTyp.get_or_create(
+                    owner, index, param_ast.ident.name, None, param_ast, param_env
+                )
+        result.append(param)
+        e.ctx.record_comptime_param(param)
+    # A second pass, so a bound may name a sibling declared after it.
+    for param, param_ast in zip(result, comptime_params, strict=True):
+        param_env.add_container(param.name, param, param_ast.ident.span)
     return tuple(result)
 
 

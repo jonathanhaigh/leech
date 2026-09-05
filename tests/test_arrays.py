@@ -291,7 +291,7 @@ def test_array_lit_length_not_concrete(tmp_path):
     # declared array type's length is still an abstract value parameter
     # at this point - there's nothing to check the element count against.
     src = """
-    fn f[N: usize]() array[i32, N] { return array[i32, N]{1, 2, 3}; }
+    fn f[value N: usize]() array[i32, N] { return array[i32, N]{1, 2, 3}; }
     """
     with pytest.raises(errors.ArrayLitLengthNotConcreteError):
         util.compile_str(tmp_path, src)
@@ -299,7 +299,7 @@ def test_array_lit_length_not_concrete(tmp_path):
 
 def test_generic_fn_body_uses_array_typ_with_value_param(tmp_path):
     src = """
-    fn sum3[N: usize](x: array[i32, N]) i32 { return x.[0] + x.[1] + x.[2]; }
+    fn sum3[value N: usize](x: array[i32, N]) i32 { return x.[0] + x.[1] + x.[2]; }
     pub fn main() i32 {
         return sum3[3](array[i32, 3]{4, 5, 6}) - 15;
     }

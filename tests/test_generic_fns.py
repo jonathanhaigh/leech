@@ -858,7 +858,7 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
         struct Foo {}
         impl Foo { fn inherent(*self) i32 { 0 } }
         impl Show for Foo { fn show(*self) i32 { 0 } }
-        extern fn extern_fn(value: i32) i32;
+        extern fn extern_fn(x: i32) i32;
         fn ordinary() i32 { 0 }
 
         pub fn main() i32 {
@@ -896,7 +896,7 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
 
 def test_value_param_declaration_typechecks(tmp_path):
     src = """
-    fn f[N: usize]() usize { return N; }
+    fn f[value N: usize]() usize { return N; }
     pub fn main() i32 { return 0; }
     """
     util.check_prog_output(tmp_path, src, "", 0)
@@ -904,7 +904,7 @@ def test_value_param_declaration_typechecks(tmp_path):
 
 def test_calling_generic_fn_with_explicit_value_arg(tmp_path):
     src = """
-    fn f[N: i32]() i32 { return N; }
+    fn f[value N: i32]() i32 { return N; }
     pub fn main() i32 {
         return f[4]() - 4;
     }
@@ -914,7 +914,7 @@ def test_calling_generic_fn_with_explicit_value_arg(tmp_path):
 
 def test_calling_generic_fn_with_explicit_bool_arg(tmp_path):
     src = """
-    fn f[B: bool]() bool { return B; }
+    fn f[value B: bool]() bool { return B; }
     pub fn main() i32 {
         if (f[true]()) { return 0; };
         return 1;
@@ -925,7 +925,7 @@ def test_calling_generic_fn_with_explicit_bool_arg(tmp_path):
 
 def test_value_and_typ_params_coexist(tmp_path):
     src = """
-    fn f[T, N: i32](x: T) i32 { return N; }
+    fn f[T, value N: i32](x: T) i32 { return N; }
     pub fn main() i32 {
         return f[i32, 3](9) - 3;
     }
@@ -935,7 +935,7 @@ def test_value_and_typ_params_coexist(tmp_path):
 
 def test_equal_value_args_share_one_instance(tmp_path):
     src = """
-    fn f[N: i32]() i32 { return N; }
+    fn f[value N: i32]() i32 { return N; }
     pub fn main() i32 {
         return f[4]() - f[4]();
     }
@@ -946,7 +946,7 @@ def test_equal_value_args_share_one_instance(tmp_path):
 
 def test_distinct_value_args_get_distinct_instances(tmp_path):
     src = """
-    fn f[N: i32]() i32 { return N; }
+    fn f[value N: i32]() i32 { return N; }
     pub fn main() i32 {
         return f[4]() - f[5]() + 1;
     }
@@ -959,17 +959,38 @@ def test_distinct_value_args_get_distinct_instances(tmp_path):
 def test_value_param_with_unsupported_typ_is_rejected(tmp_path):
     src = """
     struct Foo {}
-    fn f[N: Foo]() {}
+    fn f[value N: Foo]() {}
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
+    with pytest.raises(errors.InvalidValueParamTypError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Foo"' in str(exc_info.value)
 
 
+def test_value_param_declared_as_ptr_typ_is_rejected(tmp_path):
+    src = """
+    fn f[value N: *usize]() {}
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InvalidValueParamTypError):
+        util.compile_str(tmp_path, src)
+
+
+def test_unmarked_value_param_is_a_typ_param(tmp_path):
+    # Without the "value" marker this declares a type parameter bound by
+    # "usize", whatever "usize" turns out to name - no lookup decides the
+    # parameter's kind.
+    src = """
+    fn f[N: usize]() {}
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+        util.compile_str(tmp_path, src)
+
+
 def test_typ_arg_given_for_value_param_is_rejected(tmp_path):
     src = """
-    fn f[N: usize]() usize { return N; }
+    fn f[value N: usize]() usize { return N; }
     pub fn main() i32 {
         let _ = f[i32]();
         return 0;
@@ -993,7 +1014,7 @@ def test_value_arg_given_for_typ_param_is_rejected(tmp_path):
 
 def test_wrong_typ_value_arg_is_rejected(tmp_path):
     src = """
-    fn f[N: usize]() usize { return N; }
+    fn f[value N: usize]() usize { return N; }
     pub fn main() i32 {
         let _ = f[true]();
         return 0;
@@ -1005,7 +1026,7 @@ def test_wrong_typ_value_arg_is_rejected(tmp_path):
 
 def test_wrong_value_arg_on_bare_generic_fn_reference_is_rejected(tmp_path):
     src = """
-    fn f[N: usize]() usize { return N; }
+    fn f[value N: usize]() usize { return N; }
     pub fn main() i32 {
         let g = f[true];
         return 0;
@@ -1017,7 +1038,7 @@ def test_wrong_value_arg_on_bare_generic_fn_reference_is_rejected(tmp_path):
 
 def test_typ_arg_on_bare_generic_value_param_fn_reference_is_rejected(tmp_path):
     src = """
-    fn f[N: usize]() usize { return N; }
+    fn f[value N: usize]() usize { return N; }
     pub fn main() i32 {
         let g = f[i32];
         return 0;
@@ -1029,7 +1050,7 @@ def test_typ_arg_on_bare_generic_value_param_fn_reference_is_rejected(tmp_path):
 
 def test_value_param_used_as_param_typ_is_rejected(tmp_path):
     src = """
-    fn f[N: usize](x: N) usize { return N; }
+    fn f[value N: usize](x: N) usize { return N; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ValueUsedAsTypError):
@@ -1038,7 +1059,7 @@ def test_value_param_used_as_param_typ_is_rejected(tmp_path):
 
 def test_value_param_used_as_let_typ_is_rejected(tmp_path):
     src = """
-    fn f[N: usize]() usize {
+    fn f[value N: usize]() usize {
         let x: N = 5;
         return x;
     }
@@ -1050,7 +1071,7 @@ def test_value_param_used_as_let_typ_is_rejected(tmp_path):
 
 def test_value_param_used_as_ptr_pointee_typ_is_rejected(tmp_path):
     src = """
-    fn f[N: usize](x: *N) i32 { return 0; }
+    fn f[value N: usize](x: *N) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ValueUsedAsTypError):
@@ -1059,7 +1080,7 @@ def test_value_param_used_as_ptr_pointee_typ_is_rejected(tmp_path):
 
 def test_out_of_range_value_arg_is_rejected(tmp_path):
     src = """
-    fn f[N: u8]() u8 { return N; }
+    fn f[value N: u8]() u8 { return N; }
     pub fn main() i32 {
         let _ = f[300]();
         return 0;
@@ -1071,7 +1092,7 @@ def test_out_of_range_value_arg_is_rejected(tmp_path):
 
 def test_int_lit_against_bool_value_param_is_rejected(tmp_path):
     src = """
-    fn f[B: bool]() bool { return B; }
+    fn f[value B: bool]() bool { return B; }
     pub fn main() i32 {
         let _ = f[4]();
         return 0;
@@ -1083,7 +1104,7 @@ def test_int_lit_against_bool_value_param_is_rejected(tmp_path):
 
 def test_value_param_inferred_from_array_arg(tmp_path):
     src = """
-    fn first[T, N: usize](x: array[T, N]) T { return x.[0]; }
+    fn first[T, value N: usize](x: array[T, N]) T { return x.[0]; }
     pub fn main() i32 {
         return first(array[i32, 3]{7, 8, 9}) - 7;
     }
@@ -1096,7 +1117,7 @@ def test_value_param_inference_distinguishes_array_lengths(tmp_path):
     # result is compared rather than turned into main's i32 return value -
     # there's no int-to-int cast operator in this language.
     src = """
-    fn len_times_2[T, N: usize](x: array[T, N]) usize { return N * 2; }
+    fn len_times_2[T, value N: usize](x: array[T, N]) usize { return N * 2; }
     pub fn main() i32 {
         if (len_times_2(array[i32, 3]{1, 2, 3}) == 6) { return 0; };
         return 1;
@@ -1107,11 +1128,11 @@ def test_value_param_inference_distinguishes_array_lengths(tmp_path):
 
 def test_first_from_generic_struct_with_value_param(tmp_path):
     src = """
-    struct Buf[T, N: usize] {
+    struct Buf[T, value N: usize] {
         data: array[T, N],
     }
 
-    fn first[T, N: usize](b: *Buf[T, N]) T {
+    fn first[T, value N: usize](b: *Buf[T, N]) T {
         return b.*.data.[0];
     }
 

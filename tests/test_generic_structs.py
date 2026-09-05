@@ -358,11 +358,11 @@ def test_generic_struct_assoc_fn_scope_checks_arg_arity(tmp_path):
 
 def test_generic_struct_assoc_fn_scope_forwards_value_param(tmp_path):
     src = """
-    struct Buf[N: usize] { val: i32 }
-    impl[N: usize] Buf[N] {
+    struct Buf[value N: usize] { val: i32 }
+    impl[value N: usize] Buf[N] {
         fn make(v: i32) Buf[N] { Buf[N] { val: v } }
     }
-    fn make_buf[N: usize](v: i32) Buf[N] { Buf[N]::make(v) }
+    fn make_buf[value N: usize](v: i32) Buf[N] { Buf[N]::make(v) }
     pub fn main() i32 {
         let buf = make_buf[4](42);
         return buf.val;
@@ -447,9 +447,21 @@ def test_generic_struct_duplicate_field(tmp_path):
         util.compile_str(tmp_path, src)
 
 
+def test_struct_value_param_typ_resolves_sibling_typ_param(tmp_path):
+    # The declared type is looked up with the siblings in scope, so `T`
+    # is rejected for what it is rather than reported as unknown.
+    src = """
+    struct S[T, value N: T] {}
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.InvalidValueParamTypError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"T"' in str(exc_info.value)
+
+
 def test_value_param_used_as_struct_field_typ_is_rejected(tmp_path):
     src = """
-    struct S[N: usize] { f: N }
+    struct S[value N: usize] { f: N }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ValueUsedAsTypError):
@@ -899,16 +911,16 @@ def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
 
 def test_bare_sibling_reference_in_generic_impl_needs_no_fn_args(tmp_path):
     src = """
-    struct Box[T] { value: T }
+    struct Box[T] { val: T }
     impl[T] Box[T] {
-        fn get(value: T) T { value }
+        fn get(val: T) T { val }
         fn check_ref(*self) T {
             let getter = get;
-            return getter(self.*.value);
+            return getter(self.*.val);
         }
     }
     pub fn main() i32 {
-        let box = Box[i32] { value: 9 };
+        let box = Box[i32] { val: 9 };
         return box.check_ref();
     }
     """
@@ -990,7 +1002,7 @@ def test_mono_discovers_struct_requested_while_resolving_fields(tmp_path):
     mod = util.build_ir_mod(
         tmp_path,
         """
-        struct Inner[T] { value: T }
+        struct Inner[T] { val: T }
         struct Outer[T] { inner: Inner[T] }
         """,
     )
@@ -1005,11 +1017,11 @@ def test_mono_discovers_struct_requested_while_resolving_fields(tmp_path):
 
 def test_codegen_accepts_forward_reference_to_nested_generic_struct(tmp_path):
     src = """
-    struct Inner[T] { value: T }
+    struct Inner[T] { val: T }
     struct Outer[T] { inner: Inner[T] }
     pub fn main() i32 {
-        let outer = Outer[i32] { inner: Inner[i32] { value: 7 } };
-        return outer.inner.value - 7;
+        let outer = Outer[i32] { inner: Inner[i32] { val: 7 } };
+        return outer.inner.val - 7;
     }
     """
 
@@ -1060,7 +1072,7 @@ def test_impl_on_generic_struct_target_qualified_path(tmp_path):
 
 def test_struct_value_param_used_in_array_field(tmp_path):
     src = """
-    struct Buf[T, N: usize] {
+    struct Buf[T, value N: usize] {
         data: array[T, N],
     }
     pub fn main() i32 {
@@ -1073,7 +1085,7 @@ def test_struct_value_param_used_in_array_field(tmp_path):
 
 def test_struct_value_param_mangled_name(tmp_path):
     src = """
-    struct Buf[T, N: usize] { data: array[T, N] }
+    struct Buf[T, value N: usize] { data: array[T, N] }
     pub fn main() i32 {
         let buf = Buf[i32, 4] { data: array[i32, 4]{1, 2, 3, 4} };
         return buf.data.[0] - 1;

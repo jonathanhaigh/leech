@@ -1189,8 +1189,8 @@ COMMENTED_INTS = [
                 T("access", Tok(None)),
                 T("ident", Tok("Pair")),
                 T("comptime_params").cs(
-                    T("comptime_param", "ident", Tok("A")),
-                    T("comptime_param", "ident", Tok("B")),
+                    T("typ_param").cs(T("ident", Tok("A")), None),
+                    T("typ_param").cs(T("ident", Tok("B")), None),
                 ),
                 T("struct_field_defn_list").cs(
                     T("struct_field_defn").cs(
@@ -1230,7 +1230,7 @@ COMMENTED_INTS = [
             T("defn", "trait_defn").cs(
                 T("access", Tok("pub")),
                 T("ident", Tok("Eq")),
-                T("comptime_params", "comptime_param", "ident", Tok("T")),
+                T("comptime_params", "typ_param").cs(T("ident", Tok("T")), None),
                 T("trait_fn_decl").cs(
                     T("ident", Tok("eq")),
                     T("param_list").cs(
@@ -1260,7 +1260,7 @@ COMMENTED_INTS = [
             "defn",
             "impl[T] Pair[T, T] {}",
             T("defn", "impl_defn").cs(
-                T("comptime_params", "comptime_param", "ident", Tok("T")),
+                T("comptime_params", "typ_param").cs(T("ident", Tok("T")), None),
                 T("basic_typ").cs(
                     T("path", "ident", Tok("Pair")),
                     T("comptime_args").cs(
@@ -1312,7 +1312,7 @@ COMMENTED_INTS = [
             T("defn", "fn_defn").cs(
                 T("access", Tok(None)),
                 T("ident", Tok("id")),
-                T("comptime_params", "comptime_param", "ident", Tok("T")),
+                T("comptime_params", "typ_param").cs(T("ident", Tok("T")), None),
                 T("param_list").cs(
                     T("param").cs(
                         T("ident", Tok("x")), T("basic_typ").cs(T("path", "ident", Tok("T")), None)
@@ -1326,12 +1326,44 @@ COMMENTED_INTS = [
         ),
         (
             "defn",
+            "fn f[value N: usize]() {}",
+            T("defn", "fn_defn").cs(
+                T("access", Tok(None)),
+                T("ident", Tok("f")),
+                T(
+                    "comptime_params",
+                    "value_param",
+                ).cs(
+                    T("ident", Tok("N")),
+                    T("basic_typ").cs(T("path", "ident", Tok("usize")), None),
+                ),
+                T("param_list"),
+                None,
+                T("block_expr"),
+            ),
+        ),
+        (
+            "comptime_params",
+            "[T: Show, value N: usize]",
+            T("comptime_params").cs(
+                T("typ_param").cs(
+                    T("ident", Tok("T")),
+                    T("bound_list", "basic_typ").cs(T("path", "ident", Tok("Show")), None),
+                ),
+                T("value_param").cs(
+                    T("ident", Tok("N")),
+                    T("basic_typ").cs(T("path", "ident", Tok("usize")), None),
+                ),
+            ),
+        ),
+        (
+            "defn",
             "fn show_it[T: Show + Eq](x: T) {}",
             T("defn", "fn_defn").cs(
                 T("access", Tok(None)),
                 T("ident", Tok("show_it")),
                 T("comptime_params").cs(
-                    T("comptime_param").cs(
+                    T("typ_param").cs(
                         T("ident", Tok("T")),
                         T("bound_list").cs(
                             T("basic_typ").cs(T("path", "ident", Tok("Show")), None),
@@ -1591,6 +1623,11 @@ def test_parse(rule, src, expected):
         ("typ", "Vec[]"),
         ("comptime_params", "[]"),
         ("comptime_params", "[T"),
+        ("comptime_params", "[value]"),
+        ("comptime_params", "[value N]"),
+        ("comptime_params", "[value N:]"),
+        ("comptime_params", "[value N: Show + Eq]"),
+        ("comptime_params", "[T: value usize]"),
         ("expr", "f[](x)"),
         ("struct_defn", "struct Foo[] {}"),
         ("impl_defn", "impl[] Foo {}"),

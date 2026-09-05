@@ -8,7 +8,7 @@ import contextlib
 import dataclasses
 import enum
 import operator
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from typing import TYPE_CHECKING, Final, Optional, cast
 
 if TYPE_CHECKING:
@@ -57,6 +57,9 @@ class Ctx:
     _struct_instances: Final[_InstanceCache[typs.StructTypTemplate, typs.StructTyp]]
     _requested_struct_instances: Final[list[typs.StructTyp]]
     _cycle_stacks: Final[dict[CycleDomain, list[_CycleFrame]]]
+    #: Source-declared comptime parameters in declaration order, used as an
+    #: insertion-ordered set because one declaration may be interned twice.
+    _declared_comptime_params: Final[dict[typs.ComptimeParamTyp, None]]
 
     def __init__(self) -> None:
         self._fn_instances = {}
@@ -64,6 +67,21 @@ class Ctx:
         self._struct_instances = {}
         self._requested_struct_instances = []
         self._cycle_stacks = {}
+        self._declared_comptime_params = {}
+
+    def record_comptime_param(self, param: typs.ComptimeParamTyp) -> None:
+        """Record a source-declared comptime parameter for later validation.
+
+        What a parameter's bounds or declared type name cannot be resolved
+        while declarations are still being collected, so every parameter
+        built from source is collected here and checked once the whole
+        module graph is loaded.
+        """
+        self._declared_comptime_params.setdefault(param, None)
+
+    def declared_comptime_params(self) -> Collection[typs.ComptimeParamTyp]:
+        """Every recorded comptime parameter, in declaration order."""
+        return self._declared_comptime_params.keys()
 
     @contextlib.contextmanager
     def detect_cycle[IdentityT, DetailT](

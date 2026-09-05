@@ -747,14 +747,14 @@ class ReservedNameError(UserError):
         super().__init__(ERROR, f'"{name}" is reserved and cannot be used as a name', span)
 
 
-class InvalidComptimeBoundError(UserError):
-    """Raised when a comptime parameter's declared bound names neither a
-    trait nor a supported value parameter type."""
+class InvalidValueParamTypError(UserError):
+    """Raised when a ``value`` comptime parameter's declared type is one no
+    compile-time value can have."""
 
-    def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
+    def __init__(self, typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
-            f'"{name}" is not a trait or a supported value type, so it cannot be used as a bound',
+            f'"{typ_name}" is not a supported comptime value parameter type',
             span,
         )
 

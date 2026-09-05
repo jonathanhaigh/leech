@@ -67,7 +67,7 @@ def test_imported_non_generic_fn_is_a_monomorphization_leaf(tmp_path):
 
 def test_unused_imported_extern_keeps_bare_declaration(tmp_path):
     main_src = "import a;\npub fn main() i32 { 0 }"
-    a_src = "extern fn unused(value: i32) i32;"
+    a_src = "extern fn unused(val: i32) i32;"
 
     main_ir, _ = util.compile_modules(tmp_path, main=main_src, a=a_src)
     ir_text = main_ir.read_text()

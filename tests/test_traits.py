@@ -233,11 +233,11 @@ def test_generic_trait_impl_method_calls_sibling(tmp_path):
 
 def test_trait_declares_value_param(tmp_path):
     src = """
-    trait Sized[N: i32] {
+    trait Sized[value N: i32] {
         fn size(*self) i32;
     }
-    struct Buf[N: i32] {}
-    impl[N: i32] Sized[N] for Buf[N] {
+    struct Buf[value N: i32] {}
+    impl[value N: i32] Sized[N] for Buf[N] {
         fn size(*self) i32 { return N; }
     }
     pub fn main() i32 {
@@ -447,7 +447,7 @@ def test_calling_method_through_generic_impl(tmp_path):
 def test_trait_bound_call_through_generic_impl(tmp_path):
     src = """
     trait Show { fn show(*self) i32; }
-    struct Box[T] { value: T }
+    struct Box[T] { val: T }
     impl[T] Show for Box[T] {
         fn show(*self) i32 { 1 }
     }
@@ -455,7 +455,7 @@ def test_trait_bound_call_through_generic_impl(tmp_path):
         return x.show();
     }
     pub fn main() i32 {
-        let b = Box[i32] { value: 0 };
+        let b = Box[i32] { val: 0 };
         return call_show(b) - 1;
     }
     """
@@ -672,10 +672,59 @@ def test_ambiguous_method_call_on_bound_typ_param(tmp_path):
         util.compile_str(tmp_path, src)
 
 
+#: A bound and everything it needs, to be spliced either side of the
+#: declaration that uses it.
+_SHOW_DECLS = """
+    trait Show { fn show(*self) i32; }
+    impl Show for i32 { fn show(*self) i32 { self.* } }
+"""
+
+_BOUND_USER = """
+    fn f[T: Show](x: T) i32 { return x.show(); }
+"""
+
+
+@pytest.mark.parametrize("forward", (False, True))
+def test_bound_resolves_the_same_either_declaration_order(tmp_path, forward):
+    parts = (_BOUND_USER, _SHOW_DECLS) if forward else (_SHOW_DECLS, _BOUND_USER)
+    src = (
+        "".join(parts)
+        + """
+    pub fn main() i32 { return f(7i32) - 7; }
+    """
+    )
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+@pytest.mark.parametrize("forward", (False, True))
+def test_unsatisfied_bound_diagnosed_the_same_either_declaration_order(tmp_path, forward):
+    parts = (_BOUND_USER, _SHOW_DECLS) if forward else (_SHOW_DECLS, _BOUND_USER)
+    src = (
+        "".join(parts)
+        + """
+    pub fn main() i32 { return f(true); }
+    """
+    )
+    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"Show"' in str(exc_info.value)
+
+
+@pytest.mark.parametrize("forward", (False, True))
+def test_non_trait_bound_diagnosed_the_same_either_declaration_order(tmp_path, forward):
+    decls = "struct NotATrait { a: i32 }\n"
+    user = "fn f[T: NotATrait]() {}\n"
+    src = (
+        (user + decls if forward else decls + user)
+        + """
+    pub fn main() i32 { return 0; }
+    """
+    )
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+        util.compile_str(tmp_path, src)
+
+
 def test_bound_names_non_trait_via_method_call(tmp_path):
-    # A non-trait bound is caught eagerly, while the generic body itself
-    # is checked - before the function is ever called - because the body
-    # calls a method on the bound type parameter.
     src = """
     struct NotATrait { a: i32 }
     fn f[T: NotATrait](x: T) i32 {
@@ -683,36 +732,54 @@ def test_bound_names_non_trait_via_method_call(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
         util.compile_str(tmp_path, src)
-    assert '"NotATrait"' in str(exc_info.value)
 
 
 def test_bound_names_unapplied_generic_non_trait(tmp_path):
     src = """
-    struct NotATrait[T] { value: T }
+    struct NotATrait[T] { val: T }
     fn f[T: NotATrait](x: T) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
         util.compile_str(tmp_path, src)
-    assert '"NotATrait"' in str(exc_info.value)
 
 
-def test_bound_names_non_trait_on_generic_fn_call(tmp_path):
-    # Here the generic body never uses the bound, so nothing catches the
-    # non-trait bound until the function is actually instantiated -
-    # exercising check_comptime_arg_bounds rather than _resolve_bound_method.
+#: One never-applied declaration of each kind that can take comptime
+#: parameters, each bounding a parameter by something that isn't a trait.
+_UNUSED_BAD_BOUND_DECLS = {
+    "fn": "fn f[T: NotATrait]() {}",
+    "struct": "struct Box[T: NotATrait] {}",
+    "trait": "trait Holds[T: NotATrait] { fn get(*self) i32; }",
+    "impl": "struct Pair[T] {}\nimpl[T: NotATrait] Pair[T] {}",
+}
+
+
+@pytest.mark.parametrize("decl", list(_UNUSED_BAD_BOUND_DECLS))
+def test_non_trait_bound_on_unused_declaration_is_rejected(tmp_path, decl):
+    # Every kind of declaration must hand its parameters to the
+    # whole-graph declaration check, whether or not anything applies it.
+    src = f"""
+    struct NotATrait {{ a: i32 }}
+    {_UNUSED_BAD_BOUND_DECLS[decl]}
+    pub fn main() i32 {{ return 0; }}
+    """
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+        util.compile_str(tmp_path, src)
+
+
+def test_bound_names_non_trait_on_unused_typ_param(tmp_path):
+    # The bound is never consulted: the body doesn't use it and nothing
+    # calls the function, so only validating the declaration itself
+    # catches it.
     src = """
     struct NotATrait { a: i32 }
     fn f[T: NotATrait](x: T) i32 { return 0; }
-    pub fn main() i32 {
-        return f(1i32);
-    }
+    pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
         util.compile_str(tmp_path, src)
-    assert '"NotATrait"' in str(exc_info.value)
 
 
 def test_bound_names_non_trait_on_generic_struct_instantiation(tmp_path):
@@ -724,9 +791,8 @@ def test_bound_names_non_trait_on_generic_struct_instantiation(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidComptimeBoundError) as exc_info:
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
         util.compile_str(tmp_path, src)
-    assert '"NotATrait"' in str(exc_info.value)
 
 
 def test_trait_missing_method_not_implemented(tmp_path):
@@ -875,8 +941,8 @@ def test_blanket_trait_impl_is_selected_for_concrete_typ(tmp_path):
     trait Show { fn show(*self) i32; }
     impl[T] Show for T { fn show(*self) i32 { 42 } }
     pub fn main() i32 {
-        let value: i32 = 0;
-        return value.show();
+        let val: i32 = 0;
+        return val.show();
     }
     """
     util.check_prog_output(tmp_path, src, "", 42)
@@ -961,7 +1027,7 @@ def test_impl_for_non_trait(tmp_path):
 
 def test_impl_for_unapplied_generic_non_trait(tmp_path):
     src = """
-    struct NotATrait[T] { value: T }
+    struct NotATrait[T] { val: T }
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """
@@ -984,7 +1050,7 @@ def test_trait_used_as_typ(tmp_path):
 def test_generic_trait_used_as_typ(tmp_path, trait_typ):
     src = f"""
     trait Container[T] {{ fn get(*self) T; }}
-    pub fn main(value: {trait_typ}) i32 {{ return 0; }}
+    pub fn main(x: {trait_typ}) i32 {{ return 0; }}
     """
     with pytest.raises(errors.TraitUsedAsTypError) as exc_info:
         util.compile_str(tmp_path, src)
@@ -1093,7 +1159,7 @@ def test_trait_application_keeps_argument_order(tmp_path):
         tmp_path,
         """
         trait Convert[From, To] { fn convert(*self) To; }
-        fn use[U: Convert[bool, i32]](value: U) i32 { 0 }
+        fn use[U: Convert[bool, i32]](x: U) i32 { 0 }
         """,
     )
     item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Convert")
@@ -1223,15 +1289,14 @@ _SIBLING_PRELUDE = """
 """
 
 
-def test_bound_referencing_earlier_sibling_typ_param(tmp_path):
+def test_unsatisfied_bound_trait_arg_on_unused_declaration(tmp_path):
+    # Nothing applies `f`, so only checking its declaration catches that
+    # `Container`'s own bound rules out `bool`.
     src = (
         _SIBLING_PRELUDE
         + """
-    struct Pair[A, B: Container[A]] { mut first: A, mut second: B }
-    pub fn main() i32 {
-        let p = Pair[bool, i32] { first: true, second: 1 };
-        return 0;
-    }
+    fn f[U: Container[bool]]() {}
+    pub fn main() i32 { return 0; }
     """
     )
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
@@ -1239,13 +1304,51 @@ def test_bound_referencing_earlier_sibling_typ_param(tmp_path):
     assert '"bool"' in str(exc_info.value)
 
 
-def test_bound_referencing_later_sibling_typ_param(tmp_path):
+@pytest.mark.parametrize(
+    ("decl", "unbounded"),
+    (
+        ("struct Pair[A, B: Container[A]] { mut first: A, mut second: B }", "A"),
+        ("struct Pair[A: Container[B], B] { mut first: A, mut second: B }", "B"),
+        ("fn f[A, B: Container[A]]() {}", "A"),
+    ),
+)
+def test_bound_on_sibling_typ_param_must_be_carried_by_its_declaration(tmp_path, decl, unbounded):
+    # `Container[A]` requires `A: Show`, and a bare `A` promises nothing,
+    # so the declaration is rejected where it is written rather than at
+    # each application.
+    src = (
+        _SIBLING_PRELUDE
+        + decl
+        + """
+    pub fn main() i32 { return 0; }
+    """
+    )
+    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert f'"{unbounded}"' in str(exc_info.value)
+    assert '"Show"' in str(exc_info.value)
+
+
+def test_bound_referencing_sibling_typ_param_carrying_the_needed_bound(tmp_path):
+    # `A: Show` discharges what `Container[A]` requires, so the
+    # declaration stands and only the application is left to judge.
     src = (
         _SIBLING_PRELUDE
         + """
-    struct Pair[A: Container[B], B] { mut first: A, mut second: B }
+    struct Pair[A: Show, B: Container[A]] { mut first: A, mut second: B }
+    pub fn main() i32 { return 0; }
+    """
+    )
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_bound_referencing_sibling_typ_param_rejects_unsatisfying_arg(tmp_path):
+    src = (
+        _SIBLING_PRELUDE
+        + """
+    struct Pair[A: Show, B: Container[A]] { mut first: A, mut second: B }
     pub fn main() i32 {
-        let p = Pair[i32, bool] { first: 1, second: true };
+        let p = Pair[bool, i32] { first: true, second: 1 };
         return 0;
     }
     """
@@ -1261,7 +1364,7 @@ def test_bound_referencing_sibling_typ_param_satisfied(tmp_path):
     src = (
         _SIBLING_PRELUDE
         + """
-    struct Pair[A, B: Container[A]] { mut first: A, mut second: B }
+    struct Pair[A: Show, B: Container[A]] { mut first: A, mut second: B }
     pub fn main() i32 {
         let p = Pair[i32, i32] { first: 1, second: 1 };
         return 0;
@@ -1313,7 +1416,7 @@ def test_mutually_recursive_trait_bounds(tmp_path):
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
-    _assert_recursive_trait_bound_error(exc_info, "B[T]", ["B[T]", "A[T]"])
+    _assert_recursive_trait_bound_error(exc_info, "A[T]", ["A[T]", "B[T]"])
 
 
 def test_growing_recursive_trait_bound_via_pointer(tmp_path):
@@ -1357,7 +1460,7 @@ def test_growing_mutually_recursive_trait_bounds(tmp_path):
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
         util.compile_str(tmp_path, src)
-    _assert_recursive_trait_bound_error(exc_info, "Q[*T]", ["Q[*T]", "P[*T]"])
+    _assert_recursive_trait_bound_error(exc_info, "P[*T]", ["P[*T]", "Q[*T]"])
 
 
 def _assert_recursive_impl_selection_error(
@@ -1472,7 +1575,7 @@ def test_bound_method_reports_wrong_trait_arg_count_before_unsupported_error(tmp
 
 def test_bound_method_reports_wrong_trait_arg_kind_before_unsupported_error(tmp_path):
     src = """
-    trait Sized[N: i32] { fn get(*self) i32; }
+    trait Sized[value N: i32] { fn get(*self) i32; }
     fn f[U: Sized[i32]](x: U) i32 { return x.get(); }
     pub fn main() i32 { return 0; }
     """

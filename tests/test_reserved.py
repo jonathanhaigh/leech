@@ -24,6 +24,14 @@ _DECLARATIONS = {
     "enum_variant": "enum E(u8) { if }\npub fn main() i32 { return 0; }",
     "trait_method": "trait T { fn if(*self) i32; }\npub fn main() i32 { return 0; }",
     "generic_param": "fn f[if](x: if) i32 { return 0; }\npub fn main() i32 { return 0; }",
+    "value_param": (
+        "fn f[value value: usize]() i32 { return 0; }\npub fn main() i32 { return 0; }"
+    ),
+    # "value" is a keyword only where a comptime parameter may start, so
+    # the lexer lets it through everywhere else and the check must run.
+    "value_keyword_as_struct_field": (
+        "struct Foo { mut value: i32 }\npub fn main() i32 { return 0; }"
+    ),
     "inherent_method": (
         "struct Foo { mut x: i32 }\n"
         "impl Foo { fn if(*self) i32 { 0 } }\n"
