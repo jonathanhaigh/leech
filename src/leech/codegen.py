@@ -123,7 +123,7 @@ class Compiler:
                 self._declare_mod_item(item)
 
         for item in self._program_items():
-            if not isinstance(item.value, (typs.StructTyp, typs.StructTypTemplate)):
+            if not isinstance(item.value, typs.StructTyp | typs.StructTypTemplate):
                 self._declare_mod_item(item)
 
         # A generic struct's own fields are never lowered - only an
@@ -502,7 +502,7 @@ class Compiler:
                 zero = ll.Constant(self._ll_mod_items.get(typs.USIZE), 0)
                 ll_index = self._ll_mod_items.get(value.index)
                 base = self._ll_mod_items.get(value.base)
-                assert isinstance(base, (ll.GlobalValue, ll.Constant))
+                assert isinstance(base, ll.GlobalValue | ll.Constant)
                 return base.gep([zero, ll_index])
             case _:
                 # FnRefs are mapped during function declaration, before any

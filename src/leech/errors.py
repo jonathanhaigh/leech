@@ -79,6 +79,23 @@ class ItemNotFoundError(UserError):
         super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
 
 
+class PathTargetKindError(UserError):
+    """Raised when a resolved path names a different kind of item than required."""
+
+    def __init__(
+        self,
+        path: str,
+        actual_kind: str,
+        expected_kind: str,
+        span: Optional[src.SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Path "{path}" names a {actual_kind}, not a {expected_kind}',
+            span,
+        )
+
+
 class ItemCannotQualifyPathError(UserError):
     """Raised when a resolved item appears before the end of a path but is not a scope."""
 

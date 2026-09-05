@@ -761,7 +761,7 @@ class CfgBuilder:
                 target.substitute_typ_params(self._comptime_arg_mapping), typs.ComptimeValueTyp
             )
             return self._in_context(concrete.to_comptime_value(var_ast), ctx)
-        if isinstance(target, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
+        if isinstance(target, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
             var = self._local_values[target]
         else:
             var = asserts.checked_cast(target, ir_module.ModVar)

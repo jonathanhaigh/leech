@@ -45,7 +45,7 @@ type PathScope = Env | ir_module.Mod | typs.StructTyp | typs.EnumTyp
 type PathTarget = (
     typs.Typ
     | ir_module.Mod
-    | ir_traits.Trait
+    | ir_traits.TraitApplication
     | NonFnVar
     | ir_module.FnCandidate
     | ir_values.ComptimeEnum
@@ -55,8 +55,15 @@ type PathTarget = (
 type PathResult = PathTarget | typs.GenericTypTemplate
 """A path result, including a final unapplied generic type template."""
 
-type PathLookup = PathResult | ir_module.FnSymbol | ir_traits.ImplFnSelection
+type PathLookup = Container | Var | ir_traits.ImplFnSelection | ir_values.ComptimeEnum
 """An item produced by lookup before its segment's comptime arguments are applied."""
+
+type _ContainerResult = (
+    typs.Typ | typs.GenericTypTemplate | ir_module.Mod | ir_traits.TraitApplication
+)
+
+type ComptimeParamBound = typs.ComptimeLiteralTyp | ir_traits.Trait
+"""A declaration that determines whether a comptime parameter is a value or type."""
 
 
 class Env:
@@ -168,7 +175,7 @@ class Env:
             return "function", value.span
         if isinstance(value, ir_module.ModVar):
             return "variable", value.span
-        if isinstance(value, (typs.StructTypTemplate, typs.StructTyp, typs.EnumTyp)):
+        if isinstance(value, typs.StructTypTemplate | typs.StructTyp | typs.EnumTyp):
             return "type", value.span
         if isinstance(value, ir_traits.Trait):
             return "trait", value.span
@@ -255,6 +262,12 @@ class Env:
                 return typs.apply_generic_typ(item, seg.comptime_args, self, seg.span)
             return item
 
+        if isinstance(item, ir_traits.Trait):
+            args = typs.resolve_explicit_comptime_args(
+                item.name, item.comptime_params, seg.comptime_args, self, seg.span
+            )
+            return ir_traits.TraitApplication(item, args)
+
         if isinstance(item, ir_traits.ImplFnSelection):
             return self._apply_fn_path_seg(item.fn, item.impl_args, seg)
 
@@ -265,8 +278,6 @@ class Env:
             return self._apply_fn_path_seg(item, impl_args, seg)
 
         if not seg.comptime_args:
-            return item
-        if isinstance(item, ir_traits.Trait) and item.comptime_params:
             return item
         raise errors.ComptimeArgsOnNonGenericItemError(seg.ident.name, seg.span)
 
@@ -280,15 +291,17 @@ class Env:
         return self._apply_path_seg(item, seg)
 
     @staticmethod
-    def _path_target_kind(target: PathTarget) -> str:
+    def _path_target_kind(target: PathResult) -> str:
         match target:
             case typs.TypParamTyp():
                 return "type parameter"
             case typs.ValueParamTyp() | typs.ComptimeValueTyp():
                 return "value"
+            case typs.GenericTypTemplate():
+                return "type"
             case typs.Typ():
                 return "type"
-            case ir_traits.Trait():
+            case ir_traits.TraitApplication():
                 return "trait"
             case ir_module.FnCandidate():
                 return "function"
@@ -312,7 +325,7 @@ class Env:
                 raise errors.MissingComptimeArgsError(target.name, seg.span)
             case (
                 typs.Typ()
-                | ir_traits.Trait()
+                | ir_traits.TraitApplication()
                 | ir_module.FnCandidate()
                 | ir_values.Value()
                 | ast.Param()
@@ -328,20 +341,24 @@ class Env:
 
     def resolve_typ(self, path: ast.Path) -> typs.TypKind:
         """Resolve a qualified path whose final segment must be a type."""
-        item = self.resolve_path(Env.Namespace.CONTAINERS, path)
+        lookup, final_seg = self._lookup_final_path_seg(Env.Namespace.CONTAINERS, path)
+        if isinstance(lookup, ir_traits.Trait):
+            if final_seg.comptime_args and not lookup.comptime_params:
+                raise errors.ComptimeArgsOnNonGenericItemError(lookup.name, final_seg.span)
+            raise errors.TraitUsedAsTypError(lookup.name, final_seg.span)
+        item = self._apply_path_seg(lookup, final_seg)
         if isinstance(item, ir_module.Mod):
-            raise errors.ModUsedAsTypError(item.name, path.segs[-1].span)
-        if isinstance(item, ir_traits.Trait):
-            raise errors.TraitUsedAsTypError(item.name, path.segs[-1].span)
-        if isinstance(item, (typs.ValueParamTyp, typs.ComptimeValueTyp)):
-            raise errors.ValueUsedAsTypError(item.name, path.segs[-1].span)
+            raise errors.ModUsedAsTypError(item.name, final_seg.span)
+        if isinstance(item, typs.ValueParamTyp | typs.ComptimeValueTyp):
+            raise errors.ValueUsedAsTypError(item.name, final_seg.span)
         if isinstance(item, typs.GenericTypTemplate):
-            raise errors.MissingComptimeArgsError(item.name, path.segs[-1].span)
+            raise errors.MissingComptimeArgsError(item.name, final_seg.span)
         assert isinstance(item, typs.Typ)
         return cast(typs.TypKind, item)
 
-    def resolve_path(self, ns: Env.Namespace, path: ast.Path) -> PathResult:
-        """Resolve container path segments, then look up the final segment in ``ns``."""
+    def _lookup_final_path_seg(
+        self, ns: Env.Namespace, path: ast.Path
+    ) -> tuple[PathLookup, ast.PathSeg]:
         asserts.assert_ge(len(path.segs), 1)
 
         scope: PathScope = self
@@ -349,11 +366,60 @@ class Env:
             target = self._resolve_path_seg(Env.Namespace.CONTAINERS, scope, seg)
             scope = self._require_path_scope(target, seg)
 
-        return self._resolve_path_seg(ns, scope, path.segs[-1])
+        final_seg = path.segs[-1]
+        return self._lookup_path_seg(ns, scope, final_seg.ident), final_seg
+
+    def _resolve_path(self, ns: Env.Namespace, path: ast.Path) -> PathResult:
+        """Resolve container path segments, then apply the final segment in ``ns``."""
+        item, final_seg = self._lookup_final_path_seg(ns, path)
+        return self._apply_path_seg(item, final_seg)
+
+    def _resolve_container(self, path: ast.Path) -> _ContainerResult:
+        target = self._resolve_path(Env.Namespace.CONTAINERS, path)
+        if isinstance(
+            target,
+            typs.Typ | typs.GenericTypTemplate | ir_module.Mod | ir_traits.TraitApplication,
+        ):
+            return target
+        raise AssertionError(f"invalid container path target: {target!r}")
+
+    def resolve_comptime_param_bound(self, path: ast.Path) -> ComptimeParamBound:
+        """Classify a single comptime-parameter bound without applying a final trait.
+
+        Trait application is deferred until declarations and impls have all been registered.
+        Other final items are applied normally before classification.
+        """
+        item, final_seg = self._lookup_final_path_seg(Env.Namespace.CONTAINERS, path)
+        if isinstance(item, ir_traits.Trait):
+            if final_seg.comptime_args and not item.comptime_params:
+                raise errors.ComptimeArgsOnNonGenericItemError(item.name, final_seg.span)
+            return item
+        target = self._apply_path_seg(item, final_seg)
+        if isinstance(target, typs.IntTyp | typs.BoolTyp):
+            return target
+        raise errors.InvalidComptimeBoundError(path.str(), path.span)
+
+    def resolve_trait(self, path: ast.Path) -> ir_traits.TraitApplication:
+        """Resolve a trait application and reject any other container kind."""
+        target = self._resolve_container(path)
+        if not isinstance(target, ir_traits.TraitApplication):
+            raise errors.PathTargetKindError(
+                path.str(), self._path_target_kind(target), "trait", path.span
+            )
+        return target
+
+    def resolve_comptime_value(self, path: ast.Path) -> typs.ValueParamTyp | typs.ComptimeValueTyp:
+        """Resolve a comptime value and reject any other container kind."""
+        target = self._resolve_container(path)
+        if not isinstance(target, typs.ValueParamTyp | typs.ComptimeValueTyp):
+            raise errors.PathTargetKindError(
+                path.str(), self._path_target_kind(target), "comptime value", path.span
+            )
+        return target
 
     def resolve_var(self, path: ast.Path) -> resolve.VarTarget:
         """Resolve a variable path and verify its namespace's result invariant."""
-        target = self.resolve_path(Env.Namespace.VARS, path)
+        target = self._resolve_path(Env.Namespace.VARS, path)
         if isinstance(target, ir_values.ComptimeEnum):
             return target
         if isinstance(target, ir_values.Value):
@@ -361,14 +427,12 @@ class Env:
             return asserts.checked_cast(target, ir_module.ModVar)
         if isinstance(
             target,
-            (
-                ir_module.FnCandidate,
-                typs.ValueParamTyp,
-                ast.Param,
-                ast.Receiver,
-                ast.LetStmt,
-                ast.BindingPattern,
-            ),
+            ir_module.FnCandidate
+            | typs.ValueParamTyp
+            | ast.Param
+            | ast.Receiver
+            | ast.LetStmt
+            | ast.BindingPattern,
         ):
             return target
         raise AssertionError(f"invalid variable path target: {target!r}")

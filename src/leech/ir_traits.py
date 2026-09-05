@@ -169,7 +169,7 @@ class TraitApplication:
 
 def _is_local(item: Trait | typs.Typ, mod_name: str) -> bool:
     """Return whether a nominal trait or struct belongs to ``mod_name``."""
-    if isinstance(item, (Trait, typs.StructTyp)):
+    if isinstance(item, Trait | typs.StructTyp):
         return item.mod_name == mod_name
     return False
 

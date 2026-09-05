@@ -955,7 +955,7 @@ def test_impl_for_non_trait(tmp_path):
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ImplForNonTraitError):
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
         util.compile_str(tmp_path, src)
 
 
@@ -965,7 +965,7 @@ def test_impl_for_unapplied_generic_non_trait(tmp_path):
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ImplForNonTraitError):
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
         util.compile_str(tmp_path, src)
 
 
@@ -978,6 +978,17 @@ def test_trait_used_as_typ(tmp_path):
     with pytest.raises(errors.TraitUsedAsTypError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Show"' in str(exc_info.value)
+
+
+@pytest.mark.parametrize("trait_typ", ("Container", "Container[i32]"))
+def test_generic_trait_used_as_typ(tmp_path, trait_typ):
+    src = f"""
+    trait Container[T] {{ fn get(*self) T; }}
+    pub fn main(value: {trait_typ}) i32 {{ return 0; }}
+    """
+    with pytest.raises(errors.TraitUsedAsTypError) as exc_info:
+        util.compile_str(tmp_path, src)
+    assert '"Container"' in str(exc_info.value)
 
 
 def test_trait_method_missing_receiver(tmp_path):
@@ -1078,15 +1089,26 @@ def test_non_generic_trait_has_no_typ_params(tmp_path):
 
 
 def test_trait_application_keeps_argument_order(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "trait Convert[From, To] { fn convert(*self) To; }")
+    mod = util.build_ir_mod(
+        tmp_path,
+        """
+        trait Convert[From, To] { fn convert(*self) To; }
+        fn use[U: Convert[bool, i32]](value: U) i32 { 0 }
+        """,
+    )
     item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Convert")
     assert item is not None
     trait = asserts.checked_cast(item.value, ir_traits.Trait)
+    fn_item = mod.get_item(ir_env.Env.Namespace.VARS, "use")
+    assert fn_item is not None
+    fn = asserts.checked_cast(fn_item.value, ir_module.SrcFnSymbol)
+    (param,) = fn.comptime_params
+    param = asserts.checked_cast(param, typs.TypParamTyp)
+    (bound,) = param.bounds
 
-    application = ir_traits.TraitApplication(trait, (typs.BOOL, typs.I32))
+    application = mod.env.resolve_trait(bound.path)
 
-    assert application.trait is trait
-    assert application.args == (typs.BOOL, typs.I32)
+    assert application == ir_traits.TraitApplication(trait, (typs.BOOL, typs.I32))
 
 
 def test_bound_with_generic_args_on_non_generic_trait(tmp_path):
@@ -1102,6 +1124,16 @@ def test_bound_with_generic_args_on_non_generic_trait(tmp_path):
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
         util.compile_str(tmp_path, src)
     assert '"Show"' in str(exc_info.value)
+
+
+def test_unused_bound_with_generic_args_on_non_generic_trait(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    fn f[T: Show[i32]](x: T) i32 { return 0; }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
+        util.compile_str(tmp_path, src)
 
 
 def test_bound_on_generic_trait_without_typ_args(tmp_path):
@@ -1415,6 +1447,47 @@ def test_calling_method_through_bound_with_generic_args_not_supported_yet(tmp_pa
         NotImplementedError,
         match="calling a method through a bound with generic arguments isn't supported yet",
     ):
+        util.compile_str(tmp_path, src)
+
+
+def test_bound_method_reports_missing_trait_args_instead_of_crashing(tmp_path):
+    src = """
+    trait Container[T] { fn get(*self) T; }
+    fn f[U: Container](x: U) i32 { return x.get(); }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.MissingComptimeArgsError):
+        util.compile_str(tmp_path, src)
+
+
+def test_bound_method_reports_wrong_trait_arg_count_before_unsupported_error(tmp_path):
+    src = """
+    trait Container[T] { fn get(*self) T; }
+    fn f[U: Container[i32, bool]](x: U) i32 { return x.get(); }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.WrongNumberOfComptimeArgsError):
+        util.compile_str(tmp_path, src)
+
+
+def test_bound_method_reports_wrong_trait_arg_kind_before_unsupported_error(tmp_path):
+    src = """
+    trait Sized[N: i32] { fn get(*self) i32; }
+    fn f[U: Sized[i32]](x: U) i32 { return x.get(); }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a comptime value"):
+        util.compile_str(tmp_path, src)
+
+
+def test_bound_method_reports_trait_arg_bound_error_before_unsupported_error(tmp_path):
+    src = """
+    trait Show { fn show(*self) i32; }
+    trait Container[T: Show] { fn get(*self) T; }
+    fn f[U: Container[bool]](x: U) i32 { return x.get(); }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.UnsatisfiedBoundError):
         util.compile_str(tmp_path, src)
 
 

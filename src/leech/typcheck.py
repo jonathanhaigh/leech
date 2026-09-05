@@ -430,7 +430,7 @@ class TypCheck:
     def _check_path_pattern(
         self, pat: ast.PathPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
     ) -> patterns.ConstructorPattern:
-        item = e.resolve_path(ir_env.Env.Namespace.VARS, pat.path)
+        item = e.resolve_var(pat.path)
         if not isinstance(item, ir_values.ComptimeEnum):
             raise errors.NotAPatternError(pat.path.str(), pat.span)
         if item.typ != scrutinee_typ:
@@ -583,12 +583,10 @@ class TypCheck:
 
         matches: list[ir_traits.TraitMethod] = []
         for bound in typ_param.bounds:
-            item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
-            if not isinstance(item, ir_traits.Trait):
-                raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
-            method = item.get_trait_method(name)
+            application = e.resolve_trait(bound.path)
+            method = application.trait.get_trait_method(name)
             if method is not None:
-                if bound.path.segs[-1].comptime_args:
+                if application.args:
                     # The signature would still name the trait's own type
                     # parameters, not the bound's arguments; substituting
                     # them needs generic traits.
@@ -807,7 +805,7 @@ class TypCheck:
             # Not a place (same reasoning as the ComptimeEnum case above) -
             # a value parameter has no address to take.
             return var.value_typ
-        if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
+        if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
             return self.results.local_typ(var).pointee_typ
         return var.typ.pointee_typ
 
@@ -963,13 +961,13 @@ class TypCheck:
             var = self._resolve_var(expr_ast, e)
             if isinstance(var, ir_module.FnCandidate):
                 return self._fn_candidate_ptr_typ(expr_ast, var)
-            if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
+            if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
                 return self.results.local_typ(var)
             # An enum variant (see Env._lookup_path_seg's EnumTyp
             # case) isn't a place either - it falls through to the
             # general, value-copying case below, same as any other
             # non-place expression.
-            if not isinstance(var, (ir_values.ComptimeEnum, typs.ValueParamTyp)):
+            if not isinstance(var, ir_values.ComptimeEnum | typs.ValueParamTyp):
                 return var.typ
 
         value_typ = self._check_expr(expr_ast, e, None)
@@ -988,14 +986,10 @@ class TypCheck:
                 # a place.
                 if isinstance(
                     var,
-                    (
-                        ir_module.FnCandidate,
-                        ir_values.ComptimeEnum,
-                        typs.ValueParamTyp,
-                    ),
+                    ir_module.FnCandidate | ir_values.ComptimeEnum | typs.ValueParamTyp,
                 ):
                     return typs.CONST
-                if isinstance(var, (ast.Param, ast.Receiver, ast.LetStmt, ast.BindingPattern)):
+                if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
                     return self.results.local_typ(var).mut
                 # The only remaining binding is a ModVar.
                 return asserts.checked_cast(var.typ, typs.PtrTyp).mut

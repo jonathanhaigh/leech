@@ -925,7 +925,7 @@ def _comptime_arg_str(arg: ComptimeArg) -> str:
         if arg.mut is not None:
             mut = "mut "
         return f"*{mut}{_comptime_arg_str(arg.pointee_typ)}"
-    assert isinstance(arg, (IntLit, BoolLit))
+    assert isinstance(arg, IntLit | BoolLit)
     return str(arg.token)
 
 

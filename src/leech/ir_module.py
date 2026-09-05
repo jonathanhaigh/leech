@@ -43,7 +43,7 @@ class ModItem:
 
     @property
     def _ns(self) -> ir_env.Env.Namespace:
-        if isinstance(self.value, (ir_values.Value, FnSymbol)):
+        if isinstance(self.value, ir_values.Value | FnSymbol):
             return ir_env.Env.Namespace.VARS
         return ir_env.Env.Namespace.CONTAINERS
 
@@ -933,29 +933,18 @@ class Mod:
         trait_typ_ast = impl_ast.typ
         if not isinstance(trait_typ_ast, ast.BasicTyp):
             raise errors.ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
-        trait = impl_env.resolve_path(ir_env.Env.Namespace.CONTAINERS, trait_typ_ast.path)
-        if not isinstance(trait, ir_traits.Trait):
-            raise errors.ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
-        # Resolved the same way a bound's own trait reference is (e.g.
-        # `T: Container[i32]`): the impl supplies concrete arguments for
-        # the trait's own comptime parameters, if it declares any.
-        trait_args = typs.resolve_trait_comptime_args(
-            trait,
-            trait_typ_ast.path.segs[-1].comptime_args,
-            impl_env,
-            trait_typ_ast.span,
-        )
+        trait_application = impl_env.resolve_trait(trait_typ_ast.path)
 
         self_typ = typs.Typ.from_ast(opt_util.opt_unwrap(impl_ast.for_typ), impl_env)
 
         impl = ir_traits.Impl(
             impl_ast,
-            trait,
+            trait_application.trait,
             self_typ,
             impl_comptime_params,
             impl_env,
             self.name,
-            trait_args=trait_args,
+            trait_args=trait_application.args,
         )
         impl.check_comptime_params_constrained()
         # Registered before building any method: two impls of the same

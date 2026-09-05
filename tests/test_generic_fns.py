@@ -975,7 +975,7 @@ def test_typ_arg_given_for_value_param_is_rejected(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongKindOfComptimeArgError):
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a comptime value"):
         util.compile_str(tmp_path, src)
 
 
@@ -1023,7 +1023,7 @@ def test_typ_arg_on_bare_generic_value_param_fn_reference_is_rejected(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongKindOfComptimeArgError):
+    with pytest.raises(errors.PathTargetKindError, match="names a type, not a comptime value"):
         util.compile_str(tmp_path, src)
 
 

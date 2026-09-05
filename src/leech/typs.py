@@ -51,35 +51,6 @@ CONST = Mutability.CONST
 MUT = Mutability.MUT
 
 
-def resolve_bound(
-    bound: ast.BasicTyp,
-    e: ir_env.Env,
-) -> tuple[ir_traits.Trait, tuple[Typ, ...]]:
-    """Resolve a bound's trait and bounds-checked comptime arguments.
-
-    Whether any particular type satisfies the bound is left to callers.
-    """
-    # This must be local because ir_traits imports this module.
-    from leech import ir_traits  # noqa: PLC0415
-
-    trait = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, bound.path)
-    if not isinstance(trait, ir_traits.Trait):
-        raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
-    return trait, resolve_trait_comptime_args(
-        trait, bound.path.segs[-1].comptime_args, e, bound.span
-    )
-
-
-def resolve_trait_comptime_args(
-    trait: ir_traits.Trait,
-    args_ast: tuple[ast.ComptimeArg, ...],
-    e: ir_env.Env,
-    span: src.SrcSpan,
-) -> tuple[Typ, ...]:
-    """Resolve and bounds-check comptime arguments applied to ``trait``."""
-    return resolve_explicit_comptime_args(trait.name, trait.comptime_params, args_ast, e, span)
-
-
 def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[ComptimeParamTyp, Typ]]:
     """Match a possibly generic ``declared`` type against a specific ``actual`` one.
 
@@ -222,18 +193,18 @@ def unsatisfied_bound(
                             repeated_bound.path.span,
                             entries,
                         )
-                    trait, bound_comptime_args = resolve_bound(bound, sub_env)
+                    application = sub_env.resolve_trait(bound.path)
             else:
-                trait, bound_comptime_args = resolve_bound(bound, sub_env)
-            if bound_comptime_args:
+                application = sub_env.resolve_trait(bound.path)
+            if application.args:
                 # Matching these against an impl's own trait arguments needs generic
                 # traits. Nothing upstream rejects the bound, so fail loudly rather
                 # than silently ignore the arguments.
                 raise NotImplementedError(
                     "checking bounds with generic arguments isn't supported yet"
                 )
-            if not e.impl_registry.implements(trait, typ_arg):
-                return typ_param, typ_arg, trait
+            if not e.impl_registry.implements(application.trait, typ_arg):
+                return typ_param, typ_arg, application.trait
     return None
 
 
@@ -258,17 +229,10 @@ def resolve_comptime_arg(param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: i
         return ComptimeValueTyp.get_or_create(lit_typ, arg_ast.value)
     if isinstance(arg_ast, ast.BoolLit):
         return ComptimeValueTyp.get_or_create(BOOL, arg_ast.value)
-    if isinstance(arg_ast, ast.BasicTyp) and all(
-        not seg.comptime_args for seg in arg_ast.path.segs
-    ):
-        # A bare name here may forward a value parameter, or the concrete
-        # value substituted for one (e.g. `Sized[N]`, forwarding an
-        # enclosing impl's own value parameter as a trait argument) -
-        # resolved directly, since `Typ.from_ast`'s `resolve_typ` rejects
-        # exactly that as a type.
-        item = e.resolve_path(ir_env.Env.Namespace.CONTAINERS, arg_ast.path)
-        if isinstance(item, (ValueParamTyp, ComptimeValueTyp)):
-            return item
+    if isinstance(param, ValueParamTyp) and isinstance(arg_ast, ast.BasicTyp):
+        # A path argument for a value parameter forwards either another
+        # value parameter or the concrete value substituted for one.
+        return e.resolve_comptime_value(arg_ast.path)
     return Typ.from_ast(arg_ast, e)
 
 
@@ -321,7 +285,7 @@ def check_comptime_arg_bounds(
     typ_param_bindings: dict[ComptimeParamTyp, Typ] = {}
     for param, arg in zip(comptime_params, comptime_args, strict=True):
         arg_value_typ = None
-        if isinstance(arg, (ValueParamTyp, ComptimeValueTyp)):
+        if isinstance(arg, ValueParamTyp | ComptimeValueTyp):
             arg_value_typ = arg.value_typ
         if isinstance(param, ValueParamTyp):
             if arg_value_typ is None:
@@ -757,7 +721,7 @@ class TypParamTyp(ComptimeParamTyp):
         declaration assumes about it is all that can be known.
         """
         return any(
-            resolve_bound(bound, opt_util.opt_unwrap(self.decl_env))[0] is trait
+            opt_util.opt_unwrap(self.decl_env).resolve_trait(bound.path).trait is trait
             for bound in self.bounds
         )
 
@@ -873,9 +837,6 @@ def comptime_params_from_ast(
     :param e: The scope enclosing the declaration, in which parameters'
         bounds are resolved. See ``TypParamTyp.decl_env``.
     """
-    # Local to avoid the ir_traits import cycle.
-    from leech import ir_traits  # noqa: PLC0415
-
     for param_ast in comptime_params:
         if reserved.is_reserved(param_ast.ident.name):
             raise errors.ReservedNameError(param_ast.ident.name, param_ast.ident.span)
@@ -886,17 +847,14 @@ def comptime_params_from_ast(
         if len(param_ast.bounds) == 1:
             (bound,) = param_ast.bounds
             try:
-                item: Optional[ir_env.PathResult] = e.resolve_path(
-                    ir_env.Env.Namespace.CONTAINERS, bound.path
-                )
+                item = e.resolve_comptime_param_bound(bound.path)
             except errors.ItemNotFoundError:
                 # Not yet declared in this module - defer to a type parameter;
                 # resolve_bound raises later if it never resolves to a trait.
-                item = None
-            if isinstance(item, (IntTyp, BoolTyp)):
-                value_typ = item
-            elif item is not None and not isinstance(item, ir_traits.Trait):
-                raise errors.InvalidComptimeBoundError(bound.path.str(), bound.path.span)
+                pass
+            else:
+                if isinstance(item, IntTyp | BoolTyp):
+                    value_typ = item
         if value_typ is not None:
             result.append(
                 ValueParamTyp.get_or_create(owner, index, param_ast.ident.name, value_typ)
