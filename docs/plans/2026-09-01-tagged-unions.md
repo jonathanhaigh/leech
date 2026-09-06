@@ -82,24 +82,19 @@ below assumes that shape.
 - `MatchPlan` and `ArmTest` are **unchanged** by this task; they change in Task 2, together
   with the lowering that reads them, so this task ends with the suite green.
 
-- [ ] Replace the `arity: ClassVar[int] = 0` on `Constructor` with a real field.
-  `BoolConstructor` and `IntConstructor` keep 0; `VariantConstructor` takes it from the
-  variant.
-- [ ] Add `field_spaces()` to `Constructor`, returning `()` by default. On
-  `VariantConstructor` the lazily invoked provider goes in a **separately named** field —
-  a dataclass field cannot share a name with the base method it would otherwise shadow — and
-  `field_spaces()` invokes it. Mark the provider `dataclasses.field(compare=False)` so
-  constructor identity stays on the discriminant, which is what makes
-  `enum Alias { A = 1, B = 1 }` still deduplicate.
-- [ ] Give **both** the new `arity` and the provider defaults. Every existing call in
-  `tests/test_patterns.py` is `VariantConstructor(discriminant, name)` — two positional
-  arguments — so making either required contradicts this task's own "existing tests pass
-  unchanged" gate.
-- [ ] Keep the laziness rationale accurate: it is an optimisation, not a termination
-  requirement. By-value layout cycles are rejected before any space is built and pointer or
-  array payloads give open spaces, so eager construction would terminate for every
-  constructible type. Do not write a test asserting that eager building diverges — it cannot
-  be built from a legal program. Test instead that a pointer-recursive union yields a finite
+- [ ] Replace the `arity: ClassVar[int] = 0` on `Constructor` with a `field_spaces` field
+  holding one `ConstructorSpace` per sub-field, and derive `arity` from its length.
+  `BoolConstructor` and `IntConstructor` keep the empty default.
+- [ ] Mark it `dataclasses.field(default=(), compare=False, kw_only=True)`. `compare=False`
+  keeps constructor identity on the discriminant, which is what makes
+  `enum Alias { A = 1, B = 1 }` still deduplicate; the keyword-only default keeps every
+  existing `VariantConstructor(discriminant, name)` call in `tests/test_patterns.py`
+  working, and making it positional or required would contradict this task's own "existing
+  tests pass unchanged" gate.
+- [ ] Build the spaces eagerly. That terminates for every constructible type: by-value
+  layout cycles are rejected before any space is built and pointer or array payloads give
+  open spaces. Do not write a test asserting that eager building diverges — it cannot be
+  built from a legal program. Test instead that a pointer-recursive union yields a finite
   space.
 - [ ] Thread `spaces: tuple[ConstructorSpace, ...]` through `_is_useful` and `_missing`.
   Specialising on `c` replaces the head space with `c.field_spaces()`; `default` drops it.
@@ -409,7 +404,7 @@ union arm to the abstraction it leaves behind.
 
 **Interfaces:**
 - `_check_pattern` threads a *column* type rather than the scrutinee type.
-- `_match_constructor_space` gains a `UnionTyp` case with lazy sub-column spaces.
+- `_match_constructor_space` gains a `UnionTyp` case supplying sub-column spaces.
 - `errors.WrongNumberOfPayloadPatternsError`, `errors.PayloadPatternOnNonVariantError`.
 
 - [ ] Rename `_check_pattern`'s `scrutinee_typ` parameter to the column type it now is, and
@@ -421,9 +416,9 @@ union arm to the abstraction it leaves behind.
   zero-given case for a bare `Option::Some =>`.
 - [ ] A payload list on a non-variant path, or on an enum variant, is
   `PayloadPatternOnNonVariantError`.
-- [ ] Build a `patterns.VariantConstructor` per union variant with its real arity and a lazy
-  `field_spaces` closing over the substituted payload types, memoised per union instance so
-  repeated matches on one type do not rebuild it.
+- [ ] Build a `patterns.VariantConstructor` per union variant whose `field_spaces` are the
+  spaces of its substituted payload types, memoised per union instance so repeated matches
+  on one type do not rebuild it.
 - [ ] Extend the or-pattern binding prohibition to any depth: a `BindingPattern` anywhere
   under an `OrPattern` is `BindingInOrPatternError`. Today's check only inspects immediate
   alternatives.

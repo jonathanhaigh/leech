@@ -400,16 +400,14 @@ through a finite chain, because an infinite one is rejected here.
 #24 does exactly that. This is the extension #30 built the module to absorb, and it does not
 change the algorithm — only what it is parameterised over.
 
-- `Constructor.arity` stops being a zero `ClassVar` and becomes a real field.
-  `BoolConstructor` and `IntConstructor` keep arity 0.
-- A constructor gains `field_spaces()`, returning the constructor space for each of its
-  sub-columns. `VariantConstructor` computes it through a **lazily invoked provider**, held
-  in a separate field compared `compare=False` so constructor identity stays on the
-  discriminant. Laziness here is an optimisation and a safe default, not a termination
-  requirement: by-value layout cycles are already rejected before any space is built, and a
-  payload reached through a pointer or an array maps to an open space, so the by-value union
-  graph of any constructible type is finite and eager construction would in fact terminate.
-  What laziness buys is not building spaces for columns the algorithm never splits on.
+- `Constructor.arity` stops being a zero `ClassVar`. A constructor gains a `field_spaces`
+  tuple holding the constructor space of each of its sub-columns, and `arity` becomes its
+  length. `BoolConstructor` and `IntConstructor` keep the empty default.
+- `field_spaces` is compared `compare=False`, so constructor identity stays on the
+  discriminant. The spaces are built eagerly, which terminates for every constructible
+  type: by-value layout cycles are already rejected before any space is built, and a
+  payload reached through a pointer or an array maps to an open space, so the by-value
+  union graph is finite.
 - `is_useful` and `missing_patterns` take a tuple of spaces, one per column. Specialising on
   constructor `c` replaces the head space with `c.field_spaces()`; `default` drops it. The
   three comments in `_is_useful` and `_missing` that currently apologise for reusing the

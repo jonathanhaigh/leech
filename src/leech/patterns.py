@@ -8,18 +8,16 @@ This is a pure leaf module: it imports neither ``leech.ast`` nor
 ``leech.typs``, so it can be unit-tested in isolation. A pattern matrix is
 one row per match arm and one column per scrutinee position.
 
-Every constructor has arity zero, so every matrix is one column wide and one
-constructor space describes the whole scrutinee. ``specialize`` and
-``default`` operate over sub-patterns, but ``is_useful`` and
-``missing_patterns`` assume that single-column, single-space shape;
-supporting constructors with arity (struct patterns, tuples, tagged-union
-payloads) would additionally require threading a constructor space per
-column through the recursion.
+A constructor carries one constructor space per sub-field, so the
+recursion threads a space per column: specialising on a constructor
+replaces the head space with the constructor's field spaces, and
+defaulting drops it. The public entry points describe a single scrutinee
+column, since a match has exactly one scrutinee; extra columns appear only
+inside the recursion, from constructor payloads.
 """
 
 import dataclasses
 from collections.abc import Sequence
-from typing import ClassVar
 
 from leech import asserts
 
@@ -28,17 +26,24 @@ from leech import asserts
 class Constructor:
     """Base class for the concrete constructor kinds.
 
-    ``arity`` is the number of sub-fields a value of this constructor
-    carries. Every constructor has arity zero, since no pattern
-    destructures yet.
+    ``field_spaces`` holds the constructor space of each sub-field a value
+    of this constructor carries, in field order. It is excluded from
+    equality, so constructor identity stays on the case itself.
     """
 
-    arity: ClassVar[int] = 0
+    field_spaces: tuple[ConstructorSpace, ...] = dataclasses.field(
+        default=(), compare=False, kw_only=True
+    )
+
+    @property
+    def arity(self) -> int:
+        """The number of sub-fields a value of this constructor carries."""
+        return len(self.field_spaces)
 
 
 @dataclasses.dataclass(frozen=True)
 class VariantConstructor(Constructor):
-    """An enum variant, identified by its integer discriminant.
+    """An enum or union variant, identified by its integer discriminant.
 
     Two variants with the same discriminant are the same constructor even
     when their spelled names differ, which is what makes
@@ -104,7 +109,9 @@ class ConstructorSpace:
     A closed space names every constructor (an enum or ``bool``); an open
     one does not (integers, and any type no constructor pattern reaches
     yet), so it can only be exhausted by a wildcard. An uninhabited type
-    has an empty, closed space.
+    has an empty, closed space; a type uninhabited only through its
+    payloads keeps a non-empty one, so a wildcard over it still counts as
+    reachable.
     """
 
     constructors: tuple[ConstructorKind, ...]
@@ -170,12 +177,12 @@ def is_useful(matrix: Sequence[PatternKind], row: PatternKind, space: Constructo
     ``matrix`` holds one translated pattern per preceding match arm, in
     arm order; ``space`` is the scrutinee type's constructor space.
     """
-    return _is_useful(tuple((pattern,) for pattern in matrix), (row,), space)
+    return _is_useful(tuple((pattern,) for pattern in matrix), (row,), (space,))
 
 
 def missing_patterns(matrix: Sequence[PatternKind], space: ConstructorSpace) -> list[Witness]:
     """Return one witness per uncovered value of a non-exhaustive matrix."""
-    witnesses = _missing(tuple((pattern,) for pattern in matrix), space, 1)
+    witnesses = _missing(tuple((pattern,) for pattern in matrix), (space,))
     return [Witness(w[0]) for w in witnesses]
 
 
@@ -324,19 +331,6 @@ def _add_head_constructors(pattern: PatternKind, result: set[ConstructorKind]) -
             _add_head_constructors(alternative, result)
 
 
-def _has_wildcard_head(matrix: Matrix) -> bool:
-    """Return whether any row matches every value in the first column."""
-    return any(row and _is_wildcard_head(row[0]) for row in matrix)
-
-
-def _is_wildcard_head(pattern: PatternKind) -> bool:
-    if isinstance(pattern, WildcardPattern):
-        return True
-    return isinstance(pattern, OrPattern) and any(
-        _is_wildcard_head(alternative) for alternative in pattern.alternatives
-    )
-
-
 def _is_complete(heads: set[ConstructorKind], space: ConstructorSpace) -> bool:
     """Return whether ``heads`` covers every constructor in ``space``.
 
@@ -348,58 +342,54 @@ def _is_complete(heads: set[ConstructorKind], space: ConstructorSpace) -> bool:
     return set(space.constructors).issubset(heads)
 
 
-def _is_useful(matrix: Matrix, row: tuple[PatternKind, ...], space: ConstructorSpace) -> bool:
+def _is_useful(
+    matrix: Matrix, row: tuple[PatternKind, ...], spaces: tuple[ConstructorSpace, ...]
+) -> bool:
+    asserts.assert_eq(len(row), len(spaces))
     if not row:
         return not matrix
     head, *rest = row
+    head_space, *rest_spaces = spaces
     match head:
         case WildcardPattern():
-            if _has_wildcard_head(matrix):
-                # Only correct at arity 0: `rest` is empty, so this call bottoms
-                # out before `space` is read.
-                return _is_useful(default(matrix), tuple(rest), space)
-            heads = _head_constructors(matrix)
-            if not _is_complete(heads, space):
-                return True
-            # Each branch descends into `constructor`'s sub-columns, which would
-            # need their own spaces at arity > 0; at arity 0 there are none.
-            return any(
-                _is_useful(
-                    specialize(constructor, matrix),
-                    ((WildcardPattern(),) * constructor.arity) + tuple(rest),
-                    space,
+            if _is_complete(_head_constructors(matrix), head_space):
+                return any(
+                    _is_useful(
+                        specialize(constructor, matrix),
+                        ((WildcardPattern(),) * constructor.arity) + tuple(rest),
+                        constructor.field_spaces + tuple(rest_spaces),
+                    )
+                    for constructor in head_space.constructors
                 )
-                for constructor in heads
-            )
+            return _is_useful(default(matrix), tuple(rest), tuple(rest_spaces))
         case OrPattern(alternatives):
             return any(
-                _is_useful(matrix, (alternative, *rest), space) for alternative in alternatives
+                _is_useful(matrix, (alternative, *rest), spaces) for alternative in alternatives
             )
         case ConstructorPattern(constructor, subpatterns):
-            # `subpatterns` are new columns; at arity 0 they are empty, so the
-            # outer `space` is never consulted. Arity > 0 needs per-column spaces.
-            return _is_useful(specialize(constructor, matrix), (*subpatterns, *rest), space)
+            return _is_useful(
+                specialize(constructor, matrix),
+                (*subpatterns, *rest),
+                constructor.field_spaces + tuple(rest_spaces),
+            )
 
 
-def _missing(matrix: Matrix, space: ConstructorSpace, width: int) -> list[tuple[PatternKind, ...]]:
-    if width == 0:
+def _missing(matrix: Matrix, spaces: tuple[ConstructorSpace, ...]) -> list[tuple[PatternKind, ...]]:
+    if not spaces:
         return [] if matrix else [()]
+    head_space, *rest_spaces = spaces
     witnesses: list[tuple[PatternKind, ...]] = []
-    for constructor in space.constructors:
-        sub_width = width - 1 + constructor.arity
-        # The sub-columns would need their own spaces at arity > 0; at arity 0
-        # there are none, so the outer `space` still describes them.
-        for sub_witness in _missing(specialize(constructor, matrix), space, sub_width):
+    for constructor in head_space.constructors:
+        sub_spaces = constructor.field_spaces + tuple(rest_spaces)
+        for sub_witness in _missing(specialize(constructor, matrix), sub_spaces):
             witnesses.append(
                 (
                     ConstructorPattern(constructor, tuple(sub_witness[: constructor.arity])),
                     *sub_witness[constructor.arity :],
                 )
             )
-    if space.is_open:
-        # `default` descends to the next column, which would need its own space
-        # at arity > 0; at arity 0 it is always empty.
-        for sub_witness in _missing(default(matrix), space, width - 1):
+    if head_space.is_open:
+        for sub_witness in _missing(default(matrix), tuple(rest_spaces)):
             witnesses.append((WildcardPattern(), *sub_witness))
     return witnesses
 
@@ -408,8 +398,12 @@ def _render_pattern(pattern: PatternKind) -> str:
     match pattern:
         case WildcardPattern():
             return "_"
-        case ConstructorPattern(constructor):
-            return _render_constructor(constructor)
+        case ConstructorPattern(constructor, subpatterns):
+            rendered = _render_constructor(constructor)
+            if not subpatterns:
+                return rendered
+            payload = ", ".join(_render_pattern(subpattern) for subpattern in subpatterns)
+            return f"{rendered}({payload})"
         case OrPattern(alternatives):
             return " | ".join(_render_pattern(alternative) for alternative in alternatives)
 

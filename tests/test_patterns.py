@@ -43,6 +43,32 @@ def _int_space() -> patterns.ConstructorSpace:
     return patterns.ConstructorSpace.from_constructors([], True)
 
 
+def _pointer_space() -> patterns.ConstructorSpace:
+    """A pointer column: no constructor pattern reaches one, so it stays open."""
+    return patterns.ConstructorSpace.from_constructors([], True)
+
+
+def _payload_variant(
+    discriminant: int, name: str, *field_spaces: patterns.ConstructorSpace
+) -> patterns.VariantConstructor:
+    return patterns.VariantConstructor(discriminant, name, field_spaces=field_spaces)
+
+
+def _applied(
+    constructor: patterns.VariantConstructor, *subpatterns: patterns.PatternKind
+) -> patterns.ConstructorPattern:
+    return patterns.ConstructorPattern(constructor, tuple(subpatterns))
+
+
+def _option(
+    payload: patterns.ConstructorSpace,
+) -> tuple[patterns.ConstructorSpace, patterns.VariantConstructor, patterns.VariantConstructor]:
+    """Return an ``Option``-shaped space alongside its ``None`` and ``Some``."""
+    none = _payload_variant(0, "Option::None")
+    some = _payload_variant(1, "Option::Some", payload)
+    return patterns.ConstructorSpace.from_constructors([none, some], False), none, some
+
+
 def _never_space() -> patterns.ConstructorSpace:
     return patterns.ConstructorSpace.from_constructors([], False)
 
@@ -230,3 +256,99 @@ def test_build_match_plan_empty_arm_list():
     assert plan.reachable_arms == ()
     assert plan.tests == ()
     assert plan.missing == ()
+
+
+def test_arity_zero_constructor_has_no_field_spaces():
+    constructor = patterns.VariantConstructor(0, "Red")
+    assert constructor.arity == 0
+    assert constructor.field_spaces == ()
+
+
+def test_arity_two_variant_needs_every_payload_combination():
+    both = _payload_variant(0, "Pair::Both", _bool_space(), _bool_space())
+    space = patterns.ConstructorSpace.from_constructors([both], False)
+    matrix = [
+        _applied(both, _bool(True), _bool(True)),
+        _applied(both, _bool(True), _bool(False)),
+        _applied(both, _bool(False), _bool(True)),
+    ]
+    assert _missing_renders(matrix, space) == ["Pair::Both(false, false)"]
+    assert patterns.is_useful(matrix, _applied(both, _bool(False), _bool(False)), space)
+    matrix.append(_applied(both, _bool(False), _bool(False)))
+    assert patterns.missing_patterns(matrix, space) == []
+    assert not patterns.is_useful(matrix, _wildcard(), space)
+
+
+def test_nested_variant_patterns_exhaust_the_inner_column():
+    inner_space, inner_none, inner_some = _option(_bool_space())
+    outer_space, outer_none, outer_some = _option(inner_space)
+    matrix = [
+        _applied(outer_none),
+        _applied(outer_some, _applied(inner_none)),
+        _applied(outer_some, _applied(inner_some, _bool(True))),
+    ]
+    assert _missing_renders(matrix, outer_space) == ["Option::Some(Option::Some(false))"]
+    matrix.append(_applied(outer_some, _applied(inner_some, _bool(False))))
+    assert patterns.missing_patterns(matrix, outer_space) == []
+
+
+def test_payload_column_is_exhausted_independently_of_its_parent():
+    space, _none, some = _option(_bool_space())
+    matrix = [_applied(some, _bool(True)), _applied(some, _bool(False))]
+    assert _missing_renders(matrix, space) == ["Option::None"]
+    assert not patterns.is_useful(matrix, _applied(some, _wildcard()), space)
+
+
+def test_open_payload_column_needs_a_wildcard():
+    space, none, some = _option(_int_space())
+    assert _missing_renders([_applied(none), _applied(some, _int(0))], space) == ["Option::Some(_)"]
+    assert patterns.missing_patterns([_applied(none), _applied(some, _wildcard())], space) == []
+
+
+def test_or_pattern_inside_a_payload_covers_each_alternative():
+    space, none, some = _option(_bool_space())
+    matrix = [_applied(none), _applied(some, _or(_bool(True), _bool(False)))]
+    assert patterns.missing_patterns(matrix, space) == []
+    assert not patterns.is_useful(matrix, _applied(some, _bool(True)), space)
+
+
+def test_pointer_recursive_union_yields_a_finite_space():
+    # `union List[T] { Nil, Cons(T, *List[T]) }`: the tail is a pointer, so
+    # its column is open rather than another `List` space.
+    nil = _payload_variant(0, "List::Nil")
+    cons = _payload_variant(1, "List::Cons", _int_space(), _pointer_space())
+    space = patterns.ConstructorSpace.from_constructors([nil, cons], False)
+    assert _missing_renders([], space) == ["List::Nil", "List::Cons(_, _)"]
+    matrix = [_applied(nil), _applied(cons, _wildcard(), _wildcard())]
+    assert patterns.missing_patterns(matrix, space) == []
+
+
+def test_wildcard_payload_is_not_useful_once_combinations_are_covered():
+    both = _payload_variant(0, "Pair::Both", _bool_space(), _bool_space())
+    space = patterns.ConstructorSpace.from_constructors([both], False)
+    matrix = [
+        _applied(both, _bool(True), _bool(True)),
+        _applied(both, _bool(False), _bool(True)),
+        _applied(both, _wildcard(), _bool(False)),
+    ]
+    assert patterns.missing_patterns(matrix, space) == []
+    assert not patterns.is_useful(matrix, _applied(both, _wildcard(), _bool(True)), space)
+    assert not patterns.is_useful(matrix, _wildcard(), space)
+
+
+def test_wildcard_payload_is_useful_when_a_combination_remains():
+    both = _payload_variant(0, "Pair::Both", _bool_space(), _bool_space())
+    space = patterns.ConstructorSpace.from_constructors([both], False)
+    matrix = [_applied(both, _bool(True), _bool(True)), _applied(both, _wildcard(), _bool(False))]
+    assert patterns.is_useful(matrix, _applied(both, _wildcard(), _bool(True)), space)
+    assert _missing_renders(matrix, space) == ["Pair::Both(false, true)"]
+
+
+def test_uninhabited_payload_column_makes_its_variant_unreachable():
+    both = _payload_variant(0, "Pair::Both", _bool_space(), _never_space())
+    space = patterns.ConstructorSpace.from_constructors([both], False)
+    assert patterns.missing_patterns([], space) == []
+    assert not patterns.is_useful([], _applied(both, _wildcard(), _wildcard()), space)
+    # A bare wildcard is still reported useful: the space is non-empty, so
+    # nothing looks at the payload column that empties it.
+    assert patterns.is_useful([], _wildcard(), space)
