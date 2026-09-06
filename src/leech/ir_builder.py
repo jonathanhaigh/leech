@@ -325,31 +325,27 @@ class CfgBuilder:
         comparison_value, comparison_typ = self._match_comparison_value(
             scrutinee_value, scrutinee_typ, match_ast
         )
+        # The tests below read the column type off the value, so the two
+        # phases must agree about it.
+        asserts.assert_eq(comparison_value.typ, comparison_typ)
 
         plan = self._typ_check_results.match_plan(match_ast)
-        if plan.tests:
+        if plan.reachable_arms:
             test_bb = self._add_bb("match_test")
             self._branch(test_bb, match_ast)
-            for test in plan.tests:
-                arm_ast = match_ast.arms[test.arm_index]
-                if test.constructors == ():
-                    # Entered unconditionally, and always the final test.
-                    self._set_position(test_bb)
-                    self._branch(arm_bbs[test.arm_index], arm_ast)
+            self._set_position(test_bb)
+            for position, arm_index in enumerate(plan.reachable_arms):
+                arm_ast = match_ast.arms[arm_index]
+                if position == len(plan.reachable_arms) - 1:
+                    # The checker rejects a non-exhaustive match, so the
+                    # last reachable arm covers whatever the earlier ones
+                    # leave and needs no test of its own.
+                    self._branch(arm_bbs[arm_index], arm_ast)
                     break
-                for constructor in test.constructors:
-                    self._set_position(test_bb)
-                    next_bb = self._add_bb("match_test")
-                    condition = self._build_match_compare(
-                        comparison_value, constructor, comparison_typ, arm_ast
-                    )
-                    self._cbranch(condition, arm_bbs[test.arm_index], next_bb, arm_ast)
-                    test_bb = next_bb
-            # The checker rejects a match whose last reachable arm leaves
-            # values uncovered, so a recorded plan always ends with an
-            # unconditional test: the loop above breaks and test_bb is
-            # already terminated.
-            assert test_bb.terminated, "a recorded match plan must end with an unconditional test"
+                next_bb = self._add_bb("match_test")
+                self._emit_pattern_test(arm_ast.pattern, comparison_value, next_bb)
+                self._branch(arm_bbs[arm_index], arm_ast)
+                self._set_position(next_bb)
         else:
             self._branch(end_bb, match_ast)
 
@@ -417,7 +413,53 @@ class CfgBuilder:
                 int_typ = asserts.checked_cast(comparison_typ, typs.IntTyp)
                 return ir_values.ComptimeInt(int_typ, value, ast_node)
 
+    def _emit_pattern_test(
+        self,
+        pattern_ast: ast.PatternKind,
+        value: ir_values.Value,
+        fail_bb: ir_values.BasicBlock,
+    ) -> None:
+        """Emit one pattern's test against ``value``.
+
+        Branches to ``fail_bb`` when the pattern does not match, and
+        leaves the builder positioned in a block reached only when it
+        does. An irrefutable pattern emits nothing and leaves the
+        position alone.
+        """
+        match pattern_ast:
+            case ast.WildcardPattern() | ast.BindingPattern():
+                return
+            case ast.IntLitPattern() | ast.BoolLitPattern() | ast.PathPattern():
+                constructor = self._typ_check_results.pattern_constructor(pattern_ast)
+                condition = self._build_match_compare(value, constructor, value.typ, pattern_ast)
+                cont_bb = self._add_bb("match_cont")
+                self._cbranch(condition, cont_bb, fail_bb, pattern_ast)
+                self._set_position(cont_bb)
+            case ast.OrPattern():
+                self._emit_or_pattern_test(pattern_ast, value, fail_bb)
+
+    def _emit_or_pattern_test(
+        self,
+        pattern_ast: ast.OrPattern,
+        value: ir_values.Value,
+        fail_bb: ir_values.BasicBlock,
+    ) -> None:
+        cont_bb = self._add_bb("match_or_cont")
+        alternatives = pattern_ast.alternatives
+        for i, alternative in enumerate(alternatives):
+            if i == len(alternatives) - 1:
+                self._emit_pattern_test(alternative, value, fail_bb)
+                self._branch(cont_bb, alternative)
+                break
+            alt_fail_bb = self._add_bb("match_or_alt")
+            self._emit_pattern_test(alternative, value, alt_fail_bb)
+            self._branch(cont_bb, alternative)
+            self._set_position(alt_fail_bb)
+        self._set_position(cont_bb)
+
     def _build_match_binding(self, pattern: ast.Pattern, scrutinee_value: ir_values.Value) -> None:
+        # One check covers every pattern kind: nothing nests yet, and an
+        # or-pattern's alternatives are barred from binding.
         if not isinstance(pattern, ast.BindingPattern):
             return
         alloca = self._local_alloca(pattern, pattern)

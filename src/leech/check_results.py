@@ -69,6 +69,7 @@ class TypCheckResults:
     _let_declared_typs: Final[dict[ast.LetStmt, typs.Typ]]
     _match_scrutinee_typs: Final[dict[ast.MatchExpr, typs.Typ]]
     _match_plans: Final[dict[ast.MatchExpr, patterns.MatchPlan]]
+    _pattern_constructors: Final[dict[ast.PatternKind, patterns.ConstructorKind]]
     _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
     _expr_typs: Final[dict[ast.Expr, typs.Typ]]
     _place_typs: Final[dict[ast.Expr, typs.PtrTyp]]
@@ -86,6 +87,7 @@ class TypCheckResults:
         self._let_declared_typs = {}
         self._match_scrutinee_typs = {}
         self._match_plans = {}
+        self._pattern_constructors = {}
         self._local_typs = {}
         self._expr_typs = {}
         self._place_typs = {}
@@ -160,6 +162,19 @@ class TypCheckResults:
 
     def _set_match_plan(self, node: ast.MatchExpr, plan: patterns.MatchPlan) -> None:
         self._set_fact(self._match_plans, node, plan)
+
+    def pattern_constructor(self, node: ast.PatternKind) -> patterns.ConstructorKind:
+        """Return the constructor a refutable pattern tests for.
+
+        Recorded only for the patterns that compare against a value: an
+        integer or boolean literal, or a path naming a variant.
+        """
+        return self._pattern_constructors[node]
+
+    def _set_pattern_constructor(
+        self, node: ast.PatternKind, constructor: patterns.ConstructorKind
+    ) -> None:
+        self._set_fact(self._pattern_constructors, node, constructor)
 
     def local_typ(self, decl: resolve.LocalDecl) -> typs.PtrTyp:
         """Return the bound type and mutability for a local declaration."""

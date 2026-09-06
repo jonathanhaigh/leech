@@ -412,7 +412,9 @@ class TypCheck:
                 pat.span,
                 None,
             )
-        return patterns.ConstructorPattern(patterns.IntConstructor(value), ())
+        constructor = patterns.IntConstructor(value)
+        self.results._set_pattern_constructor(pat, constructor)
+        return patterns.ConstructorPattern(constructor, ())
 
     def _check_bool_lit_pattern(
         self, pat: ast.BoolLitPattern, scrutinee_typ: typs.Typ
@@ -425,7 +427,9 @@ class TypCheck:
                 pat.span,
                 None,
             )
-        return patterns.ConstructorPattern(patterns.BoolConstructor(pat.lit.value), ())
+        constructor = patterns.BoolConstructor(pat.lit.value)
+        self.results._set_pattern_constructor(pat, constructor)
+        return patterns.ConstructorPattern(constructor, ())
 
     def _check_path_pattern(
         self, pat: ast.PathPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
@@ -441,9 +445,9 @@ class TypCheck:
                 pat.span,
                 None,
             )
-        return patterns.ConstructorPattern(
-            patterns.VariantConstructor(item.value, pat.path.str()), ()
-        )
+        constructor = patterns.VariantConstructor(item.value, pat.path.str())
+        self.results._set_pattern_constructor(pat, constructor)
+        return patterns.ConstructorPattern(constructor, ())
 
     def _check_or_pattern(
         self, pat: ast.OrPattern, scrutinee_typ: typs.Typ, e: ir_env.Env

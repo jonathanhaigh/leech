@@ -73,6 +73,38 @@ def test_match_negative_int_pattern(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
+def test_match_or_pattern_routes_every_alternative(tmp_path):
+    src = """
+    enum Color { Red, Green, Blue, Cyan }
+    fn classify(c: Color) i32 {
+        return match (c) {
+            Color::Red | Color::Green | Color::Blue => 1i32,
+            Color::Cyan => 2i32,
+        };
+    }
+    pub fn main() i32 {
+        return classify(Color::Red) + classify(Color::Green) + classify(Color::Blue)
+            + classify(Color::Cyan) - 5i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_match_or_pattern_of_int_literals(tmp_path):
+    src = """
+    fn classify(n: i32) i32 {
+        return match (n) {
+            -1 | 0 | 1 => 1i32,
+            let other => other,
+        };
+    }
+    pub fn main() i32 {
+        return classify(-1i32) + classify(0i32) + classify(1i32) + classify(7i32) - 10i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
 def test_match_binding(tmp_path):
     src = """
     pub fn main() i32 {

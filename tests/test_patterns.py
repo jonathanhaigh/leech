@@ -197,12 +197,6 @@ def test_build_match_plan_wildcard_terminated_chain():
     plan = patterns.build_match_plan(rows, space)
     assert plan.reachable_arms == (0, 1, 2)
     assert plan.missing == ()
-    assert [test.arm_index for test in plan.tests] == [0, 1, 2]
-    assert [test.constructors for test in plan.tests] == [
-        (patterns.VariantConstructor(0, "Red"),),
-        (patterns.VariantConstructor(1, "Green"),),
-        (),
-    ]
 
 
 def test_build_match_plan_last_arm_covers_remainder():
@@ -211,12 +205,6 @@ def test_build_match_plan_last_arm_covers_remainder():
     plan = patterns.build_match_plan(rows, space)
     assert plan.reachable_arms == (0, 1)
     assert plan.missing == ()
-    assert [test.arm_index for test in plan.tests] == [0, 1]
-    assert plan.tests[0].constructors == (
-        patterns.VariantConstructor(0, "Red"),
-        patterns.VariantConstructor(1, "Green"),
-    )
-    assert plan.tests[1].constructors == ()
 
 
 def test_build_match_plan_non_exhaustive_matrix():
@@ -224,9 +212,6 @@ def test_build_match_plan_non_exhaustive_matrix():
     rows = [_variant(0, "Red"), _variant(1, "Green")]
     plan = patterns.build_match_plan(rows, space)
     assert plan.reachable_arms == (0, 1)
-    assert [test.arm_index for test in plan.tests] == [0, 1]
-    assert plan.tests[0].constructors == (patterns.VariantConstructor(0, "Red"),)
-    assert plan.tests[1].constructors == (patterns.VariantConstructor(1, "Green"),)
     assert [witness.render() for witness in plan.missing] == ["Blue"]
 
 
@@ -236,8 +221,6 @@ def test_build_match_plan_unreachable_arm():
     plan = patterns.build_match_plan(rows, space)
     assert plan.reachable_arms == (0,)
     assert plan.missing == ()
-    assert [test.arm_index for test in plan.tests] == [0]
-    assert plan.tests[0].constructors == ()
 
 
 def test_build_match_plan_or_pattern_with_wildcard_alternative():
@@ -246,16 +229,26 @@ def test_build_match_plan_or_pattern_with_wildcard_alternative():
     plan = patterns.build_match_plan(rows, space)
     assert plan.reachable_arms == (0,)
     assert plan.missing == ()
-    assert [test.arm_index for test in plan.tests] == [0]
-    assert plan.tests[0].constructors == ()
 
 
 def test_build_match_plan_empty_arm_list():
     space = _never_space()
     plan = patterns.build_match_plan([], space)
     assert plan.reachable_arms == ()
-    assert plan.tests == ()
     assert plan.missing == ()
+
+
+def test_build_match_plan_last_reachable_arm_covers_the_remainder():
+    space = _enum_space((0, "Red"), (1, "Green"), (2, "Blue"))
+    rows = [_variant(0, "Red"), _variant(1, "Green"), _variant(2, "Blue"), _wildcard()]
+    plan = patterns.build_match_plan(rows, space)
+    assert plan.reachable_arms == (0, 1, 2)
+    assert plan.missing == ()
+    # The invariant lowering relies on: everything arms 0 and 1 leave is
+    # matched by the last reachable arm, so it needs no test of its own.
+    remaining = patterns.missing_patterns(rows[:2], space)
+    assert [witness.render() for witness in remaining] == ["Blue"]
+    assert not patterns.is_useful([rows[2]], remaining[0].pattern, space)
 
 
 def test_arity_zero_constructor_has_no_field_spaces():
