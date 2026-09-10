@@ -389,3 +389,97 @@ def test_match_expr_block_tail_and_statement_forms(tmp_path):
     assert isinstance(semicolon_stmt, ast.ExprStmt)
     assert isinstance(semicolon_stmt.expr, ast.MatchExpr)
     assert isinstance(fn.block.expr, ast.MatchExpr)
+
+
+def test_union_defn_variants_and_payloads(tmp_path):
+    src = """
+    pub union Shape[T] {
+        Point,
+        Line(T, T),
+        Circle(T, i64),
+    }
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (union,) = mod.defns
+    assert isinstance(union, ast.UnionDefn)
+    assert union.ident.name == "Shape"
+    assert union.access is not None
+    assert union.access.value == "pub"
+    assert [param.ident.name for param in union.comptime_params] == ["T"]
+
+    point, line, circle = union.variants
+    assert [variant.ident.name for variant in union.variants] == ["Point", "Line", "Circle"]
+    assert point.payload_typs == ()
+    assert len(line.payload_typs) == 2
+    assert all(isinstance(typ, ast.BasicTyp) for typ in line.payload_typs)
+    assert [typ.path.str() for typ in line.payload_typs if isinstance(typ, ast.BasicTyp)] == [
+        "T",
+        "T",
+    ]
+    assert [typ.path.str() for typ in circle.payload_typs if isinstance(typ, ast.BasicTyp)] == [
+        "T",
+        "i64",
+    ]
+
+
+def test_union_defn_empty_and_non_generic(tmp_path):
+    src = """
+    union Empty {}
+    union Flag { On, Off }
+    """
+    mod = util.parse_mod(tmp_path, src)
+    empty, flag = mod.defns
+    assert isinstance(empty, ast.UnionDefn)
+    assert empty.access is None
+    assert empty.comptime_params == ()
+    assert empty.variants == ()
+    assert isinstance(flag, ast.UnionDefn)
+    assert [variant.ident.name for variant in flag.variants] == ["On", "Off"]
+    assert all(variant.payload_typs == () for variant in flag.variants)
+
+
+def test_path_pattern_payloads(tmp_path):
+    src = """
+    fn f(x: i32) i32 {
+        match (x) {
+            Option::None => 0,
+            Result::Ok(Option::Some(let v), -1) => v,
+            Shape::Line(A | B, _) => 2,
+        }
+    }
+    """
+    mod = util.parse_mod(tmp_path, src)
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    match_expr = fn.block.expr
+    assert isinstance(match_expr, ast.MatchExpr)
+    unit_arm, nested_arm, or_arm = match_expr.arms
+
+    unit = unit_arm.pattern
+    assert isinstance(unit, ast.PathPattern)
+    assert unit.path.str() == "Option::None"
+    assert unit.payload == ()
+
+    nested = nested_arm.pattern
+    assert isinstance(nested, ast.PathPattern)
+    assert nested.path.str() == "Result::Ok"
+    inner, negative = nested.payload
+    assert isinstance(inner, ast.PathPattern)
+    assert inner.path.str() == "Option::Some"
+    (binding,) = inner.payload
+    assert isinstance(binding, ast.BindingPattern)
+    assert binding.ident.name == "v"
+    assert isinstance(negative, ast.IntLitPattern)
+    assert negative.negative
+    assert negative.lit.value == 1
+
+    outer = or_arm.pattern
+    assert isinstance(outer, ast.PathPattern)
+    alternatives, wildcard = outer.payload
+    assert isinstance(alternatives, ast.OrPattern)
+    assert [
+        alternative.path.str()
+        for alternative in alternatives.alternatives
+        if isinstance(alternative, ast.PathPattern)
+    ] == ["A", "B"]
+    assert isinstance(wildcard, ast.WildcardPattern)

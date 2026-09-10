@@ -1539,6 +1539,124 @@ COMMENTED_INTS = [
             ),
         ),
         (
+            "union_defn",
+            "union U { A, B(i32), C(i32, bool) }",
+            T("union_defn").cs(
+                T("access", Tok(None)),
+                T("ident", Tok("U")),
+                None,
+                T("union_variant_list").cs(
+                    T("union_variant", "ident", Tok("A")),
+                    T("union_variant").cs(
+                        T("ident", Tok("B")),
+                        T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                    ),
+                    T("union_variant").cs(
+                        T("ident", Tok("C")),
+                        T("basic_typ").cs(T("path", "ident", Tok("i32")), None),
+                        T("basic_typ").cs(T("path", "ident", Tok("bool")), None),
+                    ),
+                ),
+            ),
+        ),
+        (
+            "union_defn",
+            "pub union Option[T] { None, Some(T,), }",
+            T("union_defn").cs(
+                T("access", Tok("pub")),
+                T("ident", Tok("Option")),
+                T("comptime_params").cs(T("typ_param").cs(T("ident", Tok("T")), None)),
+                T("union_variant_list").cs(
+                    T("union_variant", "ident", Tok("None")),
+                    T("union_variant").cs(
+                        T("ident", Tok("Some")),
+                        T("basic_typ").cs(T("path", "ident", Tok("T")), None),
+                    ),
+                ),
+            ),
+        ),
+        (
+            "union_defn",
+            "union Empty {}",
+            T("union_defn").cs(
+                T("access", Tok(None)),
+                T("ident", Tok("Empty")),
+                None,
+                T("union_variant_list"),
+            ),
+        ),
+        (
+            "mod",
+            "union U { A }",
+            T("mod").cs(
+                T("defn", "union_defn").cs(
+                    T("access", Tok(None)),
+                    T("ident", Tok("U")),
+                    None,
+                    T("union_variant_list").cs(T("union_variant", "ident", Tok("A"))),
+                )
+            ),
+        ),
+        (
+            "path_pattern",
+            "Option::Some(let x)",
+            T("path_pattern").cs(
+                T("path").cs(
+                    T("path_seg").cs(T("ident", Tok("Option")), None),
+                    T("path_seg").cs(T("ident", Tok("Some")), None),
+                ),
+                T("binding_pattern").cs(T("mut", Tok(None)), T("ident", Tok("x"))),
+            ),
+        ),
+        (
+            "path_pattern",
+            "Option[i32]::Some(let x)",
+            T("path_pattern").cs(
+                T("path").cs(
+                    T("path_seg").cs(
+                        T("ident", Tok("Option")),
+                        T("comptime_args").cs(
+                            T("basic_typ").cs(T("path", "ident", Tok("i32")), None)
+                        ),
+                    ),
+                    T("path_seg").cs(T("ident", Tok("Some")), None),
+                ),
+                T("binding_pattern").cs(T("mut", Tok(None)), T("ident", Tok("x"))),
+            ),
+        ),
+        (
+            "pattern",
+            "Result::Ok(Option::None, -1,)",
+            T("path_pattern").cs(
+                T("path").cs(
+                    T("path_seg").cs(T("ident", Tok("Result")), None),
+                    T("path_seg").cs(T("ident", Tok("Ok")), None),
+                ),
+                T("path_pattern").cs(
+                    T("path").cs(
+                        T("path_seg").cs(T("ident", Tok("Option")), None),
+                        T("path_seg").cs(T("ident", Tok("None")), None),
+                    )
+                ),
+                T("int_lit_pattern").cs("-", T("int_lit", Tok("1"))),
+            ),
+        ),
+        (
+            "pattern",
+            "Shape::Line(A | B, _)",
+            T("path_pattern").cs(
+                T("path").cs(
+                    T("path_seg").cs(T("ident", Tok("Shape")), None),
+                    T("path_seg").cs(T("ident", Tok("Line")), None),
+                ),
+                T("or_pattern").cs(
+                    T("path_pattern", "path", "ident", Tok("A")),
+                    T("path_pattern", "path", "ident", Tok("B")),
+                ),
+                T("wildcard_pattern"),
+            ),
+        ),
+        (
             "mod",
             "struct Foo {} impl Foo { pub fn new() Foo { 1 } }",
             T("mod").cs(
@@ -1659,6 +1777,18 @@ def test_parse(rule, src, expected):
         ("impl_defn", "impl Foo { import bar; }"),
         ("impl_defn", "impl Foo { impl Bar {} }"),
         ("impl_defn", "pub impl Foo {}"),
+        ("union_defn", ""),
+        ("union_defn", "union U"),
+        ("union_defn", "union U {"),
+        ("union_defn", "union { A }"),
+        ("union_defn", "union U { A() }"),
+        ("union_defn", "union U { A(,) }"),
+        ("union_defn", "union U { , }"),
+        ("union_defn", "union U { A = 1 }"),
+        ("path_pattern", "Option::Some()"),
+        ("path_pattern", "Option::Some(,)"),
+        ("path_pattern", "Option::Some(_"),
+        ("pattern", "Option::Some(_))"),
         ("mod", "1"),
         ("mod", "{}"),
         ("mod", "f(0);"),

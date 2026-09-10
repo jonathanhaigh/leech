@@ -458,8 +458,9 @@ class CfgBuilder:
         self._set_position(cont_bb)
 
     def _build_match_binding(self, pattern: ast.Pattern, scrutinee_value: ir_values.Value) -> None:
-        # One check covers every pattern kind: nothing nests yet, and an
-        # or-pattern's alternatives are barred from binding.
+        # One check covers every pattern kind: no pattern the checker
+        # accepts nests yet, and an or-pattern's alternatives are barred
+        # from binding.
         if not isinstance(pattern, ast.BindingPattern):
             return
         alloca = self._local_alloca(pattern, pattern)

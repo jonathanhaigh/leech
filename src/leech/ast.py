@@ -389,15 +389,23 @@ class BoolLitPattern(Pattern):
 
 
 class PathPattern(Pattern):
-    """A path pattern naming an enum variant."""
+    """A path pattern naming an enum variant or a union variant.
+
+    ``payload`` is empty for a path written without a parenthesised
+    sub-pattern list, which is how a unit variant is spelled. Writing an
+    empty list is a parse error, so a variant destructured with no
+    sub-patterns is indistinguishable from one written bare.
+    """
 
     path: Final[Path]
+    payload: Final[tuple[PatternKind, ...]]
 
     def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
         asserts.assert_eq(tree.data, "path_pattern")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
-        (path,) = map(_as_tree, tree.children)
-        self.path = Path(file, path)
+        path, *payload = tree.children
+        self.path = Path(file, _as_tree(path))
+        self.payload = tuple(Pattern.from_tree(file, _as_tree(p)) for p in payload)
 
     @override
     def diag_str(self) -> str:
@@ -1027,6 +1035,19 @@ type ComptimeParamKind = TypParam | ValueParam
 """Every kind of comptime parameter a declaration can introduce."""
 
 
+def _comptime_params_from_tree(
+    file: src.SrcFile, tree: Optional[lark.tree.Branch[lark.Token]]
+) -> tuple[ComptimeParamKind, ...]:
+    """Build the parameters of an optional ``comptime_params`` subtree.
+
+    ``tree`` is ``None`` for a declaration written without a bracketed
+    parameter list, which is how a non-generic one is spelled.
+    """
+    if tree is None:
+        return ()
+    return tuple(ComptimeParam.from_tree(file, _as_tree(c)) for c in _as_tree(tree).children)
+
+
 class Defn(Ast):
     """Base class for every top-level module item definition."""
 
@@ -1041,6 +1062,7 @@ class Defn(Ast):
             "var_defn": VarDefn,
             "struct_defn": StructDefn,
             "enum_defn": EnumDefn,
+            "union_defn": UnionDefn,
             "trait_defn": TraitDefn,
             "impl_defn": ImplDefn,
             "import": Import,
@@ -1069,12 +1091,7 @@ class FnDecl(Defn):
     ) -> None:
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         self.name = Ident.from_tree(file, ident)
-        if comptime_params is not None:
-            self.comptime_params = tuple(
-                ComptimeParam.from_tree(file, _as_tree(c)) for c in comptime_params.children
-            )
-        else:
-            self.comptime_params = ()
+        self.comptime_params = _comptime_params_from_tree(file, comptime_params)
         self.ret_typ = opt_util.opt_map(ret_typ, lambda x: Typ.from_tree(file, x))
 
         asserts.assert_eq(param_list.data, "param_list")
@@ -1188,13 +1205,7 @@ class StructDefn(Defn):
         access, ident, comptime_params, field_defn_list = tree.children
         self.access = Access.from_tree(file, _as_tree(access))
         self.ident = Ident.from_tree(file, _as_tree(ident))
-        if comptime_params is not None:
-            self.comptime_params = tuple(
-                ComptimeParam.from_tree(file, _as_tree(c))
-                for c in _as_tree(comptime_params).children
-            )
-        else:
-            self.comptime_params = ()
+        self.comptime_params = _comptime_params_from_tree(file, comptime_params)
 
         field_defn_list = _as_tree(field_defn_list)
         asserts.assert_eq(field_defn_list.data, "struct_field_defn_list")
@@ -1285,6 +1296,56 @@ class EnumVariantDefn(Ast):
         return f'enum variant "{self.ident.name}" definition'
 
 
+class UnionDefn(Defn):
+    """A tagged-union type definition."""
+
+    access: Final[Optional[Access]]
+    ident: Final[Ident]
+    #: Empty for a non-generic union.
+    comptime_params: Final[tuple[ComptimeParamKind, ...]]
+    variants: Final[tuple[UnionVariantDefn, ...]]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "union_defn")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        access, ident, comptime_params, variant_list = tree.children
+        self.access = Access.from_tree(file, _as_tree(access))
+        self.ident = Ident.from_tree(file, _as_tree(ident))
+        self.comptime_params = _comptime_params_from_tree(file, comptime_params)
+
+        variant_list = _as_tree(variant_list)
+        asserts.assert_eq(variant_list.data, "union_variant_list")
+        self.variants = tuple(
+            UnionVariantDefn(file, _as_tree(child)) for child in variant_list.children
+        )
+
+    @override
+    def diag_str(self) -> str:
+        return f'union "{self.ident.name}" definition'
+
+
+class UnionVariantDefn(Ast):
+    """A single variant declaration within a ``UnionDefn``.
+
+    ``payload_typs`` is empty for a unit variant, which has no
+    parenthesised payload list at all: ``A()`` is a parse error.
+    """
+
+    ident: Final[Ident]
+    payload_typs: Final[tuple[TypKind, ...]]
+
+    def __init__(self, file: src.SrcFile, tree: lark.tree.ParseTree) -> None:
+        asserts.assert_eq(tree.data, "union_variant")
+        super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
+        ident, *payload_typs = tree.children
+        self.ident = Ident.from_tree(file, _as_tree(ident))
+        self.payload_typs = tuple(Typ.from_tree(file, _as_tree(typ)) for typ in payload_typs)
+
+    @override
+    def diag_str(self) -> str:
+        return f'union variant "{self.ident.name}" definition'
+
+
 class TraitDefn(Defn):
     """A trait definition: a named set of method prototypes an ``impl ...
     for ...`` block promises to provide."""
@@ -1301,13 +1362,7 @@ class TraitDefn(Defn):
         access, ident, comptime_params, *fn_decl_trees = tree.children
         self.access = Access.from_tree(file, _as_tree(access))
         self.ident = Ident.from_tree(file, _as_tree(ident))
-        if comptime_params is not None:
-            self.comptime_params = tuple(
-                ComptimeParam.from_tree(file, _as_tree(c))
-                for c in _as_tree(comptime_params).children
-            )
-        else:
-            self.comptime_params = ()
+        self.comptime_params = _comptime_params_from_tree(file, comptime_params)
         self.fn_decls = tuple(
             TraitFnDecl(file, _as_tree(fn_decl_tree)) for fn_decl_tree in fn_decl_trees
         )
@@ -1330,13 +1385,7 @@ class ImplDefn(Defn):
         asserts.assert_eq(tree.data, "impl_defn")
         super().__init__(src.SrcSpan.from_lark_meta(file, tree.meta))
         comptime_params, typ, for_typ, *fn_defn_trees = tree.children
-        if comptime_params is not None:
-            self.comptime_params = tuple(
-                ComptimeParam.from_tree(file, _as_tree(c))
-                for c in _as_tree(comptime_params).children
-            )
-        else:
-            self.comptime_params = ()
+        self.comptime_params = _comptime_params_from_tree(file, comptime_params)
         self.typ = Typ.from_tree(file, _as_tree(typ))
         self.for_typ = opt_util.opt_map(for_typ, lambda t: Typ.from_tree(file, _as_tree(t)))
         self.fn_defns = tuple(
@@ -1465,7 +1514,15 @@ type TypKind = BasicTyp | PtrTyp
 """Every parsed type node Typ.from_tree can construct."""
 
 type DefnKind = (
-    FnDefn | ExternFnDecl | VarDefn | StructDefn | EnumDefn | TraitDefn | ImplDefn | Import
+    FnDefn
+    | ExternFnDecl
+    | VarDefn
+    | StructDefn
+    | EnumDefn
+    | UnionDefn
+    | TraitDefn
+    | ImplDefn
+    | Import
 )
 """Every module definition node Defn.from_tree can construct."""
 

@@ -45,6 +45,7 @@ KEYWORDS: Final[frozenset[str]] = frozenset(
         "struct",
         "trait",
         "true",
+        "union",
         "value",
         "while",
         "_",

@@ -845,6 +845,9 @@ class Mod:
                     visibility.Access.from_ast(defn_ast.access),
                     typs.EnumTyp.create(defn_ast, self.env, self.name),
                 )
+            case ast.UnionDefn():
+                # Unions parse but have no type representation to bind yet.
+                raise NotImplementedError("union declarations are not implemented yet")
             case ast.TraitDefn():
                 self._add_item(
                     defn_ast.ident.name,

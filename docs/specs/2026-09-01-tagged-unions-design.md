@@ -256,9 +256,11 @@ Rules:
 - The number of payload sub-patterns must equal the variant's arity;
   `WrongNumberOfPayloadPatternsError` otherwise. A payload variant written bare
   (`Option::Some => …`) is the arity-0 case of the same error, which reads better than a
-  separate diagnostic.
-- A payload list on anything that is not a union variant — an enum variant, a non-variant
-  path — is `PayloadPatternOnNonVariantError`.
+  separate diagnostic. So is an enum variant given a payload list: an enum variant is a
+  variant that carries nothing, so its expected arity is simply zero, and no diagnostic
+  about variant-ness is wanted.
+- A payload list on a path that names no variant at all is `NotAPatternError`, which the
+  path already raises before its payload is considered.
 - Comptime arguments may be written in a pattern (`Option[i32]::Some(let x)`). They are
   redundant, since the column type determines the instance, but they are checked to agree
   with it and produce `PatternTypMismatchError` when they do not.
@@ -610,7 +612,6 @@ New:
 
 - `DuplicateVariantInUnionDefnError`
 - `WrongNumberOfPayloadPatternsError` — variant, given arity, expected arity
-- `PayloadPatternOnNonVariantError`
 - `VariantConstructorNotAValueError` — a payload variant named outside call position
 - `UnitVariantCalledError`
 

@@ -1262,6 +1262,30 @@ class NotAPatternError(UserError):
         super().__init__(ERROR, f'Path "{path}" is not a pattern', span)
 
 
+class WrongNumberOfPayloadPatternsError(UserError):
+    """Raised when a pattern destructures a variant with the wrong number of sub-patterns.
+
+    A variant carrying no payload expects zero, so writing any payload list
+    for one is this error rather than a separate diagnostic.
+    """
+
+    def __init__(
+        self,
+        variant: str,
+        span: Optional[src.SrcSpan],
+        got: int,
+        expected: int,
+    ) -> None:
+        super().__init__(
+            ERROR,
+            (
+                f'Wrong number of payload patterns for variant "{variant}":'
+                f" got {got}, expected {expected}"
+            ),
+            span,
+        )
+
+
 class IfTypNotVoidError(UserError):
     """Raised when an ``if`` without ``else`` has a non-void ``then`` type."""
 

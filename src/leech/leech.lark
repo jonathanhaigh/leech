@@ -9,6 +9,7 @@ defn: fn_defn
   | var_defn
   | struct_defn
   | enum_defn
+  | union_defn
   | trait_defn
   | impl_defn
   | import
@@ -36,6 +37,12 @@ enum_variant_list: _enum_variant_list?
 _enum_variant_list: enum_variant ("," enum_variant)* ","?
 enum_variant: ident ["=" enum_variant_value]
 !enum_variant_value: ["-"] int_lit
+
+union_defn: access "union" ident [comptime_params] "{" union_variant_list "}"
+union_variant_list: _union_variant_list?
+_union_variant_list: union_variant ("," union_variant)* ","?
+union_variant: ident ["(" _union_payload_list ")"]
+_union_payload_list: typ ("," typ)* ","?
 
 trait_defn: access "trait" ident [comptime_params] "{" trait_fn_decl* "}"
 trait_fn_decl: _fn_signature ";"
@@ -129,7 +136,8 @@ match_arm: pattern "=>" expr
 wildcard_pattern: "_"
 binding_pattern: "let" mut ident
 !int_lit_pattern: ["-"] int_lit
-path_pattern: path
+path_pattern: path ["(" _pattern_list ")"]
+_pattern_list: pattern ("," pattern)* ","?
 
 ?or_expr: or_expr or_op and_expr
   | and_expr

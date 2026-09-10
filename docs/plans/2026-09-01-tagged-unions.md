@@ -405,7 +405,7 @@ union arm to the abstraction it leaves behind.
 **Interfaces:**
 - `_check_pattern` threads a *column* type rather than the scrutinee type.
 - `_match_constructor_space` gains a `UnionTyp` case supplying sub-column spaces.
-- `errors.WrongNumberOfPayloadPatternsError`, `errors.PayloadPatternOnNonVariantError`.
+- `errors.WrongNumberOfPayloadPatternsError`.
 
 - [ ] Rename `_check_pattern`'s `scrutinee_typ` parameter to the column type it now is, and
   pass each payload sub-pattern its variant's substituted payload type.
@@ -413,9 +413,9 @@ union arm to the abstraction it leaves behind.
   the same template; explicit comptime arguments on the pattern path must produce exactly
   the column type, `PatternTypMismatchError` otherwise; the payload sub-pattern count must
   equal the variant's arity, `WrongNumberOfPayloadPatternsError` otherwise — including the
-  zero-given case for a bare `Option::Some =>`.
-- [ ] A payload list on a non-variant path, or on an enum variant, is
-  `PayloadPatternOnNonVariantError`.
+  zero-given case for a bare `Option::Some =>`. An enum variant given a payload list is the
+  same error with an expected arity of zero, which Task 4 already raises; a path naming no
+  variant keeps its existing `NotAPatternError`.
 - [ ] Build a `patterns.VariantConstructor` per union variant whose `field_spaces` are the
   spaces of its substituted payload types, memoised per union instance so repeated matches
   on one type do not rebuild it.

@@ -370,6 +370,28 @@ def test_infinite_size_struct_message(tmp_path):
     assert (second.span.start_line, second.span.start_col) == util.find_pos(src, "a: A")
 
 
+def test_wrong_number_of_payload_patterns_message(tmp_path):
+    src = """
+    enum Color { Red, Green }
+    pub fn main() i32 {
+        let c = Color::Red;
+        return match (c) {
+            Color::Red(let x) => x,
+            _ => 1i32,
+        };
+    }
+    """
+    with pytest.raises(errors.WrongNumberOfPayloadPatternsError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert exc_info.value.message.message == (
+        'Wrong number of payload patterns for variant "Color::Red": got 1, expected 0'
+    )
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "Color::Red(let x)")
+
+
 def test_circular_var_initializer_message(tmp_path):
     src = """
     let b = a;

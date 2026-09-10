@@ -437,6 +437,10 @@ class TypCheck:
         item = e.resolve_var(pat.path)
         if not isinstance(item, ir_values.ComptimeEnum):
             raise errors.NotAPatternError(pat.path.str(), pat.span)
+        if pat.payload:
+            raise errors.WrongNumberOfPayloadPatternsError(
+                pat.path.str(), pat.span, len(pat.payload), 0
+            )
         if item.typ != scrutinee_typ:
             raise errors.PatternTypMismatchError(
                 pat.diag_str(),

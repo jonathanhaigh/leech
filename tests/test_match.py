@@ -528,6 +528,50 @@ def test_binding_in_or_pattern_error(tmp_path):
         util.compile_str(tmp_path, src)
 
 
+def test_payload_pattern_on_enum_variant_error(tmp_path):
+    src = """
+    enum E { A, B }
+    pub fn main() i32 {
+        let e = E::B;
+        return match (e) {
+            E::A(5) => 0i32,
+            _ => 1i32,
+        };
+    }
+    """
+    with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
+        util.compile_str(tmp_path, src)
+
+
+def test_payload_binding_on_enum_variant_error(tmp_path):
+    src = """
+    enum E { A, B }
+    pub fn main() i32 {
+        let e = E::B;
+        return match (e) {
+            E::A(let x) => x,
+            _ => 1i32,
+        };
+    }
+    """
+    with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
+        util.compile_str(tmp_path, src)
+
+
+def test_payload_pattern_nested_under_or_pattern_error(tmp_path):
+    src = """
+    enum E { A, B }
+    pub fn main() i32 {
+        let e = E::B;
+        return match (e) {
+            E::A(5) | E::B => 0i32,
+        };
+    }
+    """
+    with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
+        util.compile_str(tmp_path, src)
+
+
 def test_not_a_pattern_error(tmp_path):
     src = """
     pub fn main() i32 {
