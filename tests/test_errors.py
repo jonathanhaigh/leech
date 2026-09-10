@@ -349,7 +349,7 @@ def test_infinite_size_struct_message(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
         util.compile_str(tmp_path, src)
 
     msg = str(exc_info.value)

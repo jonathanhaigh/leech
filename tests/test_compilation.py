@@ -62,7 +62,7 @@ def test_ctx_detect_cycle_isolates_domains_and_their_details() -> None:
     ):
         assert outer_cycle is None
         with ctx.detect_cycle(
-            compilation.CycleDomain.STRUCT_LAYOUT, identity, "other"
+            compilation.CycleDomain.TYPE_LAYOUT, identity, "other"
         ) as other_cycle:
             assert other_cycle is None
             with ctx.detect_cycle(
@@ -95,11 +95,11 @@ def test_ctx_detect_cycle_can_use_domain_specific_identity_comparison() -> None:
 
     with (
         pytest.raises(RuntimeError, match="translated cycle"),
-        ctx.detect_cycle(compilation.CycleDomain.STRUCT_LAYOUT, 2, "first") as outer_cycle,
+        ctx.detect_cycle(compilation.CycleDomain.TYPE_LAYOUT, 2, "first") as outer_cycle,
     ):
         assert outer_cycle is None
         with ctx.detect_cycle(
-            compilation.CycleDomain.STRUCT_LAYOUT,
+            compilation.CycleDomain.TYPE_LAYOUT,
             4,
             "second",
             same_identity=lambda earlier, current: current % earlier == 0,

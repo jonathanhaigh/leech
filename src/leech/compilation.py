@@ -23,7 +23,7 @@ class CycleDomain(enum.Enum):
     """
 
     MOD_VAR_INITIALIZER = enum.auto()
-    STRUCT_LAYOUT = enum.auto()
+    TYPE_LAYOUT = enum.auto()
     TRAIT_BOUND = enum.auto()
     IMPL_SELECTION = enum.auto()
 

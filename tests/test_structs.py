@@ -174,7 +174,7 @@ def test_struct_contains_itself_by_value(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeStructError):
+    with pytest.raises(errors.InfiniteSizeTypError):
         util.compile_str(tmp_path, src)
 
 
@@ -209,7 +209,7 @@ def test_struct_contains_itself_via_zero_length_array(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeStructError):
+    with pytest.raises(errors.InfiniteSizeTypError):
         util.compile_str(tmp_path, src)
 
 
@@ -222,7 +222,7 @@ def test_struct_contains_itself_via_nonempty_array(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeStructError):
+    with pytest.raises(errors.InfiniteSizeTypError):
         util.compile_str(tmp_path, src)
 
 
@@ -238,7 +238,7 @@ def test_mutual_struct_recursion_by_value(tmp_path):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeStructError):
+    with pytest.raises(errors.InfiniteSizeTypError):
         util.compile_str(tmp_path, src)
 
 

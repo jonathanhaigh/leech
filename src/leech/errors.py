@@ -1109,39 +1109,59 @@ class EnumDiscriminantOverflowError(UserError):
 
 
 @dataclasses.dataclass(frozen=True)
-class StructLayoutHop:
-    """One by-value field edge followed while checking a struct layout."""
+class TypLayoutHop:
+    """Base class for one by-value edge followed while checking a layout.
 
-    containing_struct: str
+    ``container`` and ``contained`` are the display names of the type the
+    edge leaves and the one it reaches; ``span`` locates the declaration
+    that spells the edge out.
+    """
+
+    container: str
+    contained: str
+    span: Optional[src.SrcSpan]
+
+
+@dataclasses.dataclass(frozen=True)
+class StructFieldHop(TypLayoutHop):
+    """A struct field holding its type by value."""
+
     field_name: str
-    field_span: Optional[src.SrcSpan]
-    contained_struct: str
 
 
-class InfiniteSizeStructError(UserError):
-    """Raised when struct layout follows a recursive by-value declaration cycle.
+type TypLayoutHopKind = StructFieldHop
+"""One kind of by-value layout edge."""
 
-    The recursion may be direct, pass through other structs or arrays, or recur through
-    structurally growing arguments of one generic declaration. A field behind a pointer
-    does not count because a pointer's size does not depend on its pointee. Arrays of any
-    length do count, including zero-length arrays, because LLVM rejects recursive identified
-    struct layouts even when an intervening array has no elements.
+
+def _layout_hop_note(hop: TypLayoutHopKind) -> str:
+    match hop:
+        case StructFieldHop(field_name=field_name):
+            return (
+                f'Field "{field_name}" of struct "{hop.container}" '
+                f'contains "{hop.contained}" by value'
+            )
+
+
+class InfiniteSizeTypError(UserError):
+    """Raised when a layout follows a recursive by-value declaration cycle.
+
+    The recursion may be direct, pass through other nominal types or arrays, or recur
+    through structurally growing arguments of one generic declaration. A member behind a
+    pointer does not count because a pointer's size does not depend on its pointee. Arrays
+    of any length do count, including zero-length arrays, because LLVM rejects recursive
+    identified struct layouts even when an intervening array has no elements.
     """
 
     def __init__(
         self,
-        struct_name: str,
-        struct_span: Optional[src.SrcSpan],
-        cycle: Sequence[StructLayoutHop],
+        typ_kind: str,
+        typ_name: str,
+        typ_span: Optional[src.SrcSpan],
+        cycle: Sequence[TypLayoutHopKind],
     ) -> None:
-        super().__init__(ERROR, f'Struct "{struct_name}" has infinite size', struct_span)
+        super().__init__(ERROR, f'{typ_kind.capitalize()} "{typ_name}" has infinite size', typ_span)
         for hop in cycle:
-            self._add_extra(
-                NOTE,
-                f'Field "{hop.field_name}" of struct "{hop.containing_struct}" contains '
-                f'"{hop.contained_struct}" by value',
-                hop.field_span,
-            )
+            self._add_extra(NOTE, _layout_hop_note(hop), hop.span)
 
 
 class FieldAccessIntoInvalidTypError(UserError):

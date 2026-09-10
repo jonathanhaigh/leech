@@ -478,7 +478,7 @@ def test_generic_struct_infinite_size_via_own_typ_param(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
         util.compile_str(tmp_path, src)
 
     assert len(exc_info.value.extra) == 1
@@ -504,7 +504,7 @@ def test_growing_generic_struct_declaration_cycle(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
         util.compile_str(tmp_path, src)
 
     assert exc_info.value.message.message == 'Struct "L" has infinite size'
@@ -519,7 +519,7 @@ def test_growing_generic_struct_declaration_cycle_through_pointer_arg(tmp_path):
     struct L[T] { x: L[*T] }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
         util.compile_str(tmp_path, src)
 
     assert [note.message for note in exc_info.value.extra] == [
@@ -533,7 +533,7 @@ def test_mutual_growing_generic_struct_declaration_cycle(tmp_path):
     struct B[T] { y: A[array[T, 1]] }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
         util.compile_str(tmp_path, src)
 
     assert [note.message for note in exc_info.value.extra] == [
@@ -548,7 +548,7 @@ def test_generic_struct_nested_cycle_keeps_nested_root_name(tmp_path):
     struct B[T] { y: B[T] }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeStructError) as exc_info:
+    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
         util.compile_str(tmp_path, src)
 
     assert exc_info.value.message.message == 'Struct "B[T]" has infinite size'

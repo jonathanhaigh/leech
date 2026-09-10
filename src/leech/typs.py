@@ -10,7 +10,7 @@ import functools
 import re
 import types
 import weakref
-from collections.abc import Callable, Hashable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
 
 from leech import (
@@ -1035,7 +1035,7 @@ class StructTypTemplate(GenericTypTemplate):
 
     def validate_declaration(self) -> None:
         """Validate this declaration's layout with its bare root name."""
-        self._validation_instance._check_finite_size(None, self.name)
+        _check_layout_finite(self._validation_instance, None, self.name)
 
     @functools.cached_property
     def module_instance(self) -> StructTyp:
@@ -1046,6 +1046,9 @@ class StructTypTemplate(GenericTypTemplate):
 
 class StructTyp(Typ):
     """A usable nominal struct instance owned by one declaration template."""
+
+    #: Names this kind of type in layout diagnostics.
+    _LAYOUT_KIND: ClassVar[str] = "struct"
 
     template: Final[StructTypTemplate]
     comptime_args: Final[tuple[Typ, ...]]
@@ -1128,71 +1131,26 @@ class StructTyp(Typ):
     @functools.cached_property
     def fields(self) -> types.MappingProxyType[str, StructField]:
         """Return fields by declaration order after rejecting infinite-size layouts."""
-        self._check_finite_size(None, None)
+        _check_layout_finite(self, None, None)
         return types.MappingProxyType(self._fields)
 
     def field_at(self, index: int) -> StructField:
         """Return the field at declaration-order ``index``."""
         return tuple(self.fields.values())[index]
 
-    def _check_finite_size(
-        self,
-        incoming_hop: Optional[errors.StructLayoutHop],
-        root_name: Optional[str],
-    ) -> None:
-        """Reject exact or structurally growing by-value layout cycles."""
-        detail: tuple[
-            StructTyp,
-            Optional[errors.StructLayoutHop],
-        ] = (self, incoming_hop)
-        with self._env.ctx.detect_cycle(
-            compilation.CycleDomain.STRUCT_LAYOUT,
-            self,
-            detail,
-            same_identity=StructTyp._layout_repeats,
-        ) as cycle:
-            if cycle is not None:
-                repeated, repeated_hop = cycle.details[0]
-                hops = []
-                for _, hop in cycle.details[1:]:
-                    assert hop is not None, "only the root layout frame may omit its field hop"
-                    hops.append(hop)
-                repeated_name = StructTyp._display_name(repeated, repeated_hop, root_name)
-                raise errors.InfiniteSizeStructError(repeated_name, repeated.span, hops)
-
-            for field_ast in self.ast.fields:
-                typ = Typ.from_ast(field_ast.typ, self._env)
-                while isinstance(typ, ArrayTyp):
-                    typ = typ.element_typ
-                if isinstance(typ, StructTyp):
-                    hop = errors.StructLayoutHop(
-                        StructTyp._display_name(self, incoming_hop, root_name),
-                        field_ast.ident.name,
-                        field_ast.span,
-                        typ.name,
-                    )
-                    typ._check_finite_size(hop, root_name)
-
-    @staticmethod
-    def _display_name(
-        typ: StructTyp, hop: Optional[errors.StructLayoutHop], root_name: Optional[str]
-    ) -> str:
-        return root_name if hop is None and root_name is not None else typ.name
-
-    @staticmethod
-    def _layout_repeats(earlier: StructTyp, current: StructTyp) -> bool:
-        """Return whether ``current`` repeats or grows ``earlier``'s layout."""
-        if earlier is current:
-            return True
-        if earlier.template is not current.template:
-            return False
-
-        for earlier_arg, current_arg in zip(
-            earlier.comptime_args, current.comptime_args, strict=True
-        ):
-            if not contains_typ(current_arg, earlier_arg):
-                return False
-        return True
+    def _layout_edges(
+        self, container_name: str
+    ) -> Iterator[tuple[errors.TypLayoutHopKind, NominalLayoutTyp]]:
+        for field_ast in self.ast.fields:
+            contained = _by_value_nominal(Typ.from_ast(field_ast.typ, self._env))
+            if contained is None:
+                continue
+            yield (
+                errors.StructFieldHop(
+                    container_name, contained.name, field_ast.span, field_ast.ident.name
+                ),
+                contained,
+            )
 
     @property
     def span(self) -> src.SrcSpan:
@@ -1373,6 +1331,80 @@ class NeverTyp(Typ):
     @override
     def coerces_to(self, target_typ: Typ) -> bool:
         return True
+
+
+type NominalLayoutTyp = StructTyp
+"""A nominal type whose declaration can hold another type by value."""
+
+
+def _by_value_nominal(typ: Typ) -> Optional[NominalLayoutTyp]:
+    """Return the nominal type held by value at ``typ``, unwrapping arrays.
+
+    A pointer stops the walk, since its size does not depend on its
+    pointee; an array of any length does not, since LLVM rejects a
+    recursive identified struct even through a zero-length array.
+    """
+    while isinstance(typ, ArrayTyp):
+        typ = typ.element_typ
+    if isinstance(typ, StructTyp):
+        return typ
+    return None
+
+
+def _layout_display_name(
+    typ: NominalLayoutTyp, hop: Optional[errors.TypLayoutHopKind], root_name: Optional[str]
+) -> str:
+    return root_name if hop is None and root_name is not None else typ.name
+
+
+def _layout_repeats(earlier: NominalLayoutTyp, current: NominalLayoutTyp) -> bool:
+    """Return whether ``current`` repeats or grows ``earlier``'s layout."""
+    if earlier is current:
+        return True
+    if earlier.template is not current.template:
+        return False
+
+    for earlier_arg, current_arg in zip(earlier.comptime_args, current.comptime_args, strict=True):
+        if not contains_typ(current_arg, earlier_arg):
+            return False
+    return True
+
+
+def _check_layout_finite(
+    typ: NominalLayoutTyp,
+    incoming_hop: Optional[errors.TypLayoutHopKind],
+    root_name: Optional[str],
+) -> None:
+    """Reject exact or structurally growing by-value layout cycles.
+
+    ``incoming_hop`` is the edge this type was reached through, absent at
+    the root. ``root_name`` overrides the root's own name, so validating a
+    generic declaration through its opaque instance still reports the bare
+    declared name.
+    """
+    detail: tuple[NominalLayoutTyp, Optional[errors.TypLayoutHopKind]] = (typ, incoming_hop)
+    with typ._env.ctx.detect_cycle(
+        compilation.CycleDomain.TYPE_LAYOUT,
+        typ,
+        detail,
+        same_identity=_layout_repeats,
+    ) as cycle:
+        if cycle is not None:
+            repeated, repeated_hop = cycle.details[0]
+            hops = []
+            for _, hop in cycle.details[1:]:
+                assert hop is not None, "only the root layout frame may omit its incoming hop"
+                hops.append(hop)
+            raise errors.InfiniteSizeTypError(
+                repeated._LAYOUT_KIND,
+                _layout_display_name(repeated, repeated_hop, root_name),
+                repeated.span,
+                hops,
+            )
+
+        container_name = _layout_display_name(typ, incoming_hop, root_name)
+        for hop, contained in typ._layout_edges(container_name):
+            _check_layout_finite(contained, hop, root_name)
 
 
 type TypKind = (
