@@ -78,7 +78,7 @@ def _contains_typ(typ: Typ, contained: Typ, resolve: Callable[[Typ], Typ]) -> bo
         return _contains_typ(typ.pointee_typ, contained, resolve)
     if isinstance(typ, ArrayTyp):
         return _contains_typ(typ.element_typ, contained, resolve)
-    if isinstance(typ, StructTyp):
+    if isinstance(typ, StructTyp | UnionTyp):
         return any(_contains_typ(typ_arg, contained, resolve) for typ_arg in typ.comptime_args)
     if isinstance(typ, EnumBackingTyp):
         return _contains_typ(typ.inner, contained, resolve)
@@ -1158,6 +1158,290 @@ class StructTyp(Typ):
         return self.template.span
 
 
+class UnionVariantTemplate:
+    """A union variant of a declaration, independent of any instantiation.
+
+    A variant can be named before its union's comptime arguments are
+    known, which the instance-scoped ``UnionVariant`` cannot represent.
+    Its payload types therefore resolve against the declaration's own
+    comptime parameters, so inferring those arguments from a payload
+    never has to reach for an instance's environment.
+    """
+
+    index: Final[int]
+    ast: Final[ast.UnionVariantDefn]
+    _param_env: Final[ir_env.Env]
+
+    def __init__(
+        self, index: int, variant_ast: ast.UnionVariantDefn, param_env: ir_env.Env
+    ) -> None:
+        self.index = index
+        self.ast = variant_ast
+        self._param_env = param_env
+
+    @property
+    def name(self) -> str:
+        return self.ast.ident.name
+
+    @property
+    def arity(self) -> int:
+        """How many payload values the variant carries."""
+        return len(self.ast.payload_typs)
+
+    @functools.cached_property
+    def payload_typs(self) -> tuple[TypKind, ...]:
+        """The payload types over the declaration's own comptime parameters."""
+        return tuple(Typ.from_ast(typ_ast, self._param_env) for typ_ast in self.ast.payload_typs)
+
+
+class UnionVariant:
+    """One instance's view of a declared variant, with its resolution scope.
+
+    Everything but the payload types is the declaration's, so they are
+    read through ``template`` rather than copied.
+    """
+
+    template: Final[UnionVariantTemplate]
+    _env: Final[ir_env.Env]
+
+    def __init__(self, template: UnionVariantTemplate, e: ir_env.Env) -> None:
+        self.template = template
+        self._env = e
+
+    @property
+    def index(self) -> int:
+        return self.template.index
+
+    @property
+    def ast(self) -> ast.UnionVariantDefn:
+        return self.template.ast
+
+    @property
+    def name(self) -> str:
+        return self.template.name
+
+    @property
+    def tag(self) -> int:
+        """The discriminant stored for this variant, which is its declaration index."""
+        return self.index
+
+    @property
+    def arity(self) -> int:
+        """How many payload values the variant carries."""
+        return self.template.arity
+
+    @functools.cached_property
+    def payload_typs(self) -> tuple[TypKind, ...]:
+        """The variant's payload types, substituted for this instance's arguments."""
+        return tuple(Typ.from_ast(typ_ast, self._env) for typ_ast in self.ast.payload_typs)
+
+
+class UnionTypTemplate(GenericTypTemplate):
+    """A tagged-union declaration that owns its usable type instances."""
+
+    ast: Final[ast.UnionDefn]
+    variants: Final[types.MappingProxyType[str, UnionVariantTemplate]]
+    _decl_env: Final[ir_env.Env]
+    #: The declaration environment with this union's own comptime parameters
+    #: bound, which is the scope a variant's payload types resolve in.
+    _param_env: Final[ir_env.Env]
+    mod_name: Final[str]
+
+    def __init__(self, union_ast: ast.UnionDefn, e: ir_env.Env, mod_name: str) -> None:
+        self.ast = union_ast
+        self._decl_env = e
+        self.mod_name = mod_name
+        # Bind parameters before variants so parameter-name errors take priority.
+        self._param_env = e.new_child()
+        for comptime_param in self.comptime_params:
+            self._param_env.add_container(comptime_param.name, comptime_param)
+            if isinstance(comptime_param, ValueParamTyp):
+                self._param_env.add_var(comptime_param.name, comptime_param)
+        variants: dict[str, UnionVariantTemplate] = {}
+        for index, variant_ast in enumerate(union_ast.variants):
+            name = variant_ast.ident.name
+            if reserved.is_reserved(name):
+                raise errors.ReservedNameError(name, variant_ast.ident.span)
+            existing = variants.get(name)
+            if existing is not None:
+                raise errors.DuplicateVariantInUnionDefnError(
+                    name, variant_ast.ident.span, existing.ast.ident.span
+                )
+            variants[name] = UnionVariantTemplate(index, variant_ast, self._param_env)
+        self.variants = types.MappingProxyType(variants)
+
+    @property
+    @override
+    def name(self) -> str:
+        return self.ast.ident.name
+
+    @property
+    def span(self) -> src.SrcSpan:
+        """The source location of the union declaration."""
+        return self.ast.span
+
+    @override
+    def calculate_comptime_params(self) -> tuple[ComptimeParamTyp, ...]:
+        return comptime_params_from_ast(self.ast, self.ast.comptime_params, self._decl_env)
+
+    @override
+    def instantiate(self, comptime_args: tuple[Typ, ...]) -> UnionTyp:
+        """Return the cached instance for ``comptime_args`` and record its request."""
+        asserts.assert_eq(len(comptime_args), len(self.comptime_params))
+        return self._decl_env.ctx.instantiate_union(self, comptime_args, record_request=True)
+
+    @functools.cached_property
+    def _validation_instance(self) -> UnionTyp:
+        """Return the cached opaque instance used only for declaration validation."""
+        asserts.assert_gt(len(self.comptime_params), 0)
+        return self._decl_env.ctx.instantiate_union(
+            self, self.comptime_params, record_request=False
+        )
+
+    def validate_declaration(self) -> None:
+        """Validate this declaration's layout with its bare root name."""
+        _check_layout_finite(self._validation_instance, None, self.name)
+
+    @functools.cached_property
+    def module_instance(self) -> UnionTyp:
+        """Return the zero-argument instance bound for a non-generic declaration."""
+        asserts.assert_eq(len(self.comptime_params), 0)
+        return self._decl_env.ctx.instantiate_union(self, (), record_request=False)
+
+
+class UnionTyp(Typ):
+    """A usable nominal tagged-union instance owned by one declaration template."""
+
+    #: Names this kind of type in layout diagnostics.
+    _LAYOUT_KIND: ClassVar[str] = "union"
+
+    template: Final[UnionTypTemplate]
+    comptime_args: Final[tuple[Typ, ...]]
+    _env: Final[ir_env.Env]
+    _variants: Final[tuple[UnionVariant, ...]]
+
+    def __init__(self, template: UnionTypTemplate, comptime_args: tuple[Typ, ...]) -> None:
+        asserts.assert_eq(len(comptime_args), len(template.comptime_params))
+        self.template = template
+        self.comptime_args = comptime_args
+        self._env = template._decl_env.new_child()
+        for typ_param, typ_arg in zip(template.comptime_params, comptime_args, strict=True):
+            self._env.add_container(typ_param.name, typ_arg)
+        self._variants = tuple(
+            UnionVariant(variant_template, self._env)
+            for variant_template in template.variants.values()
+        )
+
+    @override
+    @classmethod
+    def cache_key(cls, *args: Hashable) -> Hashable:
+        """Reject the global cache because compilation contexts own instances."""
+        raise AssertionError("union instances are owned by the compilation context")
+
+    @property
+    def ast(self) -> ast.UnionDefn:
+        """The declaration AST shared by this template's instances."""
+        return self.template.ast
+
+    @property
+    def mod_name(self) -> str:
+        """The name of the module that declares this union."""
+        return self.template.mod_name
+
+    @property
+    @override
+    def name(self) -> str:
+        if not self.comptime_args:
+            return self.template.name
+        arg_names = ", ".join(typ_arg.name for typ_arg in self.comptime_args)
+        return f"{self.template.name}[{arg_names}]"
+
+    @property
+    @override
+    def qualified_name(self) -> str:
+        """This instantiation's mangled symbol name, e.g. ``mod::Option[i32]``.
+
+        The comptime arguments are qualified too, rather than rendered as
+        ``name`` renders them: two same-named unions declared in different
+        modules are different types, so ``Option[a::Foo]`` and
+        ``Option[b::Foo]`` must not arrive at one symbol.
+        """
+        qualified = f"{self.mod_name}::{self.template.name}"
+        if not self.comptime_args:
+            return qualified
+        arg_names = ", ".join(typ_arg.qualified_name for typ_arg in self.comptime_args)
+        return f"{qualified}[{arg_names}]"
+
+    @override
+    def is_concrete(self) -> bool:
+        return all(typ_arg.is_concrete() for typ_arg in self.comptime_args)
+
+    @override
+    def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
+        substituted = tuple(
+            typ_arg.substitute_typ_params(mapping) for typ_arg in self.comptime_args
+        )
+        if substituted == self.comptime_args:
+            return self
+        return self.template.instantiate(substituted)
+
+    @override
+    def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
+        if isinstance(actual, UnionTyp) and actual.template is self.template:
+            for declared_arg, actual_arg in zip(
+                self.comptime_args, actual.comptime_args, strict=True
+            ):
+                declared_arg.infer_typ_args(actual_arg, bindings)
+
+    @functools.cached_property
+    def variants(self) -> tuple[UnionVariant, ...]:
+        """Return variants by declaration order after rejecting infinite-size layouts."""
+        _check_layout_finite(self, None, None)
+        return self._variants
+
+    def variant_at(self, index: int) -> UnionVariant:
+        """Return the variant at declaration-order ``index``."""
+        return self.variants[index]
+
+    @functools.cached_property
+    def tag_typ(self) -> IntTyp:
+        """The smallest unsigned builtin integer type holding every variant's tag.
+
+        A union with no variants has no tag value to store, but still needs
+        a type for the field, so it takes the narrowest one.
+        """
+        max_tag = max(len(self.template.ast.variants) - 1, 0)
+        for width in (8, 16, 32, 64):
+            candidate = IntTyp.get_or_create(width, signage.UNSIGNED)
+            if candidate.fits(max_tag):
+                return candidate
+        raise AssertionError("a declaration cannot list more than 2**64 variants")
+
+    def _layout_edges(
+        self, container_name: str
+    ) -> Iterator[tuple[errors.TypLayoutHopKind, NominalLayoutTyp]]:
+        for variant_ast in self.template.ast.variants:
+            for index, typ_ast in enumerate(variant_ast.payload_typs):
+                contained = _by_value_nominal(Typ.from_ast(typ_ast, self._env))
+                if contained is None:
+                    continue
+                yield (
+                    errors.UnionPayloadHop(
+                        container_name,
+                        contained.name,
+                        typ_ast.span,
+                        variant_ast.ident.name,
+                        index,
+                    ),
+                    contained,
+                )
+
+    @property
+    def span(self) -> src.SrcSpan:
+        """The source location of this union's declaration."""
+        return self.template.span
+
+
 class EnumTyp(Typ):
     """An enum type: a fixed, named set of integer discriminants backed by
     an explicit or inferred integer type.
@@ -1333,7 +1617,7 @@ class NeverTyp(Typ):
         return True
 
 
-type NominalLayoutTyp = StructTyp
+type NominalLayoutTyp = StructTyp | UnionTyp
 """A nominal type whose declaration can hold another type by value."""
 
 
@@ -1346,7 +1630,7 @@ def _by_value_nominal(typ: Typ) -> Optional[NominalLayoutTyp]:
     """
     while isinstance(typ, ArrayTyp):
         typ = typ.element_typ
-    if isinstance(typ, StructTyp):
+    if isinstance(typ, StructTyp | UnionTyp):
         return typ
     return None
 
@@ -1416,6 +1700,7 @@ type TypKind = (
     | ComptimeParamTyp
     | ComptimeValueTyp
     | StructTyp
+    | UnionTyp
     | EnumTyp
     | EnumBackingTyp
     | VoidTyp

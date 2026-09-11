@@ -187,6 +187,9 @@ class Compiler:
                 self._ll_mod_items.get(item.value)
             case typs.StructTypTemplate():
                 pass
+            case typs.UnionTyp() | typs.UnionTypTemplate():
+                # A union has no LLVM layout yet, so nothing can be declared for one.
+                raise NotImplementedError("union code generation is not implemented yet")
             case typs.EnumTyp():
                 # No LLVM symbol of its own - it lowers directly to its
                 # backing integer type's, declared (if a builtin) already.
@@ -212,6 +215,8 @@ class Compiler:
                 return None
             case typs.StructTypTemplate():
                 return None
+            case typs.UnionTyp() | typs.UnionTypTemplate():
+                raise NotImplementedError("union code generation is not implemented yet")
             case typs.EnumTyp():
                 return None
             case ir_module.Mod():

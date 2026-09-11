@@ -172,7 +172,14 @@ class Env:
             return "function", value.span
         if isinstance(value, ir_module.ModVar):
             return "variable", value.span
-        if isinstance(value, typs.StructTypTemplate | typs.StructTyp | typs.EnumTyp):
+        if isinstance(
+            value,
+            typs.StructTypTemplate
+            | typs.StructTyp
+            | typs.UnionTypTemplate
+            | typs.UnionTyp
+            | typs.EnumTyp,
+        ):
             return "type", value.span
         if isinstance(value, ir_traits.Trait):
             return "trait", value.span

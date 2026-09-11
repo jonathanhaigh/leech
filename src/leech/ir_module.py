@@ -846,8 +846,13 @@ class Mod:
                     typs.EnumTyp.create(defn_ast, self.env, self.name),
                 )
             case ast.UnionDefn():
-                # Unions parse but have no type representation to bind yet.
-                raise NotImplementedError("union declarations are not implemented yet")
+                template = typs.UnionTypTemplate(defn_ast, self.env, self.name)
+                value = template if template.comptime_params else template.module_instance
+                self._add_item(
+                    defn_ast.ident.name,
+                    visibility.Access.from_ast(defn_ast.access),
+                    value,
+                )
             case ast.TraitDefn():
                 self._add_item(
                     defn_ast.ident.name,
@@ -1008,6 +1013,8 @@ type ModItemValue = (
     | FnSymbol
     | typs.StructTyp
     | typs.StructTypTemplate
+    | typs.UnionTyp
+    | typs.UnionTypTemplate
     | typs.EnumTyp
     | Mod
     | ir_traits.Trait

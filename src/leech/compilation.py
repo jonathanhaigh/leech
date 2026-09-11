@@ -56,6 +56,8 @@ class Ctx:
     _requested_fn_instances: Final[list[ir_module.FnInstance]]
     _struct_instances: Final[_InstanceCache[typs.StructTypTemplate, typs.StructTyp]]
     _requested_struct_instances: Final[list[typs.StructTyp]]
+    _union_instances: Final[_InstanceCache[typs.UnionTypTemplate, typs.UnionTyp]]
+    _requested_union_instances: Final[list[typs.UnionTyp]]
     _cycle_stacks: Final[dict[CycleDomain, list[_CycleFrame]]]
     #: Source-declared comptime parameters in declaration order, used as an
     #: insertion-ordered set because one declaration may be interned twice.
@@ -66,6 +68,8 @@ class Ctx:
         self._requested_fn_instances = []
         self._struct_instances = {}
         self._requested_struct_instances = []
+        self._union_instances = {}
+        self._requested_union_instances = []
         self._cycle_stacks = {}
         self._declared_comptime_params = {}
 
@@ -182,6 +186,47 @@ class Ctx:
         deliberately does not return a snapshot.
         """
         return self._requested_struct_instances
+
+    def instantiate_union(
+        self,
+        template: typs.UnionTypTemplate,
+        args: tuple[typs.Typ, ...],
+        *,
+        record_request: bool,
+    ) -> typs.UnionTyp:
+        """Return the cached union instance for ``template`` and ``args``.
+
+        :param record_request: Whether a newly created instance is appended to
+            ``requested_union_instances``. Pass ``True`` for an instance a source
+            reference requests, which ``mono.discover`` must find and code
+            generation must emit. Pass ``False`` for an instance code generation already
+            reaches another way, so it must not be discovered as a separate emission
+            request: a non-generic declaration's zero-argument module instance, and a
+            generic template's opaque validation instance. Ignored on a cache hit, since
+            only the request that first creates ``args`` can be recorded.
+        """
+        cached = self._cached_instance(self._union_instances, template, args)
+        if cached is not None:
+            return cached
+
+        # Local because typs imports this module while its classes are initializing.
+        from leech import typs  # noqa: PLC0415
+
+        return self._record_instance(
+            self._union_instances,
+            self._requested_union_instances if record_request else None,
+            template,
+            args,
+            typs.UnionTyp(template, args),
+        )
+
+    def requested_union_instances(self) -> Sequence[typs.UnionTyp]:
+        """Return the live append-only log of requested union instances.
+
+        Callers may drain it by index while lowering appends further requests; this method
+        deliberately does not return a snapshot.
+        """
+        return self._requested_union_instances
 
     @staticmethod
     def _cached_instance[OwnerT, InstanceT](

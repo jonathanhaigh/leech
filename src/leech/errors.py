@@ -1055,6 +1055,28 @@ class DuplicateFieldInStructDefnError(UserError):
             )
 
 
+class DuplicateVariantInUnionDefnError(UserError):
+    """Raised when a union declaration defines the same variant name twice."""
+
+    def __init__(
+        self,
+        variant_name: str,
+        duplicate_span: Optional[src.SrcSpan],
+        previous_span: Optional[src.SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Duplicate variant "{variant_name}" in union definition',
+            duplicate_span,
+        )
+        if previous_span is not None:
+            self._add_extra(
+                NOTE,
+                f'Variant "{variant_name}" previously given here',
+                previous_span,
+            )
+
+
 class DuplicateVariantInEnumDefnError(UserError):
     """Raised when an enum declaration defines the same variant name twice."""
 
@@ -1129,7 +1151,15 @@ class StructFieldHop(TypLayoutHop):
     field_name: str
 
 
-type TypLayoutHopKind = StructFieldHop
+@dataclasses.dataclass(frozen=True)
+class UnionPayloadHop(TypLayoutHop):
+    """A union variant's payload position holding its type by value."""
+
+    variant_name: str
+    payload_index: int
+
+
+type TypLayoutHopKind = StructFieldHop | UnionPayloadHop
 """One kind of by-value layout edge."""
 
 
@@ -1139,6 +1169,11 @@ def _layout_hop_note(hop: TypLayoutHopKind) -> str:
             return (
                 f'Field "{field_name}" of struct "{hop.container}" '
                 f'contains "{hop.contained}" by value'
+            )
+        case UnionPayloadHop(variant_name=variant_name, payload_index=payload_index):
+            return (
+                f'Payload {payload_index} of variant "{variant_name}" of union '
+                f'"{hop.container}" contains "{hop.contained}" by value'
             )
 
 

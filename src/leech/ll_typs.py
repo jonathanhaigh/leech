@@ -68,6 +68,9 @@ def ll_typ(ctx: ll.Context, typ: typs.TypKind) -> ll.Type:
             return ll_typ(ctx, typ.backing_typ)
         case typs.StructTyp():
             return _struct_ll_typ(ctx, typ)
+        case typs.UnionTyp():
+            # A union has no LLVM layout yet, so nothing can ask for one.
+            raise NotImplementedError("union layout is not implemented yet")
         case typs.NeverTyp():
             raise AssertionError("a never-typed value shouldn't need an LLVM type")
         case typs.TypParamTyp():
