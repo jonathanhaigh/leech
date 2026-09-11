@@ -808,6 +808,9 @@ class TypCheck:
         if isinstance(var, ir_values.ComptimeEnum):
             # An enum variant is an immediate value with no address.
             return var.typ
+        if isinstance(var, typs.UnionVariantRef):
+            # Resolvable, but nothing can be built from one yet.
+            raise NotImplementedError("union variant construction is not implemented yet")
         if isinstance(var, typs.ValueParamTyp):
             # A value parameter is an immediate value with no address.
             return var.value_typ
@@ -970,7 +973,9 @@ class TypCheck:
             if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
                 return self.results.local_typ(var)
             # Immediate values fall through to a const temporary.
-            if not isinstance(var, ir_values.ComptimeEnum | typs.ValueParamTyp):
+            if not isinstance(
+                var, ir_values.ComptimeEnum | typs.UnionVariantRef | typs.ValueParamTyp
+            ):
                 return var.typ
 
         value_typ = self._check_expr(expr_ast, e, None)
@@ -989,7 +994,10 @@ class TypCheck:
                 # a place.
                 if isinstance(
                     var,
-                    ir_module.FnCandidate | ir_values.ComptimeEnum | typs.ValueParamTyp,
+                    ir_module.FnCandidate
+                    | ir_values.ComptimeEnum
+                    | typs.UnionVariantRef
+                    | typs.ValueParamTyp,
                 ):
                     return typs.CONST
                 if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):

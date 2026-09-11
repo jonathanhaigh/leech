@@ -5,7 +5,8 @@
 import pytest
 import util
 
-from leech import asserts, errors, ir_env, ir_module, signage, typs
+from leech import asserts, ast, errors, ir_env, ir_module, parse, signage, typs
+from leech import src as leech_src
 
 
 def _get_union_typ(mod, name: str) -> typs.UnionTyp:
@@ -33,6 +34,18 @@ def _imported_union_template(mod, mod_name: str, name: str) -> typs.UnionTypTemp
     imported = mod.get_item(ir_env.Env.Namespace.CONTAINERS, mod_name)
     assert imported is not None
     return _get_union_template(asserts.checked_cast(imported.value, ir_module.Mod), name)
+
+
+def _path_of(tmp_path, expr_src: str) -> ast.Path:
+    """Build the path an expression spells, as if written in ``main.leech``."""
+    file = leech_src.SrcFile(tmp_path / "main.leech")
+    expr = ast.Expr.from_tree(file, parse.build_parser("expr").parse(expr_src))
+    return asserts.checked_cast(expr, ast.VarExpr).path
+
+
+def _resolve_variant(mod, tmp_path, expr_src: str) -> typs.UnionVariantRef:
+    target = mod.env.resolve_var(_path_of(tmp_path, expr_src))
+    return asserts.checked_cast(target, typs.UnionVariantRef)
 
 
 def _variant_count_src(count: int) -> str:
@@ -285,3 +298,86 @@ def test_cycle_growing_through_a_union_argument_via_a_struct_is_rejected(tmp_pat
 def test_generic_union_through_pointer_argument_is_finite(tmp_path):
     mod = util.build_ir_mod(tmp_path, "union L[T] { Nil, Cons(T, *L[T]) }")
     _get_union_template(mod, "L").validate_declaration()
+
+
+def test_variant_resolves_against_an_unapplied_template(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+    template = _get_union_template(mod, "Option")
+
+    ref = _resolve_variant(mod, tmp_path, "Option::Some")
+    assert ref.owner is template
+    assert ref.variant is template.variants["Some"]
+    assert ref.name == "Some"
+
+
+def test_variant_resolves_against_an_applied_instance(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+    template = _get_union_template(mod, "Option")
+
+    ref = _resolve_variant(mod, tmp_path, "Option[i32]::Some")
+    owner = asserts.checked_cast(ref.owner, typs.UnionTyp)
+    assert owner is template.instantiate((typs.I32,))
+    assert owner.comptime_args == (typs.I32,)
+    assert ref.variant is template.variants["Some"]
+
+
+def test_variant_of_a_non_generic_union_resolves_against_its_instance(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "union Flag { On, Off }")
+    flag = _get_union_typ(mod, "Flag")
+
+    ref = _resolve_variant(mod, tmp_path, "Flag::Off")
+    assert ref.owner is flag
+    assert ref.variant.index == 1
+
+
+def test_variant_resolves_through_a_module_path(tmp_path):
+    mod = _build_with_imports(
+        tmp_path,
+        "import a;\npub fn main() i32 { return 0; }",
+        a="pub union Option[T] { None, Some(T) }",
+    )
+    template = _imported_union_template(mod, "a", "Option")
+
+    assert _resolve_variant(mod, tmp_path, "a::Option::Some").owner is template
+    applied = _resolve_variant(mod, tmp_path, "a::Option[i32]::Some")
+    assert asserts.checked_cast(applied.owner, typs.UnionTyp).comptime_args == (typs.I32,)
+
+
+def test_unknown_variant_name_is_not_found(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+    with pytest.raises(errors.ItemNotFoundError):
+        _resolve_variant(mod, tmp_path, "Option::Nope")
+
+
+def test_private_unions_variant_is_inaccessible(tmp_path):
+    mod = _build_with_imports(
+        tmp_path,
+        "import a;\npub fn main() i32 { return 0; }",
+        a="union Option[T] { None, Some(T) }",
+    )
+    with pytest.raises(errors.PrivateItemAccessError):
+        _resolve_variant(mod, tmp_path, "a::Option::Some")
+
+
+@pytest.mark.parametrize("expr", ["Option::Some[i32]", "Option[i32]::Some[i32]"])
+def test_comptime_args_on_a_variant_segment_are_rejected(tmp_path, expr):
+    # The arguments belong to the union: `Option[i32]::Some` is how to
+    # say what these are trying to say.
+    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
+        _resolve_variant(mod, tmp_path, expr)
+
+
+def test_a_variant_cannot_qualify_a_further_path_segment(tmp_path):
+    # A mid-path segment resolves in the container namespace, where a
+    # variant is invisible, so this fails the same way `Color::Red::x`
+    # does for an enum rather than reaching a variant-specific check.
+    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+    with pytest.raises(errors.ItemNotFoundError):
+        _resolve_variant(mod, tmp_path, "Option::Some::x")
+
+
+def test_a_variant_is_not_reachable_in_the_container_namespace(tmp_path):
+    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+    with pytest.raises(errors.ItemNotFoundError):
+        mod.env.resolve_typ(_path_of(tmp_path, "Option::Some"))

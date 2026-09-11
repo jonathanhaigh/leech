@@ -578,6 +578,13 @@ union arm to the abstraction it leaves behind.
 - Modify: `tests/test_unions.py`, `tests/test_impl.py`, `tests/test_traits.py`,
   `tests/test_generic_structs.py`
 
+- [ ] Reject an inherent function whose name is one of the union's variants, at impl
+  declaration time, with a new `FnNameClashesWithUnionVariantError`. Rust accepts the
+  clash and lets the variant win, leaving the function permanently unreachable — its own
+  dead-code note says "it is impossible to refer to the associated function ... because it
+  is shadowed by this enum variant with the same name". Leech rejects it instead, so
+  `Env._lookup_path_seg`'s variant-then-associated-function order on a `UnionTyp` never has
+  to break a tie. Test both orders of declaration.
 - [ ] Accept `UnionTyp` in `_build_inherent_impl_defn`. Rename
   `ImplForNonStructTypError` → `ImplForNonNominalTypError` and
   `ImplForNonLocalStructTypError` → `ImplForNonLocalTypError`, updating their messages and

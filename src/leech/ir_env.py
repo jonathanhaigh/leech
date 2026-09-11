@@ -39,7 +39,9 @@ type NonFnVar = (
 type Var = NonFnVar | ir_module.FnSymbol
 """A variable-namespace binding before path application."""
 
-type PathScope = Env | ir_module.Mod | typs.StructTyp | typs.EnumTyp
+type PathScope = (
+    Env | ir_module.Mod | typs.StructTyp | typs.EnumTyp | typs.UnionTyp | typs.UnionTypTemplate
+)
 """A scope that may qualify another path segment."""
 
 type PathTarget = (
@@ -49,13 +51,16 @@ type PathTarget = (
     | NonFnVar
     | ir_module.FnCandidate
     | ir_values.ComptimeEnum
+    | typs.UnionVariantRef
 )
 """A fully applied item produced by path resolution."""
 
 type PathResult = PathTarget | typs.GenericTypTemplate
 """A path result, including a final unapplied generic type template."""
 
-type PathLookup = Container | Var | ir_traits.ImplFnSelection | ir_values.ComptimeEnum
+type PathLookup = (
+    Container | Var | ir_traits.ImplFnSelection | ir_values.ComptimeEnum | typs.UnionVariantRef
+)
 """An item produced by lookup before its segment's comptime arguments are applied."""
 
 type _ContainerResult = (
@@ -210,18 +215,18 @@ class Env:
             case typs.StructTyp():
                 # Only associated functions are reachable by path:
                 # `SomeStruct::x` is not a way to name a field.
-                res = (
-                    self.impl_registry.lookup_assoc_fn(scope, ident.name)
-                    if ns == Env.Namespace.VARS
-                    else None
-                )
-                selected_fn = opt_util.opt_map(res, lambda selection: selection.fn)
-                # Private associated functions are invisible outside the
-                # struct's own module, same as private Mod items above.
-                if selected_fn is not None and not selected_fn.is_accessible_from(ident.span.file):
-                    raise errors.PrivateItemAccessError(
-                        "function", ident.name, ident.span, selected_fn.span
-                    )
+                res = self._lookup_assoc_fn(ns, scope, ident)
+            case typs.UnionTypTemplate():
+                # The one place a union template behaves unlike a struct
+                # template, which raises MissingComptimeArgsError here: a
+                # variant's comptime arguments are inferable from its
+                # payload or its expected type, so naming one without them
+                # is how `Option::Some(x)` is meant to be written.
+                res = self._lookup_union_variant(ns, scope, scope, ident)
+            case typs.UnionTyp():
+                res = self._lookup_union_variant(
+                    ns, scope, scope.template, ident
+                ) or self._lookup_assoc_fn(ns, scope, ident)
             case typs.EnumTyp():
                 # Variants inherit the enum's visibility and are immediate
                 # values in the variable namespace rather than places.
@@ -234,6 +239,43 @@ class Env:
         if res is None:
             raise errors.ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
         return res
+
+    def _lookup_assoc_fn(
+        self,
+        ns: Env.Namespace,
+        scope: typs.Typ,
+        ident: ast.Ident,
+    ) -> Optional[ir_traits.ImplFnSelection]:
+        if ns != Env.Namespace.VARS:
+            return None
+        res = self.impl_registry.lookup_assoc_fn(scope, ident.name)
+        selected_fn = opt_util.opt_map(res, lambda selection: selection.fn)
+        # Private associated functions are invisible outside the type's own
+        # module, same as private Mod items above.
+        if selected_fn is not None and not selected_fn.is_accessible_from(ident.span.file):
+            raise errors.PrivateItemAccessError(
+                "function", ident.name, ident.span, selected_fn.span
+            )
+        return res
+
+    @staticmethod
+    def _lookup_union_variant(
+        ns: Env.Namespace,
+        owner: typs.UnionTypTemplate | typs.UnionTyp,
+        template: typs.UnionTypTemplate,
+        ident: ast.Ident,
+    ) -> Optional[typs.UnionVariantRef]:
+        """Find a variant by name, which needs no visibility check of its own.
+
+        A variant is exactly as accessible as its union, so reaching this
+        scope at all has already established access.
+        """
+        if ns != Env.Namespace.VARS:
+            return None
+        variant = template.variants.get(ident.name)
+        if variant is None:
+            return None
+        return typs.UnionVariantRef(owner, variant)
 
     def _apply_fn_path_seg(
         self,
@@ -304,6 +346,8 @@ class Env:
                 return "function"
             case ir_module.Mod():
                 return "module"
+            case typs.UnionVariantRef():
+                return "variant"
             case (
                 ir_values.Value()
                 | ast.Param()
@@ -316,12 +360,18 @@ class Env:
     @staticmethod
     def _require_path_scope(target: PathResult, seg: ast.PathSeg) -> PathScope:
         match target:
-            case ir_module.Mod() | typs.StructTyp() | typs.EnumTyp():
+            case ir_module.Mod() | typs.StructTyp() | typs.EnumTyp() | typs.UnionTyp():
+                return target
+            case typs.UnionTypTemplate():
+                # A union template qualifies a path even unapplied, so that
+                # `Option::Some` can name a variant whose comptime
+                # arguments are still to be inferred.
                 return target
             case typs.GenericTypTemplate():
                 raise errors.MissingComptimeArgsError(target.name, seg.span)
             case (
                 typs.Typ()
+                | typs.UnionVariantRef()
                 | ir_traits.TraitApplication()
                 | ir_module.FnCandidate()
                 | ir_values.Value()
@@ -401,7 +451,7 @@ class Env:
     def resolve_var(self, path: ast.Path) -> resolve.VarTarget:
         """Resolve a variable path and verify its namespace's result invariant."""
         target = self._resolve_path(Env.Namespace.VARS, path)
-        if isinstance(target, ir_values.ComptimeEnum):
+        if isinstance(target, ir_values.ComptimeEnum | typs.UnionVariantRef):
             return target
         if isinstance(target, ir_values.Value):
             asserts.checked_cast(target.typ, typs.PtrTyp)

@@ -292,7 +292,9 @@ impl [T] SomeTrait for Option[T] { … }
 ```
 
 Trait impls already accept any self type, so the only genuine restriction to lift is the
-inherent one (`ImplForNonStructTypError`). The coherence machinery needs union arms in three
+inherent one (`ImplForNonStructTypError`). An inherent function may not take a variant's
+name: Rust allows the clash and lets the variant win, which leaves the function impossible
+to call, so leech rejects it at impl declaration time instead. The coherence machinery needs union arms in three
 structural helpers — `typs._contains_typ`, `typs.typs_overlap`'s `unify`, and
 `ir_traits._head_shape`/`_is_local` — all of which mirror their `StructTyp` arms exactly.
 Omitting any of them would silently mis-handle overlap and orphan checking for generic union
@@ -611,6 +613,7 @@ unused declaration can request an instance.
 New:
 
 - `DuplicateVariantInUnionDefnError`
+- `FnNameClashesWithUnionVariantError` — an inherent function named after a variant
 - `WrongNumberOfPayloadPatternsError` — variant, given arity, expected arity
 - `VariantConstructorNotAValueError` — a payload variant named outside call position
 - `UnitVariantCalledError`

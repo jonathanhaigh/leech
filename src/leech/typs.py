@@ -5,6 +5,7 @@
 """Leech's type system: type representations, caching, and construction from AST."""
 
 import abc
+import dataclasses
 import enum
 import functools
 import re
@@ -1440,6 +1441,26 @@ class UnionTyp(Typ):
     def span(self) -> src.SrcSpan:
         """The source location of this union's declaration."""
         return self.template.span
+
+
+@dataclasses.dataclass(frozen=True)
+class UnionVariantRef:
+    """A named union variant, with whatever its path established about the union.
+
+    ``owner`` is the declaration while the union's comptime arguments are
+    still to be inferred, and an instance once a path spells them out. The
+    variant is always the declaration's either way; once inference settles
+    the arguments, the concrete ``UnionVariant`` is looked up by index on
+    the resulting instance.
+    """
+
+    owner: UnionTypTemplate | UnionTyp
+    variant: UnionVariantTemplate
+
+    @property
+    def name(self) -> str:
+        """The variant's name, unqualified by its union."""
+        return self.variant.name
 
 
 class EnumTyp(Typ):

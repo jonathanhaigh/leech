@@ -27,9 +27,10 @@ type VarTarget = (
     | ir_module.ModVar
     | ir_module.FnCandidate
     | ir_values.ComptimeEnum
+    | typs.UnionVariantRef
     | typs.ValueParamTyp
 )
-"""A local, module value, function candidate, enum variant, or value parameter."""
+"""A local, module value, function candidate, enum or union variant, or value parameter."""
 
 type Callee = ir_traits.ImplFnSelection
 """A callable a dot-call's member lookup found."""
