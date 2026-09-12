@@ -115,20 +115,26 @@ class MissingComptimeArgsError(UserError):
 
 
 class CannotInferComptimeArgError(UserError):
-    """Raised when a generic function call can't determine one of its
-    comptime parameters from its arguments' types, and no explicit
+    """Raised when a generic item's use can't determine one of its
+    comptime parameters from the types around it, and no explicit
     comptime argument was given for it either."""
 
-    def __init__(self, fn_name: str, typ_param_name: str, span: Optional[src.SrcSpan]) -> None:
+    def __init__(
+        self,
+        item_kind: str,
+        item_name: str,
+        typ_param_name: str,
+        span: Optional[src.SrcSpan],
+    ) -> None:
         super().__init__(
             ERROR,
             (
                 f'Cannot infer argument for parameter "{typ_param_name}"'
-                f' of generic function "{fn_name}"'
+                f' of generic {item_kind} "{item_name}"'
             ),
             span,
         )
-        self._add_extra(NOTE, f'Give it explicitly, e.g. "{fn_name}[...]"', None)
+        self._add_extra(NOTE, f'Give it explicitly, e.g. "{item_name}[...]"', None)
 
 
 class WrongNumberOfComptimeArgsError(UserError):
@@ -1287,6 +1293,28 @@ class BindingInOrPatternError(UserError):
             ERROR,
             '"let" bindings are not allowed inside or-patterns',
             binding_span,
+        )
+
+
+class VariantConstructorNotAValueError(UserError):
+    """Raised when a union variant that carries a payload is named outside a call."""
+
+    def __init__(self, variant: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'Variant "{variant}" carries a payload, so it names a value only when called',
+            span,
+        )
+
+
+class UnitVariantCalledError(UserError):
+    """Raised when a union variant that carries no payload is called."""
+
+    def __init__(self, variant: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'Variant "{variant}" carries no payload, so it is named without a call',
+            span,
         )
 
 

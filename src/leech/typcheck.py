@@ -201,7 +201,7 @@ class TypCheck:
             case ast.MatchExpr():
                 return self._check_match_expr(expr_ast, e, expected_typ)
             case ast.CallExpr():
-                return self._check_call_expr(expr_ast, e)
+                return self._check_call_expr(expr_ast, e, expected_typ)
             case ast.BinOpExpr():
                 return self._check_bin_op_expr(expr_ast, e, expected_typ)
             case ast.UnaryOpExpr():
@@ -217,7 +217,7 @@ class TypCheck:
             case ast.BoolLit():
                 return typs.BOOL
             case ast.VarExpr():
-                return self._check_var_expr(expr_ast, e)
+                return self._check_var_expr(expr_ast, e, expected_typ)
             case ast.ArrayAccessExpr():
                 return self._check_array_access_expr(expr_ast, e)
             case ast.BraceExpr():
@@ -463,8 +463,10 @@ class TypCheck:
             alternatives.append(self._check_pattern(alternative, scrutinee_typ, e))
         return patterns.OrPattern(tuple(alternatives))
 
-    def _check_call_expr(self, call_ast: ast.CallExpr, e: ir_env.Env) -> typs.Typ:
-        fn_typ, recv_ast, recv_typ = self._resolve_callee(call_ast, e)
+    def _check_call_expr(
+        self, call_ast: ast.CallExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
+    ) -> typs.Typ:
+        fn_typ, recv_ast, recv_typ = self._resolve_callee(call_ast, e, expected_typ)
         callee_diag_str = call_ast.callee.diag_str()
         param_typs = fn_typ.param_typs
 
@@ -507,7 +509,7 @@ class TypCheck:
         return fn_typ.ret_typ
 
     def _resolve_callee(
-        self, call_ast: ast.CallExpr, e: ir_env.Env
+        self, call_ast: ast.CallExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
     ) -> tuple[typs.CallableTyp, Optional[ast.ExprKind], Optional[typs.Typ]]:
         """Resolve a callee and its optional pointer-typed method receiver.
 
@@ -521,6 +523,12 @@ class TypCheck:
             var = self._resolve_var(callee_ast, e)
             if isinstance(var, ir_module.FnCandidate):
                 return self._resolve_fn_call(var, call_ast, e), None, None
+            if isinstance(var, typs.UnionVariantRef):
+                return (
+                    self._resolve_variant_callee(var, callee_ast, call_ast, e, expected_typ),
+                    None,
+                    None,
+                )
 
         if not isinstance(callee_ast, ast.FieldAccessExpr):
             callee_typ = self._check_expr(callee_ast, e, None)
@@ -642,7 +650,9 @@ class TypCheck:
 
         for typ_param in comptime_params:
             if typ_param not in bindings:
-                raise errors.CannotInferComptimeArgError(fn.name, typ_param.name, call_ast.span)
+                raise errors.CannotInferComptimeArgError(
+                    "function", fn.name, typ_param.name, call_ast.span
+                )
 
         return bindings
 
@@ -798,7 +808,9 @@ class TypCheck:
             self.results.resolutions.set_var(var_ast, target)
             return target
 
-    def _check_var_expr(self, var_ast: ast.VarExpr, e: ir_env.Env) -> typs.Typ:
+    def _check_var_expr(
+        self, var_ast: ast.VarExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
+    ) -> typs.Typ:
         # Local because runtime isinstance checks cannot use the TYPE_CHECKING import.
         from leech import ir_module  # noqa: PLC0415
 
@@ -809,14 +821,104 @@ class TypCheck:
             # An enum variant is an immediate value with no address.
             return var.typ
         if isinstance(var, typs.UnionVariantRef):
-            # Resolvable, but nothing can be built from one yet.
-            raise NotImplementedError("union variant construction is not implemented yet")
+            return self._check_variant_ref(var, var_ast, e, expected_typ)
         if isinstance(var, typs.ValueParamTyp):
             # A value parameter is an immediate value with no address.
             return var.value_typ
         if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
             return self.results.local_typ(var).pointee_typ
         return var.typ.pointee_typ
+
+    def _check_variant_ref(
+        self,
+        ref: typs.UnionVariantRef,
+        var_ast: ast.VarExpr,
+        e: ir_env.Env,
+        expected_typ: Optional[typs.Typ],
+    ) -> typs.UnionTyp:
+        """Check a variant named outside a call, which must carry no payload."""
+        if ref.variant.arity != 0:
+            raise errors.VariantConstructorNotAValueError(var_ast.path.str(), var_ast.span)
+        union_typ = self._variant_union_typ(ref, (), e, expected_typ, var_ast.span)
+        self.results._set_variant_construction(var_ast, union_typ, ref.variant.index)
+        return union_typ
+
+    def _resolve_variant_callee(
+        self,
+        ref: typs.UnionVariantRef,
+        callee_ast: ast.VarExpr,
+        call_ast: ast.CallExpr,
+        e: ir_env.Env,
+        expected_typ: Optional[typs.Typ],
+    ) -> typs.FnTyp:
+        """Synthesize the constructor type of a variant applied to its payload."""
+        if ref.variant.arity == 0:
+            raise errors.UnitVariantCalledError(callee_ast.path.str(), call_ast.span)
+        # The arity is checked here rather than left to _check_call_expr,
+        # which compares counts only after the callee resolves: inferring
+        # this variant's comptime arguments reads the very arguments a
+        # miscounted call is missing, so the count has to settle first.
+        self._check_variant_arity(ref, callee_ast, call_ast)
+        union_typ = self._variant_union_typ(ref, call_ast.args, e, expected_typ, call_ast.span)
+        self.results._set_variant_construction(callee_ast, union_typ, ref.variant.index)
+        variant = union_typ.variant_at(ref.variant.index)
+        return typs.FnTyp.get_or_create(union_typ, variant.payload_typs)
+
+    @staticmethod
+    def _check_variant_arity(
+        ref: typs.UnionVariantRef, callee_ast: ast.VarExpr, call_ast: ast.CallExpr
+    ) -> None:
+        arity = ref.variant.arity
+        num_args = len(call_ast.args)
+        if num_args < arity:
+            raise errors.NotEnoughArgsError(callee_ast.diag_str(), call_ast.span, num_args, arity)
+        if num_args > arity:
+            raise errors.TooManyArgsError(
+                callee_ast.diag_str(), call_ast.args[-1].span, num_args, arity
+            )
+
+    def _variant_union_typ(
+        self,
+        ref: typs.UnionVariantRef,
+        arg_asts: Sequence[ast.ExprKind],
+        e: ir_env.Env,
+        expected_typ: Optional[typs.Typ],
+        span: Optional[src.SrcSpan],
+    ) -> typs.UnionTyp:
+        """Settle the union instance a variant reference constructs.
+
+        A path that spelled the comptime arguments out has already applied
+        them. Otherwise they come from an expected type of the same union,
+        or from inferring the declared payload types against the argument
+        types.
+        """
+        if isinstance(ref.owner, typs.UnionTyp):
+            return ref.owner
+
+        template = ref.owner
+        if isinstance(expected_typ, typs.UnionTyp) and expected_typ.template is template:
+            return expected_typ
+
+        comptime_params = template.comptime_params
+        bindings: dict[typs.ComptimeParamTyp, typs.Typ] = {}
+        # This probe lets a failing argument's own diagnostics escape and
+        # be reported twice, inheriting #72 and #73 from the function-call
+        # inference it mirrors.
+        with self._speculative():
+            for declared_typ, arg_ast in zip(ref.variant.payload_typs, arg_asts, strict=False):
+                if _is_flexible_int_lit(arg_ast):
+                    continue
+                declared_typ.infer_typ_args(self._check_expr(arg_ast, e, None), bindings)
+
+        for comptime_param in comptime_params:
+            if comptime_param not in bindings:
+                raise errors.CannotInferComptimeArgError(
+                    "union", template.name, comptime_param.name, span
+                )
+
+        comptime_args = tuple(bindings[param] for param in comptime_params)
+        typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, span)
+        return template.instantiate(comptime_args)
 
     def _fn_candidate_ptr_typ(
         self, var_ast: ast.VarExpr, candidate: ir_module.FnCandidate

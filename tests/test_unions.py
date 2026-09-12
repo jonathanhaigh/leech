@@ -48,6 +48,25 @@ def _resolve_variant(mod, tmp_path, expr_src: str) -> typs.UnionVariantRef:
     return asserts.checked_cast(target, typs.UnionVariantRef)
 
 
+_UNIONS = "union Option[T] { None, Some(T) }\nunion Res[T, E] { Ok(T), Err(E) }\n"
+
+
+def _check_body(tmp_path, body: str, unions: str = _UNIONS):
+    """Type-check a main body over the shared union declarations, without lowering."""
+    mod = util.build_ir_mod(tmp_path, f"{unions}pub fn main() i32 {{\n{body}\nreturn 0;\n}}")
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "main")
+    assert item is not None
+    return asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
+
+
+def _constructions(results) -> list[tuple[str, str, int]]:
+    """Every recorded construction as (path, union name, variant index)."""
+    return [
+        (node.path.str(), typ.name, index)
+        for node, (typ, index) in results._variant_constructions.items()
+    ]
+
+
 def _variant_count_src(count: int) -> str:
     variants = ", ".join(f"V{i}" for i in range(count))
     return f"union Wide {{ {variants} }}"
@@ -381,3 +400,153 @@ def test_a_variant_is_not_reachable_in_the_container_namespace(tmp_path):
     mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
     with pytest.raises(errors.ItemNotFoundError):
         mod.env.resolve_typ(_path_of(tmp_path, "Option::Some"))
+
+
+def test_variant_comptime_args_come_from_the_payload_argument(tmp_path):
+    results = _check_body(tmp_path, "let x = Option::Some(1i32);")
+    assert _constructions(results) == [("Option::Some", "Option[i32]", 1)]
+
+
+def test_variant_comptime_args_can_be_explicit(tmp_path):
+    results = _check_body(tmp_path, "let x = Option[bool]::Some(true);")
+    assert _constructions(results) == [("Option[bool]::Some", "Option[bool]", 1)]
+
+
+def test_explicit_comptime_args_beat_the_payload_argument(tmp_path):
+    # The payload would infer Option[i32]; the path already said otherwise,
+    # so the argument is checked against the spelled-out instance instead.
+    with pytest.raises(errors.InvalidArgTypError):
+        _check_body(tmp_path, "let x = Option[bool]::Some(1i32);")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "let x: Option[i32] = Option::None;",
+        "let mut x: Option[i32] = Option[i32]::None; x = Option::None;",
+        "let x = takes(Option::None);",
+    ],
+)
+def test_unit_variant_infers_from_its_expected_type(tmp_path, body):
+    unions = _UNIONS + "fn takes(o: Option[i32]) i32 { return 0; }\n"
+    results = _check_body(tmp_path, body, unions)
+    assert ("Option::None", "Option[i32]", 0) in _constructions(results)
+
+
+def test_unit_variant_infers_from_a_return_type(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        _UNIONS + "pub fn make() Option[i32] { return Option::None; }",
+    )
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "make")
+    assert item is not None
+    results = asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
+    assert _constructions(results) == [("Option::None", "Option[i32]", 0)]
+
+
+def test_unit_variant_infers_from_a_block_tail_expression(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        _UNIONS + "pub fn make() Option[i32] { Option::None }",
+    )
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "make")
+    assert item is not None
+    results = asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
+    assert _constructions(results) == [("Option::None", "Option[i32]", 0)]
+
+
+def test_unit_variant_with_nothing_to_infer_from_is_rejected(tmp_path):
+    with pytest.raises(errors.CannotInferComptimeArgError):
+        _check_body(tmp_path, "let x = Option::None;")
+
+
+def test_payload_variant_named_as_a_value_is_rejected(tmp_path):
+    with pytest.raises(errors.VariantConstructorNotAValueError):
+        _check_body(tmp_path, "let x = Option::Some;")
+
+
+def test_payload_variant_addressed_is_rejected(tmp_path):
+    with pytest.raises(errors.VariantConstructorNotAValueError):
+        _check_body(tmp_path, "let x = &Option::Some;")
+
+
+def test_unit_variant_called_is_rejected(tmp_path):
+    with pytest.raises(errors.UnitVariantCalledError):
+        _check_body(tmp_path, "let x: Option[i32] = Option::None();")
+
+
+@pytest.mark.parametrize(
+    "body,error",
+    [
+        ("let x = Option::Some();", errors.NotEnoughArgsError),
+        ("let x = Option::Some(1i32, 2i32);", errors.TooManyArgsError),
+        # E is unrelated to Ok's payload, so without the arity-first
+        # check this would report CannotInferComptimeArgError on E rather
+        # than counting the extra argument.
+        ("let x = Res::Ok(1i32, 2i32);", errors.TooManyArgsError),
+    ],
+)
+def test_payload_arity_is_checked_before_inference(tmp_path, body, error):
+    # Neither the path nor an expected type fixes T here, so inference
+    # would read the very arguments the call miscounts. Checking the count
+    # first is what keeps this from becoming CannotInferComptimeArgError.
+    with pytest.raises(error):
+        _check_body(tmp_path, body)
+
+
+def test_wrong_payload_typ_is_rejected(tmp_path):
+    with pytest.raises(errors.InvalidArgTypError):
+        _check_body(tmp_path, "let x: Option[bool] = Option::Some(1i32);")
+
+
+def test_partially_inferable_variant_names_the_unbound_parameter(tmp_path):
+    # Err(E) fixes E from its payload and leaves T with nothing to say.
+    with pytest.raises(errors.CannotInferComptimeArgError) as exc_info:
+        _check_body(tmp_path, "let x = Res::Err(1i32);")
+
+    msg = str(exc_info.value)
+    assert '"T"' in msg
+    assert '"Res"' in msg
+    assert "generic union" in msg
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "let x = Res[bool, i32]::Err(1i32);",
+        "let x: Res[bool, i32] = Res::Err(1i32);",
+    ],
+)
+def test_partially_inferable_variant_is_fixed_by_the_missing_context(tmp_path, body):
+    results = _check_body(tmp_path, body)
+    assert _constructions(results)[0][1] == "Res[bool, i32]"
+
+
+def test_peer_context_across_if_branches_is_not_inferred(tmp_path):
+    # Deferred, not accidental: the second branch is checked with no
+    # expected type of its own, so it has nothing to infer T from.
+    with pytest.raises(errors.CannotInferComptimeArgError):
+        _check_body(tmp_path, "let o = if (true) { Option::Some(1i32) } else { Option::None };")
+
+
+def test_peer_context_across_if_branches_works_when_annotated(tmp_path):
+    results = _check_body(
+        tmp_path,
+        "let o: Option[i32] = if (true) { Option::Some(1i32) } else { Option::None };",
+    )
+    assert sorted(_constructions(results)) == [
+        ("Option::None", "Option[i32]", 0),
+        ("Option::Some", "Option[i32]", 1),
+    ]
+
+
+def test_non_generic_union_variants_need_no_inference(tmp_path):
+    results = _check_body(
+        tmp_path,
+        "let a = Flag::On; let b = Pair::Both(1i32, true);",
+        "union Flag { On, Off }\nunion Pair { Both(i32, bool) }\n",
+    )
+    assert sorted(_constructions(results)) == [
+        ("Flag::On", "Flag", 0),
+        ("Pair::Both", "Pair", 0),
+    ]

@@ -70,6 +70,7 @@ class TypCheckResults:
     _match_scrutinee_typs: Final[dict[ast.MatchExpr, typs.Typ]]
     _match_plans: Final[dict[ast.MatchExpr, patterns.MatchPlan]]
     _pattern_constructors: Final[dict[ast.PatternKind, patterns.ConstructorKind]]
+    _variant_constructions: Final[dict[ast.VarExpr, tuple[typs.UnionTyp, int]]]
     _local_typs: Final[dict[resolve.LocalDecl, typs.PtrTyp]]
     _expr_typs: Final[dict[ast.Expr, typs.Typ]]
     _place_typs: Final[dict[ast.Expr, typs.PtrTyp]]
@@ -88,6 +89,7 @@ class TypCheckResults:
         self._match_scrutinee_typs = {}
         self._match_plans = {}
         self._pattern_constructors = {}
+        self._variant_constructions = {}
         self._local_typs = {}
         self._expr_typs = {}
         self._place_typs = {}
@@ -175,6 +177,18 @@ class TypCheckResults:
         self, node: ast.PatternKind, constructor: patterns.ConstructorKind
     ) -> None:
         self._set_fact(self._pattern_constructors, node, constructor)
+
+    def variant_construction(self, node: ast.VarExpr) -> tuple[typs.UnionTyp, int]:
+        """Return the union instance and variant index a construction site builds."""
+        return self._variant_constructions[node]
+
+    def _set_variant_construction(
+        self, node: ast.VarExpr, union_typ: typs.UnionTyp, variant_index: int
+    ) -> None:
+        # Written directly rather than through _set_fact: a construction
+        # whose comptime arguments are still being inferred is checked
+        # speculatively first, and the authoritative pass overwrites it.
+        self._variant_constructions[node] = (union_typ, variant_index)
 
     def local_typ(self, decl: resolve.LocalDecl) -> typs.PtrTyp:
         """Return the bound type and mutability for a local declaration."""
