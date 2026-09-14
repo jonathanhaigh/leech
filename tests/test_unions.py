@@ -5,7 +5,18 @@
 import pytest
 import util
 
-from leech import asserts, ast, errors, ir_env, ir_module, parse, signage, typs
+from leech import (
+    asserts,
+    ast,
+    comptime,
+    errors,
+    ir_env,
+    ir_module,
+    ir_values,
+    parse,
+    signage,
+    typs,
+)
 from leech import src as leech_src
 
 
@@ -727,3 +738,143 @@ def test_two_bindings_of_one_name_in_an_arm_are_rejected(tmp_path):
         util.build_ir_mod(
             tmp_path, f"union Pair {{ Both(i32, i32) }}\npub fn f(p: Pair) i32 {{ {body} }}"
         )
+
+
+def _mod_var_value(mod, name: str) -> ir_values.ComptimeValue:
+    """Run a module variable's initializer through the compile-time interpreter."""
+    item = mod.get_item(ir_env.Env.Namespace.VARS, name)
+    assert item is not None
+    return asserts.checked_cast(item.value, ir_module.ModVar).initializer
+
+
+def _as_union(value: ir_values.ComptimeValue) -> ir_values.ComptimeUnion:
+    return asserts.checked_cast(value, ir_values.ComptimeUnion)
+
+
+def _payload_ints(union_value: ir_values.ComptimeUnion) -> list[int]:
+    return [
+        asserts.checked_cast(value, ir_values.ComptimeInt).value for value in union_value.payload
+    ]
+
+
+def test_comptime_payload_variant_construction(tmp_path):
+    mod = util.build_ir_mod(tmp_path, _UNIONS + "pub let a = Option::Some(7i32);")
+    value = _as_union(_mod_var_value(mod, "a"))
+
+    assert value.typ.name == "Option[i32]"
+    assert value.variant_index == 1
+    assert _payload_ints(value) == [7]
+
+
+def test_comptime_unit_variant_construction(tmp_path):
+    mod = util.build_ir_mod(tmp_path, _UNIONS + "pub let b: Option[i32] = Option::None;")
+    value = _as_union(_mod_var_value(mod, "b"))
+
+    assert value.typ.name == "Option[i32]"
+    assert value.variant_index == 0
+    assert value.payload == ()
+
+
+def test_comptime_multi_payload_variant_construction(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        "union Pair { Both(i32, i32) }\npub let p = Pair::Both(3i32, 4i32);",
+    )
+    value = _as_union(_mod_var_value(mod, "p"))
+
+    assert value.variant_index == 0
+    assert _payload_ints(value) == [3, 4]
+
+
+def test_comptime_nested_variant_construction(tmp_path):
+    mod = util.build_ir_mod(
+        tmp_path,
+        _UNIONS + "pub let n: Option[Option[i32]] = Option::Some(Option::Some(1i32));",
+    )
+    outer = _as_union(_mod_var_value(mod, "n"))
+    (inner_value,) = outer.payload
+    inner = _as_union(inner_value)
+
+    assert outer.typ.name == "Option[Option[i32]]"
+    assert inner.typ.name == "Option[i32]"
+    assert _payload_ints(inner) == [1]
+
+
+def test_comptime_union_payload_cannot_hold_a_temporary_address(tmp_path):
+    # ComptimeUnion is not a ComptimeAggregate, so without its own arm in
+    # _check_not_temporary a temporary pointer would escape inside one.
+    mod = util.build_ir_mod(tmp_path, "union Boxed { B(*i32) }\npub let g = Boxed::B(&1);")
+    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+        _mod_var_value(mod, "g")
+
+
+def _union_instr_cfg(union_typ: typs.UnionTyp, payload: int):
+    """A CFG that builds a union, then reads back its tag and payload."""
+    cfg = ir_values.Cfg()
+    bb = cfg.entry
+    made = bb.union_make(union_typ, 1, (ir_values.ComptimeInt(typs.I32, payload, None),), None)
+    return cfg, bb, made
+
+
+def test_union_tag_instr_reads_the_variant_index(tmp_path):
+    mod = util.build_ir_mod(tmp_path, _UNIONS)
+    union_typ = _get_union_template(mod, "Option").instantiate((typs.I32,))
+    cfg, bb, made = _union_instr_cfg(union_typ, 7)
+    tag = bb.union_tag(made, None)
+    bb.ret(tag, None)
+
+    assert tag.typ == union_typ.tag_typ
+    result = asserts.checked_cast(comptime.Interpreter(cfg, (), ()).eval(), ir_values.ComptimeInt)
+    assert result.value == 1
+    assert result.typ == union_typ.tag_typ
+
+
+def test_union_payload_instr_reads_the_active_variants_field(tmp_path):
+    mod = util.build_ir_mod(tmp_path, _UNIONS)
+    union_typ = _get_union_template(mod, "Option").instantiate((typs.I32,))
+    cfg, bb, made = _union_instr_cfg(union_typ, 7)
+    payload = bb.union_payload(made, 1, 0, None)
+    bb.ret(payload, None)
+
+    assert payload.typ == typs.I32
+    result = asserts.checked_cast(comptime.Interpreter(cfg, (), ()).eval(), ir_values.ComptimeInt)
+    assert result.value == 7
+
+
+def test_union_payload_instr_rejects_the_wrong_variant(tmp_path):
+    # Lowering must compare the tag before projecting; the interpreter has
+    # nothing to return for a variant the value does not hold.
+    mod = util.build_ir_mod(tmp_path, _UNIONS)
+    union_typ = _get_union_template(mod, "Option").instantiate((typs.I32,))
+    cfg = ir_values.Cfg()
+    bb = cfg.entry
+    made = bb.union_make(union_typ, 0, (), None)
+    bb.ret(bb.union_payload(made, 1, 0, None), None)
+
+    with pytest.raises(AssertionError):
+        comptime.Interpreter(cfg, (), ()).eval()
+
+
+def test_generic_body_lowers_the_substituted_union_instance(tmp_path):
+    # Inside a generic body the checker records Option[T]; lowering must
+    # substitute the instantiation's arguments before building.
+    mod = util.build_ir_mod(
+        tmp_path,
+        _UNIONS + "pub fn wrap[T](x: T) Option[T] { return Option::Some(x); }",
+    )
+    fn = asserts.checked_cast(
+        mod.get_item(ir_env.Env.Namespace.VARS, "wrap"), ir_module.ModItem
+    ).value
+    fn = asserts.checked_cast(fn, ir_module.SrcFnSymbol)
+    recorded, _index = next(iter(fn.typ_check_results._variant_constructions.values()))
+    assert recorded.name == "Option[T]"
+
+    cfg = fn.instantiate((typs.I32,)).cfg
+    makes = [
+        instr
+        for bb in cfg.nodes
+        for instr in bb.instrs
+        if isinstance(instr, ir_values.UnionMakeInstr)
+    ]
+    assert [instr.union_typ.name for instr in makes] == ["Option[i32]"]
+    assert [instr.variant_index for instr in makes] == [1]

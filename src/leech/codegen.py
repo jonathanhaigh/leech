@@ -450,6 +450,12 @@ class Compiler:
                     ctx.ll_values.get(instr.value),
                     instr.index.value,
                 )
+            case (
+                ir_values.UnionMakeInstr()
+                | ir_values.UnionTagInstr()
+                | ir_values.UnionPayloadInstr()
+            ):
+                raise NotImplementedError("union code generation is not implemented yet")
             case ir_values.CallInstr():
                 ll_args = [ctx.ll_values.get(arg) for arg in instr.args]
                 return ctx.ll_builder.call(ctx.ll_values.get(instr.callee), ll_args)
@@ -509,6 +515,8 @@ class Compiler:
                 base = self._ll_mod_items.get(value.base)
                 assert isinstance(base, ll.GlobalValue | ll.Constant)
                 return base.gep([zero, ll_index])
+            case ir_values.ComptimeUnion():
+                raise NotImplementedError("union code generation is not implemented yet")
             case _:
                 # FnRefs are mapped during function declaration, before any
                 # initializer or body can request one, so they never reach this

@@ -256,6 +256,49 @@ class ComptimeStruct(ComptimeAggregate[typs.StructTyp]):
         return ComptimeStruct(self._typ, {k: v.copy() for k, v in self.fields.items()}, self.ast)
 
 
+class ComptimeUnion(ComptimeValue[typs.UnionTyp]):
+    """A compile-time-known union value: one active variant and its payload.
+
+    Deliberately not a ``ComptimeAggregate``: a union holds whichever
+    variant was built rather than a fixed set of indexable elements, so
+    nothing can read a payload without first establishing the variant.
+    """
+
+    variant_index: Final[int]
+    payload: Final[tuple[ComptimeValue, ...]]
+    _typ: Final[typs.UnionTyp]
+
+    @override
+    def __init__(
+        self,
+        typ: typs.UnionTyp,
+        variant_index: int,
+        payload: tuple[ComptimeValue, ...],
+        ast_node: Optional[ast.Ast],
+    ) -> None:
+        super().__init__(ast_node)
+        asserts.assert_eq(
+            tuple(value.typ for value in payload),
+            typ.variant_at(variant_index).payload_typs,
+        )
+        self._typ = typ
+        self.variant_index = variant_index
+        self.payload = payload
+
+    @override
+    def calculate_typ(self) -> typs.UnionTyp:
+        return self._typ
+
+    @override
+    def copy(self) -> ComptimeUnion:
+        return ComptimeUnion(
+            self._typ,
+            self.variant_index,
+            tuple(value.copy() for value in self.payload),
+            self.ast,
+        )
+
+
 class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[typs.PtrTyp, AstT_co]):
     """Base class for compile-time-known pointer values.
 
@@ -883,6 +926,87 @@ class InsertValueInstr(Instr):
         return self.aggregate.typ
 
 
+class UnionMakeInstr(Instr[typs.UnionTyp]):
+    """Builds a union value from one of its variants and that variant's payload."""
+
+    union_typ: Final[typs.UnionTyp]
+    variant_index: Final[int]
+    values: Final[tuple[Value, ...]]
+
+    @override
+    def __init__(
+        self,
+        bb: BasicBlock,
+        union_typ: typs.UnionTyp,
+        variant_index: int,
+        values: tuple[Value, ...],
+        ast_node: Optional[ast.Ast],
+    ) -> None:
+        super().__init__(bb, ast_node)
+        asserts.assert_eq(
+            tuple(value.typ for value in values),
+            union_typ.variant_at(variant_index).payload_typs,
+        )
+        self.union_typ = union_typ
+        self.variant_index = variant_index
+        self.values = values
+
+    @override
+    def calculate_typ(self) -> typs.UnionTyp:
+        return self.union_typ
+
+
+class UnionTagInstr(Instr[typs.IntTyp]):
+    """Reads which variant a union value holds, as its union's tag type."""
+
+    operand: Final[Value]
+
+    @override
+    def __init__(self, bb: BasicBlock, operand: Value, ast_node: Optional[ast.Ast]) -> None:
+        super().__init__(bb, ast_node)
+        asserts.checked_cast(operand.typ, typs.UnionTyp)
+        self.operand = operand
+
+    @override
+    def calculate_typ(self) -> typs.IntTyp:
+        return asserts.checked_cast(self.operand.typ, typs.UnionTyp).tag_typ
+
+
+class UnionPayloadInstr(Instr):
+    """Reads one payload field of the variant a union value is known to hold.
+
+    Reading a field of any other variant is meaningless - at runtime it
+    reads storage never written for it, and at compile time there is
+    nothing to return - so every use must be dominated by a comparison
+    against this variant's tag.
+    """
+
+    operand: Final[Value]
+    variant_index: Final[int]
+    field_index: Final[int]
+
+    @override
+    def __init__(
+        self,
+        bb: BasicBlock,
+        operand: Value,
+        variant_index: int,
+        field_index: int,
+        ast_node: Optional[ast.Ast],
+    ) -> None:
+        super().__init__(bb, ast_node)
+        union_typ = asserts.checked_cast(operand.typ, typs.UnionTyp)
+        asserts.assert_lt(field_index, union_typ.variant_at(variant_index).arity)
+        self.operand = operand
+        self.variant_index = variant_index
+        self.field_index = field_index
+
+    @override
+    def calculate_typ(self) -> typs.Typ:
+        union_typ = asserts.checked_cast(self.operand.typ, typs.UnionTyp)
+        return union_typ.variant_at(self.variant_index).payload_typs[self.field_index]
+
+
 class CallInstr(Instr[typs.Typ, ast.CallExpr]):
     """Calls a function."""
 
@@ -1019,6 +1143,9 @@ type InstrKind = (
     | EnumToIntInstr
     | IsNullInstr
     | InsertValueInstr
+    | UnionMakeInstr
+    | UnionTagInstr
+    | UnionPayloadInstr
     | CallInstr
     | PhiInstr
     | BranchInstr
@@ -1164,6 +1291,29 @@ class BasicBlock:
         ast_node: Optional[ast.Ast],
     ) -> InsertValueInstr:
         return self._add_instr(InsertValueInstr(self, aggregate, value, index, ast_node))
+
+    def union_make(
+        self,
+        union_typ: typs.UnionTyp,
+        variant_index: int,
+        values: tuple[Value, ...],
+        ast_node: Optional[ast.Ast],
+    ) -> UnionMakeInstr:
+        return self._add_instr(UnionMakeInstr(self, union_typ, variant_index, values, ast_node))
+
+    def union_tag(self, operand: Value, ast_node: Optional[ast.Ast]) -> UnionTagInstr:
+        return self._add_instr(UnionTagInstr(self, operand, ast_node))
+
+    def union_payload(
+        self,
+        operand: Value,
+        variant_index: int,
+        field_index: int,
+        ast_node: Optional[ast.Ast],
+    ) -> UnionPayloadInstr:
+        return self._add_instr(
+            UnionPayloadInstr(self, operand, variant_index, field_index, ast_node)
+        )
 
     def call(
         self, callee: Value, args: tuple[Value, ...], ast_node: Optional[ast.CallExpr]

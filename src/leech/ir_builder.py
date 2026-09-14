@@ -491,6 +491,19 @@ class CfgBuilder:
     def _build_call_expr(self, call_ast: ast.CallExpr, ctx: _ExprContext) -> ir_values.Value:
         """Lower a call, including method receivers and generic instances."""
         callee_ast = call_ast.callee
+        if isinstance(callee_ast, ast.VarExpr) and isinstance(
+            self._typ_check_results.resolutions.var(callee_ast), typs.UnionVariantRef
+        ):
+            values = tuple(
+                opt_util.opt_unwrap(
+                    self._coerce(self._build_expr(arg_ast, _ExprContext.VALUE), arg_ast)
+                )
+                for arg_ast in call_ast.args
+            )
+            return self._in_context(
+                self._build_variant_construction(callee_ast, values, call_ast), ctx
+            )
+
         recv_ast: Optional[ast.ExprKind] = None
         recv_arg: Optional[ir_values.Value] = None
 
@@ -788,6 +801,9 @@ class CfgBuilder:
             return self._resolve_fn_ref(applied_fn)
 
         target = self._typ_check_results.resolutions.var(var_ast)
+        if isinstance(target, typs.UnionVariantRef):
+            # A unit variant: its whole value is the tag it carries.
+            return self._in_context(self._build_variant_construction(var_ast, (), var_ast), ctx)
         if isinstance(target, ir_values.ComptimeEnum):
             # In place context, materialize the immediate value in a temporary.
             return self._in_context(target, ctx)
@@ -805,6 +821,19 @@ class CfgBuilder:
             return var
 
         return self._curr_bb.load(var, var_ast)
+
+    def _build_variant_construction(
+        self,
+        callee_ast: ast.VarExpr,
+        values: tuple[ir_values.Value, ...],
+        ast_node: ast.Ast,
+    ) -> ir_values.Value:
+        """Build the union instance the checker settled on for this reference."""
+        recorded_typ, variant_index = self._typ_check_results.variant_construction(callee_ast)
+        union_typ = asserts.checked_cast(
+            recorded_typ.substitute_typ_params(self._comptime_arg_mapping), typs.UnionTyp
+        )
+        return self._curr_bb.union_make(union_typ, variant_index, values, ast_node)
 
     def _build_array_access_expr(
         self, aa_expr: ast.ArrayAccessExpr, ctx: _ExprContext

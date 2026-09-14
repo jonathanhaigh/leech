@@ -86,6 +86,11 @@ class Interpreter:
         if isinstance(value, ir_values.ComptimeAggregate):
             for elt in value.values():
                 self._check_not_temporary(elt)
+        # A union is not a ComptimeAggregate, so its payload needs its own
+        # arm here or a temporary pointer could hide inside one.
+        if isinstance(value, ir_values.ComptimeUnion):
+            for payload_value in value.payload:
+                self._check_not_temporary(payload_value)
 
     def _eval_instr(self, instr: ir_values.InstrKind) -> None:
         match instr:
@@ -212,6 +217,28 @@ class Interpreter:
                 agg = asserts.checked_cast(agg, ir_values.ComptimeAggregate)
                 agg.set_element(value, instr.index.value)
                 self._registers[instr] = agg
+            case ir_values.UnionMakeInstr():
+                self._registers[instr] = ir_values.ComptimeUnion(
+                    instr.union_typ,
+                    instr.variant_index,
+                    tuple(self._get_comptime_value(value) for value in instr.values),
+                    instr.ast,
+                )
+            case ir_values.UnionTagInstr():
+                union_value = asserts.checked_cast(
+                    self._get_comptime_value(instr.operand), ir_values.ComptimeUnion
+                )
+                self._registers[instr] = ir_values.ComptimeInt(
+                    instr.typ, union_value.variant_index, instr.ast
+                )
+            case ir_values.UnionPayloadInstr():
+                union_value = asserts.checked_cast(
+                    self._get_comptime_value(instr.operand), ir_values.ComptimeUnion
+                )
+                # Guaranteed by lowering: a payload is only ever projected
+                # in a block the variant's own tag comparison reaches.
+                asserts.assert_eq(union_value.variant_index, instr.variant_index)
+                self._registers[instr] = union_value.payload[instr.field_index]
             case ir_values.CallInstr():
                 callee = asserts.checked_cast(
                     self._get_comptime_value(instr.callee), ir_module.FnRef
