@@ -26,6 +26,15 @@ WARNING = Level.WARNING
 ERROR = Level.ERROR
 
 
+def _sentence_case(text: str) -> str:
+    """Upper-case only the first character, so a message can open with ``text``.
+
+    ``str.capitalize`` lower-cases everything after it, which would rewrite
+    any name the text quotes.
+    """
+    return text[:1].upper() + text[1:]
+
+
 @dataclasses.dataclass(frozen=True)
 class Message:
     """A single diagnostic message, optionally located in source."""
@@ -76,7 +85,7 @@ class ItemNotFoundError(UserError):
     """Raised when a name cannot be resolved in scope."""
 
     def __init__(self, item_kind: str, name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" not found.', span)
+        super().__init__(ERROR, f'{_sentence_case(item_kind)} "{name}" not found.', span)
 
 
 class PathTargetKindError(UserError):
@@ -100,7 +109,7 @@ class ItemCannotQualifyPathError(UserError):
     """Raised when a resolved item appears before the end of a path but is not a scope."""
 
     def __init__(self, item_kind: str, name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" cannot qualify a path', span)
+        super().__init__(ERROR, f'{_sentence_case(item_kind)} "{name}" cannot qualify a path', span)
 
 
 class MissingComptimeArgsError(UserError):
@@ -202,9 +211,9 @@ class PrivateItemAccessError(UserError):
         access_span: Optional[src.SrcSpan],
         defn_span: Optional[src.SrcSpan],
     ) -> None:
-        super().__init__(ERROR, f'{item_kind.capitalize()} "{name}" is private', access_span)
+        super().__init__(ERROR, f'{_sentence_case(item_kind)} "{name}" is private', access_span)
         if defn_span is not None:
-            self._add_extra(NOTE, f'{item_kind.capitalize()} "{name}" defined here', defn_span)
+            self._add_extra(NOTE, f'{_sentence_case(item_kind)} "{name}" defined here', defn_span)
 
 
 class AssignToConstError(UserError):
@@ -316,7 +325,7 @@ class InvalidBinOpArgTypError(UserError):
         super().__init__(
             ERROR,
             (
-                f'{arg_name.capitalize()} operand of binary operation "{op}"'
+                f'{_sentence_case(arg_name)} operand of binary operation "{op}"'
                 f' has invalid type "{given_typ}",'
                 f' expecting "{expected_typ}"'
             ),
@@ -1200,7 +1209,9 @@ class InfiniteSizeTypError(UserError):
         typ_span: Optional[src.SrcSpan],
         cycle: Sequence[TypLayoutHopKind],
     ) -> None:
-        super().__init__(ERROR, f'{typ_kind.capitalize()} "{typ_name}" has infinite size', typ_span)
+        super().__init__(
+            ERROR, f'{_sentence_case(typ_kind)} "{typ_name}" has infinite size', typ_span
+        )
         for hop in cycle:
             self._add_extra(NOTE, _layout_hop_note(hop), hop.span)
 
@@ -1276,7 +1287,7 @@ class PatternTypMismatchError(UserError):
         super().__init__(
             ERROR,
             (
-                f'{pattern_diag.capitalize()} has type "{pattern_typ}",'
+                f'{_sentence_case(pattern_diag)} has type "{pattern_typ}",'
                 f' which cannot match scrutinee of type "{scrutinee_typ}"'
             ),
             pattern_span,

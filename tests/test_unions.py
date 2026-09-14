@@ -59,6 +59,14 @@ def _check_body(tmp_path, body: str, unions: str = _UNIONS):
     return asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
 
 
+def _check_match(tmp_path, body: str, unions: str = _UNIONS):
+    """Type-check a function matching on an ``Option[i32]``, without lowering."""
+    mod = util.build_ir_mod(tmp_path, f"{unions}pub fn f(o: Option[i32]) i32 {{\n{body}\n}}")
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "f")
+    assert item is not None
+    return asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
+
+
 def _constructions(results) -> list[tuple[str, str, int]]:
     """Every recorded construction as (path, union name, variant index)."""
     return [
@@ -550,3 +558,172 @@ def test_non_generic_union_variants_need_no_inference(tmp_path):
         ("Flag::On", "Flag", 0),
         ("Pair::Both", "Pair", 0),
     ]
+
+
+def _witnesses(error) -> list[str]:
+    """The uncovered patterns a non-exhaustive match reports, in order."""
+    return [
+        extra.message.removeprefix('Uncovered pattern "').removesuffix('"') for extra in error.extra
+    ]
+
+
+@pytest.mark.parametrize(
+    "arms",
+    [
+        "Option::None => 0i32, Option::Some(let x) => x,",
+        "Option::Some(_) => 1i32, Option::None => 0i32,",
+        "Option::Some(1i32) => 1i32, Option::Some(_) => 2i32, Option::None => 0i32,",
+        "Option::Some(1i32 | 2i32) => 1i32, Option::Some(_) => 2i32, Option::None => 0i32,",
+        "Option[i32]::Some(_) => 1i32, Option::None => 0i32,",
+    ],
+)
+def test_exhaustive_union_matches(tmp_path, arms):
+    _check_match(tmp_path, f"return match (o) {{ {arms} }};")
+
+
+def test_payload_binding_takes_the_payload_typ(tmp_path):
+    # The binding is an i32, not an Option[i32]: arithmetic on it proves
+    # the column type descended into the payload.
+    arms = "Option::Some(let x) => x + 1i32, Option::None => 0i32,"
+    _check_match(tmp_path, f"return match (o) {{ {arms} }};")
+
+
+@pytest.mark.parametrize(
+    "arms",
+    [
+        "Option::None => 0i32,",
+        # A literal leaves the payload column open, so a wildcard is still
+        # needed even though both variants are named.
+        "Option::Some(1i32) => 1i32, Option::None => 0i32,",
+    ],
+)
+def test_uncovered_payload_values_are_named(tmp_path, arms):
+    with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
+        _check_match(tmp_path, f"return match (o) {{ {arms} }};")
+    assert _witnesses(exc_info.value) == ["Option::Some(_)"]
+
+
+_NESTED = _UNIONS + "union Nested { N(Option[i32]) }\n"
+
+
+def _check_nested(tmp_path, arms: str) -> None:
+    util.build_ir_mod(
+        tmp_path, _NESTED + f"pub fn f(n: Nested) i32 {{ return match (n) {{ {arms} }}; }}"
+    )
+
+
+def test_nested_union_payload_is_exhausted_column_by_column(tmp_path):
+    _check_nested(tmp_path, "Nested::N(Option::Some(let x)) => x, Nested::N(Option::None) => 0i32,")
+
+
+def test_nested_union_payload_witness_names_both_levels(tmp_path):
+    with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
+        _check_nested(tmp_path, "Nested::N(Option::None) => 0i32,")
+    assert _witnesses(exc_info.value) == ["Nested::N(Option::Some(_))"]
+
+
+def _check_generic_nested(tmp_path, arms: str) -> None:
+    body = f"return match (r) {{ {arms} }};"
+    util.build_ir_mod(tmp_path, _UNIONS + f"pub fn g(r: Res[Option[i32], bool]) i32 {{ {body} }}")
+
+
+def test_generic_nested_union_payload_is_exhausted_column_by_column(tmp_path):
+    # The outer union's comptime argument is itself a generic union, so
+    # the inner column's payload type comes from two substitutions.
+    _check_generic_nested(
+        tmp_path,
+        "Res::Ok(Option::Some(let x)) => x,"
+        " Res::Ok(Option::None) => 0i32,"
+        " Res::Err(let b) => 1i32,",
+    )
+
+
+def test_generic_nested_union_witness_names_every_level(tmp_path):
+    with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
+        _check_generic_nested(tmp_path, "Res::Ok(Option::None) => 0i32, Res::Err(_) => 1i32,")
+    assert _witnesses(exc_info.value) == ["Res::Ok(Option::Some(_))"]
+
+
+def test_generic_nested_payload_binding_takes_the_innermost_typ(tmp_path):
+    # `x` must be the i32 inside Option, not the Option itself.
+    with pytest.raises(errors.MatchArmTypMismatchError):
+        _check_generic_nested(
+            tmp_path,
+            "Res::Ok(Option::Some(let x)) => x + 1i32,"
+            " Res::Ok(Option::None) => false,"
+            " Res::Err(_) => 1i32,",
+        )
+
+
+def test_binding_under_an_or_pattern_outranks_an_enum_payload(tmp_path):
+    # Bindings are rejected before an alternative is checked, so that
+    # checking never registers one it is about to reject. That makes this
+    # a BindingInOrPatternError rather than the payload-arity error the
+    # enum variant would otherwise give.
+    body = "return match (e) { E::A(let x) | E::B => 1i32, };"
+    with pytest.raises(errors.BindingInOrPatternError):
+        util.build_ir_mod(tmp_path, f"enum E {{ A, B }}\npub fn f(e: E) i32 {{ {body} }}")
+
+
+def test_unreachable_payload_arm_warns(tmp_path, monkeypatch):
+    monkeypatch.setattr(errors, "_errors", [])
+    monkeypatch.setattr(errors, "_error_level", errors.NOTE)
+    arms = "Option::Some(_) => 1i32, Option::Some(1i32) => 2i32, Option::None => 0i32,"
+    _check_match(tmp_path, f"return match (o) {{ {arms} }};")
+
+    assert [type(err) for err in errors.all_errors()] == [errors.UnreachableMatchArmWarning]
+
+
+@pytest.mark.parametrize(
+    "arm,got,expected",
+    [
+        ("Option::Some => 1i32", 0, 1),
+        ("Option::Some(_, _) => 1i32", 2, 1),
+        ("Option::None(_) => 1i32", 1, 0),
+    ],
+)
+def test_wrong_number_of_payload_patterns(tmp_path, arm, got, expected):
+    with pytest.raises(errors.WrongNumberOfPayloadPatternsError) as exc_info:
+        _check_match(tmp_path, f"return match (o) {{ {arm}, _ => 0i32, }};")
+
+    assert f"got {got}, expected {expected}" in str(exc_info.value)
+
+
+def test_variant_of_another_union_cannot_match(tmp_path):
+    with pytest.raises(errors.PatternTypMismatchError) as exc_info:
+        _check_match(tmp_path, "return match (o) { Res::Ok(_) => 1i32, _ => 0i32, };")
+
+    # The message sentence-cases its opening without touching the path.
+    assert 'Path pattern "Res::Ok"' in str(exc_info.value)
+
+
+def test_pattern_comptime_args_must_name_the_column_instance(tmp_path):
+    with pytest.raises(errors.PatternTypMismatchError) as exc_info:
+        _check_match(tmp_path, "return match (o) { Option[bool]::Some(_) => 1i32, _ => 0i32, };")
+
+    assert '"Option[bool]"' in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "arm",
+    [
+        # Under a payload, so the or-pattern's own alternatives are paths
+        # and only a walk to any depth finds this binding.
+        "Option::Some(let x) | Option::None => 1i32",
+        # An immediate alternative of the inner or-pattern.
+        "Option::Some(let x | 1i32) => 1i32",
+    ],
+)
+def test_binding_anywhere_under_an_or_pattern_is_rejected(tmp_path, arm):
+    with pytest.raises(errors.BindingInOrPatternError):
+        _check_match(tmp_path, f"return match (o) {{ {arm}, _ => 0i32, }};")
+
+
+def test_two_bindings_of_one_name_in_an_arm_are_rejected(tmp_path):
+    # Confirms existing behaviour rather than adding any: an arm's
+    # bindings all share one scope.
+    body = "return match (p) { Pair::Both(let x, let x) => x, };"
+    with pytest.raises(errors.DuplicateItemDefnError):
+        util.build_ir_mod(
+            tmp_path, f"union Pair {{ Both(i32, i32) }}\npub fn f(p: Pair) i32 {{ {body} }}"
+        )

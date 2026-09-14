@@ -63,28 +63,19 @@ def _match_arm_check_order(arms: Sequence[ast.MatchArm]) -> tuple[list[int], lis
     return fixed_indices, flexible_indices
 
 
-def _match_constructor_space(scrutinee_typ: typs.Typ) -> patterns.ConstructorSpace:
-    """Return the complete constructor space for a match scrutinee type."""
-    match scrutinee_typ:
-        case typs.EnumTyp():
-            constructors = [
-                patterns.VariantConstructor(
-                    discriminant,
-                    f"{scrutinee_typ.name}::{variant_name}",
-                )
-                for variant_name, discriminant in scrutinee_typ.variants.items()
-            ]
-            return patterns.ConstructorSpace.from_constructors(constructors, False)
-        case typs.BoolTyp():
-            return patterns.ConstructorSpace.from_constructors(
-                [patterns.BoolConstructor(False), patterns.BoolConstructor(True)],
-                False,
-            )
-        case typs.NeverTyp():
-            return patterns.ConstructorSpace.from_constructors([], False)
-        case _:
-            # All other current and future types have an open constructor space.
-            return patterns.ConstructorSpace.from_constructors([], True)
+def _reject_nested_bindings(pat: ast.PatternKind) -> None:
+    """Raise if a binding appears anywhere beneath an or-pattern alternative."""
+    match pat:
+        case ast.BindingPattern():
+            raise errors.BindingInOrPatternError(pat.span)
+        case ast.PathPattern():
+            for subpattern in pat.payload:
+                _reject_nested_bindings(subpattern)
+        case ast.OrPattern():
+            for alternative in pat.alternatives:
+                _reject_nested_bindings(alternative)
+        case ast.WildcardPattern() | ast.IntLitPattern() | ast.BoolLitPattern():
+            return
 
 
 def _callable_typ(typ: typs.Typ) -> Optional[typs.CallableTyp]:
@@ -291,7 +282,7 @@ class TypCheck:
     ) -> typs.Typ:
         scrutinee_typ = self._check_expr(match_ast.scrutinee, e, None)
         self.results._set_match_scrutinee_typ(match_ast, scrutinee_typ)
-        space = _match_constructor_space(scrutinee_typ)
+        space = self._match_constructor_space(scrutinee_typ, e)
 
         arm_envs: dict[int, ir_env.Env] = {}
         arm_patterns: list[patterns.PatternKind] = []
@@ -366,49 +357,49 @@ class TypCheck:
         return typs.VOID
 
     def _check_pattern(
-        self, pat: ast.PatternKind, scrutinee_typ: typs.Typ, e: ir_env.Env
+        self, pat: ast.PatternKind, column_typ: typs.Typ, e: ir_env.Env
     ) -> patterns.PatternKind:
         match pat:
             case ast.WildcardPattern():
                 return patterns.WildcardPattern()
             case ast.BindingPattern():
-                return self._check_binding_pattern(pat, scrutinee_typ, e)
+                return self._check_binding_pattern(pat, column_typ, e)
             case ast.IntLitPattern():
-                return self._check_int_lit_pattern(pat, scrutinee_typ)
+                return self._check_int_lit_pattern(pat, column_typ)
             case ast.BoolLitPattern():
-                return self._check_bool_lit_pattern(pat, scrutinee_typ)
+                return self._check_bool_lit_pattern(pat, column_typ)
             case ast.PathPattern():
-                return self._check_path_pattern(pat, scrutinee_typ, e)
+                return self._check_path_pattern(pat, column_typ, e)
             case ast.OrPattern():
-                return self._check_or_pattern(pat, scrutinee_typ, e)
+                return self._check_or_pattern(pat, column_typ, e)
 
     def _check_binding_pattern(
-        self, pat: ast.BindingPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
+        self, pat: ast.BindingPattern, column_typ: typs.Typ, e: ir_env.Env
     ) -> patterns.WildcardPattern:
-        if scrutinee_typ == typs.VOID:
+        if column_typ == typs.VOID:
             raise errors.VoidVarInitializerError(pat.span)
         mut = typs.Mutability.from_ast(pat.mut)
-        self.results._set_local_typ(pat, typs.PtrTyp.get_or_create(scrutinee_typ, mut))
+        self.results._set_local_typ(pat, typs.PtrTyp.get_or_create(column_typ, mut))
         if reserved.is_reserved(pat.ident.name):
             raise errors.ReservedNameError(pat.ident.name, pat.ident.span)
         e.add_var(pat.ident.name, pat)
         return patterns.WildcardPattern()
 
     def _check_int_lit_pattern(
-        self, pat: ast.IntLitPattern, scrutinee_typ: typs.Typ
+        self, pat: ast.IntLitPattern, column_typ: typs.Typ
     ) -> patterns.ConstructorPattern:
         lit_typ = self._infer_int_lit_typ(
             pat.lit,
-            scrutinee_typ if isinstance(scrutinee_typ, typs.IntTyp) else None,
+            column_typ if isinstance(column_typ, typs.IntTyp) else None,
         )
         value = -pat.lit.value if pat.negative else pat.lit.value
         if not lit_typ.fits(value):
             raise errors.IntLitOverflowError(value, lit_typ.name, pat.span)
-        if not isinstance(scrutinee_typ, typs.IntTyp) or lit_typ != scrutinee_typ:
+        if not isinstance(column_typ, typs.IntTyp) or lit_typ != column_typ:
             raise errors.PatternTypMismatchError(
                 pat.diag_str(),
                 lit_typ.name,
-                scrutinee_typ.name,
+                column_typ.name,
                 pat.span,
                 None,
             )
@@ -417,13 +408,13 @@ class TypCheck:
         return patterns.ConstructorPattern(constructor, ())
 
     def _check_bool_lit_pattern(
-        self, pat: ast.BoolLitPattern, scrutinee_typ: typs.Typ
+        self, pat: ast.BoolLitPattern, column_typ: typs.Typ
     ) -> patterns.ConstructorPattern:
-        if scrutinee_typ != typs.BOOL:
+        if column_typ != typs.BOOL:
             raise errors.PatternTypMismatchError(
                 pat.diag_str(),
                 typs.BOOL.name,
-                scrutinee_typ.name,
+                column_typ.name,
                 pat.span,
                 None,
             )
@@ -432,36 +423,135 @@ class TypCheck:
         return patterns.ConstructorPattern(constructor, ())
 
     def _check_path_pattern(
-        self, pat: ast.PathPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
+        self, pat: ast.PathPattern, column_typ: typs.Typ, e: ir_env.Env
     ) -> patterns.ConstructorPattern:
-        item = e.resolve_var(pat.path)
-        if not isinstance(item, ir_values.ComptimeEnum):
-            raise errors.NotAPatternError(pat.path.str(), pat.span)
+        match e.resolve_var(pat.path):
+            case ir_values.ComptimeEnum() as variant:
+                return self._check_enum_variant_pattern(pat, variant, column_typ)
+            case typs.UnionVariantRef() as ref:
+                return self._check_union_variant_pattern(pat, ref, column_typ, e)
+            case _:
+                raise errors.NotAPatternError(pat.path.str(), pat.span)
+
+    def _check_enum_variant_pattern(
+        self,
+        pat: ast.PathPattern,
+        variant: ir_values.ComptimeEnum,
+        column_typ: typs.Typ,
+    ) -> patterns.ConstructorPattern:
+        """Check an enum variant pattern, which carries no payload to destructure."""
         if pat.payload:
             raise errors.WrongNumberOfPayloadPatternsError(
                 pat.path.str(), pat.span, len(pat.payload), 0
             )
-        if item.typ != scrutinee_typ:
+        if variant.typ != column_typ:
             raise errors.PatternTypMismatchError(
                 pat.diag_str(),
-                item.typ.name,
-                scrutinee_typ.name,
+                variant.typ.name,
+                column_typ.name,
                 pat.span,
                 None,
             )
-        constructor = patterns.VariantConstructor(item.value, pat.path.str())
+        constructor = patterns.VariantConstructor(variant.value, pat.path.str())
         self.results._set_pattern_constructor(pat, constructor)
         return patterns.ConstructorPattern(constructor, ())
 
+    def _check_union_variant_pattern(
+        self,
+        pat: ast.PathPattern,
+        ref: typs.UnionVariantRef,
+        column_typ: typs.Typ,
+        e: ir_env.Env,
+    ) -> patterns.ConstructorPattern:
+        """Check a union variant pattern against the column it destructures.
+
+        Comptime arguments written on the pattern's own path are redundant,
+        since the column type already fixes the instance, but they are
+        checked to name that same instance.
+        """
+        if not isinstance(column_typ, typs.UnionTyp) or column_typ.template is not ref.template:
+            raise errors.PatternTypMismatchError(
+                pat.diag_str(), ref.owner.name, column_typ.name, pat.span, None
+            )
+        if isinstance(ref.owner, typs.UnionTyp) and ref.owner is not column_typ:
+            raise errors.PatternTypMismatchError(
+                pat.diag_str(), ref.owner.name, column_typ.name, pat.span, None
+            )
+
+        variant = column_typ.variant_at(ref.variant.index)
+        if len(pat.payload) != variant.arity:
+            raise errors.WrongNumberOfPayloadPatternsError(
+                pat.path.str(), pat.span, len(pat.payload), variant.arity
+            )
+        subpatterns = tuple(
+            self._check_pattern(subpattern, payload_typ, e)
+            for subpattern, payload_typ in zip(pat.payload, variant.payload_typs, strict=True)
+        )
+
+        constructor = self._union_variant_constructors(column_typ, e)[variant.index]
+        self.results._set_pattern_constructor(pat, constructor)
+        return patterns.ConstructorPattern(constructor, subpatterns)
+
     def _check_or_pattern(
-        self, pat: ast.OrPattern, scrutinee_typ: typs.Typ, e: ir_env.Env
+        self, pat: ast.OrPattern, column_typ: typs.Typ, e: ir_env.Env
     ) -> patterns.OrPattern:
         alternatives: list[patterns.PatternKind] = []
         for alternative in pat.alternatives:
-            if isinstance(alternative, ast.BindingPattern):
-                raise errors.BindingInOrPatternError(alternative.span)
-            alternatives.append(self._check_pattern(alternative, scrutinee_typ, e))
+            _reject_nested_bindings(alternative)
+            alternatives.append(self._check_pattern(alternative, column_typ, e))
         return patterns.OrPattern(tuple(alternatives))
+
+    def _union_variant_constructors(
+        self, union_typ: typs.UnionTyp, e: ir_env.Env
+    ) -> tuple[patterns.VariantConstructor, ...]:
+        """Return one constructor per variant, in declaration order."""
+        return e.ctx.union_variant_constructors(
+            union_typ, lambda: self._build_variant_constructors(union_typ, e)
+        )
+
+    def _build_variant_constructors(
+        self, union_typ: typs.UnionTyp, e: ir_env.Env
+    ) -> tuple[patterns.VariantConstructor, ...]:
+        return tuple(
+            patterns.VariantConstructor(
+                variant.index,
+                f"{union_typ.template.name}::{variant.name}",
+                field_spaces=tuple(
+                    self._match_constructor_space(payload_typ, e)
+                    for payload_typ in variant.payload_typs
+                ),
+            )
+            for variant in union_typ.variants
+        )
+
+    def _match_constructor_space(
+        self, column_typ: typs.Typ, e: ir_env.Env
+    ) -> patterns.ConstructorSpace:
+        """Return the complete constructor space for a match column's type."""
+        match column_typ:
+            case typs.EnumTyp():
+                constructors = [
+                    patterns.VariantConstructor(
+                        discriminant,
+                        f"{column_typ.name}::{variant_name}",
+                    )
+                    for variant_name, discriminant in column_typ.variants.items()
+                ]
+                return patterns.ConstructorSpace.from_constructors(constructors, False)
+            case typs.UnionTyp():
+                return patterns.ConstructorSpace.from_constructors(
+                    self._union_variant_constructors(column_typ, e), False
+                )
+            case typs.BoolTyp():
+                return patterns.ConstructorSpace.from_constructors(
+                    [patterns.BoolConstructor(False), patterns.BoolConstructor(True)],
+                    False,
+                )
+            case typs.NeverTyp():
+                return patterns.ConstructorSpace.from_constructors([], False)
+            case _:
+                # All other current and future types have an open constructor space.
+                return patterns.ConstructorSpace.from_constructors([], True)
 
     def _check_call_expr(
         self, call_ast: ast.CallExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]

@@ -11,6 +11,8 @@ import operator
 from collections.abc import Callable, Collection, Iterator, Sequence
 from typing import TYPE_CHECKING, Final, Optional, cast
 
+from leech import patterns
+
 if TYPE_CHECKING:
     from leech import ir_module, typs
 
@@ -58,6 +60,7 @@ class Ctx:
     _requested_struct_instances: Final[list[typs.StructTyp]]
     _union_instances: Final[_InstanceCache[typs.UnionTypTemplate, typs.UnionTyp]]
     _requested_union_instances: Final[list[typs.UnionTyp]]
+    _union_variant_constructors: Final[dict[typs.UnionTyp, tuple[patterns.VariantConstructor, ...]]]
     _cycle_stacks: Final[dict[CycleDomain, list[_CycleFrame]]]
     #: Source-declared comptime parameters in declaration order, used as an
     #: insertion-ordered set because one declaration may be interned twice.
@@ -70,6 +73,7 @@ class Ctx:
         self._requested_struct_instances = []
         self._union_instances = {}
         self._requested_union_instances = []
+        self._union_variant_constructors = {}
         self._cycle_stacks = {}
         self._declared_comptime_params = {}
 
@@ -227,6 +231,25 @@ class Ctx:
         deliberately does not return a snapshot.
         """
         return self._requested_union_instances
+
+    def union_variant_constructors(
+        self,
+        union_typ: typs.UnionTyp,
+        build: Callable[[], tuple[patterns.VariantConstructor, ...]],
+    ) -> tuple[patterns.VariantConstructor, ...]:
+        """Return ``union_typ``'s pattern constructors, calling ``build`` at most once.
+
+        Held here rather than by whichever body is being checked because
+        a constructor's sub-column spaces are built eagerly, so every
+        function matching one union would otherwise rebuild every space
+        its payloads can reach. The instances keying this are owned here
+        too, so the memo lasts exactly as long as they do.
+        """
+        cached = self._union_variant_constructors.get(union_typ)
+        if cached is None:
+            cached = build()
+            self._union_variant_constructors[union_typ] = cached
+        return cached
 
     @staticmethod
     def _cached_instance[OwnerT, InstanceT](

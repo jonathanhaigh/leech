@@ -1462,6 +1462,13 @@ class UnionVariantRef:
         """The variant's name, unqualified by its union."""
         return self.variant.name
 
+    @property
+    def template(self) -> UnionTypTemplate:
+        """The union declaration, whichever kind of owner the path established."""
+        if isinstance(self.owner, UnionTyp):
+            return self.owner.template
+        return self.owner
+
 
 class EnumTyp(Typ):
     """An enum type: a fixed, named set of integer discriminants backed by
