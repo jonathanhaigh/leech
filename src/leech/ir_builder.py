@@ -36,6 +36,32 @@ class _ExprContext(enum.Enum):
     VALUE = 1
 
 
+def _pattern_tests_anything(pattern_ast: ast.PatternKind) -> bool:
+    """Whether emitting this pattern's test produces any instruction at all."""
+    match pattern_ast:
+        case ast.WildcardPattern() | ast.BindingPattern():
+            return False
+        case ast.IntLitPattern() | ast.BoolLitPattern() | ast.PathPattern() | ast.OrPattern():
+            return True
+
+
+def _pattern_binds_anything(pattern_ast: ast.PatternKind) -> bool:
+    """Whether this pattern introduces a binding, at any depth."""
+    match pattern_ast:
+        case ast.BindingPattern():
+            return True
+        case ast.PathPattern():
+            return any(_pattern_binds_anything(sub) for sub in pattern_ast.payload)
+        case (
+            ast.WildcardPattern()
+            | ast.IntLitPattern()
+            | ast.BoolLitPattern()
+            # An or-pattern's alternatives cannot bind.
+            | ast.OrPattern()
+        ):
+            return False
+
+
 class CfgBuilder:
     """Lower one function body or module initializer to a control-flow graph.
 
@@ -352,7 +378,7 @@ class CfgBuilder:
         arm_results: dict[int, tuple[ir_values.Value, ir_values.BasicBlock, bool]] = {}
         for i, arm_ast in enumerate(match_ast.arms):
             self._set_position(arm_bbs[i])
-            self._build_match_binding(arm_ast.pattern, scrutinee_value)
+            self._build_match_bindings(arm_ast.pattern, scrutinee_value)
             arm_results[i] = self._build_if_arm(
                 arm_ast.body, arm_bbs[i], end_bb, _ExprContext.VALUE
             )
@@ -429,6 +455,8 @@ class CfgBuilder:
         match pattern_ast:
             case ast.WildcardPattern() | ast.BindingPattern():
                 return
+            case ast.PathPattern() if isinstance(value.typ, typs.UnionTyp):
+                self._emit_union_variant_test(pattern_ast, value, value.typ, fail_bb)
             case ast.IntLitPattern() | ast.BoolLitPattern() | ast.PathPattern():
                 constructor = self._typ_check_results.pattern_constructor(pattern_ast)
                 condition = self._build_match_compare(value, constructor, value.typ, pattern_ast)
@@ -437,6 +465,42 @@ class CfgBuilder:
                 self._set_position(cont_bb)
             case ast.OrPattern():
                 self._emit_or_pattern_test(pattern_ast, value, fail_bb)
+
+    def _emit_union_variant_test(
+        self,
+        pattern_ast: ast.PathPattern,
+        value: ir_values.Value,
+        union_typ: typs.UnionTyp,
+        fail_bb: ir_values.BasicBlock,
+    ) -> None:
+        """Test a union value's tag, then each payload column in turn.
+
+        Every payload test is emitted in a block the tag comparison
+        reaches, so a payload is only ever projected from the variant the
+        value actually holds.
+        """
+        variant_index = self._pattern_variant_index(pattern_ast)
+        tag = self._curr_bb.union_tag(value, pattern_ast)
+        constructor = self._typ_check_results.pattern_constructor(pattern_ast)
+        condition = self._build_match_compare(tag, constructor, union_typ.tag_typ, pattern_ast)
+        cont_bb = self._add_bb("match_cont")
+        self._cbranch(condition, cont_bb, fail_bb, pattern_ast)
+        self._set_position(cont_bb)
+
+        for field_index, subpattern in enumerate(pattern_ast.payload):
+            if not _pattern_tests_anything(subpattern):
+                continue
+            payload = self._curr_bb.union_payload(value, variant_index, field_index, subpattern)
+            comparison_value, _ = self._match_comparison_value(payload, payload.typ, subpattern)
+            self._emit_pattern_test(subpattern, comparison_value, fail_bb)
+
+    def _pattern_variant_index(self, pattern_ast: ast.PathPattern) -> int:
+        """The declaration index of the variant a union pattern names."""
+        constructor = asserts.checked_cast(
+            self._typ_check_results.pattern_constructor(pattern_ast),
+            patterns.VariantConstructor,
+        )
+        return constructor.discriminant
 
     def _emit_or_pattern_test(
         self,
@@ -457,15 +521,31 @@ class CfgBuilder:
             self._set_position(alt_fail_bb)
         self._set_position(cont_bb)
 
-    def _build_match_binding(self, pattern: ast.Pattern, scrutinee_value: ir_values.Value) -> None:
-        # One check covers every pattern kind: no pattern the checker
-        # accepts nests yet, and an or-pattern's alternatives are barred
-        # from binding.
-        if not isinstance(pattern, ast.BindingPattern):
-            return
-        alloca = self._local_alloca(pattern, pattern)
-        self._local_values[pattern] = alloca
-        self._curr_bb.store(scrutinee_value, alloca, pattern)
+    def _build_match_bindings(self, pattern_ast: ast.PatternKind, value: ir_values.Value) -> None:
+        """Store each binding a matched pattern introduces, from its own column."""
+        match pattern_ast:
+            case ast.BindingPattern():
+                alloca = self._local_alloca(pattern_ast, pattern_ast)
+                self._local_values[pattern_ast] = alloca
+                self._curr_bb.store(value, alloca, pattern_ast)
+            case ast.PathPattern():
+                # An enum variant, or a unit union variant, has nothing below it.
+                if not pattern_ast.payload:
+                    return
+                variant_index = self._pattern_variant_index(pattern_ast)
+                for field_index, subpattern in enumerate(pattern_ast.payload):
+                    if not _pattern_binds_anything(subpattern):
+                        continue
+                    payload = self._curr_bb.union_payload(
+                        value, variant_index, field_index, subpattern
+                    )
+                    self._build_match_bindings(subpattern, payload)
+            case ast.OrPattern():
+                # Bindings are barred anywhere below an or-pattern, so
+                # there is no need to know which alternative matched.
+                return
+            case ast.WildcardPattern() | ast.IntLitPattern() | ast.BoolLitPattern():
+                return
 
     def _build_while_expr(self, while_ast: ast.WhileExpr, _ctx: _ExprContext) -> ir_values.Value:
         cond_bb = self._add_bb("while_cond")

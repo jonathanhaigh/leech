@@ -878,3 +878,127 @@ def test_generic_body_lowers_the_substituted_union_instance(tmp_path):
     ]
     assert [instr.union_typ.name for instr in makes] == ["Option[i32]"]
     assert [instr.variant_index for instr in makes] == [1]
+
+
+def _comptime_int(mod, name: str) -> int:
+    return asserts.checked_cast(_mod_var_value(mod, name), ir_values.ComptimeInt).value
+
+
+def _match_let(tmp_path, scrutinee: str, arms: str, unions: str = _UNIONS):
+    """Evaluate a module-level `let` whose initializer matches ``scrutinee``."""
+    src = f"{unions}pub let answer = match ({scrutinee}) {{ {arms} }};"
+    return _comptime_int(util.build_ir_mod(tmp_path, src), "answer")
+
+
+def test_comptime_match_binds_a_payload(tmp_path):
+    arms = "Option::Some(let x) => x, Option::None => 0i32,"
+    assert _match_let(tmp_path, "Option::Some(7i32)", arms) == 7
+
+
+def test_comptime_match_takes_the_unit_variant(tmp_path):
+    arms = "Option::Some(let x) => x, Option::None => 5i32,"
+    assert _match_let(tmp_path, "Option[i32]::None", arms) == 5
+
+
+def test_comptime_match_binds_under_two_levels_of_payload(tmp_path):
+    arms = "Res::Ok(Option::Some(let x)) => x, Res::Ok(Option::None) => 1i32, Res::Err(_) => 2i32,"
+    scrutinee = "Res[Option[i32], bool]::Ok(Option::Some(3i32))"
+    assert _match_let(tmp_path, scrutinee, arms) == 3
+
+
+def test_comptime_match_or_pattern_inside_a_payload(tmp_path):
+    arms = "Option::Some(1i32 | 2i32) => 10i32, _ => 0i32,"
+    assert _match_let(tmp_path, "Option::Some(2i32)", arms) == 10
+
+
+def test_comptime_match_multi_payload_variant(tmp_path):
+    unions = "union Pair { Both(i32, i32) }\n"
+    arms = "Pair::Both(let a, let b) => a - b,"
+    assert _match_let(tmp_path, "Pair::Both(9i32, 4i32)", arms, unions) == 5
+
+
+def test_comptime_match_arm_reached_through_the_fall_through_chain(tmp_path):
+    unions = "union Three { A(i32), B(i32), C(i32) }\n"
+    arms = "Three::A(let x) => x, Three::B(let x) => x + 1i32, Three::C(let x) => x + 2i32,"
+    assert _match_let(tmp_path, "Three::C(1i32)", arms, unions) == 3
+
+
+def test_comptime_match_on_a_call_result(tmp_path):
+    unions = _UNIONS + "fn make() Option[i32] { return Option::Some(4i32); }\n"
+    arms = "Option::Some(let x) => x, Option::None => 0i32,"
+    assert _match_let(tmp_path, "make()", arms, unions) == 4
+
+
+@pytest.mark.parametrize(
+    "scrutinee,arms",
+    [
+        # The payload literal must not be tested against a None value: the
+        # interpreter has nothing to project from the variant it does not hold.
+        ("Option[i32]::None", "Option::Some(1i32) => 1i32, _ => 0i32,"),
+        (
+            "Res[Option[i32], bool]::Err(true)",
+            "Res::Ok(Option::Some(1i32)) => 1i32, _ => 0i32,",
+        ),
+        (
+            "Res[Option[i32], bool]::Ok(Option::None)",
+            "Res::Ok(Option::Some(1i32)) => 1i32, _ => 0i32,",
+        ),
+    ],
+)
+def test_comptime_match_payload_tests_short_circuit(tmp_path, scrutinee, arms):
+    assert _match_let(tmp_path, scrutinee, arms) == 0
+
+
+def test_payload_projection_is_emitted_behind_the_tag_comparison(tmp_path):
+    # Structural, not just behavioural: the projection must land in a
+    # different block from the tag test that guards it.
+    mod = util.build_ir_mod(
+        tmp_path,
+        _UNIONS
+        + """pub fn f(o: Option[i32]) i32 {
+            return match (o) { Option::Some(1i32) => 1i32, _ => 0i32, };
+        }""",
+    )
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "f")
+    assert item is not None
+    cfg = asserts.checked_cast(item.value, ir_module.SrcFnSymbol).instantiate(()).cfg
+
+    tag_blocks = {
+        bb for bb in cfg.nodes for i in bb.instrs if isinstance(i, ir_values.UnionTagInstr)
+    }
+    payload_blocks = {
+        bb for bb in cfg.nodes for i in bb.instrs if isinstance(i, ir_values.UnionPayloadInstr)
+    }
+    assert tag_blocks
+    assert payload_blocks
+    assert not (tag_blocks & payload_blocks)
+
+
+def _payload_projections(tmp_path, arms: str) -> int:
+    """How many union_payload instructions lowering a match emits."""
+    mod = util.build_ir_mod(
+        tmp_path,
+        _UNIONS + f"pub fn f(o: Option[i32]) i32 {{ return match (o) {{ {arms} }}; }}",
+    )
+    item = mod.get_item(ir_env.Env.Namespace.VARS, "f")
+    assert item is not None
+    cfg = asserts.checked_cast(item.value, ir_module.SrcFnSymbol).instantiate(()).cfg
+    return sum(
+        1
+        for bb in cfg.nodes
+        for instr in bb.instrs
+        if isinstance(instr, ir_values.UnionPayloadInstr)
+    )
+
+
+@pytest.mark.parametrize(
+    "arms,projections",
+    [
+        # A payload nothing tests and nothing binds is never projected.
+        ("Option::Some(_) => 1i32, Option::None => 0i32,", 0),
+        ("Option::Some(let x) => x, Option::None => 0i32,", 1),
+        ("Option::Some(1i32) => 1i32, _ => 0i32,", 1),
+    ],
+)
+def test_payload_is_projected_only_where_it_is_used(tmp_path, arms, projections):
+    assert _payload_projections(tmp_path, arms) == projections
