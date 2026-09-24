@@ -1066,7 +1066,7 @@ def test_impl_on_generic_struct_target_qualified_path(tmp_path):
     a_src = """
     pub struct Pair[T] { val: T }
     """
-    with pytest.raises(errors.ImplForNonLocalStructTypError):
+    with pytest.raises(errors.ImplForNonLocalTypError):
         util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 

@@ -871,29 +871,55 @@ class PositionalElementInStructExprError(UserError):
         )
 
 
-class ImplForNonStructTypError(UserError):
-    """Raised when an ``impl`` block targets a non-struct type."""
+class ImplForNonNominalTypError(UserError):
+    """Raised when an ``impl`` block targets a type other than a struct or union."""
 
     def __init__(self, typ_diag: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
-            f'"impl" blocks are only supported for struct types, found {typ_diag}',
+            f'"impl" blocks are only supported for struct and union types, found {typ_diag}',
             span,
         )
 
 
-class ImplForNonLocalStructTypError(UserError):
-    """Raised when an ``impl`` block targets a struct defined in another module."""
+class ImplForNonLocalTypError(UserError):
+    """Raised when an ``impl`` block targets a type defined in another module."""
 
     def __init__(self, typ_diag: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
             (
-                '"impl" blocks are only supported for structs defined in the'
+                '"impl" blocks are only supported for types defined in the'
                 f" same module, found {typ_diag}"
             ),
             span,
         )
+
+
+class FnNameClashesWithUnionVariantError(UserError):
+    """Raised when an inherent function takes the name of one of the union's variants."""
+
+    def __init__(
+        self,
+        fn_name: str,
+        union_name: str,
+        fn_span: Optional[src.SrcSpan],
+        variant_span: Optional[src.SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Associated function "{fn_name}" has the same name as a variant of union'
+            f' "{union_name}"',
+            fn_span,
+        )
+        self._add_extra(
+            NOTE,
+            f'A path into "{union_name}" names the variant, so "{union_name}::{fn_name}"'
+            " could not name this function",
+            None,
+        )
+        if variant_span is not None:
+            self._add_extra(NOTE, f'Variant "{fn_name}" declared here', variant_span)
 
 
 class ImplForNonTraitError(UserError):

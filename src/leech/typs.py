@@ -142,6 +142,11 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
                 unify(left_arg, right_arg)
                 for left_arg, right_arg in zip(left.comptime_args, right.comptime_args, strict=True)
             )
+        if isinstance(left, UnionTyp) and isinstance(right, UnionTyp):
+            return left.template is right.template and all(
+                unify(left_arg, right_arg)
+                for left_arg, right_arg in zip(left.comptime_args, right.comptime_args, strict=True)
+            )
         if isinstance(left, EnumBackingTyp) and isinstance(right, EnumBackingTyp):
             return unify(left.inner, right.inner)
         return False

@@ -899,24 +899,49 @@ class Mod:
     ) -> None:
         """Build one inherent ``impl SomeStruct { ... }`` block's associated functions.
 
-        Rejects ``impl_ast.typ`` if it doesn't name a struct type defined
-        in this module.
+        Rejects ``impl_ast.typ`` if it doesn't name a struct or union type
+        defined in this module.
         """
         impl_typ_ast = impl_ast.typ
         if not isinstance(impl_typ_ast, ast.BasicTyp):
-            raise errors.ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+            raise errors.ImplForNonNominalTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         typ = typs.Typ.from_ast(impl_typ_ast, impl_env)
-        if not isinstance(typ, typs.StructTyp):
-            raise errors.ImplForNonStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+        if not isinstance(typ, typs.StructTyp | typs.UnionTyp):
+            raise errors.ImplForNonNominalTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
 
         if len(impl_typ_ast.path.segs) > 1:
-            raise errors.ImplForNonLocalStructTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+            raise errors.ImplForNonLocalTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+
+        if isinstance(typ, typs.UnionTyp):
+            self._check_no_variant_name_clash(impl_ast, typ)
 
         impl = ir_traits.Impl(impl_ast, None, typ, impl_comptime_params, impl_env, self.name)
         impl.check_comptime_params_constrained()
         self.loader.impl_registry.add_impl(impl)
         self._build_impl_fn_symbols(impl_ast, impl, src_fn_symbols)
+
+    @staticmethod
+    def _check_no_variant_name_clash(impl_ast: ast.ImplDefn, typ: typs.UnionTyp) -> None:
+        """Reject an associated function named after one of the union's variants.
+
+        A path into a union resolves a variant before an associated
+        function, so the variant takes the `U::f` spelling. A function
+        without a receiver is then unnameable outright; a method keeps
+        its dot-call but loses the explicit path form, which is meant to
+        be equivalent to it. Rust allows the clash and lets the variant
+        win, leaving the function unreachable; rejecting it here means
+        that lookup order never has a tie to break.
+        """
+        for fn_defn in impl_ast.fn_defns:
+            variant = typ.template.variants.get(fn_defn.name.name)
+            if variant is not None:
+                raise errors.FnNameClashesWithUnionVariantError(
+                    fn_defn.name.name,
+                    typ.template.name,
+                    fn_defn.name.span,
+                    variant.ast.ident.span,
+                )
 
     def _build_trait_impl_defn(
         self,

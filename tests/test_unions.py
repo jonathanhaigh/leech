@@ -1221,3 +1221,231 @@ def test_imported_union_constant_pointing_at_a_private_global(tmp_path):
     }
     """
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+
+
+# --- Task 12: impl blocks on unions ---
+
+
+def test_inherent_method_on_generic_union_called_on_a_value(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    impl[T] Option[T] {
+        fn unwrap_or(*self, fallback: T) T {
+            return match (self.*) {
+                Option::Some(let x) => x,
+                Option::None => fallback,
+            };
+        }
+    }
+    pub fn main() i32 {
+        let some = Option::Some(7i32);
+        let none: Option[i32] = Option::None;
+        return some.unwrap_or(0i32) + none.unwrap_or(35i32) - 42i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_inherent_method_on_generic_union_called_through_a_pointer(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    impl[T] Option[T] {
+        fn is_some(*self) bool {
+            return match (self.*) {
+                Option::Some(_) => true,
+                Option::None => false,
+            };
+        }
+    }
+    pub fn main() i32 {
+        let some = Option::Some(1i32);
+        let none: Option[i32] = Option::None;
+        // The explicit path form passes the pointer receiver itself,
+        // where the dot form takes the address of a place for you.
+        let held = Option[i32]::is_some(&some);
+        let empty = Option[i32]::is_some(&none);
+        if (held and not empty and some.is_some()) { return 0; };
+        return 1;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_assoc_fn_on_a_union_reached_through_explicit_comptime_args(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    impl[T] Option[T] {
+        fn make(v: T) Option[T] { return Option::Some(v); }
+    }
+    pub fn main() i32 {
+        return match (Option[i32]::make(9i32)) {
+            Option::Some(let x) => x - 9i32,
+            Option::None => 1i32,
+        };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_trait_impl_for_a_union(tmp_path):
+    src = """
+    trait Code { fn code(*self) i32; }
+    union Option[T] { None, Some(T) }
+    impl[T] Code for Option[T] {
+        fn code(*self) i32 {
+            return match (self.*) {
+                Option::Some(_) => 0i32,
+                Option::None => 1i32,
+            };
+        }
+    }
+    pub fn main() i32 {
+        let some = Option::Some(1i32);
+        return some.code();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_overlapping_trait_impls_for_one_union_rejected(tmp_path):
+    src = """
+    trait Code { fn code(*self) i32; }
+    union Option[T] { None, Some(T) }
+    impl[T] Code for Option[T] {
+        fn code(*self) i32 { 0 }
+    }
+    impl Code for Option[i32] {
+        fn code(*self) i32 { 1 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ConflictingImplsError):
+        util.compile_str(tmp_path, src)
+
+
+def test_orphan_trait_impl_for_a_non_local_union_rejected(tmp_path):
+    a_src = """
+    pub trait Code { fn code(*self) i32; }
+    pub union Option[T] { None, Some(T) }
+    """
+    main_src = """
+    import a;
+    impl a::Code for a::Option[i32] {
+        fn code(*self) i32 { 0 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.OrphanImplError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+def test_foreign_trait_impl_for_a_local_union_is_not_an_orphan(tmp_path):
+    # The union is this module's own, which is what makes the impl
+    # allowed - the orphan rule needs either side to be local.
+    a_src = "pub trait Code { fn code(*self) i32; }"
+    main_src = """
+    import a;
+    union Option[T] { None, Some(T) }
+    impl[T] a::Code for Option[T] {
+        fn code(*self) i32 {
+            return match (self.*) {
+                Option::Some(_) => 0i32,
+                Option::None => 1i32,
+            };
+        }
+    }
+    pub fn main() i32 {
+        let some = Option::Some(1i32);
+        return some.code();
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+
+
+def test_inherent_impl_for_a_non_local_union_rejected(tmp_path):
+    a_src = "pub union Option[T] { None, Some(T) }"
+    main_src = """
+    import a;
+    impl a::Option[i32] {
+        fn f() i32 { 1 }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.ImplForNonLocalTypError):
+        util.compile_modules(tmp_path, main=main_src, a=a_src)
+
+
+@pytest.mark.parametrize(
+    "order",
+    (
+        "union U { A, B }\nimpl U { fn A() i32 { 1 } }",
+        "impl U { fn A() i32 { 1 } }\nunion U { A, B }",
+    ),
+    ids=("union-first", "impl-first"),
+)
+def test_assoc_fn_named_after_a_variant_rejected(order, tmp_path):
+    # A path into a union resolves a variant before an associated
+    # function, so either declaration order must be rejected rather than
+    # leaving the function unnameable.
+    src = f"""
+    {order}
+    pub fn main() i32 {{ return 0; }}
+    """
+    with pytest.raises(errors.FnNameClashesWithUnionVariantError):
+        util.compile_str(tmp_path, src)
+
+
+def test_assoc_fn_named_after_a_variant_of_a_generic_union_rejected(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    impl[T] Option[T] {
+        fn Some(v: T) Option[T] { return Option::Some(v); }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.FnNameClashesWithUnionVariantError):
+        util.compile_str(tmp_path, src)
+
+
+def test_assoc_fn_not_named_after_a_variant_is_accepted(tmp_path):
+    # The clash check must not reject a name merely near a variant's.
+    src = """
+    union U { A, B }
+    impl U { fn c() i32 { return 3i32; } }
+    pub fn main() i32 { return U::c() - 3i32; }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_trait_method_may_share_a_variant_name(tmp_path):
+    # The clash rule is about inherent functions only. A trait fixes its
+    # methods' names, so rejecting the overlap would bar the union from
+    # implementing the trait at all; the method is reached through the
+    # trait rather than by a path into the union, so nothing is shadowed.
+    src = """
+    trait Maker { fn Some(*self) i32; }
+    union U { Some(i32), None }
+    impl Maker for U {
+        fn Some(*self) i32 { return 0i32; }
+    }
+    pub fn main() i32 {
+        let u = U::Some(1i32);
+        return u.Some();
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_inherent_method_named_after_a_variant_rejected(tmp_path):
+    # A method keeps its dot-call when the variant takes its name, but
+    # loses the explicit path form that is meant to be equivalent to it:
+    # `U::Some(&u)` would build a variant instead of calling the method.
+    src = """
+    union U { Some(i32), None }
+    impl U {
+        fn Some(*self) i32 { return 0i32; }
+    }
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(errors.FnNameClashesWithUnionVariantError):
+        util.compile_str(tmp_path, src)

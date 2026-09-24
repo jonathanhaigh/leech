@@ -485,7 +485,7 @@ def test_impl_on_non_struct_typ(impl_typ, tmp_path):
     }}
     pub fn main() i32 {{ return 0; }}
     """
-    with pytest.raises(errors.ImplForNonStructTypError):
+    with pytest.raises(errors.ImplForNonNominalTypError):
         util.compile_str(tmp_path, src)
 
 
@@ -500,7 +500,7 @@ def test_impl_on_qualified_path_typ(tmp_path):
     a_src = """
     pub struct Foo {}
     """
-    with pytest.raises(errors.ImplForNonLocalStructTypError):
+    with pytest.raises(errors.ImplForNonLocalTypError):
         util.compile_modules(tmp_path, main=main_src, a=a_src)
 
 

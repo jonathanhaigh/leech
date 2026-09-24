@@ -168,8 +168,8 @@ class TraitApplication:
 
 
 def _is_local(item: Trait | typs.Typ, mod_name: str) -> bool:
-    """Return whether a nominal trait or struct belongs to ``mod_name``."""
-    if isinstance(item, Trait | typs.StructTyp):
+    """Return whether a nominal trait, struct or union belongs to ``mod_name``."""
+    if isinstance(item, Trait | typs.StructTyp | typs.UnionTyp):
         return item.mod_name == mod_name
     return False
 
@@ -328,10 +328,11 @@ class Impl:
 def _head_shape(typ: typs.Typ) -> Hashable:
     """A hashable key for ``typ``'s outer shape, ignoring its own parameters.
 
-    Struct instances share their declaration's shape; other types use
-    their Python class. This is only a pre-filter for structural matching.
+    Struct and union instances share their declaration's shape; other
+    types use their Python class. This is only a pre-filter for
+    structural matching.
     """
-    if isinstance(typ, typs.StructTyp):
+    if isinstance(typ, typs.StructTyp | typs.UnionTyp):
         return typ.template
     return type(typ)
 
