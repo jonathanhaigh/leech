@@ -835,3 +835,80 @@ pub fn main() i32 { return 0; }
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == util.find_pos(src, "U]")
+
+
+def test_non_exhaustive_match_over_a_union_message(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    pub fn main() i32 {
+        let o = Option::Some(1i32);
+        return match (o) { Option::None => 0i32, };
+    }
+    """
+    with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"match"' in msg
+    assert "not exhaustive" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "match (o)")
+
+    # The witness carries a payload column, which a wildcard stands for.
+    assert [note.message for note in exc_info.value.extra] == [
+        'Uncovered pattern "Option::Some(_)"',
+    ]
+    assert all(note.span is None for note in exc_info.value.extra)
+
+
+def test_wrong_number_of_payload_patterns_over_a_union_message(tmp_path):
+    src = """
+    union Pair { Both(i32, i32) }
+    pub fn main() i32 {
+        let p = Pair::Both(1i32, 2i32);
+        return match (p) {
+            Pair::Both(let x) => x,
+        };
+    }
+    """
+    with pytest.raises(errors.WrongNumberOfPayloadPatternsError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    assert exc_info.value.message.message == (
+        'Wrong number of payload patterns for variant "Pair::Both": got 1, expected 2'
+    )
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "Pair::Both(let x)")
+
+
+def test_infinite_size_union_message(tmp_path):
+    src = """
+    union Tree {
+        Leaf,
+        Node(i32, Tree),
+    }
+    pub fn main() i32 {
+        return 0;
+    }
+    """
+    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
+        util.compile_str(tmp_path, src)
+
+    msg = str(exc_info.value)
+    assert '"Tree"' in msg
+    assert "infinite size" in msg
+
+    span = exc_info.value.message.span
+    assert span is not None
+    assert (span.start_line, span.start_col) == util.find_pos(src, "union Tree")
+
+    assert len(exc_info.value.extra) == 1
+    (hop,) = exc_info.value.extra
+    assert hop.message == 'Payload 1 of variant "Node" of union "Tree" contains "Tree" by value'
+    assert hop.span is not None
+    # The hop points at the payload type itself, as a struct field hop
+    # points at the field rather than the struct.
+    assert (hop.span.start_line, hop.span.start_col) == util.find_pos(src, "Tree),")

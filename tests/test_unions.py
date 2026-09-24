@@ -1223,7 +1223,7 @@ def test_imported_union_constant_pointing_at_a_private_global(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
-# --- Task 12: impl blocks on unions ---
+# --- impl blocks on unions ---
 
 
 def test_inherent_method_on_generic_union_called_on_a_value(tmp_path):
@@ -1449,3 +1449,171 @@ def test_inherent_method_named_after_a_variant_rejected(tmp_path):
     """
     with pytest.raises(errors.FnNameClashesWithUnionVariantError):
         util.compile_str(tmp_path, src)
+
+
+# --- end-to-end runtime and comptime behaviour ---
+
+
+def test_unwrap_or_over_an_option(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    fn unwrap_or[T](o: Option[T], fallback: T) T {
+        return match (o) {
+            Option::Some(let x) => x,
+            Option::None => fallback,
+        };
+    }
+    pub fn main() i32 {
+        let some = Option::Some(40i32);
+        let none: Option[i32] = Option::None;
+        return unwrap_or(some, 0i32) + unwrap_or(none, 2i32) - 42i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_result_carrying_a_struct_payload(tmp_path):
+    src = """
+    struct Point { x: i32, y: i32 }
+    union Result[T, E] { Ok(T), Err(E) }
+    pub fn main() i32 {
+        let r: Result[Point, i32] = Result::Ok(Point { x: 3, y: 4 });
+        return match (r) {
+            Result::Ok(let p) => p.x * p.y - 12i32,
+            Result::Err(let e) => e,
+        };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_multi_payload_variant_read_back(tmp_path):
+    # Differently sized and aligned payload fields, each checked against
+    # the value put in - a wrong field offset would show up here.
+    src = """
+    union V { P(i8, i32, i64), Q }
+    pub fn main() i32 {
+        let v = V::P(1i8, 2i32, 3i64);
+        return match (v) {
+            V::P(let a, let b, let c) => {
+                if (a == 1i8 and b == 2i32 and c == 3i64) { 0i32 } else { 1i32 }
+            },
+            V::Q => 2i32,
+        };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_union_stored_in_a_struct_field(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    struct Holder { tag: i32, opt: Option[i64] }
+    pub fn main() i32 {
+        let h = Holder { tag: 7, opt: Option::Some(35i64) };
+        return match (h.opt) {
+            Option::Some(let x) => if (x == 35i64 and h.tag == 7i32) { 0i32 } else { 1i32 },
+            Option::None => 2i32,
+        };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_union_in_an_array(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    pub fn main() i32 {
+        let arr = array[Option[i32], 3]{
+            Option::Some(10i32),
+            Option::None,
+            Option::Some(32i32),
+        };
+        let mut total = 0i32;
+        let mut i = 0usize;
+        while (i < 3usize) {
+            let here = match (arr.[i]) {
+                Option::Some(let x) => x,
+                Option::None => 0i32,
+            };
+            total = total + here;
+            i = i + 1usize;
+        };
+        return total - 42i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_recursive_list_union_walked_to_a_length(tmp_path):
+    src = """
+    union List[T] { Nil, Cons(T, *List[T]) }
+    fn length[T](list: *List[T]) i32 {
+        let mut n = 0i32;
+        let mut cur = list;
+        while (true) {
+            cur = match (cur.*) {
+                List::Nil => { break; },
+                List::Cons(_, let rest) => rest,
+            };
+            n = n + 1i32;
+        };
+        return n;
+    }
+    pub fn main() i32 {
+        let nil: List[i32] = List::Nil;
+        let third = List::Cons(3i32, &nil);
+        let second = List::Cons(2i32, &third);
+        let first = List::Cons(1i32, &second);
+        return length(&first) - 3i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_zero_variant_union_is_lowered_but_uninhabited(tmp_path):
+    # Compile-only: Empty has no constructor, so there is no value to call
+    # absurd with. It must be `pub`, or mono would never force its body and
+    # the test would pass without lowering anything.
+    src = """
+    union Empty {}
+    pub fn absurd(e: Empty) i32 { return match (e) {}; }
+    pub fn main() i32 { return 0; }
+    """
+    ir_text = util.compile_str(tmp_path, src).read_text()
+    # A definition, not the declaration that carries the same spelling:
+    # the point is that the empty match was lowered, not that the symbol
+    # was named. Its one block falls straight through to `unreachable`,
+    # there being no arm to branch to.
+    assert 'define i32 @"main::absurd"' in ir_text
+    assert "unreachable" in ir_text
+
+
+def test_comptime_union_constant_read_at_runtime(tmp_path):
+    src = """
+    union Option[T] { None, Some(T) }
+    pub let G = Option::Some(1i32);
+    pub fn main() i32 {
+        return match (G) {
+            Option::Some(let x) => x - 1i32,
+            Option::None => 1i32,
+        };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_comptime_match_over_a_union_in_a_module_initializer(tmp_path):
+    # The initializer is folded by the interpreter, so the match itself
+    # never reaches codegen - only the integer it produces.
+    src = """
+    union Option[T] { None, Some(T) }
+    let x = match (Option::Some(42i32)) {
+        Option::Some(let v) => v,
+        Option::None => 0i32,
+    };
+    pub fn main() i32 {
+        return x - 42i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
