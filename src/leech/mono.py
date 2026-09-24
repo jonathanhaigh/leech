@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Discover concrete function and struct instances requested by one compilation.
+"""Discover concrete function, struct and union instances requested by one compilation.
 
 Function and struct instances are created on demand while type checking and lowering.
 Discovery drains the compilation context's live request logs; resolving one request may
@@ -17,22 +17,29 @@ from leech import ir_module, typs, visibility
 
 @dataclasses.dataclass(frozen=True)
 class MonoResult:
-    """Function definitions, imported declarations, and struct instances for one module."""
+    """Function definitions, imported declarations, and nominal type instances."""
 
     #: Instances whose bodies this module owns or specializes and must emit.
     fn_instances: tuple[ir_module.FnInstance, ...]
     #: Imported non-generic instances that need declarations but not bodies.
     imported_fn_instances: tuple[ir_module.FnInstance, ...]
     struct_instances: tuple[typs.StructTyp, ...]
+    union_instances: tuple[typs.UnionTyp, ...]
 
 
 def discover(mod: ir_module.Mod) -> MonoResult:
-    """Drain and resolve the compilation's concrete function and struct requests."""
-    # Fn instances first: forcing their bodies can request struct
-    # instantiations that only a subsequent struct-discovery pass would catch.
+    """Drain and resolve the compilation's concrete function, struct and union requests."""
+    # Fn instances first: forcing their bodies can request type
+    # instantiations that only a subsequent type-discovery pass would catch.
+    # That dependency runs one way, so one pass over functions is enough.
     fn_instances, imported_fn_instances = _discover_fn_instances(mod)
-    struct_instances = _discover_struct_instances(mod)
-    return MonoResult(tuple(fn_instances), tuple(imported_fn_instances), tuple(struct_instances))
+    struct_instances, union_instances = _discover_typ_instances(mod)
+    return MonoResult(
+        tuple(fn_instances),
+        tuple(imported_fn_instances),
+        tuple(struct_instances),
+        tuple(union_instances),
+    )
 
 
 def _is_imported_fn_instance(inst: ir_module.FnInstance, mod: ir_module.Mod) -> bool:
@@ -86,22 +93,42 @@ def _discover_fn_instances(
     return local, imported
 
 
-def _discover_struct_instances(mod: ir_module.Mod) -> list[typs.StructTyp]:
-    """Discover requested struct instances while draining the live request log.
+def _discover_typ_instances(
+    mod: ir_module.Mod,
+) -> tuple[list[typs.StructTyp], list[typs.UnionTyp]]:
+    """Drain the struct and union request logs to a joint fixed point.
 
-    Resolving fields can append further requests. Non-concrete instances created while
-    checking generic definitions are ignored. Returns every instantiation
-    discovered, in discovery order.
+    The two logs are mutually recursive: forcing a struct's fields can request a union,
+    and forcing that union's payloads can request a further struct. Draining one and then
+    the other would let the second append to the log the first had already finished with,
+    silently omitting a reachable instance, so each keeps its own cursor and they
+    alternate until neither advances. Non-concrete instances created while checking
+    generic definitions are ignored. Returns every instantiation discovered, in discovery
+    order.
     """
-    discovered = []
-    requests = mod.loader.ctx.requested_struct_instances()
-    cursor = 0
-    while cursor < len(requests):
-        inst = requests[cursor]
-        cursor += 1
-        if not inst.is_concrete():
-            continue
-        _ = inst.fields
-        discovered.append(inst)
+    ctx = mod.loader.ctx
+    struct_requests = ctx.requested_struct_instances()
+    union_requests = ctx.requested_union_instances()
+    structs: list[typs.StructTyp] = []
+    unions: list[typs.UnionTyp] = []
+    struct_cursor = 0
+    union_cursor = 0
 
-    return discovered
+    while struct_cursor < len(struct_requests) or union_cursor < len(union_requests):
+        while struct_cursor < len(struct_requests):
+            struct_inst = struct_requests[struct_cursor]
+            struct_cursor += 1
+            if not struct_inst.is_concrete():
+                continue
+            _ = struct_inst.fields
+            structs.append(struct_inst)
+        while union_cursor < len(union_requests):
+            union_inst = union_requests[union_cursor]
+            union_cursor += 1
+            if not union_inst.is_concrete():
+                continue
+            for variant in union_inst.variants:
+                _ = variant.payload_typs
+            unions.append(union_inst)
+
+    return structs, unions

@@ -4,9 +4,9 @@
 
 """Leech-type to LLVM-type mapping, shared by codegen and comptime evaluation.
 
-Deliberately depends on nothing beyond ``typs`` and ``llvmlite.ir``, so it can be imported
-from ``comptime.py`` (which runs during IR building, before ``codegen.py`` exists) without a
-circular import (``codegen.py`` -> ``ir_module.py`` -> ``comptime.py``).
+Deliberately depends on nothing beyond ``typs``, ``ll_layout`` and ``llvmlite.ir``, so it
+can be imported from ``comptime.py`` (which runs during IR building, before ``codegen.py``
+exists) without a circular import (``codegen.py`` -> ``ir_module.py`` -> ``comptime.py``).
 """
 
 import weakref
@@ -14,7 +14,7 @@ from typing import assert_never
 
 from llvmlite import ir as ll
 
-from leech import typs
+from leech import ll_layout, typs
 
 #: Struct qualified names currently having their body built, per llvmlite context. Building a
 #: struct's body means recursing into its field types, one of which may (through a pointer)
@@ -69,8 +69,7 @@ def ll_typ(ctx: ll.Context, typ: typs.TypKind) -> ll.Type:
         case typs.StructTyp():
             return _struct_ll_typ(ctx, typ)
         case typs.UnionTyp():
-            # A union has no LLVM layout yet, so nothing can ask for one.
-            raise NotImplementedError("union layout is not implemented yet")
+            return _union_ll_typ(ctx, typ)
         case typs.NeverTyp():
             raise AssertionError("a never-typed value shouldn't need an LLVM type")
         case typs.TypParamTyp():
@@ -84,6 +83,40 @@ def ll_typ(ctx: ll.Context, typ: typs.TypKind) -> ll.Type:
         case typs.EnumBackingTyp():
             raise AssertionError("an unresolved enum backing type has no LLVM representation")
     assert_never(typ)
+
+
+def union_payload_ll_typ(ctx: ll.Context, variant: typs.UnionVariant) -> ll.LiteralStructType:
+    """The literal struct a variant's payload is stored and read through.
+
+    An ordinary struct type, so LLVM computes the padding and offsets
+    between payload fields rather than this compiler doing it by hand.
+    """
+    return ll.LiteralStructType([ll_typ(ctx, typ) for typ in variant.payload_typs])
+
+
+def _union_ll_typ(ctx: ll.Context, typ: typs.UnionTyp) -> ll.Type:
+    ll_union = ctx.get_identified_type(typ.qualified_name)
+    if not ll_union.is_opaque:
+        return ll_union
+
+    building = _building.setdefault(ctx, set())
+    if typ.qualified_name in building:
+        return ll_union
+
+    building.add(typ.qualified_name)
+    try:
+        ll_union.set_body(ll_typ(ctx, typ.tag_typ), union_storage_ll_typ(ctx, typ))
+    finally:
+        building.discard(typ.qualified_name)
+    return ll_union
+
+
+def union_storage_ll_typ(ctx: ll.Context, typ: typs.UnionTyp) -> ll.Type:
+    """The field holding whichever of a union's variant payloads is live."""
+    return ll_layout.storage_typ(
+        [union_payload_ll_typ(ctx, variant) for variant in typ.variants if variant.payload_typs],
+        ctx,
+    )
 
 
 def _struct_ll_typ(ctx: ll.Context, typ: typs.StructTyp) -> ll.Type:

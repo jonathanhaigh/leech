@@ -6,7 +6,7 @@
 
 import collections
 import dataclasses
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Final, Optional, cast
 
 import networkx as nx
@@ -17,6 +17,7 @@ from leech import (
     ir_module,
     ir_traits,
     ir_values,
+    ll_layout,
     ll_typs,
     mono,
     naming,
@@ -27,12 +28,37 @@ from leech import (
 )
 
 
+def _contains_union(typ: typs.Typ) -> bool:
+    """Whether a union is reachable within ``typ`` without passing a pointer.
+
+    Which is exactly when a constant of ``typ`` cannot use ``typ``'s own
+    LLVM representation, since the union's bytes sit inline in whatever
+    contains it. A pointer ends the walk, holding an address rather than
+    those bytes, which is also what keeps this terminating: a by-value
+    cycle is rejected long before codegen.
+    """
+    match typ:
+        case typs.UnionTyp():
+            return True
+        case typs.StructTyp():
+            return any(_contains_union(field.typ) for field in typ.fields.values())
+        case typs.ArrayTyp():
+            return _contains_union(typ.element_typ)
+        case _:
+            return False
+
+
 def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: visibility.Access) -> None:
     """Set an LLVM global's linkage from a Leech access level."""
     if access == visibility.PRIVATE:
         ll_global.linkage = "private"
     else:
         asserts.assert_eq(access, visibility.PUBLIC)
+
+
+def _ll_typ_of(ll_value: ll.Value) -> ll.Type:
+    """An LLVM value's own type, which llvmlite sets per instance rather than declaring."""
+    return asserts.checked_cast(ll_value.type, ll.Type)  # type: ignore
 
 
 def _checked_builder_value(value: Optional[ll.Value]) -> ll.Value:
@@ -48,6 +74,9 @@ class Compiler:
     _ll_mod_items: Final[Compiler._LLItems]
     _tmp_name: Final[naming.VarNamer]
     _overflow_intrinsics: Final[dict[str, ll.Function]]
+    #: Raw globals, kept apart from the item values so a module variable
+    #: whose value is a bitcast can still take an initializer and linkage.
+    _mod_var_globals: Final[dict[ir_module.ModVar, ll.GlobalVariable]]
 
     class _LLItems:
         """A nested, lazily compiled mapping from Leech IR items to LLVM items."""
@@ -108,6 +137,7 @@ class Compiler:
         self._ll_mod_items = Compiler._LLItems(self)
         self._tmp_name = naming.VarNamer()
         self._overflow_intrinsics = {}
+        self._mod_var_globals = {}
 
     def compile(self) -> None:
         """Compile declarations before bodies and discover generic instances to a fixpoint.
@@ -119,11 +149,14 @@ class Compiler:
         self.ll_mod.data_layout = target.DATALAYOUT
 
         for item in self._program_items():
-            if isinstance(item.value, typs.StructTyp):
+            if isinstance(item.value, typs.StructTyp | typs.UnionTyp):
                 self._declare_mod_item(item)
 
         for item in self._program_items():
-            if not isinstance(item.value, typs.StructTyp | typs.StructTypTemplate):
+            if not isinstance(
+                item.value,
+                typs.StructTyp | typs.StructTypTemplate | typs.UnionTyp | typs.UnionTypTemplate,
+            ):
                 self._declare_mod_item(item)
 
         # A generic struct's own fields are never lowered - only an
@@ -140,14 +173,16 @@ class Compiler:
         # forcing it alone already forces (and catches duplicates in)
         # variants too.
         for item in self._program_items():
-            if isinstance(item.value, typs.StructTypTemplate):
+            if isinstance(item.value, typs.StructTypTemplate | typs.UnionTypTemplate):
                 item.value.validate_declaration()
             elif isinstance(item.value, typs.EnumTyp):
                 _ = item.value.backing_typ
 
         result = mono.discover(self._mod)
         for struct_inst in result.struct_instances:
-            self._declare_struct_instance(struct_inst)
+            self._declare_nominal_instance(struct_inst)
+        for union_inst in result.union_instances:
+            self._declare_nominal_instance(union_inst)
 
         for inst in result.fn_instances:
             self._declare_fn_instance(inst)
@@ -169,7 +204,7 @@ class Compiler:
                 if mod is self._mod or item.access == visibility.PUBLIC:
                     yield item
 
-    def _declare_struct_instance(self, inst: typs.StructTyp) -> None:
+    def _declare_nominal_instance(self, inst: typs.StructTyp | typs.UnionTyp) -> None:
         self._ll_mod_items.get(inst)
 
     def _ll_typ(self, typ: typs.TypKind) -> ll.Type:
@@ -187,9 +222,10 @@ class Compiler:
                 self._ll_mod_items.get(item.value)
             case typs.StructTypTemplate():
                 pass
-            case typs.UnionTyp() | typs.UnionTypTemplate():
-                # A union has no LLVM layout yet, so nothing can be declared for one.
-                raise NotImplementedError("union code generation is not implemented yet")
+            case typs.UnionTyp():
+                self._ll_mod_items.get(item.value)
+            case typs.UnionTypTemplate():
+                pass
             case typs.EnumTyp():
                 # No LLVM symbol of its own - it lowers directly to its
                 # backing integer type's, declared (if a builtin) already.
@@ -216,7 +252,8 @@ class Compiler:
             case typs.StructTypTemplate():
                 return None
             case typs.UnionTyp() | typs.UnionTypTemplate():
-                raise NotImplementedError("union code generation is not implemented yet")
+                # Already fully built by the earlier declare-types pass.
+                return None
             case typs.EnumTyp():
                 return None
             case ir_module.Mod():
@@ -229,18 +266,44 @@ class Compiler:
                 return None
 
     def _declare_mod_var(self, item: ir_module.ModItem, var: ir_module.ModVar) -> ll.Value:
-        ll_val = ll.GlobalVariable(
-            self.ll_mod,
-            self._ll_mod_items.get(var.typ.pointee_typ),
-            item.qualified_name,
-        )
-        self._ll_mod_items.set(var, ll_val)
+        """Declare a module variable's global, with the layout its initializer needs.
+
+        A constant reaching a union cannot use the union's own LLVM type,
+        so the global takes an ad-hoc one. Only that type is derived here,
+        never the constant: the constant is another module's to build when
+        the variable is imported, and building one would need globals this
+        pass has not reached.
+        """
+        declared_ll_typ = asserts.checked_cast(self._ll_mod_items.get(var.typ.pointee_typ), ll.Type)
+        ll_typ = self._target_layout_typ(var.initializer)
+        ll_val = ll.GlobalVariable(self.ll_mod, ll_typ, item.qualified_name)
+        self._mod_var_globals[var] = ll_val
         _set_linkage(ll_val, item.access)
+
+        if ll_typ == declared_ll_typ:
+            self._ll_mod_items.set(var, ll_val)
+            return ll_val
+
+        # A packed ad-hoc type has alignment 1, so the union's own
+        # requirement has to be stated. It comes from the declared outer
+        # type: a struct holding both an i128 and a weakly aligned union
+        # would otherwise take the union's figure and be under-aligned.
+        ll_val.align = self._align(declared_ll_typ)  # type: ignore
+        # Only the raw global can take an initializer or linkage, so the
+        # bitcast is registered as the value everything else consumes.
+        self._ll_mod_items.set(
+            var,
+            ll_val.bitcast(ll.PointerType(declared_ll_typ)),  # type: ignore
+        )
         return ll_val
 
     def _compile_mod_var(self, _item: ir_module.ModItem, var: ir_module.ModVar) -> None:
-        ll_init = self._ll_mod_items.get(var.initializer)
-        self._ll_mod_items.get(var).initializer = ll_init  # type: ignore
+        ll_val = self._mod_var_globals[var]
+        initializer = self._target_layout_constant(var.initializer)
+        # The global's type was derived without building this, so the two
+        # derivations have to agree about it.
+        asserts.assert_eq(str(_ll_typ_of(initializer)), str(ll_val.type.pointee))  # type: ignore
+        ll_val.initializer = initializer  # type: ignore
 
     def _declare_mod_fn(self, item: ir_module.ModItem, fn: ir_module.ExternFnSymbol) -> ll.Value:
         inst = fn.instantiate(())
@@ -426,8 +489,7 @@ class Compiler:
                 # relies on), so its size is already fully known here -
                 # no runtime computation needed.
                 ll_typ = asserts.checked_cast(self._ll_mod_items.get(instr.sized_typ), ll.Type)
-                size = ll_typ.get_abi_size(target.target_data(), context=self.ll_mod.context)
-                return ll.Constant(self._ll_mod_items.get(typs.USIZE), size)
+                return ll.Constant(self._ll_mod_items.get(typs.USIZE), self._size(ll_typ))
             case ir_values.PtrCastInstr():
                 return ctx.ll_builder.bitcast(  # type: ignore
                     ctx.ll_values.get(instr.operand), self._ll_mod_items.get(instr.target_typ)
@@ -450,12 +512,12 @@ class Compiler:
                     ctx.ll_values.get(instr.value),
                     instr.index.value,
                 )
-            case (
-                ir_values.UnionMakeInstr()
-                | ir_values.UnionTagInstr()
-                | ir_values.UnionPayloadInstr()
-            ):
-                raise NotImplementedError("union code generation is not implemented yet")
+            case ir_values.UnionTagInstr():
+                return ctx.ll_builder.extract_value(ctx.ll_values.get(instr.operand), 0)
+            case ir_values.UnionMakeInstr():
+                return self._compile_union_make(instr, ctx)
+            case ir_values.UnionPayloadInstr():
+                return self._compile_union_payload(instr, ctx)
             case ir_values.CallInstr():
                 ll_args = [ctx.ll_values.get(arg) for arg in instr.args]
                 return ctx.ll_builder.call(ctx.ll_values.get(instr.callee), ll_args)
@@ -478,6 +540,239 @@ class Compiler:
                 return ctx.ll_builder.ret(ctx.ll_values.get(instr.value))
             case ir_values.UnreachableInstr():
                 return ctx.ll_builder.unreachable()
+
+    def _union_tag_constant(self, union_typ: typs.UnionTyp, variant_index: int) -> ll.Constant:
+        return ll.Constant(self._ll_mod_items.get(union_typ.tag_typ), variant_index)
+
+    def _union_payload_ptr(
+        self,
+        storage: ll.Value,
+        union_typ: typs.UnionTyp,
+        variant_index: int,
+        ctx: Compiler._FnBuilderContext,
+    ) -> ll.Value:
+        """A pointer to ``storage``'s payload, viewed as this variant's own struct."""
+        payload_ll_typ = ll_typs.union_payload_ll_typ(
+            self.ll_mod.context, union_typ.variant_at(variant_index)
+        )
+        field_ptr = ctx.ll_builder.gep(
+            storage, [ll.Constant(ll.IntType(32), 0), ll.Constant(ll.IntType(32), 1)]
+        )
+        return ctx.ll_builder.bitcast(  # type: ignore
+            field_ptr, ll.PointerType(payload_ll_typ)
+        )
+
+    def _compile_union_make(
+        self, instr: ir_values.UnionMakeInstr, ctx: Compiler._FnBuilderContext
+    ) -> ll.Value:
+        union_ll_typ = self._ll_mod_items.get(instr.union_typ)
+        tag = self._union_tag_constant(instr.union_typ, instr.variant_index)
+        if not instr.values:
+            # Nothing to store, so the whole value is the tag in an
+            # otherwise undefined union.
+            undef = ll.Constant(union_ll_typ, ll.Undefined)
+            return ctx.ll_builder.insert_value(undef, tag, 0)
+
+        payload_ll_typ = ll_typs.union_payload_ll_typ(
+            self.ll_mod.context, instr.union_typ.variant_at(instr.variant_index)
+        )
+        payload: ll.Value = ll.Constant(payload_ll_typ, ll.Undefined)
+        for field_index, value in enumerate(instr.values):
+            payload = ctx.ll_builder.insert_value(payload, ctx.ll_values.get(value), field_index)
+
+        # The payload is built in registers, but reaching the union from it
+        # is a memory round trip: the storage field is [K x iA] and there
+        # is no value-level cast between two aggregate types, so the store
+        # and load are what reinterpret one as the other. SROA removes the
+        # traffic again.
+        storage = ctx.ll_builder.alloca(union_ll_typ)
+        ctx.ll_builder.store(
+            tag,
+            ctx.ll_builder.gep(
+                storage, [ll.Constant(ll.IntType(32), 0), ll.Constant(ll.IntType(32), 0)]
+            ),
+        )
+        ctx.ll_builder.store(
+            payload,
+            self._union_payload_ptr(storage, instr.union_typ, instr.variant_index, ctx),
+        )
+        return ctx.ll_builder.load(storage)
+
+    def _compile_union_payload(
+        self, instr: ir_values.UnionPayloadInstr, ctx: Compiler._FnBuilderContext
+    ) -> ll.Value:
+        union_typ = asserts.checked_cast(instr.operand.typ, typs.UnionTyp)
+        storage = ctx.ll_builder.alloca(self._ll_mod_items.get(union_typ))
+        ctx.ll_builder.store(ctx.ll_values.get(instr.operand), storage)
+        payload_ptr = self._union_payload_ptr(storage, union_typ, instr.variant_index, ctx)
+        field_ptr = ctx.ll_builder.gep(
+            payload_ptr,
+            [ll.Constant(ll.IntType(32), 0), ll.Constant(ll.IntType(32), instr.field_index)],
+        )
+        return ctx.ll_builder.load(field_ptr)
+
+    def _target_layout_constant(self, value: ir_values.ComptimeValue) -> ll.Value:
+        """Return ``value`` as a constant of a type the target's layout gives it.
+
+        A union cannot be a constant of its own LLVM type: that type holds
+        the payload as ``[K x iA]``, and a payload of pointers or mixed
+        fields has no expression as ``iA`` integers. Such a value gets a
+        padded stand-in reproducing the layout the running program uses,
+        and so does every aggregate containing one, because an aggregate
+        constant's element types are fixed by the aggregate's own type and
+        LLVM has no cast between one aggregate type and another.
+
+        The constant's own type is the one ``_target_layout_typ`` derives
+        for the same value, and always has the value's own ABI size.
+        """
+        if not _contains_union(value.typ):
+            # Nothing forces a stand-in, so this is the ordinary constant,
+            # built the one way every other constant is.
+            return asserts.checked_cast(self._ll_mod_items.get(value), ll.Value)
+        laid_out = self._target_layout_constant_inner(value)
+        original = asserts.checked_cast(self._ll_mod_items.get(value.typ), ll.Type)
+        asserts.assert_eq(self._size(_ll_typ_of(laid_out)), self._size(original))
+        return laid_out
+
+    def _target_layout_typ(self, value: ir_values.ComptimeValue) -> ll.Type:
+        """The type ``_target_layout_constant`` gives ``value``, without building it.
+
+        The two agree, but only this one can run during the declare pass.
+        A type follows from the value's shape - its types, and which
+        variant each union holds - while the constant needs its contents,
+        resolving each pointer to the global it names. A global's LLVM
+        type is fixed when it is constructed, and at that point the globals
+        a constant would reach may be declared later, may hold a function
+        not yet declared, or may be another module's private business.
+        """
+        if not _contains_union(value.typ):
+            return asserts.checked_cast(self._ll_mod_items.get(value.typ), ll.Type)
+        return self._target_layout_typ_inner(value)
+
+    def _target_layout_constant_inner(self, value: ir_values.ComptimeValue) -> ll.Value:
+        match value:
+            case ir_values.ComptimeUnion():
+                layout = self._union_layout(value)
+                consts: list[ll.Value] = [self._union_tag_constant(value.typ, value.variant_index)]
+                payload_ll_typ = self._union_payload_ll_typ(value)
+                if payload_ll_typ is not None:
+                    consts.append(self._target_layout_fields(value.payload, payload_ll_typ))
+                return layout.with_typs([_ll_typ_of(const) for const in consts]).constant(consts)
+            case ir_values.ComptimeStruct():
+                return self._target_layout_fields(
+                    [value.fields[name] for name in value.typ.fields],
+                    asserts.checked_cast(
+                        self._ll_mod_items.get(value.typ), ll.IdentifiedStructType
+                    ),
+                )
+            case ir_values.ComptimeArray():
+                array_ll_typ = asserts.checked_cast(self._ll_mod_items.get(value.typ), ll.ArrayType)
+                # Elements holding different variants have differing padded
+                # types, so this cannot stay an ArrayType; each is placed
+                # at its original stride instead.
+                elements = [self._target_layout_constant(elt) for elt in value.elements]
+                return (
+                    ll_layout.Layout.of_typ(array_ll_typ, self.ll_mod.context)
+                    .with_typs([_ll_typ_of(element) for element in elements])
+                    .constant(elements)
+                )
+            case _:
+                # The caller only gets here for a value whose type holds a
+                # union, and the three cases above are the only comptime
+                # values such a type can have. An undef could in principle
+                # have any type at all, but none can be written: every
+                # literal must supply all of its parts, and every `let` an
+                # initializer.
+                raise AssertionError(f"{value} has a union in its type but no parts to lay out")
+
+    def _target_layout_typ_inner(self, value: ir_values.ComptimeValue) -> ll.Type:
+        match value:
+            case ir_values.ComptimeUnion():
+                layout = self._union_layout(value)
+                part_typs = [layout.parts[0].typ]
+                payload_ll_typ = self._union_payload_ll_typ(value)
+                if payload_ll_typ is not None:
+                    part_typs.append(self._target_layout_fields_typ(value.payload, payload_ll_typ))
+                return layout.with_typs(part_typs).typ()
+            case ir_values.ComptimeStruct():
+                return self._target_layout_fields_typ(
+                    [value.fields[name] for name in value.typ.fields],
+                    asserts.checked_cast(
+                        self._ll_mod_items.get(value.typ), ll.IdentifiedStructType
+                    ),
+                )
+            case ir_values.ComptimeArray():
+                array_ll_typ = asserts.checked_cast(self._ll_mod_items.get(value.typ), ll.ArrayType)
+                # Every element has the array's element type, but each
+                # holds its own variant, so their padded types can still
+                # differ from one another.
+                element_typs = [self._target_layout_typ(elt) for elt in value.elements]
+                return (
+                    ll_layout.Layout.of_typ(array_ll_typ, self.ll_mod.context)
+                    .with_typs(element_typs)
+                    .typ()
+                )
+            case _:
+                # As in _target_layout_constant_inner: only an aggregate
+                # or a union itself has a type holding a union, since no
+                # source construct can leave a value undefined.
+                raise AssertionError(f"{value} has a union in its type but no parts to lay out")
+
+    def _union_payload_ll_typ(
+        self, value: ir_values.ComptimeUnion
+    ) -> Optional[ll.LiteralStructType]:
+        """The struct ``value``'s payload is read back through, if it has one.
+
+        The variant's ordinary unpacked struct, so a constant has to
+        reproduce its field offsets rather than invent its own.
+        """
+        if not value.payload:
+            return None
+        return ll_typs.union_payload_ll_typ(
+            self.ll_mod.context, value.typ.variant_at(value.variant_index)
+        )
+
+    def _union_layout(self, value: ir_values.ComptimeUnion) -> ll_layout.Layout:
+        """Where a union value's tag sits, and its payload when it has one.
+
+        A union's LLVM type is ``{tag, storage}``, so that type's own
+        layout already places both. All this narrows is the storage
+        field, to the payload the value actually holds - keeping the
+        offset storage gives it, which is aligned for the widest of every
+        variant's payloads rather than just this one's.
+        """
+        union_ll_typ = asserts.checked_cast(self._ll_mod_items.get(value.typ), ll.Type)
+        tag_ll_typ = asserts.checked_cast(self._ll_mod_items.get(value.typ.tag_typ), ll.Type)
+        return ll_layout.Layout.of_typ(union_ll_typ, self.ll_mod.context).with_typs(
+            (tag_ll_typ, self._union_payload_ll_typ(value))
+        )
+
+    def _target_layout_fields(
+        self,
+        values: Sequence[ir_values.ComptimeValue],
+        original: ll.LiteralStructType | ll.IdentifiedStructType,
+    ) -> ll.Value:
+        """Lay ``values`` out as ``original``'s fields, at ``original``'s offsets."""
+        fields = [self._target_layout_constant(value) for value in values]
+        return (
+            ll_layout.Layout.of_typ(original, self.ll_mod.context)
+            .with_typs([_ll_typ_of(field) for field in fields])
+            .constant(fields)
+        )
+
+    def _target_layout_fields_typ(
+        self,
+        values: Sequence[ir_values.ComptimeValue],
+        original: ll.LiteralStructType | ll.IdentifiedStructType,
+    ) -> ll.Type:
+        field_typs = [self._target_layout_typ(value) for value in values]
+        return ll_layout.Layout.of_typ(original, self.ll_mod.context).with_typs(field_typs).typ()
+
+    def _size(self, ll_typ: ll.Type) -> int:
+        return ll_layout.abi_size(ll_typ, self.ll_mod.context)
+
+    def _align(self, ll_typ: ll.Type) -> int:
+        return ll_layout.abi_align(ll_typ, self.ll_mod.context)
 
     def _compile_comptime_value(self, value: ir_values.ComptimeValue) -> ll.Value:
         match value:
@@ -516,7 +811,9 @@ class Compiler:
                 assert isinstance(base, ll.GlobalValue | ll.Constant)
                 return base.gep([zero, ll_index])
             case ir_values.ComptimeUnion():
-                raise NotImplementedError("union code generation is not implemented yet")
+                # Only _laid_out_constant can build one, since a union
+                # constant needs a type of its own.
+                raise AssertionError("a union constant needs its own laid-out LLVM type")
             case _:
                 # FnRefs are mapped during function declaration, before any
                 # initializer or body can request one, so they never reach this

@@ -352,3 +352,34 @@ def test_size_of_intrinsic_compiled_once_across_multiple_calls(tmp_path):
     ll_path = util.compile_str(tmp_path, src)
     ir_text = ll_path.read_text()
     assert ir_text.count('define linkonce_odr i64 @"__size_of[i32]"') == 1
+
+
+@pytest.mark.parametrize(
+    "decls,typ,expected_size",
+    [
+        # Unit-only: the tag alone, with a zero-length payload array.
+        ("union U { A, B }", "U", 1),
+        ("union U { A(i32) }", "U", 8),
+        # Mixed size: the widest payload decides, not the first.
+        ("union U { S(i32), L(i64) }", "U", 16),
+        # Mixed alignment: an i64 payload forces 8-byte alignment even
+        # though the widest payload by size is the pair.
+        ("union U { P(i32, i32), L(i64) }", "U", 16),
+        # A union nested in a struct: a byte-array payload would give the
+        # union alignment 1 and under-align it here.
+        ("union U { L(i64) }\nstruct S { a: i8, u: U }", "S", 24),
+    ],
+)
+def test_size_of_union_typs(tmp_path, decls, typ, expected_size):
+    # Confirmed against the real compiled-and-run output by hand, as with
+    # the struct sizes above.
+    src = f"""
+    {decls}
+    pub fn main() i32 {{
+        if (__size_of[{typ}]() == {expected_size}usize) {{
+            return 1;
+        }};
+        return 0;
+    }}
+    """
+    util.check_prog_output(tmp_path, src, "", 1)

@@ -13,6 +13,7 @@ from leech import (
     ir_env,
     ir_module,
     ir_values,
+    mono,
     parse,
     signage,
     typs,
@@ -1002,3 +1003,221 @@ def _payload_projections(tmp_path, arms: str) -> int:
 )
 def test_payload_is_projected_only_where_it_is_used(tmp_path, arms, projections):
     assert _payload_projections(tmp_path, arms) == projections
+
+
+_RUNTIME_UNIONS = """
+union U { I(i32), D(i64) }
+union Wrap { P(*i32) }
+struct Holder { a: i128, u: U, b: i32 }
+
+fn as_i(u: U) i32 { return match (u) { U::I(let x) => x, U::D(_) => 0i32, }; }
+fn as_d(u: U) i64 { return match (u) { U::D(let x) => x, U::I(_) => 0i64, }; }
+"""
+
+
+def test_union_round_trips_at_runtime(tmp_path):
+    src = (
+        _RUNTIME_UNIONS
+        + """
+    pub fn main() i32 {
+        let small = U::I(5i32);
+        let large = U::D(9i64);
+        if (as_i(small) != 5i32) { return 1i32; }
+        if (as_d(large) != 9i64) { return 2i32; }
+        return 0;
+    }
+    """
+    )
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_module_level_union_constants_read_back_at_runtime(tmp_path):
+    # A size check alone cannot see a wrong field offset or array stride,
+    # so the values are read back out of each constant.
+    src = (
+        _RUNTIME_UNIONS
+        + """
+    pub let plain = U::I(5i32);
+    pub let held = Holder { a: 1i128, u: U::D(9i64), b: 3i32 };
+    pub let arr = array[U, 2]{ U::I(1i32), U::D(2i64) };
+    pub let later = 42i32;
+    pub let ptr_bearing = Wrap::P(&later);
+
+    pub fn main() i32 {
+        if (as_i(plain) != 5i32) { return 1i32; }
+        if (held.a != 1i128) { return 2i32; }
+        if (as_d(held.u) != 9i64) { return 3i32; }
+        if (held.b != 3i32) { return 4i32; }
+        if (as_i(arr.[0usize]) != 1i32) { return 5i32; }
+        if (as_d(arr.[1usize]) != 2i64) { return 6i32; }
+        let p = match (ptr_bearing) { Wrap::P(let q) => q, };
+        if (p.* != 42i32) { return 7i32; }
+        return 0;
+    }
+    """
+    )
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_union_constant_pointing_at_a_later_module_variable(tmp_path):
+    # The global has to be declared out of source order, because lowering
+    # this constant needs the one it points at.
+    src = """
+    union Wrap { P(*i32) }
+    pub let ptr_first = Wrap::P(&later);
+    pub let later = 42i32;
+    pub fn main() i32 {
+        let p = match (ptr_first) { Wrap::P(let q) => q, };
+        return p.* - 42i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_module_level_union_global_has_its_typs_abi_size(tmp_path):
+    # The one place two independently built LLVM types must agree: the
+    # ad-hoc constant type and the union's own.
+    src = """
+    union U { I(i32), D(i64) }
+    pub let g = U::I(5i32);
+    pub fn main() i32 {
+        if (__size_of[U]() != 16usize) { return 1i32; }
+        return match (g) { U::I(let x) => x - 5i32, U::D(_) => 2i32, };
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_recursive_union_walks_at_runtime(tmp_path):
+    src = """
+    union List[T] { Nil, Cons(T, *List[T]) }
+    fn length(l: *List[i32]) i32 {
+        let mut count = 0i32;
+        let mut cur = l;
+        while (true) {
+            let next = match (cur.*) { List::Nil => cur, List::Cons(_, let tail) => tail, };
+            let done = match (cur.*) { List::Nil => true, List::Cons(_, _) => false, };
+            if (done) { return count; }
+            count = count + 1i32;
+            cur = next;
+        }
+        return count;
+    }
+    pub fn main() i32 {
+        let tail: List[i32] = List::Nil;
+        let mid = List::Cons(2i32, &tail);
+        let head = List::Cons(1i32, &mid);
+        return length(&head) - 2i32;
+    }
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def _discovered(tmp_path, src: str) -> tuple[list[str], list[str]]:
+    """The struct and union instances monomorphization finds, by name."""
+    mod = util.build_ir_mod(tmp_path, src)
+    result = mono.discover(mod)
+    return (
+        [inst.name for inst in result.struct_instances],
+        [inst.name for inst in result.union_instances],
+    )
+
+
+def test_discovery_finds_a_union_requested_by_a_struct_field(tmp_path):
+    structs, unions = _discovered(
+        tmp_path,
+        """
+        union Option[T] { None, Some(T) }
+        struct Box[T] { o: Option[T] }
+        pub fn main() i32 { let b = Box[i32] { o: Option::None }; return 0; }
+        """,
+    )
+    assert "Box[i32]" in structs
+    assert "Option[i32]" in unions
+
+
+def test_discovery_finds_a_struct_requested_by_a_union_payload(tmp_path):
+    structs, unions = _discovered(
+        tmp_path,
+        """
+        struct Pair[T] { a: T, b: T }
+        union Holder[T] { H(Pair[T]) }
+        pub fn main() i32 {
+            let h = Holder::H(Pair[i32] { a: 1i32, b: 2i32 });
+            return 0;
+        }
+        """,
+    )
+    assert "Holder[i32]" in unions
+    assert "Pair[i32]" in structs
+
+
+def test_discovery_alternates_along_a_struct_union_chain(tmp_path):
+    # struct -> union -> struct -> union, with only the head named in
+    # source and every link behind a pointer. The layout walk is itself
+    # transitive, so a by-value chain would be requested in one go; a
+    # pointer stops it, leaving each link to be requested while draining
+    # the other log after that log has already been finished with. A
+    # single pass over each finds only the first two.
+    structs, unions = _discovered(
+        tmp_path,
+        """
+        union Inner[T] { I(T) }
+        struct Middle[T] { i: *Inner[T] }
+        union Outer[T] { O(*Middle[T]) }
+        struct Top[T] { o: *Outer[T] }
+        pub fn take(t: Top[i32]) i32 { return 0; }
+        pub fn main() i32 { return 0; }
+        """,
+    )
+    assert structs == ["Top[i32]", "Middle[i32]"]
+    assert unions == ["Outer[i32]", "Inner[i32]"]
+
+
+@pytest.mark.parametrize(
+    "payload,args,reads",
+    [
+        # Fields needing padding between them: a packed payload would put
+        # the second field where the read path does not look for it.
+        ("i8, i32", "1i8, 22i32", [("a", "i8", "1i8"), ("b", "i32", "22i32")]),
+        ("i32, i64", "3i32, 44i64", [("a", "i32", "3i32"), ("b", "i64", "44i64")]),
+        ("bool, i64", "true, 55i64", [("b", "i64", "55i64")]),
+    ],
+)
+def test_module_level_constant_of_a_padded_payload_reads_back(tmp_path, payload, args, reads):
+    accessors = "".join(
+        f"fn get_{name}(v: V) {typ} {{ return match (v) {{ V::P(let a, let b) => {name}, }}; }}\n"
+        for name, typ, _expected in reads
+    )
+    checks = "".join(
+        f"    if (get_{name}(g) != {expected}) {{ return {i + 1}i32; }}\n"
+        for i, (name, _typ, expected) in enumerate(reads)
+    )
+    src = f"""
+    union V {{ P({payload}) }}
+    pub let g = V::P({args});
+    {accessors}
+    pub fn main() i32 {{
+{checks}        return 0;
+    }}
+    """
+    util.check_prog_output(tmp_path, src, "", 0)
+
+
+def test_imported_union_constant_pointing_at_a_private_global(tmp_path):
+    # The importing module needs the exported global's ad-hoc type but must
+    # not build its constant: doing so would reach a global that module
+    # keeps to itself.
+    a_src = """
+    pub union Wrap { P(*i32) }
+    let hidden = 42i32;
+    pub let exported = Wrap::P(&hidden);
+    """
+    main_src = """
+    import a;
+    pub fn main() i32 {
+        let p = match (a::exported) { a::Wrap::P(let q) => q, };
+        return p.* - 42i32;
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
