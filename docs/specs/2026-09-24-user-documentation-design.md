@@ -76,11 +76,13 @@ documented `std::io` build impossible with the existing CLI alone.
 
 Add `--module-name NAME` to the CLI and pass it to `compile_to_llvm_ir` as
 `qualified_name`; preserve the stem default. `NAME` consists of one or more valid Leech
-identifier segments separated by `::`; reserved Leech names are invalid segments. Reject
+identifier segments separated by `::`. The final segment, which an import binds, cannot
+be a reserved Leech name; intermediate filesystem path segments may be reserved. Reject
 empty or invalid names through argparse with its normal usage message and exit code 2.
-Use `reserved.is_reserved` as the source of truth; the implicit filename stem keeps its
-current behavior, including no new validation of reserved names. The Python
-`compile_to_ir` API keeps its existing contract. The option changes only symbol
+Parse the segments with Leech's Lark grammar and use `reserved.is_reserved` as the source
+of truth for the final segment. The implicit filename stem keeps its current behavior,
+including no new validation of reserved names. The Python `compile_to_ir` API keeps its
+existing contract. The option changes only symbol
 qualification, not import search paths or the output filename. A program entry point is
 emitted only when the root's module name and function name are both `main`; the source
 file must therefore be `main.leech` under the default, or be compiled with

@@ -99,6 +99,38 @@ def check_parse_fails(rule, src):
         print(tree)
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    (
+        ("math", ("math",)),
+        ("pkg::math", ("pkg", "math")),
+        # Reserved spellings are syntactically valid; callers decide whether a bound name
+        # may use one. A keyword can therefore be an intermediate filesystem component.
+        ("fn::array", ("fn", "array")),
+    ),
+)
+def test_parse_qualified_name(value, expected):
+    assert parse.parse_qualified_name(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "",
+        "::math",
+        "pkg::",
+        "pkg::::math",
+        "pkg-name",
+        "1pkg",
+        "pkg[bool]",
+        "pkg :: math",
+        "pkg // comment\n::math",
+    ),
+)
+def test_parse_invalid_qualified_name(value):
+    assert parse.parse_qualified_name(value) is None
+
+
 def test_comptime_args_attach_to_each_path_seg():
     check_parse(
         "expr",

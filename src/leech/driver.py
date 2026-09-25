@@ -9,7 +9,7 @@ import pathlib
 import sys
 from typing import Optional
 
-from leech import codegen, errors, ir_loader, ir_module, opt_util, src
+from leech import codegen, errors, ir_loader, ir_module, opt_util, parse, reserved, src
 
 
 def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir_module.Mod:
@@ -34,11 +34,24 @@ def compile_to_llvm_ir(file: src.SrcFile, qualified_name: Optional[str] = None) 
     return str(compiler.ll_mod) + "\n"
 
 
+def _parse_module_name(value: str) -> str:
+    segments = parse.parse_qualified_name(value)
+    if segments is None or reserved.is_reserved(segments[-1]):
+        raise argparse.ArgumentTypeError(f"invalid qualified module name: {value!r}")
+    return value
+
+
 def _parse_args() -> argparse.Namespace:
     """Parse arguments, defaulting the output to the input path with an ``.ll`` suffix."""
-    parser = argparse.ArgumentParser(prog="leechc", description="Leech compiler")
+    parser = argparse.ArgumentParser(prog="leech", description="Leech compiler")
     parser.add_argument("filename", help="source file", type=pathlib.Path)
     parser.add_argument("-o", help="output file", metavar="FILENAME", type=pathlib.Path)
+    parser.add_argument(
+        "--module-name",
+        help="qualified name used for emitted symbols (defaults to the source file stem)",
+        metavar="NAME",
+        type=_parse_module_name,
+    )
     args = parser.parse_args()
     if args.o is None:
         if args.filename.suffix != ".ll":
@@ -60,7 +73,7 @@ def run() -> None:
 
     output = ""
     try:
-        output = compile_to_llvm_ir(file)
+        output = compile_to_llvm_ir(file, args.module_name)
     except errors.UserError as err:
         errors.register_error(err)
 

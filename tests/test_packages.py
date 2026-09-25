@@ -42,6 +42,21 @@ def test_nested_import_resolves_subdirectory(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 7, **{"sub/helper": helper_src})
 
 
+def test_nested_import_allows_reserved_directory_name(tmp_path):
+    main_src = """
+    import array::helper;
+    pub fn main() i32 {
+        return helper::f();
+    }
+    """
+    helper_src = """
+    pub fn f() i32 {
+        return 7;
+    }
+    """
+    util.check_prog_output(tmp_path, main_src, "", 7, **{"array/helper": helper_src})
+
+
 def test_transitive_nested_import_resolves_relative_to_its_own_file(tmp_path):
     # a's own `import sub::helper;` must resolve relative to a's directory
     # (tmp_path/pkg), not the root's (tmp_path) - if it resolved relative

@@ -7,6 +7,7 @@
 import functools
 import pathlib
 from collections.abc import Iterable
+from typing import Optional
 
 import lark
 
@@ -41,6 +42,21 @@ def _describe_expected_tokens(parser: lark.Lark, names: Iterable[str]) -> list[s
         else:
             descriptions.add(name)
     return sorted(descriptions)
+
+
+def parse_qualified_name(value: str) -> Optional[tuple[str, ...]]:
+    """Parse a canonical ``::``-qualified identifier sequence."""
+    try:
+        tree = build_parser("qualified_name").parse(value)
+    except lark.UnexpectedInput:
+        return None
+
+    # Lark filters the anonymous separators. Rebuilding the name also rejects whitespace
+    # and comments that the source grammar ignores but a CLI symbol name must not contain.
+    segments = tuple(str(child) for child in tree.children)
+    if "::".join(segments) != value:
+        return None
+    return segments
 
 
 def parse_mod_ast(file: src.SrcFile) -> ast.Mod:

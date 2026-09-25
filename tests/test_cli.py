@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import pathlib
 import subprocess
 import sys
 
@@ -59,6 +60,108 @@ def test_cli_success_with_explicit_o(tmp_path):
 
     assert proc.returncode == errors.NOTE
     assert out_path.exists()
+
+
+def test_cli_defaults_module_name_to_source_stem(tmp_path):
+    src_path = tmp_path / "array.leech"
+    src_path.write_text("pub fn answer() i32 { return 42; }\n")
+
+    proc = run_cli(src_path)
+
+    assert proc.returncode == errors.NOTE
+    assert 'define i32 @"array::answer"' in src_path.with_suffix(".ll").read_text()
+
+
+def test_cli_accepts_explicit_qualified_module_name(tmp_path):
+    src_path = tmp_path / "math.leech"
+    src_path.write_text("pub fn answer() i32 { return 42; }\n")
+    out_path = tmp_path / "math.ll"
+
+    proc = run_cli(src_path, "--module-name", "array::math", "-o", out_path)
+
+    assert proc.returncode == errors.NOTE
+    assert 'define i32 @"array::math::answer"' in out_path.read_text()
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    ("", "::math", "pkg::", "pkg::::math", "pkg-name", "1pkg", "fn", "array", "pkg::i32"),
+)
+def test_cli_rejects_invalid_module_name(tmp_path, module_name, monkeypatch, capsys):
+    src_path = tmp_path / "math.leech"
+    src_path.write_text("pub fn answer() i32 { return 42; }\n")
+    out_path = tmp_path / "math.ll"
+
+    code = run_leech_in_process(monkeypatch, src_path, "--module-name", module_name, "-o", out_path)
+
+    assert code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("usage: leech ")
+    assert "argument --module-name: invalid qualified module name" in captured.err
+    assert not out_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("filename", "module_name", "expected_symbol"),
+    (
+        ("main.leech", None, 'define i32 @"main"'),
+        ("app.leech", None, 'define i32 @"app::main"'),
+        ("app.leech", "main", 'define i32 @"main"'),
+    ),
+)
+def test_cli_module_name_controls_entry_symbol(tmp_path, filename, module_name, expected_symbol):
+    src_path = tmp_path / filename
+    src_path.write_text("pub fn main() i32 { return 0; }\n")
+    out_path = tmp_path / f"{src_path.stem}.ll"
+    args = [src_path, "-o", out_path]
+    if module_name is not None:
+        args.extend(("--module-name", module_name))
+
+    proc = run_cli(*args)
+
+    assert proc.returncode == errors.NOTE
+    assert expected_symbol in out_path.read_text()
+
+
+def test_cli_compiles_linkable_std_io_program(tmp_path):
+    main_path = tmp_path / "main.leech"
+    main_path.write_text(
+        """import std::io;
+pub fn main() i32 {
+    io::println("hello");
+    return 0;
+}
+"""
+    )
+    std_root = pathlib.Path(driver.__file__).parent / "std"
+    modules = (
+        (main_path, "main", tmp_path / "main.ll"),
+        (std_root / "io.leech", "std::io", tmp_path / "io.ll"),
+        (std_root / "prelude.leech", "prelude", tmp_path / "prelude.ll"),
+    )
+
+    for src_path, module_name, out_path in modules:
+        proc = run_cli(src_path, "--module-name", module_name, "-o", out_path)
+        assert proc.returncode == errors.NOTE
+        assert proc.stdout == ""
+        assert proc.stderr == ""
+
+    bitcode_path = tmp_path / "program.bc"
+    subprocess.run(
+        ["llvm-link", *(out_path for _, _, out_path in modules), "-o", bitcode_path],
+        check=True,
+    )
+    proc = subprocess.run(
+        ["lli", bitcode_path],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0
+    assert proc.stdout == "hello\n"
+    assert proc.stderr == ""
 
 
 def test_cli_ll_suffix_requires_explicit_o(tmp_path):

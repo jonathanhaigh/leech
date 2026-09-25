@@ -15,12 +15,17 @@ the later implementation, after manual approval and a separate instruction to im
 
 ## Task 1: Make separately compiled module names available from the CLI
 
-**Files:** `src/leech/driver.py`, `tests/test_cli.py`.
+**Files:** `src/leech/driver.py`, `src/leech/parse.py`, `src/leech/leech.lark`,
+`tests/test_cli.py`, `tests/test_parsing.py`, `tests/test_packages.py`,
+`docs/specs/2026-09-24-user-documentation-design.md`, and this plan.
 
-- Add `--module-name NAME`; validate nonempty, non-reserved Leech identifier segments
-  joined by `::`. Malformed values produce argparse usage text on stderr and exit code 2.
-  Use `reserved.is_reserved` rather than a second reserved-word list. Leave the implicit
-  filename-stem default unvalidated, preserving existing behavior even for unusual stems.
+- Add `--module-name NAME`; validate nonempty Leech identifier segments joined by `::`.
+  Reject a reserved final segment because that is the name an import binds; allow reserved
+  intermediate filesystem path segments. Malformed values produce argparse usage text on
+  stderr and exit code 2. Parse the identifier sequence with the existing Lark grammar and
+  use `reserved.is_reserved` rather than duplicating either language rule. Leave the
+  implicit filename-stem default unvalidated, preserving existing behavior even for
+  unusual stems.
   Preserve `-o` behavior and compiler diagnostics.
   Pass the chosen name through `compile_to_llvm_ir` without changing import resolution
   or the Python API. Set argparse's `prog` to the actual console-script name, `leech`.

@@ -211,6 +211,8 @@ var_expr: path
 path: path_seg ("::" path_seg)*
 path_seg: ident [comptime_args]
 ident: IDENT
+// CLI-only start rule for validating --module-name; not part of source syntax.
+qualified_name: IDENT ("::" IDENT)*
 
 INT_LIT: NONNEG_INT (("i"|"u") (POS_INT | "size"))?
 NONNEG_INT: POS_INT | "0"
