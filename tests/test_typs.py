@@ -285,8 +285,8 @@ def test_ptr_typ_name_matches_source_syntax(src, expected):
     assert typ.name == expected
 
 
-def test_typ_param_typ_interns_by_owner_and_index(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
+def test_typ_param_typ_interns_by_owner_and_index(compiler):
+    mod = compiler.parse("fn f[T, U](x: T, y: U) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -300,9 +300,8 @@ def test_typ_param_typ_interns_by_owner_and_index(tmp_path):
     assert t1.name == "U"
 
 
-def test_typ_param_typ_distinct_across_owners(tmp_path):
-    mod = util.parse_mod(
-        tmp_path,
+def test_typ_param_typ_distinct_across_owners(compiler):
+    mod = compiler.parse(
         """
         fn f[T](x: T) {}
         fn g[T](x: T) {}
@@ -318,8 +317,8 @@ def test_typ_param_typ_distinct_across_owners(tmp_path):
     assert t_f.name == t_g.name == "T"
 
 
-def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(tmp_path):
-    parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
+def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(compiler):
+    parsed_mod = compiler.parse("struct Box[T] { val: T }")
     (struct_ast,) = parsed_mod.defns
     assert isinstance(struct_ast, ast.StructDefn)
     first_ctx = compilation.Ctx()
@@ -341,8 +340,8 @@ def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(tmp_path
     assert tuple(second_ctx.requested_struct_instances()) == (second_instance,)
 
 
-def test_struct_validation_instance_is_cached_without_request(tmp_path):
-    parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
+def test_struct_validation_instance_is_cached_without_request(compiler):
+    parsed_mod = compiler.parse("struct Box[T] { val: T }")
     (struct_ast,) = parsed_mod.defns
     assert isinstance(struct_ast, ast.StructDefn)
     ctx = compilation.Ctx()
@@ -357,8 +356,8 @@ def test_struct_validation_instance_is_cached_without_request(tmp_path):
     assert tuple(ctx.requested_struct_instances()) == ()
 
 
-def test_struct_typ_rejects_global_typ_cache_construction(tmp_path):
-    parsed_mod = util.parse_mod(tmp_path, "struct Box[T] { val: T }")
+def test_struct_typ_rejects_global_typ_cache_construction(compiler):
+    parsed_mod = compiler.parse("struct Box[T] { val: T }")
     (struct_ast,) = parsed_mod.defns
     assert isinstance(struct_ast, ast.StructDefn)
     ctx = compilation.Ctx()
@@ -369,8 +368,8 @@ def test_struct_typ_rejects_global_typ_cache_construction(tmp_path):
         typs.StructTyp.get_or_create(template, (typs.I32,))
 
 
-def test_substitute_typ_params_replaces_mapped_typ_param(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+def test_substitute_typ_params_replaces_mapped_typ_param(compiler):
+    mod = compiler.parse("fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     t = typs.TypParamTyp.get_or_create(fn, 0, fn.comptime_params[0].ident.name)
@@ -378,8 +377,8 @@ def test_substitute_typ_params_replaces_mapped_typ_param(tmp_path):
     assert t.substitute_typ_params({t: typs.I32}) is typs.I32
 
 
-def test_substitute_typ_params_leaves_unmapped_typ_param_unchanged(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[T, U](x: T, y: U) {}")
+def test_substitute_typ_params_leaves_unmapped_typ_param_unchanged(compiler):
+    mod = compiler.parse("fn f[T, U](x: T, y: U) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     t = typs.TypParamTyp.get_or_create(fn, 0, fn.comptime_params[0].ident.name)
@@ -393,8 +392,8 @@ def test_substitute_typ_params_leaves_concrete_typ_unchanged():
     assert typs.BOOL.substitute_typ_params({}) is typs.BOOL
 
 
-def test_substitute_typ_params_recurses_through_composite_typs(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+def test_substitute_typ_params_recurses_through_composite_typs(compiler):
+    mod = compiler.parse("fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     t = typs.TypParamTyp.get_or_create(fn, 0, fn.comptime_params[0].ident.name)
@@ -428,8 +427,8 @@ def test_contains_typ_finds_structural_occurrences() -> None:
     assert not typs.contains_typ(array, typs.BOOL)
 
 
-def test_typs_overlap_fn_typs_symmetrically(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+def test_typs_overlap_fn_typs_symmetrically(compiler):
+    mod = compiler.parse("fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     t = typs.TypParamTyp.get_or_create(fn, 0, fn.comptime_params[0].ident.name)
@@ -442,8 +441,8 @@ def test_typs_overlap_fn_typs_symmetrically(tmp_path):
     )
 
 
-def test_typs_overlap_ptr_typs_symmetrically_and_distinguishes_mutability(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+def test_typs_overlap_ptr_typs_symmetrically_and_distinguishes_mutability(compiler):
+    mod = compiler.parse("fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     t = typs.TypParamTyp.get_or_create(fn, 0, fn.comptime_params[0].ident.name)
@@ -453,8 +452,8 @@ def test_typs_overlap_ptr_typs_symmetrically_and_distinguishes_mutability(tmp_pa
     _assert_typs_overlap_symmetric(generic, typs.PtrTyp.get_or_create(typs.I32, typs.MUT), False)
 
 
-def test_typs_overlap_array_typs_symmetrically_and_distinguishes_length(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+def test_typs_overlap_array_typs_symmetrically_and_distinguishes_length(compiler):
+    mod = compiler.parse("fn f[T](x: T) {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     t = typs.TypParamTyp.get_or_create(fn, 0, fn.comptime_params[0].ident.name)
@@ -464,8 +463,8 @@ def test_typs_overlap_array_typs_symmetrically_and_distinguishes_length(tmp_path
     _assert_typs_overlap_symmetric(generic, typs.ArrayTyp.of_length(typs.I32, 4), False)
 
 
-def test_typs_overlap_struct_typs_symmetrically_and_distinguishes_declaration(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "struct Pair[A, B] {}\nstruct Other[A, B] {}")
+def test_typs_overlap_struct_typs_symmetrically_and_distinguishes_declaration(compiler):
+    mod = compiler.build("struct Pair[A, B] {}\nstruct Other[A, B] {}")
     pair = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Pair")
     other = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Other")
     assert isinstance(pair, typs.StructTypTemplate)
@@ -484,14 +483,14 @@ def test_typs_overlap_struct_typs_symmetrically_and_distinguishes_declaration(tm
     )
 
 
-def test_typs_overlap_enum_backing_typs_symmetrically(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "enum E(u8) { A } enum F(u8) { A }")
+def test_typs_overlap_enum_backing_typs_symmetrically(compiler):
+    mod = compiler.build("enum E(u8) { A } enum F(u8) { A }")
     enum_e = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "E")
     enum_f = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "F")
     assert isinstance(enum_e, typs.EnumTyp)
     assert isinstance(enum_f, typs.EnumTyp)
 
-    parsed = util.parse_mod(tmp_path, "fn f[T](x: T) {}")
+    parsed = compiler.parse("fn f[T](x: T) {}")
     (fn,) = parsed.defns
     assert isinstance(fn, ast.FnDefn)
     t = typs.TypParamTyp.get_or_create(fn, 0, fn.comptime_params[0].ident.name)
@@ -560,8 +559,8 @@ def test_checked_value_rejects_a_non_comptime_value_typ():
         typs.ComptimeValueTyp.checked_value(typs.I32)
 
 
-def test_value_param_typ_interns_by_owner_and_index(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f() {}")
+def test_value_param_typ_interns_by_owner_and_index(compiler):
+    mod = compiler.parse("fn f() {}")
     (fn,) = mod.defns
     p0 = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)
     p0_again = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)
@@ -573,16 +572,16 @@ def test_value_param_typ_interns_by_owner_and_index(tmp_path):
     assert not p0.is_concrete()
 
 
-def test_typ_param_typ_and_value_param_typ_never_alias(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f() {}")
+def test_typ_param_typ_and_value_param_typ_never_alias(compiler):
+    mod = compiler.parse("fn f() {}")
     (fn,) = mod.defns
     type_param = typs.TypParamTyp.get_or_create(fn, 0, "T")
     value_param = typs.ValueParamTyp.get_or_create(fn, 0, "T", typs.USIZE)
     assert type_param is not value_param
 
 
-def test_value_param_typ_substitutes_to_comptime_value_typ(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f() {}")
+def test_value_param_typ_substitutes_to_comptime_value_typ(compiler):
+    mod = compiler.parse("fn f() {}")
     (fn,) = mod.defns
     p = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)
     four = typs.ComptimeValueTyp.get_or_create(typs.USIZE, 4)
@@ -604,8 +603,8 @@ def test_array_typ_of_length_wraps_comptime_value_typ():
     assert typs.ArrayTyp.of_length(typs.I32, 3) is typs.ArrayTyp.get_or_create(typs.I32, length)
 
 
-def test_array_typ_length_substitutes_value_param(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[value N: usize]() {}")
+def test_array_typ_length_substitutes_value_param(compiler):
+    mod = compiler.parse("fn f[value N: usize]() {}")
     (fn,) = mod.defns
     n = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)
     four = typs.ComptimeValueTyp.get_or_create(typs.USIZE, 4)
@@ -615,8 +614,8 @@ def test_array_typ_length_substitutes_value_param(tmp_path):
     assert symbolic.substitute_typ_params({n: four}) is typs.ArrayTyp.of_length(typs.I32, 4)
 
 
-def test_array_typ_infers_symbolic_length_from_actual(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[value N: usize]() {}")
+def test_array_typ_infers_symbolic_length_from_actual(compiler):
+    mod = compiler.parse("fn f[value N: usize]() {}")
     (fn,) = mod.defns
     n = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)
     declared = typs.ArrayTyp.get_or_create(typs.I32, n)
@@ -627,8 +626,8 @@ def test_array_typ_infers_symbolic_length_from_actual(tmp_path):
     assert bindings[n] is typs.ComptimeValueTyp.get_or_create(typs.USIZE, 4)
 
 
-def test_typs_overlap_treats_array_length_as_unifiable(tmp_path):
-    mod = util.parse_mod(tmp_path, "fn f[value N: usize]() {}")
+def test_typs_overlap_treats_array_length_as_unifiable(compiler):
+    mod = compiler.parse("fn f[value N: usize]() {}")
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     n = typs.ValueParamTyp.get_or_create(fn, 0, "N", typs.USIZE)

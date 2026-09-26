@@ -18,7 +18,7 @@ from leech import (
     typs,
 )
 from leech import src as leech_src
-from tests import util
+from tests import harness, util
 
 
 def _get_union_typ(mod, name: str) -> typs.UnionTyp:
@@ -35,11 +35,13 @@ def _get_union_template(mod, name: str) -> typs.UnionTypTemplate:
     return asserts.checked_cast(item.value, typs.UnionTypTemplate)
 
 
-def _build_with_imports(tmp_path, main_src: str, **modules: str):
+def _build_with_imports(
+    compiler: harness.CompilerHarness,
+    main_src: str,
+    *mods: harness.ModSrc,
+):
     """Build ``main_src`` into IR alongside sibling modules it can import."""
-    for name, mod_src in modules.items():
-        util.write_whole_file(tmp_path / f"{name}.leech", mod_src)
-    return util.build_ir_mod(tmp_path, main_src)
+    return compiler.build(harness.TestProgram.from_main(main_src, *mods))
 
 
 def _imported_union_template(mod, mod_name: str, name: str) -> typs.UnionTypTemplate:
@@ -48,32 +50,32 @@ def _imported_union_template(mod, mod_name: str, name: str) -> typs.UnionTypTemp
     return _get_union_template(asserts.checked_cast(imported.value, ir_module.Mod), name)
 
 
-def _path_of(tmp_path, expr_src: str) -> ast.Path:
+def _path_of(compiler: harness.CompilerHarness, expr_src: str) -> ast.Path:
     """Build the path an expression spells, as if written in ``main.leech``."""
-    file = leech_src.SrcFile(tmp_path / "main.leech")
+    file = leech_src.SrcFile(compiler.workspace / "main.leech")
     expr = ast.Expr.from_tree(file, parse.build_parser("expr").parse(expr_src))
     return asserts.checked_cast(expr, ast.VarExpr).path
 
 
-def _resolve_variant(mod, tmp_path, expr_src: str) -> typs.UnionVariantRef:
-    target = mod.env.resolve_var(_path_of(tmp_path, expr_src))
+def _resolve_variant(mod, compiler: harness.CompilerHarness, expr_src: str) -> typs.UnionVariantRef:
+    target = mod.env.resolve_var(_path_of(compiler, expr_src))
     return asserts.checked_cast(target, typs.UnionVariantRef)
 
 
 _UNIONS = "union Option[T] { None, Some(T) }\nunion Res[T, E] { Ok(T), Err(E) }\n"
 
 
-def _check_body(tmp_path, body: str, unions: str = _UNIONS):
+def _check_body(compiler, body: str, unions: str = _UNIONS):
     """Type-check a main body over the shared union declarations, without lowering."""
-    mod = util.build_ir_mod(tmp_path, f"{unions}pub fn main() i32 {{\n{body}\nreturn 0;\n}}")
+    mod = compiler.build(f"{unions}pub fn main() i32 {{\n{body}\nreturn 0;\n}}")
     item = mod.get_item(ir_env.Env.Namespace.VARS, "main")
     assert item is not None
     return asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
 
 
-def _check_match(tmp_path, body: str, unions: str = _UNIONS):
+def _check_match(compiler, body: str, unions: str = _UNIONS):
     """Type-check a function matching on an ``Option[i32]``, without lowering."""
-    mod = util.build_ir_mod(tmp_path, f"{unions}pub fn f(o: Option[i32]) i32 {{\n{body}\n}}")
+    mod = compiler.build(f"{unions}pub fn f(o: Option[i32]) i32 {{\n{body}\n}}")
     item = mod.get_item(ir_env.Env.Namespace.VARS, "f")
     assert item is not None
     return asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
@@ -92,9 +94,8 @@ def _variant_count_src(count: int) -> str:
     return f"union Wide {{ {variants} }}"
 
 
-def test_generic_and_non_generic_union_module_items_have_distinct_types(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_generic_and_non_generic_union_module_items_have_distinct_types(compiler):
+    mod = compiler.build(
         "union Option[T] { None, Some(T) }\nunion Flag { On, Off }",
     )
 
@@ -107,9 +108,8 @@ def test_generic_and_non_generic_union_module_items_have_distinct_types(tmp_path
     assert flag.template.name == "Flag"
 
 
-def test_union_variants_carry_declaration_order_and_arity(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_union_variants_carry_declaration_order_and_arity(compiler):
+    mod = compiler.build(
         "union Shape { Point, Line(i32, i32), Circle(i32) }",
     )
     shape = _get_union_typ(mod, "Shape")
@@ -125,8 +125,8 @@ def test_union_variants_carry_declaration_order_and_arity(tmp_path):
     assert shape.variant_at(1).template is shape.template.variants["Line"]
 
 
-def test_union_variant_templates_are_instance_independent(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+def test_union_variant_templates_are_instance_independent(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     template = _get_union_template(mod, "Option")
 
     assert list(template.variants) == ["None", "Some"]
@@ -136,8 +136,8 @@ def test_union_variant_templates_are_instance_independent(tmp_path):
     assert template.variants["Some"].arity == 1
 
 
-def test_union_payload_typs_resolve_against_comptime_args(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+def test_union_payload_typs_resolve_against_comptime_args(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     template = _get_union_template(mod, "Option")
 
     instance = template.instantiate((typs.I32,))
@@ -145,28 +145,27 @@ def test_union_payload_typs_resolve_against_comptime_args(tmp_path):
     assert instance.variant_at(0).payload_typs == ()
 
 
-def test_union_instances_are_cached_per_argument_list(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+def test_union_instances_are_cached_per_argument_list(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     template = _get_union_template(mod, "Option")
 
     assert template.instantiate((typs.I32,)) is template.instantiate((typs.I32,))
     assert template.instantiate((typs.I32,)) is not template.instantiate((typs.U8,))
 
 
-def test_union_names_render_comptime_args(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }\nunion Flag { On }")
+def test_union_names_render_comptime_args(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }\nunion Flag { On }")
     template = _get_union_template(mod, "Option")
 
     assert template.instantiate((typs.I32,)).name == "Option[i32]"
     assert _get_union_typ(mod, "Flag").name == "Flag"
 
 
-def test_union_qualified_name_qualifies_the_union_and_its_arguments(tmp_path):
+def test_union_qualified_name_qualifies_the_union_and_its_arguments(compiler):
     # Qualifying the arguments too is what keeps same-named unions from
     # different modules apart: Option[a::Foo] and Option[b::Foo] must not
     # arrive at one symbol.
-    mod = util.build_ir_mod(
-        tmp_path,
+    mod = compiler.build(
         "union Option[T] { None, Some(T) }\nstruct Foo {}\nunion Flag { On }",
     )
     foo = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Foo")
@@ -180,12 +179,12 @@ def test_union_qualified_name_qualifies_the_union_and_its_arguments(tmp_path):
     assert _get_union_typ(mod, "Flag").qualified_name == "main::Flag"
 
 
-def test_union_qualified_name_distinguishes_same_named_unions(tmp_path):
+def test_union_qualified_name_distinguishes_same_named_unions(compiler):
     mod = _build_with_imports(
-        tmp_path,
+        compiler,
         "import a;\nimport b;\npub fn main() i32 { return 0; }",
-        a="pub union Payload[T] { P(T) }",
-        b="pub union Payload[T] { P(T) }",
+        harness.ModSrc("a", "pub union Payload[T] { P(T) }"),
+        harness.ModSrc("b", "pub union Payload[T] { P(T) }"),
     )
     from_a = _imported_union_template(mod, "a", "Payload").instantiate((typs.I32,))
     from_b = _imported_union_template(mod, "b", "Payload").instantiate((typs.I32,))
@@ -196,14 +195,14 @@ def test_union_qualified_name_distinguishes_same_named_unions(tmp_path):
     assert from_a is not from_b
 
 
-def test_union_qualified_name_qualifies_its_arguments(tmp_path):
+def test_union_qualified_name_qualifies_its_arguments(compiler):
     # Qualifying the arguments too is what keeps one union instantiated
     # over two same-named types from different modules apart.
     mod = _build_with_imports(
-        tmp_path,
+        compiler,
         "import a;\nimport b;\npub fn main() i32 { return 0; }",
-        a="pub union Payload[T] { P(T) }\npub struct Foo {}",
-        b="pub struct Foo {}",
+        harness.ModSrc("a", "pub union Payload[T] { P(T) }\npub struct Foo {}"),
+        harness.ModSrc("b", "pub struct Foo {}"),
     )
     template = _imported_union_template(mod, "a", "Payload")
     foos = []
@@ -222,8 +221,8 @@ def test_union_qualified_name_qualifies_its_arguments(tmp_path):
     assert over_b.qualified_name == "a::Payload[b::Foo]"
 
 
-def test_union_variant_template_payload_typs_use_the_declarations_own_params(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union U[T, value N: usize] { A, B(array[T, N]) }")
+def test_union_variant_template_payload_typs_use_the_declarations_own_params(compiler):
+    mod = compiler.build("union U[T, value N: usize] { A, B(array[T, N]) }")
     template = _get_union_template(mod, "U")
 
     (payload,) = template.variants["B"].payload_typs
@@ -234,8 +233,8 @@ def test_union_variant_template_payload_typs_use_the_declarations_own_params(tmp
     assert template.variants["A"].payload_typs == ()
 
 
-def test_instantiating_a_union_records_a_request(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }\nunion Flag { On }")
+def test_instantiating_a_union_records_a_request(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }\nunion Flag { On }")
     template = _get_union_template(mod, "Option")
     ctx = mod.env.ctx
 
@@ -249,53 +248,52 @@ def test_instantiating_a_union_records_a_request(tmp_path):
     "count,width",
     [(0, 8), (1, 8), (2, 8), (256, 8), (257, 16)],
 )
-def test_union_tag_typ_is_the_narrowest_unsigned_fit(tmp_path, count, width):
-    mod = util.build_ir_mod(tmp_path, _variant_count_src(count))
+def test_union_tag_typ_is_the_narrowest_unsigned_fit(compiler, count, width):
+    mod = compiler.build(_variant_count_src(count))
     wide = _get_union_typ(mod, "Wide")
 
     assert wide.tag_typ == typs.IntTyp.get_or_create(width, signage.UNSIGNED)
 
 
-def test_duplicate_variant_in_union_defn_error(tmp_path):
+def test_duplicate_variant_in_union_defn_error(compiler):
     with pytest.raises(errors.DuplicateVariantInUnionDefnError):
-        util.build_ir_mod(tmp_path, "union U { A, A }")
+        compiler.build("union U { A, A }")
 
 
-def test_reserved_variant_name_error(tmp_path):
+def test_reserved_variant_name_error(compiler):
     with pytest.raises(errors.ReservedNameError):
-        util.build_ir_mod(tmp_path, "union U { match }")
+        compiler.build("union U { match }")
 
 
-def test_union_by_value_self_cycle_is_rejected(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Bad { A, B(Bad) }")
+def test_union_by_value_self_cycle_is_rejected(compiler):
+    mod = compiler.build("union Bad { A, B(Bad) }")
     with pytest.raises(errors.InfiniteSizeTypError):
         _ = _get_union_typ(mod, "Bad").variants
 
 
-def test_union_through_pointer_is_finite(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union List { Nil, Cons(i32, *List) }")
+def test_union_through_pointer_is_finite(compiler):
+    mod = compiler.build("union List { Nil, Cons(i32, *List) }")
     assert len(_get_union_typ(mod, "List").variants) == 2
 
 
-def test_union_through_array_element_is_rejected(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Bad { A, B(array[Bad, 1]) }")
+def test_union_through_array_element_is_rejected(compiler):
+    mod = compiler.build("union Bad { A, B(array[Bad, 1]) }")
     with pytest.raises(errors.InfiniteSizeTypError):
         _ = _get_union_typ(mod, "Bad").variants
 
 
-def test_union_and_struct_mutual_by_value_cycle_is_rejected(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_union_and_struct_mutual_by_value_cycle_is_rejected(compiler):
+    mod = compiler.build(
         "union U { A, B(S) }\nstruct S { u: U }",
     )
     with pytest.raises(errors.InfiniteSizeTypError):
         _ = _get_union_typ(mod, "U").variants
 
 
-def test_growing_generic_union_declaration_cycle_is_rejected(tmp_path):
+def test_growing_generic_union_declaration_cycle_is_rejected(compiler):
     # Every payload adds an array layer, so exact type identity never
     # repeats; the declaration still recurs with a growing argument.
-    mod = util.build_ir_mod(tmp_path, "union L[T] { Nil, Cons(L[array[T, 1]]) }")
+    mod = compiler.build("union L[T] { Nil, Cons(L[array[T, 1]]) }")
     with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
         _get_union_template(mod, "L").validate_declaration()
 
@@ -306,137 +304,135 @@ def test_growing_generic_union_declaration_cycle_is_rejected(tmp_path):
     )
 
 
-def test_growing_generic_union_cycle_through_a_struct_is_rejected(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_growing_generic_union_cycle_through_a_struct_is_rejected(compiler):
+    mod = compiler.build(
         "union U[T] { A, B(S[array[T, 1]]) }\nstruct S[T] { u: U[T] }",
     )
     with pytest.raises(errors.InfiniteSizeTypError):
         _get_union_template(mod, "U").validate_declaration()
 
 
-def test_cycle_growing_through_a_union_comptime_argument_is_rejected(tmp_path):
+def test_cycle_growing_through_a_union_comptime_argument_is_rejected(compiler):
     # The growth is the argument becoming a union, so detecting it needs
     # contains_typ to look inside a UnionTyp's own comptime arguments.
     # Without that the walk never recognises the repeat and recurses until
     # it exhausts the stack.
-    mod = util.build_ir_mod(tmp_path, "union L[T] { Nil, Cons(L[L[T]]) }")
+    mod = compiler.build("union L[T] { Nil, Cons(L[L[T]]) }")
     with pytest.raises(errors.InfiniteSizeTypError):
         _get_union_template(mod, "L").validate_declaration()
 
 
-def test_cycle_growing_through_a_union_argument_via_a_struct_is_rejected(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_cycle_growing_through_a_union_argument_via_a_struct_is_rejected(compiler):
+    mod = compiler.build(
         "union U[T] { A, B(S[T]) }\nstruct S[T] { u: U[U[T]] }",
     )
     with pytest.raises(errors.InfiniteSizeTypError):
         _get_union_template(mod, "U").validate_declaration()
 
 
-def test_generic_union_through_pointer_argument_is_finite(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union L[T] { Nil, Cons(T, *L[T]) }")
+def test_generic_union_through_pointer_argument_is_finite(compiler):
+    mod = compiler.build("union L[T] { Nil, Cons(T, *L[T]) }")
     _get_union_template(mod, "L").validate_declaration()
 
 
-def test_variant_resolves_against_an_unapplied_template(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+def test_variant_resolves_against_an_unapplied_template(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     template = _get_union_template(mod, "Option")
 
-    ref = _resolve_variant(mod, tmp_path, "Option::Some")
+    ref = _resolve_variant(mod, compiler, "Option::Some")
     assert ref.owner is template
     assert ref.variant is template.variants["Some"]
     assert ref.name == "Some"
 
 
-def test_variant_resolves_against_an_applied_instance(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+def test_variant_resolves_against_an_applied_instance(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     template = _get_union_template(mod, "Option")
 
-    ref = _resolve_variant(mod, tmp_path, "Option[i32]::Some")
+    ref = _resolve_variant(mod, compiler, "Option[i32]::Some")
     owner = asserts.checked_cast(ref.owner, typs.UnionTyp)
     assert owner is template.instantiate((typs.I32,))
     assert owner.comptime_args == (typs.I32,)
     assert ref.variant is template.variants["Some"]
 
 
-def test_variant_of_a_non_generic_union_resolves_against_its_instance(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Flag { On, Off }")
+def test_variant_of_a_non_generic_union_resolves_against_its_instance(compiler):
+    mod = compiler.build("union Flag { On, Off }")
     flag = _get_union_typ(mod, "Flag")
 
-    ref = _resolve_variant(mod, tmp_path, "Flag::Off")
+    ref = _resolve_variant(mod, compiler, "Flag::Off")
     assert ref.owner is flag
     assert ref.variant.index == 1
 
 
-def test_variant_resolves_through_a_module_path(tmp_path):
+def test_variant_resolves_through_a_module_path(compiler):
     mod = _build_with_imports(
-        tmp_path,
+        compiler,
         "import a;\npub fn main() i32 { return 0; }",
-        a="pub union Option[T] { None, Some(T) }",
+        harness.ModSrc("a", "pub union Option[T] { None, Some(T) }"),
     )
     template = _imported_union_template(mod, "a", "Option")
 
-    assert _resolve_variant(mod, tmp_path, "a::Option::Some").owner is template
-    applied = _resolve_variant(mod, tmp_path, "a::Option[i32]::Some")
+    assert _resolve_variant(mod, compiler, "a::Option::Some").owner is template
+    applied = _resolve_variant(mod, compiler, "a::Option[i32]::Some")
     assert asserts.checked_cast(applied.owner, typs.UnionTyp).comptime_args == (typs.I32,)
 
 
-def test_unknown_variant_name_is_not_found(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+def test_unknown_variant_name_is_not_found(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     with pytest.raises(errors.ItemNotFoundError):
-        _resolve_variant(mod, tmp_path, "Option::Nope")
+        _resolve_variant(mod, compiler, "Option::Nope")
 
 
-def test_private_unions_variant_is_inaccessible(tmp_path):
+def test_private_unions_variant_is_inaccessible(compiler):
     mod = _build_with_imports(
-        tmp_path,
+        compiler,
         "import a;\npub fn main() i32 { return 0; }",
-        a="union Option[T] { None, Some(T) }",
+        harness.ModSrc("a", "union Option[T] { None, Some(T) }"),
     )
     with pytest.raises(errors.PrivateItemAccessError):
-        _resolve_variant(mod, tmp_path, "a::Option::Some")
+        _resolve_variant(mod, compiler, "a::Option::Some")
 
 
 @pytest.mark.parametrize("expr", ["Option::Some[i32]", "Option[i32]::Some[i32]"])
-def test_comptime_args_on_a_variant_segment_are_rejected(tmp_path, expr):
+def test_comptime_args_on_a_variant_segment_are_rejected(compiler, expr):
     # The arguments belong to the union: `Option[i32]::Some` is how to
     # say what these are trying to say.
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
-        _resolve_variant(mod, tmp_path, expr)
+        _resolve_variant(mod, compiler, expr)
 
 
-def test_a_variant_cannot_qualify_a_further_path_segment(tmp_path):
+def test_a_variant_cannot_qualify_a_further_path_segment(compiler):
     # A mid-path segment resolves in the container namespace, where a
     # variant is invisible, so this fails the same way `Color::Red::x`
     # does for an enum rather than reaching a variant-specific check.
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     with pytest.raises(errors.ItemNotFoundError):
-        _resolve_variant(mod, tmp_path, "Option::Some::x")
+        _resolve_variant(mod, compiler, "Option::Some::x")
 
 
-def test_a_variant_is_not_reachable_in_the_container_namespace(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "union Option[T] { None, Some(T) }")
+def test_a_variant_is_not_reachable_in_the_container_namespace(compiler):
+    mod = compiler.build("union Option[T] { None, Some(T) }")
     with pytest.raises(errors.ItemNotFoundError):
-        mod.env.resolve_typ(_path_of(tmp_path, "Option::Some"))
+        mod.env.resolve_typ(_path_of(compiler, "Option::Some"))
 
 
-def test_variant_comptime_args_come_from_the_payload_argument(tmp_path):
-    results = _check_body(tmp_path, "let x = Option::Some(1i32);")
+def test_variant_comptime_args_come_from_the_payload_argument(compiler):
+    results = _check_body(compiler, "let x = Option::Some(1i32);")
     assert _constructions(results) == [("Option::Some", "Option[i32]", 1)]
 
 
-def test_variant_comptime_args_can_be_explicit(tmp_path):
-    results = _check_body(tmp_path, "let x = Option[bool]::Some(true);")
+def test_variant_comptime_args_can_be_explicit(compiler):
+    results = _check_body(compiler, "let x = Option[bool]::Some(true);")
     assert _constructions(results) == [("Option[bool]::Some", "Option[bool]", 1)]
 
 
-def test_explicit_comptime_args_beat_the_payload_argument(tmp_path):
+def test_explicit_comptime_args_beat_the_payload_argument(compiler):
     # The payload would infer Option[i32]; the path already said otherwise,
     # so the argument is checked against the spelled-out instance instead.
     with pytest.raises(errors.InvalidArgTypError):
-        _check_body(tmp_path, "let x = Option[bool]::Some(1i32);")
+        _check_body(compiler, "let x = Option[bool]::Some(1i32);")
 
 
 @pytest.mark.parametrize(
@@ -447,15 +443,14 @@ def test_explicit_comptime_args_beat_the_payload_argument(tmp_path):
         "let x = takes(Option::None);",
     ],
 )
-def test_unit_variant_infers_from_its_expected_type(tmp_path, body):
+def test_unit_variant_infers_from_its_expected_type(compiler, body):
     unions = _UNIONS + "fn takes(o: Option[i32]) i32 { return 0; }\n"
-    results = _check_body(tmp_path, body, unions)
+    results = _check_body(compiler, body, unions)
     assert ("Option::None", "Option[i32]", 0) in _constructions(results)
 
 
-def test_unit_variant_infers_from_a_return_type(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_unit_variant_infers_from_a_return_type(compiler):
+    mod = compiler.build(
         _UNIONS + "pub fn make() Option[i32] { return Option::None; }",
     )
     item = mod.get_item(ir_env.Env.Namespace.VARS, "make")
@@ -464,9 +459,8 @@ def test_unit_variant_infers_from_a_return_type(tmp_path):
     assert _constructions(results) == [("Option::None", "Option[i32]", 0)]
 
 
-def test_unit_variant_infers_from_a_block_tail_expression(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_unit_variant_infers_from_a_block_tail_expression(compiler):
+    mod = compiler.build(
         _UNIONS + "pub fn make() Option[i32] { Option::None }",
     )
     item = mod.get_item(ir_env.Env.Namespace.VARS, "make")
@@ -475,24 +469,24 @@ def test_unit_variant_infers_from_a_block_tail_expression(tmp_path):
     assert _constructions(results) == [("Option::None", "Option[i32]", 0)]
 
 
-def test_unit_variant_with_nothing_to_infer_from_is_rejected(tmp_path):
+def test_unit_variant_with_nothing_to_infer_from_is_rejected(compiler):
     with pytest.raises(errors.CannotInferComptimeArgError):
-        _check_body(tmp_path, "let x = Option::None;")
+        _check_body(compiler, "let x = Option::None;")
 
 
-def test_payload_variant_named_as_a_value_is_rejected(tmp_path):
+def test_payload_variant_named_as_a_value_is_rejected(compiler):
     with pytest.raises(errors.VariantConstructorNotAValueError):
-        _check_body(tmp_path, "let x = Option::Some;")
+        _check_body(compiler, "let x = Option::Some;")
 
 
-def test_payload_variant_addressed_is_rejected(tmp_path):
+def test_payload_variant_addressed_is_rejected(compiler):
     with pytest.raises(errors.VariantConstructorNotAValueError):
-        _check_body(tmp_path, "let x = &Option::Some;")
+        _check_body(compiler, "let x = &Option::Some;")
 
 
-def test_unit_variant_called_is_rejected(tmp_path):
+def test_unit_variant_called_is_rejected(compiler):
     with pytest.raises(errors.UnitVariantCalledError):
-        _check_body(tmp_path, "let x: Option[i32] = Option::None();")
+        _check_body(compiler, "let x: Option[i32] = Option::None();")
 
 
 @pytest.mark.parametrize(
@@ -506,23 +500,23 @@ def test_unit_variant_called_is_rejected(tmp_path):
         ("let x = Res::Ok(1i32, 2i32);", errors.TooManyArgsError),
     ],
 )
-def test_payload_arity_is_checked_before_inference(tmp_path, body, error):
+def test_payload_arity_is_checked_before_inference(compiler, body, error):
     # Neither the path nor an expected type fixes T here, so inference
     # would read the very arguments the call miscounts. Checking the count
     # first is what keeps this from becoming CannotInferComptimeArgError.
     with pytest.raises(error):
-        _check_body(tmp_path, body)
+        _check_body(compiler, body)
 
 
-def test_wrong_payload_typ_is_rejected(tmp_path):
+def test_wrong_payload_typ_is_rejected(compiler):
     with pytest.raises(errors.InvalidArgTypError):
-        _check_body(tmp_path, "let x: Option[bool] = Option::Some(1i32);")
+        _check_body(compiler, "let x: Option[bool] = Option::Some(1i32);")
 
 
-def test_partially_inferable_variant_names_the_unbound_parameter(tmp_path):
+def test_partially_inferable_variant_names_the_unbound_parameter(compiler):
     # Err(E) fixes E from its payload and leaves T with nothing to say.
     with pytest.raises(errors.CannotInferComptimeArgError) as exc_info:
-        _check_body(tmp_path, "let x = Res::Err(1i32);")
+        _check_body(compiler, "let x = Res::Err(1i32);")
 
     msg = str(exc_info.value)
     assert '"T"' in msg
@@ -537,21 +531,21 @@ def test_partially_inferable_variant_names_the_unbound_parameter(tmp_path):
         "let x: Res[bool, i32] = Res::Err(1i32);",
     ],
 )
-def test_partially_inferable_variant_is_fixed_by_the_missing_context(tmp_path, body):
-    results = _check_body(tmp_path, body)
+def test_partially_inferable_variant_is_fixed_by_the_missing_context(compiler, body):
+    results = _check_body(compiler, body)
     assert _constructions(results)[0][1] == "Res[bool, i32]"
 
 
-def test_peer_context_across_if_branches_is_not_inferred(tmp_path):
+def test_peer_context_across_if_branches_is_not_inferred(compiler):
     # Deferred, not accidental: the second branch is checked with no
     # expected type of its own, so it has nothing to infer T from.
     with pytest.raises(errors.CannotInferComptimeArgError):
-        _check_body(tmp_path, "let o = if (true) { Option::Some(1i32) } else { Option::None };")
+        _check_body(compiler, "let o = if (true) { Option::Some(1i32) } else { Option::None };")
 
 
-def test_peer_context_across_if_branches_works_when_annotated(tmp_path):
+def test_peer_context_across_if_branches_works_when_annotated(compiler):
     results = _check_body(
-        tmp_path,
+        compiler,
         "let o: Option[i32] = if (true) { Option::Some(1i32) } else { Option::None };",
     )
     assert sorted(_constructions(results)) == [
@@ -560,9 +554,9 @@ def test_peer_context_across_if_branches_works_when_annotated(tmp_path):
     ]
 
 
-def test_non_generic_union_variants_need_no_inference(tmp_path):
+def test_non_generic_union_variants_need_no_inference(compiler):
     results = _check_body(
-        tmp_path,
+        compiler,
         "let a = Flag::On; let b = Pair::Both(1i32, true);",
         "union Flag { On, Off }\nunion Pair { Both(i32, bool) }\n",
     )
@@ -589,15 +583,15 @@ def _witnesses(error) -> list[str]:
         "Option[i32]::Some(_) => 1i32, Option::None => 0i32,",
     ],
 )
-def test_exhaustive_union_matches(tmp_path, arms):
-    _check_match(tmp_path, f"return match (o) {{ {arms} }};")
+def test_exhaustive_union_matches(compiler, arms):
+    _check_match(compiler, f"return match (o) {{ {arms} }};")
 
 
-def test_payload_binding_takes_the_payload_typ(tmp_path):
+def test_payload_binding_takes_the_payload_typ(compiler):
     # The binding is an i32, not an Option[i32]: arithmetic on it proves
     # the column type descended into the payload.
     arms = "Option::Some(let x) => x + 1i32, Option::None => 0i32,"
-    _check_match(tmp_path, f"return match (o) {{ {arms} }};")
+    _check_match(compiler, f"return match (o) {{ {arms} }};")
 
 
 @pytest.mark.parametrize(
@@ -609,79 +603,77 @@ def test_payload_binding_takes_the_payload_typ(tmp_path):
         "Option::Some(1i32) => 1i32, Option::None => 0i32,",
     ],
 )
-def test_uncovered_payload_values_are_named(tmp_path, arms):
+def test_uncovered_payload_values_are_named(compiler, arms):
     with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
-        _check_match(tmp_path, f"return match (o) {{ {arms} }};")
+        _check_match(compiler, f"return match (o) {{ {arms} }};")
     assert _witnesses(exc_info.value) == ["Option::Some(_)"]
 
 
 _NESTED = _UNIONS + "union Nested { N(Option[i32]) }\n"
 
 
-def _check_nested(tmp_path, arms: str) -> None:
-    util.build_ir_mod(
-        tmp_path, _NESTED + f"pub fn f(n: Nested) i32 {{ return match (n) {{ {arms} }}; }}"
-    )
+def _check_nested(compiler, arms: str) -> None:
+    compiler.build(_NESTED + f"pub fn f(n: Nested) i32 {{ return match (n) {{ {arms} }}; }}")
 
 
-def test_nested_union_payload_is_exhausted_column_by_column(tmp_path):
-    _check_nested(tmp_path, "Nested::N(Option::Some(let x)) => x, Nested::N(Option::None) => 0i32,")
+def test_nested_union_payload_is_exhausted_column_by_column(compiler):
+    _check_nested(compiler, "Nested::N(Option::Some(let x)) => x, Nested::N(Option::None) => 0i32,")
 
 
-def test_nested_union_payload_witness_names_both_levels(tmp_path):
+def test_nested_union_payload_witness_names_both_levels(compiler):
     with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
-        _check_nested(tmp_path, "Nested::N(Option::None) => 0i32,")
+        _check_nested(compiler, "Nested::N(Option::None) => 0i32,")
     assert _witnesses(exc_info.value) == ["Nested::N(Option::Some(_))"]
 
 
-def _check_generic_nested(tmp_path, arms: str) -> None:
+def _check_generic_nested(compiler, arms: str) -> None:
     body = f"return match (r) {{ {arms} }};"
-    util.build_ir_mod(tmp_path, _UNIONS + f"pub fn g(r: Res[Option[i32], bool]) i32 {{ {body} }}")
+    compiler.build(_UNIONS + f"pub fn g(r: Res[Option[i32], bool]) i32 {{ {body} }}")
 
 
-def test_generic_nested_union_payload_is_exhausted_column_by_column(tmp_path):
+def test_generic_nested_union_payload_is_exhausted_column_by_column(compiler):
     # The outer union's comptime argument is itself a generic union, so
     # the inner column's payload type comes from two substitutions.
     _check_generic_nested(
-        tmp_path,
+        compiler,
         "Res::Ok(Option::Some(let x)) => x,"
         " Res::Ok(Option::None) => 0i32,"
         " Res::Err(let b) => 1i32,",
     )
 
 
-def test_generic_nested_union_witness_names_every_level(tmp_path):
+def test_generic_nested_union_witness_names_every_level(compiler):
     with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
-        _check_generic_nested(tmp_path, "Res::Ok(Option::None) => 0i32, Res::Err(_) => 1i32,")
+        _check_generic_nested(compiler, "Res::Ok(Option::None) => 0i32, Res::Err(_) => 1i32,")
     assert _witnesses(exc_info.value) == ["Res::Ok(Option::Some(_))"]
 
 
-def test_generic_nested_payload_binding_takes_the_innermost_typ(tmp_path):
+def test_generic_nested_payload_binding_takes_the_innermost_typ(compiler):
     # `x` must be the i32 inside Option, not the Option itself.
     with pytest.raises(errors.MatchArmTypMismatchError):
         _check_generic_nested(
-            tmp_path,
+            compiler,
             "Res::Ok(Option::Some(let x)) => x + 1i32,"
             " Res::Ok(Option::None) => false,"
             " Res::Err(_) => 1i32,",
         )
 
 
-def test_binding_under_an_or_pattern_outranks_an_enum_payload(tmp_path):
+def test_binding_under_an_or_pattern_outranks_an_enum_payload(compiler):
     # Bindings are rejected before an alternative is checked, so that
     # checking never registers one it is about to reject. That makes this
     # a BindingInOrPatternError rather than the payload-arity error the
     # enum variant would otherwise give.
     body = "return match (e) { E::A(let x) | E::B => 1i32, };"
     with pytest.raises(errors.BindingInOrPatternError):
-        util.build_ir_mod(tmp_path, f"enum E {{ A, B }}\npub fn f(e: E) i32 {{ {body} }}")
+        compiler.build(f"enum E {{ A, B }}\npub fn f(e: E) i32 {{ {body} }}")
 
 
-def test_unreachable_payload_arm_warns(tmp_path, monkeypatch):
+def test_unreachable_payload_arm_warns(compiler, monkeypatch):
     monkeypatch.setattr(errors, "_errors", [])
     monkeypatch.setattr(errors, "_error_level", errors.NOTE)
     arms = "Option::Some(_) => 1i32, Option::Some(1i32) => 2i32, Option::None => 0i32,"
-    _check_match(tmp_path, f"return match (o) {{ {arms} }};")
+    _check_match(compiler, f"return match (o) {{ {arms} }};")
 
     assert [type(err) for err in errors.all_errors()] == [errors.UnreachableMatchArmWarning]
 
@@ -694,24 +686,24 @@ def test_unreachable_payload_arm_warns(tmp_path, monkeypatch):
         ("Option::None(_) => 1i32", 1, 0),
     ],
 )
-def test_wrong_number_of_payload_patterns(tmp_path, arm, got, expected):
+def test_wrong_number_of_payload_patterns(compiler, arm, got, expected):
     with pytest.raises(errors.WrongNumberOfPayloadPatternsError) as exc_info:
-        _check_match(tmp_path, f"return match (o) {{ {arm}, _ => 0i32, }};")
+        _check_match(compiler, f"return match (o) {{ {arm}, _ => 0i32, }};")
 
     assert f"got {got}, expected {expected}" in str(exc_info.value)
 
 
-def test_variant_of_another_union_cannot_match(tmp_path):
+def test_variant_of_another_union_cannot_match(compiler):
     with pytest.raises(errors.PatternTypMismatchError) as exc_info:
-        _check_match(tmp_path, "return match (o) { Res::Ok(_) => 1i32, _ => 0i32, };")
+        _check_match(compiler, "return match (o) { Res::Ok(_) => 1i32, _ => 0i32, };")
 
     # The message sentence-cases its opening without touching the path.
     assert 'Path pattern "Res::Ok"' in str(exc_info.value)
 
 
-def test_pattern_comptime_args_must_name_the_column_instance(tmp_path):
+def test_pattern_comptime_args_must_name_the_column_instance(compiler):
     with pytest.raises(errors.PatternTypMismatchError) as exc_info:
-        _check_match(tmp_path, "return match (o) { Option[bool]::Some(_) => 1i32, _ => 0i32, };")
+        _check_match(compiler, "return match (o) { Option[bool]::Some(_) => 1i32, _ => 0i32, };")
 
     assert '"Option[bool]"' in str(exc_info.value)
 
@@ -726,19 +718,17 @@ def test_pattern_comptime_args_must_name_the_column_instance(tmp_path):
         "Option::Some(let x | 1i32) => 1i32",
     ],
 )
-def test_binding_anywhere_under_an_or_pattern_is_rejected(tmp_path, arm):
+def test_binding_anywhere_under_an_or_pattern_is_rejected(compiler, arm):
     with pytest.raises(errors.BindingInOrPatternError):
-        _check_match(tmp_path, f"return match (o) {{ {arm}, _ => 0i32, }};")
+        _check_match(compiler, f"return match (o) {{ {arm}, _ => 0i32, }};")
 
 
-def test_two_bindings_of_one_name_in_an_arm_are_rejected(tmp_path):
+def test_two_bindings_of_one_name_in_an_arm_are_rejected(compiler):
     # Confirms existing behaviour rather than adding any: an arm's
     # bindings all share one scope.
     body = "return match (p) { Pair::Both(let x, let x) => x, };"
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.build_ir_mod(
-            tmp_path, f"union Pair {{ Both(i32, i32) }}\npub fn f(p: Pair) i32 {{ {body} }}"
-        )
+        compiler.build(f"union Pair {{ Both(i32, i32) }}\npub fn f(p: Pair) i32 {{ {body} }}")
 
 
 def _mod_var_value(mod, name: str) -> ir_values.ComptimeValue:
@@ -758,8 +748,8 @@ def _payload_ints(union_value: ir_values.ComptimeUnion) -> list[int]:
     ]
 
 
-def test_comptime_payload_variant_construction(tmp_path):
-    mod = util.build_ir_mod(tmp_path, _UNIONS + "pub let a = Option::Some(7i32);")
+def test_comptime_payload_variant_construction(compiler):
+    mod = compiler.build(_UNIONS + "pub let a = Option::Some(7i32);")
     value = _as_union(_mod_var_value(mod, "a"))
 
     assert value.typ.name == "Option[i32]"
@@ -767,8 +757,8 @@ def test_comptime_payload_variant_construction(tmp_path):
     assert _payload_ints(value) == [7]
 
 
-def test_comptime_unit_variant_construction(tmp_path):
-    mod = util.build_ir_mod(tmp_path, _UNIONS + "pub let b: Option[i32] = Option::None;")
+def test_comptime_unit_variant_construction(compiler):
+    mod = compiler.build(_UNIONS + "pub let b: Option[i32] = Option::None;")
     value = _as_union(_mod_var_value(mod, "b"))
 
     assert value.typ.name == "Option[i32]"
@@ -776,9 +766,8 @@ def test_comptime_unit_variant_construction(tmp_path):
     assert value.payload == ()
 
 
-def test_comptime_multi_payload_variant_construction(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_comptime_multi_payload_variant_construction(compiler):
+    mod = compiler.build(
         "union Pair { Both(i32, i32) }\npub let p = Pair::Both(3i32, 4i32);",
     )
     value = _as_union(_mod_var_value(mod, "p"))
@@ -787,9 +776,8 @@ def test_comptime_multi_payload_variant_construction(tmp_path):
     assert _payload_ints(value) == [3, 4]
 
 
-def test_comptime_nested_variant_construction(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_comptime_nested_variant_construction(compiler):
+    mod = compiler.build(
         _UNIONS + "pub let n: Option[Option[i32]] = Option::Some(Option::Some(1i32));",
     )
     outer = _as_union(_mod_var_value(mod, "n"))
@@ -801,10 +789,10 @@ def test_comptime_nested_variant_construction(tmp_path):
     assert _payload_ints(inner) == [1]
 
 
-def test_comptime_union_payload_cannot_hold_a_temporary_address(tmp_path):
+def test_comptime_union_payload_cannot_hold_a_temporary_address(compiler):
     # ComptimeUnion is not a ComptimeAggregate, so without its own arm in
     # _check_not_temporary a temporary pointer would escape inside one.
-    mod = util.build_ir_mod(tmp_path, "union Boxed { B(*i32) }\npub let g = Boxed::B(&1);")
+    mod = compiler.build("union Boxed { B(*i32) }\npub let g = Boxed::B(&1);")
     with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
         _mod_var_value(mod, "g")
 
@@ -817,8 +805,8 @@ def _union_instr_cfg(union_typ: typs.UnionTyp, payload: int):
     return cfg, bb, made
 
 
-def test_union_tag_instr_reads_the_variant_index(tmp_path):
-    mod = util.build_ir_mod(tmp_path, _UNIONS)
+def test_union_tag_instr_reads_the_variant_index(compiler):
+    mod = compiler.build(_UNIONS)
     union_typ = _get_union_template(mod, "Option").instantiate((typs.I32,))
     cfg, bb, made = _union_instr_cfg(union_typ, 7)
     tag = bb.union_tag(made, None)
@@ -830,8 +818,8 @@ def test_union_tag_instr_reads_the_variant_index(tmp_path):
     assert result.typ == union_typ.tag_typ
 
 
-def test_union_payload_instr_reads_the_active_variants_field(tmp_path):
-    mod = util.build_ir_mod(tmp_path, _UNIONS)
+def test_union_payload_instr_reads_the_active_variants_field(compiler):
+    mod = compiler.build(_UNIONS)
     union_typ = _get_union_template(mod, "Option").instantiate((typs.I32,))
     cfg, bb, made = _union_instr_cfg(union_typ, 7)
     payload = bb.union_payload(made, 1, 0, None)
@@ -842,10 +830,10 @@ def test_union_payload_instr_reads_the_active_variants_field(tmp_path):
     assert result.value == 7
 
 
-def test_union_payload_instr_rejects_the_wrong_variant(tmp_path):
+def test_union_payload_instr_rejects_the_wrong_variant(compiler):
     # Lowering must compare the tag before projecting; the interpreter has
     # nothing to return for a variant the value does not hold.
-    mod = util.build_ir_mod(tmp_path, _UNIONS)
+    mod = compiler.build(_UNIONS)
     union_typ = _get_union_template(mod, "Option").instantiate((typs.I32,))
     cfg = ir_values.Cfg()
     bb = cfg.entry
@@ -856,11 +844,10 @@ def test_union_payload_instr_rejects_the_wrong_variant(tmp_path):
         comptime.Interpreter(cfg, (), ()).eval()
 
 
-def test_generic_body_lowers_the_substituted_union_instance(tmp_path):
+def test_generic_body_lowers_the_substituted_union_instance(compiler):
     # Inside a generic body the checker records Option[T]; lowering must
     # substitute the instantiation's arguments before building.
-    mod = util.build_ir_mod(
-        tmp_path,
+    mod = compiler.build(
         _UNIONS + "pub fn wrap[T](x: T) Option[T] { return Option::Some(x); }",
     )
     fn = asserts.checked_cast(
@@ -885,49 +872,49 @@ def _comptime_int(mod, name: str) -> int:
     return asserts.checked_cast(_mod_var_value(mod, name), ir_values.ComptimeInt).value
 
 
-def _match_let(tmp_path, scrutinee: str, arms: str, unions: str = _UNIONS):
+def _match_let(compiler, scrutinee: str, arms: str, unions: str = _UNIONS):
     """Evaluate a module-level `let` whose initializer matches ``scrutinee``."""
     src = f"{unions}pub let answer = match ({scrutinee}) {{ {arms} }};"
-    return _comptime_int(util.build_ir_mod(tmp_path, src), "answer")
+    return _comptime_int(compiler.build(src), "answer")
 
 
-def test_comptime_match_binds_a_payload(tmp_path):
+def test_comptime_match_binds_a_payload(compiler):
     arms = "Option::Some(let x) => x, Option::None => 0i32,"
-    assert _match_let(tmp_path, "Option::Some(7i32)", arms) == 7
+    assert _match_let(compiler, "Option::Some(7i32)", arms) == 7
 
 
-def test_comptime_match_takes_the_unit_variant(tmp_path):
+def test_comptime_match_takes_the_unit_variant(compiler):
     arms = "Option::Some(let x) => x, Option::None => 5i32,"
-    assert _match_let(tmp_path, "Option[i32]::None", arms) == 5
+    assert _match_let(compiler, "Option[i32]::None", arms) == 5
 
 
-def test_comptime_match_binds_under_two_levels_of_payload(tmp_path):
+def test_comptime_match_binds_under_two_levels_of_payload(compiler):
     arms = "Res::Ok(Option::Some(let x)) => x, Res::Ok(Option::None) => 1i32, Res::Err(_) => 2i32,"
     scrutinee = "Res[Option[i32], bool]::Ok(Option::Some(3i32))"
-    assert _match_let(tmp_path, scrutinee, arms) == 3
+    assert _match_let(compiler, scrutinee, arms) == 3
 
 
-def test_comptime_match_or_pattern_inside_a_payload(tmp_path):
+def test_comptime_match_or_pattern_inside_a_payload(compiler):
     arms = "Option::Some(1i32 | 2i32) => 10i32, _ => 0i32,"
-    assert _match_let(tmp_path, "Option::Some(2i32)", arms) == 10
+    assert _match_let(compiler, "Option::Some(2i32)", arms) == 10
 
 
-def test_comptime_match_multi_payload_variant(tmp_path):
+def test_comptime_match_multi_payload_variant(compiler):
     unions = "union Pair { Both(i32, i32) }\n"
     arms = "Pair::Both(let a, let b) => a - b,"
-    assert _match_let(tmp_path, "Pair::Both(9i32, 4i32)", arms, unions) == 5
+    assert _match_let(compiler, "Pair::Both(9i32, 4i32)", arms, unions) == 5
 
 
-def test_comptime_match_arm_reached_through_the_fall_through_chain(tmp_path):
+def test_comptime_match_arm_reached_through_the_fall_through_chain(compiler):
     unions = "union Three { A(i32), B(i32), C(i32) }\n"
     arms = "Three::A(let x) => x, Three::B(let x) => x + 1i32, Three::C(let x) => x + 2i32,"
-    assert _match_let(tmp_path, "Three::C(1i32)", arms, unions) == 3
+    assert _match_let(compiler, "Three::C(1i32)", arms, unions) == 3
 
 
-def test_comptime_match_on_a_call_result(tmp_path):
+def test_comptime_match_on_a_call_result(compiler):
     unions = _UNIONS + "fn make() Option[i32] { return Option::Some(4i32); }\n"
     arms = "Option::Some(let x) => x, Option::None => 0i32,"
-    assert _match_let(tmp_path, "make()", arms, unions) == 4
+    assert _match_let(compiler, "make()", arms, unions) == 4
 
 
 @pytest.mark.parametrize(
@@ -946,15 +933,14 @@ def test_comptime_match_on_a_call_result(tmp_path):
         ),
     ],
 )
-def test_comptime_match_payload_tests_short_circuit(tmp_path, scrutinee, arms):
-    assert _match_let(tmp_path, scrutinee, arms) == 0
+def test_comptime_match_payload_tests_short_circuit(compiler, scrutinee, arms):
+    assert _match_let(compiler, scrutinee, arms) == 0
 
 
-def test_payload_projection_is_emitted_behind_the_tag_comparison(tmp_path):
+def test_payload_projection_is_emitted_behind_the_tag_comparison(compiler):
     # Structural, not just behavioural: the projection must land in a
     # different block from the tag test that guards it.
-    mod = util.build_ir_mod(
-        tmp_path,
+    mod = compiler.build(
         _UNIONS
         + """pub fn f(o: Option[i32]) i32 {
             return match (o) { Option::Some(1i32) => 1i32, _ => 0i32, };
@@ -975,10 +961,9 @@ def test_payload_projection_is_emitted_behind_the_tag_comparison(tmp_path):
     assert not (tag_blocks & payload_blocks)
 
 
-def _payload_projections(tmp_path, arms: str) -> int:
+def _payload_projections(compiler, arms: str) -> int:
     """How many union_payload instructions lowering a match emits."""
-    mod = util.build_ir_mod(
-        tmp_path,
+    mod = compiler.build(
         _UNIONS + f"pub fn f(o: Option[i32]) i32 {{ return match (o) {{ {arms} }}; }}",
     )
     item = mod.get_item(ir_env.Env.Namespace.VARS, "f")
@@ -1001,8 +986,8 @@ def _payload_projections(tmp_path, arms: str) -> int:
         ("Option::Some(1i32) => 1i32, _ => 0i32,", 1),
     ],
 )
-def test_payload_is_projected_only_where_it_is_used(tmp_path, arms, projections):
-    assert _payload_projections(tmp_path, arms) == projections
+def test_payload_is_projected_only_where_it_is_used(compiler, arms, projections):
+    assert _payload_projections(compiler, arms) == projections
 
 
 _RUNTIME_UNIONS = """
@@ -1113,9 +1098,9 @@ def test_recursive_union_walks_at_runtime(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def _discovered(tmp_path, src: str) -> tuple[list[str], list[str]]:
+def _discovered(compiler, src: str) -> tuple[list[str], list[str]]:
     """The struct and union instances monomorphization finds, by name."""
-    mod = util.build_ir_mod(tmp_path, src)
+    mod = compiler.build(src)
     result = mono.discover(mod)
     return (
         [inst.name for inst in result.struct_instances],
@@ -1123,9 +1108,9 @@ def _discovered(tmp_path, src: str) -> tuple[list[str], list[str]]:
     )
 
 
-def test_discovery_finds_a_union_requested_by_a_struct_field(tmp_path):
+def test_discovery_finds_a_union_requested_by_a_struct_field(compiler):
     structs, unions = _discovered(
-        tmp_path,
+        compiler,
         """
         union Option[T] { None, Some(T) }
         struct Box[T] { o: Option[T] }
@@ -1136,9 +1121,9 @@ def test_discovery_finds_a_union_requested_by_a_struct_field(tmp_path):
     assert "Option[i32]" in unions
 
 
-def test_discovery_finds_a_struct_requested_by_a_union_payload(tmp_path):
+def test_discovery_finds_a_struct_requested_by_a_union_payload(compiler):
     structs, unions = _discovered(
-        tmp_path,
+        compiler,
         """
         struct Pair[T] { a: T, b: T }
         union Holder[T] { H(Pair[T]) }
@@ -1152,7 +1137,7 @@ def test_discovery_finds_a_struct_requested_by_a_union_payload(tmp_path):
     assert "Pair[i32]" in structs
 
 
-def test_discovery_alternates_along_a_struct_union_chain(tmp_path):
+def test_discovery_alternates_along_a_struct_union_chain(compiler):
     # struct -> union -> struct -> union, with only the head named in
     # source and every link behind a pointer. The layout walk is itself
     # transitive, so a by-value chain would be requested in one go; a
@@ -1160,7 +1145,7 @@ def test_discovery_alternates_along_a_struct_union_chain(tmp_path):
     # the other log after that log has already been finished with. A
     # single pass over each finds only the first two.
     structs, unions = _discovered(
-        tmp_path,
+        compiler,
         """
         union Inner[T] { I(T) }
         struct Middle[T] { i: *Inner[T] }

@@ -6,6 +6,7 @@ import pathlib
 
 import pytest
 
+from leech import errors
 from tests import harness
 
 
@@ -99,3 +100,88 @@ def test_harness_coerces_src_string_to_main_program():
     assert program.root.src == "fn main() {}"
     assert program.root.path == pathlib.Path("main.leech")
     assert program.mods == ()
+
+
+def test_parse_records_explicit_mod_path(compiler: harness.CompilerHarness):
+    mod = harness.ModSrc("pkg::helper", "fn f() {}", path="pkg/helper.leech")
+
+    parsed = compiler.parse(mod)
+
+    assert parsed.span.file.path == compiler.workspace / "pkg/helper.leech"
+
+
+def test_parse_propagates_user_error(compiler: harness.CompilerHarness):
+    with pytest.raises(errors.UnexpectedTokenError):
+        compiler.parse("fn broken(")
+
+
+def test_build_materializes_imports(compiler: harness.CompilerHarness):
+    program = harness.TestProgram.from_main(
+        "import helper; pub fn main() i32 { helper::answer() }",
+        harness.ModSrc("helper", "pub fn answer() i32 { 42 }"),
+    )
+
+    mod = compiler.build(program)
+
+    assert mod.name == "main"
+
+
+def test_build_supports_exceptional_mod_path(compiler: harness.CompilerHarness):
+    program = harness.TestProgram(
+        harness.ModSrc(
+            "pkg::a",
+            "import sub::helper; pub fn answer() i32 { helper::answer() }",
+            path="pkg/a.leech",
+        ),
+        (
+            harness.ModSrc(
+                "sub::helper",
+                "pub fn answer() i32 { 42 }",
+                path="pkg/sub/helper.leech",
+            ),
+        ),
+    )
+
+    mod = compiler.build(program)
+
+    assert mod.name == "pkg::a"
+
+
+def test_build_propagates_user_error(compiler: harness.CompilerHarness):
+    with pytest.raises(errors.InvalidRetTypError):
+        compiler.build("fn invalid() i32 { true }")
+
+
+def test_success_does_not_print(compiler: harness.CompilerHarness, capsys):
+    compiler.build("pub fn main() i32 { 0 }")
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_materialization_rejects_symlink_escape(
+    compiler: harness.CompilerHarness,
+    tmp_path_factory,
+):
+    outside = tmp_path_factory.mktemp("outside")
+    (compiler.workspace / "escape").symlink_to(outside, target_is_directory=True)
+    program = harness.TestProgram.from_main(
+        "pub fn main() i32 { 0 }",
+        harness.ModSrc("helper", "", path="escape/helper.leech"),
+    )
+
+    with pytest.raises(ValueError, match="escapes the compiler workspace"):
+        compiler.build(program)
+
+    assert not (outside / "helper.leech").exists()
+    assert not (compiler.workspace / "main.leech").exists()
+
+
+def test_write_mod_returns_materialized_path(compiler: harness.CompilerHarness):
+    mod = harness.ModSrc("helper", "λ")
+
+    path = compiler.write_mod(mod)
+
+    assert path == compiler.workspace / "helper.leech"
+    assert path.read_text(encoding="utf-8") == mod.src

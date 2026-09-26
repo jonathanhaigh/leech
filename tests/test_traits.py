@@ -81,9 +81,8 @@ def test_inherent_and_trait_methods_coexist(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_inherent_impl_is_registered(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_inherent_impl_is_registered(compiler):
+    mod = compiler.build(
         """
         struct Foo { a: i32 }
         impl Foo {
@@ -100,9 +99,8 @@ def test_inherent_impl_is_registered(tmp_path):
     assert inherent_impls[0].get_fn_symbol("get") is not None
 
 
-def test_fn_points_at_its_impl_block(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_fn_points_at_its_impl_block(compiler):
+    mod = compiler.build(
         """
         struct Foo { a: i32 }
         trait Show { fn show(*self) i32; }
@@ -121,7 +119,7 @@ def test_fn_points_at_its_impl_block(tmp_path):
     assert method.impl.trait.name == "Show"
 
 
-def test_generic_trait_impl_lookup_does_not_instantiate_method(tmp_path):
+def test_generic_trait_impl_lookup_does_not_instantiate_method(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     struct Box[T] { val: T }
@@ -130,7 +128,7 @@ def test_generic_trait_impl_lookup_does_not_instantiate_method(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    mod = util.build_ir_mod(tmp_path, src)
+    mod = compiler.build(src)
     box = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Box")
     box = asserts.checked_cast(box, typs.StructTypTemplate)
     concrete_box = box.instantiate((typs.I32,))
@@ -835,9 +833,8 @@ def test_trait_impl_duplicate_method(tmp_path):
     assert "method" in str(exc_info.value)
 
 
-def test_trait_impl_duplicate_extra_method_is_rejected_atomically(tmp_path):
-    mod_ast = util.parse_mod(
-        tmp_path,
+def test_trait_impl_duplicate_extra_method_is_rejected_atomically(compiler):
+    mod_ast = compiler.parse(
         """
         trait Show { fn show(*self) i32; }
         impl Show for i32 {
@@ -1118,8 +1115,8 @@ def test_cross_module_trait_and_impl(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
-def test_get_trait_item_from_mod(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "trait Show { fn show(*self) i32; }")
+def test_get_trait_item_from_mod(compiler):
+    mod = compiler.build("trait Show { fn show(*self) i32; }")
     item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Show")
     assert item is not None
     assert isinstance(item.value, ir_traits.Trait)
@@ -1138,25 +1135,24 @@ def test_bound_with_generic_args_parses(tmp_path):
     util.compile_str(tmp_path, src)
 
 
-def test_generic_trait_exposes_typ_params(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "trait Container[T] { fn get(*self) T; }")
+def test_generic_trait_exposes_typ_params(compiler):
+    mod = compiler.build("trait Container[T] { fn get(*self) T; }")
     item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Container")
     assert item is not None
     assert isinstance(item.value, ir_traits.Trait)
     assert [p.name for p in item.value.comptime_params] == ["T"]
 
 
-def test_non_generic_trait_has_no_typ_params(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "trait Show { fn show(*self) i32; }")
+def test_non_generic_trait_has_no_typ_params(compiler):
+    mod = compiler.build("trait Show { fn show(*self) i32; }")
     item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Show")
     assert item is not None
     assert isinstance(item.value, ir_traits.Trait)
     assert item.value.comptime_params == ()
 
 
-def test_trait_application_keeps_argument_order(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_trait_application_keeps_argument_order(compiler):
+    mod = compiler.build(
         """
         trait Convert[From, To] { fn convert(*self) To; }
         fn use[U: Convert[bool, i32]](x: U) i32 { 0 }

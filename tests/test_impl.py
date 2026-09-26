@@ -36,7 +36,7 @@ def test_generic_inherent_impl_method_found_through_registry(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
-def test_generic_impl_lookup_does_not_instantiate_method(tmp_path):
+def test_generic_impl_lookup_does_not_instantiate_method(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T] Box[T] {
@@ -44,7 +44,7 @@ def test_generic_impl_lookup_does_not_instantiate_method(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    mod = util.build_ir_mod(tmp_path, src)
+    mod = compiler.build(src)
     box_item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Box")
     assert box_item is not None
     box = asserts.checked_cast(box_item.value, typs.StructTypTemplate)
@@ -269,7 +269,7 @@ def test_impl_typ_param_nested_in_self_typ_is_constrained(tmp_path):
     util.compile_str(tmp_path, src)
 
 
-def test_generic_impl_instance_args_follow_declaration_order(tmp_path):
+def test_generic_impl_instance_args_follow_declaration_order(compiler):
     src = """
     struct Pair[A, B] { first: A, second: B }
     impl[A, B] Pair[A, B] {
@@ -277,7 +277,7 @@ def test_generic_impl_instance_args_follow_declaration_order(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    mod = util.build_ir_mod(tmp_path, src)
+    mod = compiler.build(src)
     pair_item = mod.get_item(ir_env.Env.Namespace.CONTAINERS, "Pair")
     assert pair_item is not None
     pair = asserts.checked_cast(pair_item.value, typs.StructTypTemplate)
@@ -359,7 +359,7 @@ def test_recursive_generic_inherent_impl_equation_does_not_overlap(tmp_path):
     util.compile_str(tmp_path, src)
 
 
-def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(tmp_path):
+def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(compiler):
     src = """
     struct Foo {}
     impl Foo {
@@ -367,7 +367,7 @@ def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(tmp_path):
         fn duplicate() i32 { 2 }
     }
     """
-    mod_ast = util.parse_mod(tmp_path, src)
+    mod_ast = compiler.parse(src)
     _, impl_ast = mod_ast.defns
     assert isinstance(impl_ast, ast.ImplDefn)
     ctx = compilation.Ctx()

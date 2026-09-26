@@ -10,7 +10,7 @@ from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_trait
 from tests import util
 
 
-def test_env_rejects_bound_value_without_pointer_typ(tmp_path):
+def test_env_rejects_bound_value_without_pointer_typ(compiler):
     ctx = compilation.Ctx()
     env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
     value = cast(
@@ -18,7 +18,7 @@ def test_env_rejects_bound_value_without_pointer_typ(tmp_path):
         ir_values.ComptimeInt(typs.I32, 1, None),
     )
     env.add_var("value", value)
-    mod_ast = util.parse_mod(tmp_path, "let result = value;")
+    mod_ast = compiler.parse("let result = value;")
     (defn_ast,) = mod_ast.defns
     var_ast = asserts.checked_cast(
         asserts.checked_cast(defn_ast, ast.VarDefn).let_stmt.expr,
@@ -97,9 +97,9 @@ def test_fn_mod_var(tmp_path):
     util.check_prog_output(tmp_path, src, "", 99)
 
 
-def test_extern_fn_value_remains_global_initializer(tmp_path):
+def test_extern_fn_value_remains_global_initializer(compiler, tmp_path):
     source = "extern fn puts(s: *u8) i32;\nlet p = puts;\npub fn main() i32 { 0 }"
-    mod = util.build_ir_mod(tmp_path, source)
+    mod = compiler.build(source)
     item = mod.get_item(ir_env.Env.Namespace.VARS, "p")
     assert item is not None
     var = asserts.checked_cast(item.value, ir_module.ModVar)
@@ -113,11 +113,10 @@ def test_extern_fn_value_remains_global_initializer(tmp_path):
     assert '@"main::p" = private global i32 (i8*)* @"puts"' in ir_text
 
 
-def test_non_generic_fn_mod_var_initializer_is_fn_ref(tmp_path):
+def test_non_generic_fn_mod_var_initializer_is_fn_ref(compiler):
     # Evaluating the initializer also verifies that an FnRef is not rejected as
     # a temporary compile-time pointer.
-    mod = util.build_ir_mod(
-        tmp_path,
+    mod = compiler.build(
         "fn f() i32 { 99 }\nlet g = f;\npub fn main() i32 { g() }",
     )
     item = mod.get_item(ir_env.Env.Namespace.VARS, "g")
@@ -412,7 +411,7 @@ def test_cross_module_var_cycle(tmp_path):
     ]
 
 
-def test_mod_var_cycle_can_be_retried_after_failure(tmp_path):
+def test_mod_var_cycle_can_be_retried_after_failure(compiler):
     src = """
     let b = a;
     let a = b;
@@ -420,7 +419,7 @@ def test_mod_var_cycle_can_be_retried_after_failure(tmp_path):
         return 0;
     }
     """
-    mod = util.build_ir_mod(tmp_path, src)
+    mod = compiler.build(src)
     item = mod.get_item(ir_env.Env.Namespace.VARS, "b")
     assert item is not None
     var = asserts.checked_cast(item.value, ir_module.ModVar)

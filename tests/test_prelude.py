@@ -80,9 +80,8 @@ def test_synthesized_check_uses_real_panic_even_when_shadowed(tmp_path):
     util.check_prog_output(tmp_path, main_src, "integer overflow\n", -signal.SIGABRT)
 
 
-def test_source_and_synthesized_panic_calls_share_reference(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_source_and_synthesized_panic_calls_share_reference(compiler):
+    mod = compiler.build(
         """
         pub fn main() i32 {
             let x: i32 = 1;

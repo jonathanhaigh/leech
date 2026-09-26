@@ -8,7 +8,7 @@ import subprocess
 from collections.abc import Sequence
 from typing import Optional
 
-from leech import ast, driver, ir_module, opt_util, parse
+from leech import driver, opt_util, parse
 from leech import src as leech_src
 
 _STD_ROOT = pathlib.Path(parse.__file__).parent / "std"
@@ -44,26 +44,6 @@ def compile_str(tmp_path: pathlib.Path, src: str) -> pathlib.Path:
     path = tmp_path / "main.leech"
     write_whole_file(path, src)
     return compile_file(path)
-
-
-def parse_mod(tmp_path: pathlib.Path, src: str) -> ast.Mod:
-    path = tmp_path / "main.leech"
-    write_whole_file(path, src)
-    file = leech_src.SrcFile(path)
-    tree = parse.build_parser("mod").parse(file.src)
-    return ast.Mod(file, tree)
-
-
-def build_ir_mod(tmp_path: pathlib.Path, src: str) -> ir_module.Mod:
-    """Parse and build ``src`` into IR, without lowering or compiling it.
-
-    For exercising type-checking (or anything else that only needs a
-    built :class:`~leech.ir_module.Mod`) on code that can't yet be
-    lowered all the way to a runnable program.
-    """
-    path = tmp_path / "main.leech"
-    write_whole_file(path, src)
-    return driver.compile_to_ir(leech_src.SrcFile(path))
 
 
 def compile_modules(

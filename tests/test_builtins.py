@@ -333,8 +333,8 @@ def test_is_null_true_for_genuine_null_pointer(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_size_of_intrinsic_instance_caches_by_typ_args(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "pub fn main() i32 { return 0; }")
+def test_size_of_intrinsic_instance_caches_by_typ_args(compiler):
+    mod = compiler.build("pub fn main() i32 { return 0; }")
     size_of = _get_intrinsic(mod, "__size_of")
 
     assert size_of.instantiate((typs.I32,)) is size_of.instantiate((typs.I32,))

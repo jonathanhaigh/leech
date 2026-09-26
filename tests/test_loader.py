@@ -5,30 +5,28 @@
 import pytest
 
 from leech import asserts, compilation, errors, ir_env, ir_loader, ir_module, ir_traits, typs
-from tests import util
+from tests import harness
 
 
-def load_main(tmp_path, **modules):
+def load_main(compiler: harness.CompilerHarness, *mods: harness.ModSrc):
     """Write the given modules and load main.leech, returning its loader."""
-    for mod_name, mod_src in modules.items():
-        util.write_whole_file(tmp_path / f"{mod_name}.leech", mod_src)
+    for mod in mods:
+        compiler.write_mod(mod)
     loader = ir_loader.ModLoader()
-    loader.load(tmp_path / "main.leech", "main")
+    loader.load(compiler.workspace / "main.leech", "main")
     return loader
 
 
-def test_load_is_memoized(tmp_path):
-    util.write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
+def test_load_is_memoized(compiler):
+    path = compiler.write_mod(harness.ModSrc("main", "pub fn main() i32 { return 0; }"))
     loader = ir_loader.ModLoader()
-    path = tmp_path / "main.leech"
     assert loader.load(path, "main") is loader.load(path, "main")
     # +1 for the bundled prelude module, always loaded by ModLoader.__init__.
     assert len(loader.mods) == 2
 
 
-def test_loader_scopes_and_impl_registry_share_compilation_ctx(tmp_path):
-    path = tmp_path / "main.leech"
-    util.write_whole_file(path, "pub fn main() i32 { return 0; }")
+def test_loader_scopes_and_impl_registry_share_compilation_ctx(compiler):
+    path = compiler.write_mod(harness.ModSrc("main", "pub fn main() i32 { return 0; }"))
     loader = ir_loader.ModLoader()
 
     mod = loader.load(path, "main")
@@ -48,62 +46,68 @@ def test_env_and_registry_share_explicit_ctx():
     assert env.impl_registry.ctx is env.ctx
 
 
-def test_load_normalizes_paths(tmp_path):
+def test_load_normalizes_paths(compiler):
     # The same file named two different ways is one module, which is what
     # keeps a cycle back to the file the CLI was invoked on from
     # reloading it.
-    util.write_whole_file(tmp_path / "main.leech", "pub fn main() i32 { return 0; }")
+    path = compiler.write_mod(harness.ModSrc("main", "pub fn main() i32 { return 0; }"))
+    (compiler.workspace / "sub").mkdir()
     loader = ir_loader.ModLoader()
-    direct = loader.load(tmp_path / "main.leech", "main")
-    indirect = loader.load(tmp_path / "." / "main.leech", "main")
+    direct = loader.load(path, "main")
+    indirect = loader.load(compiler.workspace / "sub" / ".." / "main.leech", "main")
     assert direct is indirect
     # +1 for the bundled prelude module, always loaded by ModLoader.__init__.
     assert len(loader.mods) == 2
 
 
-def test_declaration_checking_is_an_explicit_post_load_phase(tmp_path):
-    util.write_whole_file(
-        tmp_path / "main.leech",
-        "fn invalid() i32 { return true; }\npub fn main() i32 { return 0; }",
+def test_declaration_checking_is_an_explicit_post_load_phase(compiler):
+    path = compiler.write_mod(
+        harness.ModSrc(
+            "main",
+            "fn invalid() i32 { return true; }\npub fn main() i32 { return 0; }",
+        )
     )
     loader = ir_loader.ModLoader()
 
-    loader.load(tmp_path / "main.leech", "main")
+    loader.load(path, "main")
 
     with pytest.raises(errors.InvalidRetTypError):
         loader.check_declarations()
 
 
-def test_main_name_outside_main_module_is_not_entry_point(tmp_path):
-    util.write_whole_file(tmp_path / "library.leech", "fn main() i32 { return 0; }")
+def test_main_name_outside_main_module_is_not_entry_point(compiler):
+    path = compiler.write_mod(harness.ModSrc("library", "fn main() i32 { return 0; }"))
     loader = ir_loader.ModLoader()
 
-    mod = loader.load(tmp_path / "library.leech", "library")
+    mod = loader.load(path, "library")
 
     fn = next(fn for fn in mod.src_fn_symbols if fn.name == "main")
     assert not fn.is_main
 
 
-def test_diamond_loads_each_module_once(tmp_path):
+def test_diamond_loads_each_module_once(compiler):
     loader = load_main(
-        tmp_path,
-        main="import a;\nimport b;\npub fn main() i32 { return 0; }",
-        a="import c;\npub fn viaa() i32 { return c::base(); }",
-        b="import c;\npub fn viab() i32 { return c::base(); }",
-        c="pub fn base() i32 { return 5; }",
+        compiler,
+        harness.ModSrc("main", "import a;\nimport b;\npub fn main() i32 { return 0; }"),
+        harness.ModSrc("a", "import c;\npub fn viaa() i32 { return c::base(); }"),
+        harness.ModSrc("b", "import c;\npub fn viab() i32 { return c::base(); }"),
+        harness.ModSrc("c", "pub fn base() i32 { return 5; }"),
     )
     assert sorted(mod.name for mod in loader.mods) == ["a", "b", "c", "main", "prelude"]
 
 
-def test_diamond_shares_one_struct_typ(tmp_path):
+def test_diamond_shares_one_struct_typ(compiler):
     # The point of memoizing: both paths to c must yield the *same*
     # StructTyp object, since struct types are compared by identity.
     loader = load_main(
-        tmp_path,
-        main="import a;\nimport b;\npub fn main() i32 { return 0; }",
-        a="import c;\npub fn viaa() c::Foo { return c::mk(1); }",
-        b="import c;\npub fn viab() c::Foo { return c::mk(2); }",
-        c="pub struct Foo { pub v: i32 }\npub fn mk(n: i32) Foo { return Foo{v: n}; }",
+        compiler,
+        harness.ModSrc("main", "import a;\nimport b;\npub fn main() i32 { return 0; }"),
+        harness.ModSrc("a", "import c;\npub fn viaa() c::Foo { return c::mk(1); }"),
+        harness.ModSrc("b", "import c;\npub fn viab() c::Foo { return c::mk(2); }"),
+        harness.ModSrc(
+            "c",
+            "pub struct Foo { pub v: i32 }\npub fn mk(n: i32) Foo { return Foo{v: n}; }",
+        ),
     )
     mods = {mod.name: mod for mod in loader.mods}
     # Each lookup is checked rather than chained straight through: a
@@ -117,11 +121,11 @@ def test_diamond_shares_one_struct_typ(tmp_path):
     assert foo_via_a is foo_via_b
 
 
-def test_circular_import_loads_each_module_once(tmp_path):
+def test_circular_import_loads_each_module_once(compiler):
     loader = load_main(
-        tmp_path,
-        main="import a;\npub fn main() i32 { return a::f(); }",
-        a="import b;\npub fn f() i32 { return b::g(); }",
-        b="import a;\npub fn g() i32 { return 1; }",
+        compiler,
+        harness.ModSrc("main", "import a;\npub fn main() i32 { return a::f(); }"),
+        harness.ModSrc("a", "import b;\npub fn f() i32 { return b::g(); }"),
+        harness.ModSrc("b", "import a;\npub fn g() i32 { return 1; }"),
     )
     assert sorted(mod.name for mod in loader.mods) == ["a", "b", "main", "prelude"]

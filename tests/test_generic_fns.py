@@ -5,7 +5,7 @@
 import pytest
 
 from leech import asserts, ast, errors, ir_env, ir_module, ir_values, mono, typs
-from tests import util
+from tests import harness, util
 
 
 def _get_fn(mod, name: str) -> ir_module.SrcFnSymbol:
@@ -22,7 +22,7 @@ def _get_generic_fn(mod, name: str) -> ir_module.SrcFnSymbol:
     return asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
 
 
-def _lower_main(tmp_path, src):
+def _lower_main(compiler, program: str | harness.TestProgram):
     """Build and lower ``main``'s body, without compiling it to LLVM IR.
 
     Codegen doesn't emit generic function instances yet, so this is how
@@ -32,14 +32,13 @@ def _lower_main(tmp_path, src):
 
     :return: ``main``'s lowered control-flow graph.
     """
-    mod = util.build_ir_mod(tmp_path, src)
+    mod = compiler.build(program)
     return _get_fn(mod, "main").instantiate(()).cfg
 
 
-def _get_extern_decl(tmp_path) -> ir_module.ExternFnSymbol:
+def _get_extern_decl(compiler) -> ir_module.ExternFnSymbol:
     """Build and return a representative extern declaration."""
-    mod = util.build_ir_mod(
-        tmp_path,
+    mod = compiler.build(
         "extern fn exit(code: i32);\nfn f(x: i32) i32 { x }\npub fn main() i32 { f(1) }",
     )
     decl_item = mod.get_item(ir_env.Env.Namespace.VARS, "exit")
@@ -47,8 +46,8 @@ def _get_extern_decl(tmp_path) -> ir_module.ExternFnSymbol:
     return asserts.checked_cast(decl_item.value, ir_module.ExternFnSymbol)
 
 
-def test_extern_instance_cfg_is_rejected(tmp_path):
-    decl = _get_extern_decl(tmp_path)
+def test_extern_instance_cfg_is_rejected(compiler):
+    decl = _get_extern_decl(compiler)
 
     with pytest.raises(AssertionError, match="extern instances have no body"):
         _ = decl.instantiate(()).cfg
@@ -99,17 +98,16 @@ def test_uncalled_public_generic_fn_has_no_instance_to_emit(tmp_path):
     assert "unused_generic[" not in llir_path.read_text()
 
 
-def test_fn_candidate_applies_impl_args_before_fn_args(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { x }")
+def test_fn_candidate_applies_impl_args_before_fn_args(compiler):
+    mod = compiler.build("fn id[T](x: T) T { x }")
     fn = _get_generic_fn(mod, "id")
     candidate = ir_module.FnCandidate(fn, (typs.BOOL,), (typs.I32,))
 
     assert candidate.apply((typs.I32,)) == ir_module.AppliedFn(fn, (typs.BOOL, typs.I32))
 
 
-def test_explicit_fn_application_is_recorded_before_instantiation(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_explicit_fn_application_is_recorded_before_instantiation(compiler):
+    mod = compiler.build(
         "fn id[T](x: T) T { x } pub fn main() i32 { id[i32](1) }",
     )
     fn = _get_generic_fn(mod, "id")
@@ -691,8 +689,8 @@ def test_generic_assoc_fn_not_yet_supported(tmp_path):
         util.compile_str(tmp_path, src)
 
 
-def test_fn_instance_caches_by_typ_args(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+def test_fn_instance_caches_by_typ_args(compiler):
+    mod = compiler.build("fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
     i32_inst = fn.instantiate((typs.I32,))
@@ -702,8 +700,8 @@ def test_fn_instance_caches_by_typ_args(tmp_path):
     assert tuple(mod.loader.ctx.requested_fn_instances()).count(i32_inst) == 1
 
 
-def test_fn_instance_caches_one_reference(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+def test_fn_instance_caches_one_reference(compiler):
+    mod = compiler.build("fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
     inst = fn.instantiate((typs.I32,))
@@ -712,8 +710,8 @@ def test_fn_instance_caches_one_reference(tmp_path):
     assert inst.ref.instance is inst
 
 
-def test_fn_instance_signature_is_substituted(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+def test_fn_instance_signature_is_substituted(compiler):
+    mod = compiler.build("fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
     inst = fn.instantiate((typs.I32,))
@@ -721,8 +719,8 @@ def test_fn_instance_signature_is_substituted(tmp_path):
     assert inst.fn_typ.ret_typ is typs.I32
 
 
-def test_fn_instance_mangled_name(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+def test_fn_instance_mangled_name(compiler):
+    mod = compiler.build("fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
     inst = fn.instantiate((typs.I32,))
@@ -730,41 +728,40 @@ def test_fn_instance_mangled_name(tmp_path):
     assert inst.qualified_name == "main::id[i32]"
 
 
-def test_fn_instance_mangled_name_with_multiple_typ_args(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
+def test_fn_instance_mangled_name_with_multiple_typ_args(compiler):
+    mod = compiler.build("fn pair_first[T, U](x: T, y: U) T { return x; }")
     fn = _get_generic_fn(mod, "pair_first")
 
     inst = fn.instantiate((typs.I32, typs.BOOL))
     assert inst.name == "pair_first[i32, bool]"
 
 
-def test_fn_instance_body_lowers(tmp_path):
+def test_fn_instance_body_lowers(compiler):
     # The body's sole statement is a bare `return x;`, with no tail
     # expression - so the block's own type is `never`, coerced to the
     # declared return type T. Lowering that coercion has to substitute
     # the instance's concrete type argument for T rather than leaving a
     # raw type parameter behind for codegen to choke on.
-    mod = util.build_ir_mod(tmp_path, "fn id[T](x: T) T { return x; }")
+    mod = compiler.build("fn id[T](x: T) T { return x; }")
     fn = _get_generic_fn(mod, "id")
 
     _ = fn.instantiate((typs.I32,)).cfg
 
 
-def test_fn_instance_body_lowers_for_multiple_typ_args(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "fn pair_first[T, U](x: T, y: U) T { return x; }")
+def test_fn_instance_body_lowers_for_multiple_typ_args(compiler):
+    mod = compiler.build("fn pair_first[T, U](x: T, y: U) T { return x; }")
     fn = _get_generic_fn(mod, "pair_first")
 
     _ = fn.instantiate((typs.I32, typs.BOOL)).cfg
 
 
-def test_fn_instance_recursive_call_lowers(tmp_path):
+def test_fn_instance_recursive_call_lowers(compiler):
     # depth's own recursive call binds its type parameter to itself (the
     # argument x has type T, depth's own type parameter), so the type
     # argument TypCheck records for that call site is itself a type
     # parameter, not a concrete type - lowering has to resolve that
     # against the instance actually being built before asking for it.
-    mod = util.build_ir_mod(
-        tmp_path,
+    mod = compiler.build(
         """
         fn depth[T](x: T, n: i32) T {
             if (n <= 0) {
@@ -779,9 +776,8 @@ def test_fn_instance_recursive_call_lowers(tmp_path):
     _ = fn.instantiate((typs.I32,)).cfg
 
 
-def test_mono_discovers_requests_appended_while_lowering_generic_fn(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_mono_discovers_requests_appended_while_lowering_generic_fn(compiler):
+    mod = compiler.build(
         """
         fn inner[T](x: T) T { x }
         fn outer[T](x: T) T {
@@ -799,9 +795,8 @@ def test_mono_discovers_requests_appended_while_lowering_generic_fn(tmp_path):
     assert names == {"main::outer[i32]", "main::inner[i32]", "__size_of[i32]"}
 
 
-def test_mono_discovers_recursive_instance_once(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_mono_discovers_recursive_instance_once(compiler):
+    mod = compiler.build(
         """
         fn depth[T](x: T, n: i32) T {
             if (n == 0) { return x; };
@@ -817,7 +812,7 @@ def test_mono_discovers_recursive_instance_once(tmp_path):
     assert result.fn_instances.count(instance) == 1
 
 
-def test_calling_generic_fn_lowers_to_a_fn_ref(tmp_path):
+def test_calling_generic_fn_lowers_to_a_fn_ref(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -826,7 +821,7 @@ def test_calling_generic_fn_lowers_to_a_fn_ref(tmp_path):
         return id(n) - 5;
     }
     """
-    cfg = _lower_main(tmp_path, src)
+    cfg = _lower_main(compiler, src)
 
     # Filtered to the generic instance under test specifically: `- 5`'s
     # compiler-synthesized overflow check also references the imported
@@ -845,14 +840,8 @@ def test_calling_generic_fn_lowers_to_a_fn_ref(tmp_path):
     assert callee.instance.name == "id[i32]"
 
 
-def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
-    util.write_whole_file(
-        tmp_path / "helper.leech",
-        "pub fn imported() i32 { 0 }",
-    )
-    cfg = _lower_main(
-        tmp_path,
-        """
+def test_source_function_call_kinds_lower_to_fn_refs(compiler):
+    src = """
         import helper;
         trait Show { fn show(*self) i32; }
         struct Foo {}
@@ -871,8 +860,12 @@ def test_source_function_call_kinds_lower_to_fn_refs(tmp_path):
             extern_fn(0);
             return 0;
         }
-        """,
+        """
+    program = harness.TestProgram.from_main(
+        src,
+        harness.ModSrc("helper", "pub fn imported() i32 { 0 }"),
     )
+    cfg = _lower_main(compiler, program)
 
     callees = {}
     for bb in cfg.nodes:

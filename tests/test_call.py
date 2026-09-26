@@ -132,9 +132,8 @@ def test_comptime_call_extern(tmp_path):
     assert span.file.src[span.start : span.end] == "extern fn puts(s: *u8) i32;"
 
 
-def test_extern_fn_has_cached_bodyless_instance(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_extern_fn_has_cached_bodyless_instance(compiler):
+    mod = compiler.build(
         "extern fn puts(s: *u8) i32;\npub fn main() i32 { 0 }",
     )
     item = mod.get_item(ir_env.Env.Namespace.VARS, "puts")

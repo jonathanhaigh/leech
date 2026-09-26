@@ -116,8 +116,7 @@ Construction validates:
 materialization that every normalized destination remains below its workspace.
 
 Intermediate directory segments may use reserved Leech words, matching module resolution and
-the `--module-name` contract. Paths are displayed with forward slashes in diagnostics through
-`Path.as_posix()`.
+the `--module-name` contract. Diagnostics render paths using the host convention.
 
 ### `TestProgram`
 

@@ -3,17 +3,16 @@
 # SPDX-License-Identifier: MPL-2.0
 
 from leech import ast
-from tests import util
 
 
-def test_impl_defn_basic_typ(tmp_path):
+def test_impl_defn_basic_typ(compiler):
     src = """
     struct Foo {}
     impl Foo {
         pub fn new() Foo { Foo {} }
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
@@ -27,14 +26,14 @@ def test_impl_defn_basic_typ(tmp_path):
     assert fn.access.value == "pub"
 
 
-def test_impl_defn_ptr_typ(tmp_path):
+def test_impl_defn_ptr_typ(compiler):
     src = """
     struct Foo {}
     impl *Foo {
         fn helper() i32 { 1 }
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
@@ -46,14 +45,14 @@ def test_impl_defn_ptr_typ(tmp_path):
     assert impl.fn_defns[0].name.name == "helper"
 
 
-def test_impl_defn_array_typ(tmp_path):
+def test_impl_defn_array_typ(compiler):
     src = """
     struct Foo {}
     impl array[Foo, 3] {
         fn helper() i32 { 1 }
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
@@ -66,22 +65,22 @@ def test_impl_defn_array_typ(tmp_path):
     assert length.value == 3
 
 
-def test_impl_defn_empty(tmp_path):
+def test_impl_defn_empty(compiler):
     src = """
     struct Foo {}
     impl Foo {}
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
     assert impl.fn_defns == ()
 
 
-def test_fn_defn_generic_params(tmp_path):
+def test_fn_defn_generic_params(compiler):
     src = """
     fn id[T: Show](x: T) T { return x; }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -91,11 +90,11 @@ def test_fn_defn_generic_params(tmp_path):
     assert [b.path.str() for b in param.bounds] == ["Show"]
 
 
-def test_fn_defn_value_param(tmp_path):
+def test_fn_defn_value_param(compiler):
     src = """
     fn f[T, value N: usize]() {}
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -107,21 +106,21 @@ def test_fn_defn_value_param(tmp_path):
     assert value_param.typ.path.str() == "usize"
 
 
-def test_fn_defn_no_generic_params(tmp_path):
+def test_fn_defn_no_generic_params(compiler):
     src = """
     fn f() {}
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     assert fn.comptime_params == ()
 
 
-def test_basic_typ_generic_args(tmp_path):
+def test_basic_typ_generic_args(compiler):
     src = """
     fn f(x: Pair[i32, bool]) {}
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -133,11 +132,11 @@ def test_basic_typ_generic_args(tmp_path):
     assert arg_names == ["i32", "bool"]
 
 
-def test_basic_typ_comptime_args_accepts_int_lit(tmp_path):
+def test_basic_typ_comptime_args_accepts_int_lit(compiler):
     src = """
     fn f(x: Buf[i32, 4]) {}
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
@@ -147,11 +146,11 @@ def test_basic_typ_comptime_args_accepts_int_lit(tmp_path):
     assert int_arg.value == 4
 
 
-def test_array_length_path_is_populated_for_identifier(tmp_path):
+def test_array_length_path_is_populated_for_identifier(compiler):
     src = """
     fn f[N](x: array[i32, N]) {}
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
@@ -162,11 +161,11 @@ def test_array_length_path_is_populated_for_identifier(tmp_path):
     assert length.path.str() == "N"
 
 
-def test_array_length_value_is_populated_for_literal(tmp_path):
+def test_array_length_value_is_populated_for_literal(compiler):
     src = """
     fn f(x: array[i32, 4]) {}
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
@@ -177,11 +176,11 @@ def test_array_length_value_is_populated_for_literal(tmp_path):
     assert length.value == 4
 
 
-def test_var_expr_generic_args(tmp_path):
+def test_var_expr_generic_args(compiler):
     src = """
     fn f() { g[i32](); }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -195,13 +194,13 @@ def test_var_expr_generic_args(tmp_path):
     assert arg.path.str() == "i32"
 
 
-def test_comptime_args_are_stored_on_path_segs(tmp_path):
+def test_comptime_args_are_stored_on_path_segs(compiler):
     src = """
     fn f(x: pkg::Outer[i32]::Inner[bool]) {
         pkg::Outer[i32]::make[bool];
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -222,11 +221,11 @@ def test_comptime_args_are_stored_on_path_segs(tmp_path):
     assert stmt.expr.path.str() == "pkg::Outer[i32]::make[bool]"
 
 
-def test_path_str_renders_nested_comptime_args(tmp_path):
+def test_path_str_renders_nested_comptime_args(compiler):
     src = """
     fn f(x: pkg::Outer[array[*mut i32, 4], true]::Inner[false]) {}
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     (param,) = fn.params
@@ -235,29 +234,29 @@ def test_path_str_renders_nested_comptime_args(tmp_path):
     assert param.typ.path.str() == "pkg::Outer[array[*mut i32, 4], true]::Inner[false]"
 
 
-def test_import_single_seg_path(tmp_path):
+def test_import_single_seg_path(compiler):
     src = """
     import xyz;
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (imp,) = mod.defns
     assert isinstance(imp, ast.Import)
     assert [seg.ident.name for seg in imp.path.segs] == ["xyz"]
     assert imp.path.str() == "xyz"
 
 
-def test_import_multi_seg_path(tmp_path):
+def test_import_multi_seg_path(compiler):
     src = """
     import std::mem;
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (imp,) = mod.defns
     assert isinstance(imp, ast.Import)
     assert [seg.ident.name for seg in imp.path.segs] == ["std", "mem"]
     assert imp.path.str() == "std::mem"
 
 
-def test_impl_defn_multiple_fns(tmp_path):
+def test_impl_defn_multiple_fns(compiler):
     src = """
     struct Foo {}
     impl Foo {
@@ -265,7 +264,7 @@ def test_impl_defn_multiple_fns(tmp_path):
         fn helper() i32 { 1 }
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (_struct, impl) = mod.defns
     assert isinstance(impl, ast.ImplDefn)
 
@@ -277,7 +276,7 @@ def test_impl_defn_multiple_fns(tmp_path):
     assert helper_access is None
 
 
-def test_block_stmt_block_like_no_semicolon(tmp_path):
+def test_block_stmt_block_like_no_semicolon(compiler):
     src = """
     fn f() {
         if (true) { 1 }
@@ -285,7 +284,7 @@ def test_block_stmt_block_like_no_semicolon(tmp_path):
         3;
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -299,7 +298,7 @@ def test_block_stmt_block_like_no_semicolon(tmp_path):
     assert fn.block.expr is None
 
 
-def test_match_expr_patterns(tmp_path):
+def test_match_expr_patterns(compiler):
     src = """
     fn f(x: i32) i32 {
         match (x) {
@@ -315,7 +314,7 @@ def test_match_expr_patterns(tmp_path):
         }
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     match_expr = fn.block.expr
@@ -369,7 +368,7 @@ def test_match_expr_patterns(tmp_path):
     ] == ["Color::Green", "Color::Blue", "Color::Yellow"]
 
 
-def test_match_expr_block_tail_and_statement_forms(tmp_path):
+def test_match_expr_block_tail_and_statement_forms(compiler):
     src = """
     fn f(x: i32) i32 {
         match (x) {}
@@ -377,7 +376,7 @@ def test_match_expr_block_tail_and_statement_forms(tmp_path):
         match (x) { _ => 3, }
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
 
@@ -390,7 +389,7 @@ def test_match_expr_block_tail_and_statement_forms(tmp_path):
     assert isinstance(fn.block.expr, ast.MatchExpr)
 
 
-def test_union_defn_variants_and_payloads(tmp_path):
+def test_union_defn_variants_and_payloads(compiler):
     src = """
     pub union Shape[T] {
         Point,
@@ -398,7 +397,7 @@ def test_union_defn_variants_and_payloads(tmp_path):
         Circle(T, i64),
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (union,) = mod.defns
     assert isinstance(union, ast.UnionDefn)
     assert union.ident.name == "Shape"
@@ -421,12 +420,12 @@ def test_union_defn_variants_and_payloads(tmp_path):
     ]
 
 
-def test_union_defn_empty_and_non_generic(tmp_path):
+def test_union_defn_empty_and_non_generic(compiler):
     src = """
     union Empty {}
     union Flag { On, Off }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     empty, flag = mod.defns
     assert isinstance(empty, ast.UnionDefn)
     assert empty.access is None
@@ -437,7 +436,7 @@ def test_union_defn_empty_and_non_generic(tmp_path):
     assert all(variant.payload_typs == () for variant in flag.variants)
 
 
-def test_path_pattern_payloads(tmp_path):
+def test_path_pattern_payloads(compiler):
     src = """
     fn f(x: i32) i32 {
         match (x) {
@@ -447,7 +446,7 @@ def test_path_pattern_payloads(tmp_path):
         }
     }
     """
-    mod = util.parse_mod(tmp_path, src)
+    mod = compiler.parse(src)
     (fn,) = mod.defns
     assert isinstance(fn, ast.FnDefn)
     match_expr = fn.block.expr

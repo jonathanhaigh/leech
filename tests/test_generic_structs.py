@@ -22,9 +22,8 @@ def _get_struct_template(mod, name: str) -> typs.StructTypTemplate:
     return asserts.checked_cast(item.value, typs.StructTypTemplate)
 
 
-def test_generic_and_non_generic_struct_module_items_have_distinct_types(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_generic_and_non_generic_struct_module_items_have_distinct_types(compiler):
+    mod = compiler.build(
         "struct Box[T] { val: T }\nstruct Plain { val: i32 }",
     )
 
@@ -96,7 +95,7 @@ def test_generic_struct_field_indices_work_for_multiple_instances(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_struct_lowering_uses_typechecked_field_indices(tmp_path):
+def test_struct_lowering_uses_typechecked_field_indices(compiler):
     src = """
     struct Pair[A, B] { first: A, second: B }
     pub fn main() i32 {
@@ -104,7 +103,7 @@ def test_struct_lowering_uses_typechecked_field_indices(tmp_path):
         pair.second + pair.first
     }
     """
-    mod = util.build_ir_mod(tmp_path, src)
+    mod = compiler.build(src)
     item = mod.get_item(ir_env.Env.Namespace.VARS, "main")
     assert item is not None
     fn = asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
@@ -987,8 +986,8 @@ def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(tmp_path):
     assert '"T"' in str(exc_info.value)
 
 
-def test_generic_struct_instance_caches_by_typ_args(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "struct Box[T] { val: T }")
+def test_generic_struct_instance_caches_by_typ_args(compiler):
+    mod = compiler.build("struct Box[T] { val: T }")
     box = _get_struct_template(mod, "Box")
 
     i32_inst = box.instantiate((typs.I32,))
@@ -998,9 +997,8 @@ def test_generic_struct_instance_caches_by_typ_args(tmp_path):
     assert tuple(mod.loader.ctx.requested_struct_instances()).count(i32_inst) == 1
 
 
-def test_mono_discovers_struct_requested_while_resolving_fields(tmp_path):
-    mod = util.build_ir_mod(
-        tmp_path,
+def test_mono_discovers_struct_requested_while_resolving_fields(compiler):
+    mod = compiler.build(
         """
         struct Inner[T] { val: T }
         struct Outer[T] { inner: Inner[T] }
@@ -1028,8 +1026,8 @@ def test_codegen_accepts_forward_reference_to_nested_generic_struct(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_generic_struct_instance_qualified_name(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "struct Pair[A, B] { first: A, second: B }")
+def test_generic_struct_instance_qualified_name(compiler):
+    mod = compiler.build("struct Pair[A, B] { first: A, second: B }")
     pair = _get_struct_template(mod, "Pair")
 
     inst = pair.instantiate((typs.I32, typs.BOOL))
@@ -1037,16 +1035,16 @@ def test_generic_struct_instance_qualified_name(tmp_path):
     assert inst.qualified_name == "main::Pair[i32, bool]"
 
 
-def test_generic_struct_field_typs_are_substituted(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "struct Box[T] { val: T }")
+def test_generic_struct_field_typs_are_substituted(compiler):
+    mod = compiler.build("struct Box[T] { val: T }")
     box = _get_struct_template(mod, "Box")
 
     inst = box.instantiate((typs.I32,))
     assert inst.fields["val"].typ is typs.I32
 
 
-def test_struct_fields_mapping_is_live(tmp_path):
-    mod = util.build_ir_mod(tmp_path, "struct Box { val: i32 }")
+def test_struct_fields_mapping_is_live(compiler):
+    mod = compiler.build("struct Box { val: i32 }")
     box = _get_struct_typ(mod, "Box")
 
     fields = box.fields

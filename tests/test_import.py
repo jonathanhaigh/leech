@@ -5,7 +5,7 @@
 import pytest
 
 from leech import errors, mono
-from tests import util
+from tests import harness, util
 
 
 def test_import_of_module_with_syntax_error(tmp_path):
@@ -43,7 +43,7 @@ def test_import_fn(tmp_path):
     util.check_prog_output(tmp_path, main_src, "abc\n", 101, a=a_src)
 
 
-def test_imported_non_generic_fn_is_a_monomorphization_leaf(tmp_path):
+def test_imported_non_generic_fn_is_a_monomorphization_leaf(compiler):
     main_src = """
     import a;
     pub fn main() i32 { return a::f(); }
@@ -52,8 +52,8 @@ def test_imported_non_generic_fn_is_a_monomorphization_leaf(tmp_path):
     fn id[T](x: T) T { x }
     pub fn f() i32 { return id[i32](7); }
     """
-    util.write_whole_file(tmp_path / "a.leech", a_src)
-    mod = util.build_ir_mod(tmp_path, main_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    mod = compiler.build(program)
 
     result = mono.discover(mod)
 
