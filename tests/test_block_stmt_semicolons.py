@@ -4,9 +4,9 @@
 
 import lark
 import pytest
-import util
 
 from leech import errors, parse
+from tests import util
 
 
 def test_while_stmt_no_semicolon(tmp_path):

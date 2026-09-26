@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import errors
+from tests import util
 
 
 def test_if_false_else_expr_val(tmp_path):

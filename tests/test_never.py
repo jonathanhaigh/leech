@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import errors, typs
+from tests import util
 
 
 def test_never_coerces_to_any_type():

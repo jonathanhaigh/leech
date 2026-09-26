@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import errors
+from tests import util
 
 
 def test_const_ptr_method_call(tmp_path):

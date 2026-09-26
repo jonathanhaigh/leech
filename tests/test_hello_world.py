@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-import util
+from tests import util
 
 
 def test_hello_world(tmp_path):

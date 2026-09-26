@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, typs
+from tests import util
 
 
 def test_trait_impl_for_builtin_typ(tmp_path):

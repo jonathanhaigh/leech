@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import errors, mono
+from tests import util
 
 
 def test_import_of_module_with_syntax_error(tmp_path):

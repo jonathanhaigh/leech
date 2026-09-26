@@ -4,9 +4,8 @@
 
 import signal
 
-import util
-
 from leech import ir_module, ir_values
+from tests import util
 
 
 def test_panic_usable_with_no_import(tmp_path):

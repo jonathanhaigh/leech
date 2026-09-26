@@ -21,18 +21,18 @@ The common one-file case remains terse:
 
 ```python
 def test_answer(compiler):
-    compiler.check(source, stdout="", exit_status=42)
+    compiler.check(src, stdout="", exit_status=42)
 ```
 
 Tests that need more control construct an explicit program:
 
 ```python
 program = harness.TestProgram.from_main(
-    main_source,
-    harness.ModuleSource("pkg::a", a_source),
-    harness.ModuleSource(
+    main_src,
+    harness.ModSrc("pkg::a", a_src),
+    harness.ModSrc(
         "sub::helper",
-        helper_source,
+        helper_src,
         path="pkg/sub/helper.leech",
     ),
 )
@@ -75,21 +75,21 @@ tests use the single canonical `tests.harness` module rather than loading helper
 both `util` and `tests.util`. Repository-root `conftest.py` supplies the fixture so tests and
 the later documentation collector can share it.
 
-### `ModuleSource`
+### `ModSrc`
 
-`ModuleSource` is an immutable description of one source file:
+`ModSrc` describes one source file. Its fields are `Final`, so basedpyright rejects
+reassignment without requiring frozen-dataclass initialization machinery:
 
 ```python
-@dataclasses.dataclass(frozen=True, init=False)
-class ModuleSource:
-    name: str
-    source: str
-    path: pathlib.Path
+class ModSrc:
+    name: Final[str]
+    src: Final[str]
+    path: Final[pathlib.Path]
 
     def __init__(
         self,
         name: str,
-        source: str,
+        src: str,
         path: Optional[str] = None,
     ) -> None: ...
 ```
@@ -126,14 +126,14 @@ the `--module-name` contract. Paths are displayed with forward slashes in diagno
 ```python
 @dataclasses.dataclass(frozen=True)
 class TestProgram:
-    root: ModuleSource
-    modules: tuple[ModuleSource, ...] = ()
+    root: ModSrc
+    mods: tuple[ModSrc, ...] = ()
 
     @classmethod
-    def from_main(cls, source: str, *modules: ModuleSource) -> TestProgram: ...
+    def from_main(cls, src: str, *mods: ModSrc) -> TestProgram: ...
 ```
 
-`from_main` creates `ModuleSource("main", source)`. Harness methods also accept a bare source
+`from_main` creates `ModSrc("main", src)`. Harness methods also accept a bare source
 string and coerce it through `from_main`, preserving the concise single-file case.
 
 A program rejects duplicate paths and duplicate qualified names. A runnable program requires
@@ -151,7 +151,7 @@ variable-meaning function:
 
 ```python
 class CompilerHarness:
-    def parse(self, source: str | ModuleSource) -> ast.Mod: ...
+    def parse(self, src: str | ModSrc) -> ast.Mod: ...
     def build(self, program: str | TestProgram) -> ir_module.Mod: ...
     def compile(self, program: str | TestProgram) -> CompiledProgram: ...
     def run(self, program: str | TestProgram) -> ProgramResult: ...
@@ -173,8 +173,8 @@ class CompilerHarness:
     ) -> None: ...
 ```
 
-`parse` turns a bare string into `ModuleSource("main", source)`, materializes that file, calls
-`parse.parse_mod_ast`, and returns an AST. A caller may pass `ModuleSource` to control the name
+`parse` turns a bare string into `ModSrc("main", src)`, materializes that file, calls
+`parse.parse_mod_ast`, and returns an AST. A caller may pass `ModSrc` to control the name
 and path recorded in source spans. This deliberately adopts production `UserError` translation
 for malformed modules; tests of raw Lark failures and non-module start rules continue to call
 `parse.build_parser` directly. `build` materializes all sources and calls the production
@@ -194,7 +194,7 @@ phase method.
 
 ### Direct materialization
 
-A narrow `write_module(module: ModuleSource) -> pathlib.Path` operation remains available for
+A narrow `write_mod(mod: ModSrc) -> pathlib.Path` operation remains available for
 tests of `ModLoader` itself. Those tests intentionally invoke the loader below the normal
 driver boundary and therefore need a real path. There is no general `write_whole_file` helper,
 and materialization never prints file contents as a side effect.
@@ -205,22 +205,22 @@ Compilation returns identities and contents rather than an anonymous list:
 
 ```python
 @dataclasses.dataclass(frozen=True)
-class CompiledModule:
-    module: ModuleSource
-    source_path: pathlib.Path
+class CompiledMod:
+    mod: ModSrc
+    src_path: pathlib.Path
     llvm_path: pathlib.Path
     llvm_ir: str
 
 
 @dataclasses.dataclass(frozen=True)
 class CompiledProgram:
-    modules: Mapping[str, CompiledModule]
+    mods: Mapping[str, CompiledMod]
 ```
 
 The read-only mapping is keyed by qualified module name and retains source order; the
 implementation wraps its private dictionary rather than exposing mutable result state.
 Construction rejects duplicates before compilation. Tests inspect
-`compiled.modules["main"].llvm_ir` rather than unpacking a path tuple and rereading it.
+`compiled.mods["main"].llvm_ir` rather than unpacking a path tuple and rereading it.
 
 Execution returns:
 
@@ -289,11 +289,11 @@ The migration removes ambiguous free functions:
 | `compile_modules(...)` | `compiler.compile(TestProgram(...))` |
 | `link_and_run(...)` | `compiler.run(program)` |
 | `check_prog_output(...)` | `compiler.check(...)` or `compiler.check_signal(...)` |
-| `write_whole_file(...)` | `TestProgram`/`ModuleSource`; `compiler.write_module(...)` only when directly testing the loader |
+| `write_whole_file(...)` | `TestProgram`/`ModSrc`; `compiler.write_mod(...)` only when directly testing the loader |
 
-`source_position(source, substring)` is the clearer public successor to `find_pos` and retains
+`src_position(src, substring)` is the clearer public successor to `find_pos` and retains
 today's first-occurrence behavior. Ordered diagnostic-note tests use it to build expected
-position sequences. `assert_span_at(span, source, substring)` replaces the repeated
+position sequences. `assert_span_at(span, src, substring)` replaces the repeated
 `span is not None` and single line/column tuple comparison and reports expected and actual
 locations explicitly. Tests that need a different occurrence or more detailed span boundaries
 keep direct assertions.

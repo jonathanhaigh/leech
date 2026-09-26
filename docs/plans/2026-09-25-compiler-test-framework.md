@@ -18,14 +18,14 @@ remains stashed while every task in this plan is completed and committed.
 
 - Preserve compiler behavior, emitted LLVM, diagnostic classes, diagnostic locations, and
   test coverage. This issue changes test infrastructure, not Leech semantics.
-- Keep the ordinary single-source calls concise: `compiler.parse(source)`,
-  `compiler.build(source)`, `compiler.compile(source)`, and
-  `compiler.check(source, stdout=..., exit_status=...)`.
+- Keep the ordinary single-source calls concise: `compiler.parse(src)`,
+  `compiler.build(src)`, `compiler.compile(src)`, and
+  `compiler.check(src, stdout=..., exit_status=...)`.
 - Accept plain string paths at the public module boundary and convert them internally to
   concrete `pathlib.Path` values. Do not require tests to construct `PurePath` objects.
 - Keep imports module-qualified. Add `tests/__init__.py` so the new harness has one canonical
   import name.
-- Use explicit `TestProgram`/`ModuleSource` objects for multi-file cases; do not add mappings
+- Use explicit `TestProgram`/`ModSrc` objects for multi-file cases; do not add mappings
   parallel to those objects or accept source modules through `**kwargs`.
 - Compatibility wrappers may keep intermediate commits green, but the final change removes
   `tests/util.py` and every old helper use.
@@ -41,6 +41,8 @@ remains stashed while every task in this plan is completed and committed.
   structured framework` in its body.
 
 ## Task 1: Add the program model and pytest harness fixture
+
+Implementation baseline: `pytest --collect-only -q` collected 1,593 tests before Task 1.
 
 **Files:**
 
@@ -58,16 +60,16 @@ remains stashed while every task in this plan is completed and committed.
    `from tests import util`. Adding the package changes pytest's import context, so this must
    land atomically; do not leave the legacy helper loaded under two module names.
 3. Give every new file its SPDX copyright and license header before running REUSE.
-4. Add immutable `ModuleSource` and `TestProgram` types as specified by the design.
-5. Make `ModuleSource(name, source, path=None)` accept an ordinary optional string path, derive
+4. Add the final-field `ModSrc` and immutable `TestProgram` types as specified by the design.
+5. Make `ModSrc(name, src, path=None)` accept an ordinary optional string path, derive
    the common path from the qualified name, and store a normalized `pathlib.Path`.
 6. Reuse Leech's qualified-name parser and reserved-name rules. Validate `.leech` suffixes,
-   relative paths, traversal, and empty names in `ModuleSource`; validate duplicate names and
+   relative paths, traversal, and empty names in `ModSrc`; validate duplicate names and
    paths in `TestProgram`; and reject a test-supplied `prelude` module.
 7. Add the workspace-bound `CompilerHarness` shell and a function-scoped `compiler` fixture
    backed by pytest's `tmp_path`.
 8. Add the one coercion boundary that converts a bare source string into
-   `TestProgram.from_main(source)`. Keep all lower layers typed in terms of `TestProgram`.
+   `TestProgram.from_main(src)`. Keep all lower layers typed in terms of `TestProgram`.
 9. Add unit tests showing two fixture instances have independent paths and that public string
    paths become concrete paths without requiring callers to import `pathlib`.
 
@@ -95,19 +97,19 @@ the collected-count and full-suite checks are required before committing it.
 1. Implement private whole-program materialization. Write every source before invoking a
    compiler phase, enforce containment below the fixture workspace, use UTF-8, and do not
    print contents.
-2. Implement `CompilerHarness.parse(source_or_module)` by materializing one source file and
-   calling `parse.parse_mod_ast`. A bare string becomes `main.leech`; `ModuleSource` lets a test
+2. Implement `CompilerHarness.parse(src_or_mod)` by materializing one source file and
+   calling `parse.parse_mod_ast`. A bare string becomes `main.leech`; `ModSrc` lets a test
    choose the name and path recorded in spans. Keep raw-Lark tests on `parse.build_parser`.
 3. Implement `CompilerHarness.build(program)` by materializing a program and invoking
    `driver.compile_to_ir` on its root using the root's qualified name.
-4. Implement `write_module(ModuleSource) -> pathlib.Path` only for loader-level tests that
+4. Implement `write_mod(ModSrc) -> pathlib.Path` only for loader-level tests that
    intentionally bypass the driver.
 5. Add focused tests for imports seeing all materialized sources, exceptional path/name pairs,
    containment, clean success output, and propagation of production `UserError` subclasses.
 6. Migrate all parser-AST tests from `parse_mod` to `compiler.parse`.
 7. Migrate semantic-IR tests from `build_ir_mod` to `compiler.build`, using `TestProgram` where
    they currently write helper files manually.
-8. Migrate direct writes in loader tests to `write_module`; defer only writes that belong to a
+8. Migrate direct writes in loader tests to `write_mod`; defer only writes that belong to a
    later LLVM/run migration.
 
 ### Validation
@@ -130,7 +132,7 @@ temporarily available for unmigrated tests.
 
 ### Work
 
-1. Add `CompiledModule` and `CompiledProgram`. Preserve module declaration order and provide a
+1. Add `CompiledMod` and `CompiledProgram`. Preserve module declaration order and provide a
    qualified-name mapping with source path, LLVM path, and LLVM text.
 2. Implement `CompilerHarness.compile(program)`. Materialize once, compile every supplied
    module independently under its declared qualified name, and write each LLVM artifact without
@@ -138,11 +140,11 @@ temporarily available for unmigrated tests.
 3. Add focused tests for a one-file program, multiple modules, a transitive relative import,
    same-stem modules in different directories, duplicate rejection, compile errors, and stable
    artifact lookup by qualified name.
-4. Migrate compile-success and compile-error tests to `compiler.compile(source_or_program)`.
+4. Migrate compile-success and compile-error tests to `compiler.compile(src_or_program)`.
 5. Replace tuple unpacking and `.read_text()` with structured access such as
-   `compiled.modules["main"].llvm_ir`.
+   `compiled.mods["main"].llvm_ir`.
 6. Preserve tests that deliberately compile an imported module separately. Express each file
-   as `ModuleSource` rather than reconstructing a qualified-name mapping.
+   as `ModSrc` rather than reconstructing a qualified-name mapping.
 7. Compare representative emitted LLVM before and after migration to ensure the harness has not
    changed module names, linkage, or entry-point selection.
 
@@ -206,10 +208,10 @@ API is stable before the mechanical full-suite batch.
 1. Replace ordinary calls with named expectations:
 
    ```python
-   compiler.check(source, stdout="", exit_status=42)
+   compiler.check(src, stdout="", exit_status=42)
    ```
 
-2. Use `TestProgram.from_main` plus `ModuleSource` for every multi-file case. Keep explicit paths
+2. Use `TestProgram.from_main` plus `ModSrc` for every multi-file case. Keep explicit paths
    only where physical layout differs from the qualified name.
 3. Replace negative signal statuses with `check_signal` and state the stable stderr prefix.
 4. For tests that inspect a `ProgramResult` beyond common expectations, call `run` and keep the
@@ -239,14 +241,14 @@ has already landed and been reviewed in Task 4.
 
 ### Work
 
-1. Replace `find_pos` with public `source_position(source, substring)`, retaining its
+1. Replace `find_pos` with public `src_position(src, substring)`, retaining its
    first-occurrence semantics so ordered lists of diagnostic-note positions remain readable.
-2. Add `assert_span_at(span, source, substring)` with explicit expected/actual location detail.
-   Keep `source_position` or direct assertions for tests needing ordered collections, another
+2. Add `assert_span_at(span, src, substring)` with explicit expected/actual location detail.
+   Keep `src_position` or direct assertions for tests needing ordered collections, another
    occurrence, end positions, file identity, or note-specific structure.
 3. Migrate repeated `span is not None` plus `(start_line, start_col)` comparisons where the new
    helper improves readability.
-4. Convert remaining sibling-module setup to `TestProgram`/`ModuleSource`; use `write_module`
+4. Convert remaining sibling-module setup to `TestProgram`/`ModSrc`; use `write_mod`
    only where the loader itself is under test.
 5. Keep direct construction of `src.SrcFile`, parsers for non-module grammar rules, and compiler
    internals where those objects are themselves the unit under test.
@@ -318,7 +320,7 @@ and the owner resumes #23.
 3. Restore the Markdown collector, collector tests, dependency changes, and other still-relevant
    #23 work selectively. Do not restore its obsolete `tests/util.py` implementation or broad
    import migration over the completed framework.
-4. Adapt documentation `SourceFence` data to construct `harness.ModuleSource` and
+4. Adapt documentation `SrcFence` data to construct `harness.ModSrc` and
    `harness.TestProgram`, or remove the duplicate type if the Markdown-specific line metadata can
    remain alongside the shared module object cleanly.
 5. Remove `std=` from the documentation fence schema and update the #23 spec/plan before

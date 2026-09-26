@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, opt_util, typs
+from tests import util
 
 
 def test_assoc_fn_call(tmp_path):

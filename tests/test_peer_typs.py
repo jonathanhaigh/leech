@@ -5,9 +5,9 @@
 import signal
 
 import pytest
-import util
 
 from leech import errors
+from tests import util
 
 # --- if/else arms ---
 

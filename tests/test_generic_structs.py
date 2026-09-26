@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import asserts, ast, errors, ir_env, ir_module, mono, typs
+from tests import util
 
 
 def _get_struct_typ(mod, name: str) -> typs.StructTyp:

@@ -7,10 +7,10 @@ import pathlib
 import typing
 
 import pytest
-import util
 
 from leech import ast, compilation, errors, ir_env, ir_traits, parse, typs
 from leech import src as leech_src
+from tests import util
 
 
 def test_typ_kind_covers_every_concrete_typ_subclass():

@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import (
     asserts,
@@ -19,6 +18,7 @@ from leech import (
     typs,
 )
 from leech import src as leech_src
+from tests import util
 
 
 def _get_union_typ(mod, name: str) -> typs.UnionTyp:

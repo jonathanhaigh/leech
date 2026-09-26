@@ -2,9 +2,8 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-import util
-
 from leech import ast
+from tests import util
 
 
 def test_impl_defn_basic_typ(tmp_path):

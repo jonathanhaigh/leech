@@ -4,9 +4,9 @@
 
 import lark
 import pytest
-import util
 
 from leech import errors, parse, reserved
+from tests import util
 
 _DECLARATIONS = {
     "struct_name": "struct if { mut x: i32 }\npub fn main() i32 { return 0; }",

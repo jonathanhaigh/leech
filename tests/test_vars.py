@@ -5,9 +5,9 @@
 from typing import cast
 
 import pytest
-import util
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, ir_values, typs
+from tests import util
 
 
 def test_env_rejects_bound_value_without_pointer_typ(tmp_path):

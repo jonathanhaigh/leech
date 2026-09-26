@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import asserts, ast, errors, ir_env, ir_module, ir_values, mono, typs
+from tests import util
 
 
 def _get_fn(mod, name: str) -> ir_module.SrcFnSymbol:

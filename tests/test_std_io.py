@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-import util
+from tests import util
 
 
 def test_println_adds_a_newline(tmp_path):

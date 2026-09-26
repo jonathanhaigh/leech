@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-import util
+from tests import util
 
 
 def test_alloc_write_read_dealloc_round_trips_an_int(tmp_path):

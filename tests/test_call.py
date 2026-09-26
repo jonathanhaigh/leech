@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pytest
-import util
 
 from leech import asserts, errors, ir_env, ir_module
+from tests import util
 
 
 def test_not_callable(tmp_path):
