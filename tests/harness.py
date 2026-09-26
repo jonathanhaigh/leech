@@ -3,13 +3,28 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import dataclasses
+import functools
 import pathlib
+import signal
+import subprocess
 import types
 from collections.abc import Mapping
 from typing import ClassVar, Final, Optional
 
 from leech import ast, driver, ir_module, parse, reserved
 from leech import src as leech_src
+
+_TOOL_TIMEOUT_SECONDS = 30
+
+
+@functools.cache
+def _bundled_mod_llvm_ir() -> Mapping[str, str]:
+    std_root = pathlib.Path(driver.__file__).parent / "std"
+    compiled = dict[str, str]()
+    for path in sorted(std_root.glob("*.leech")):
+        name = "prelude" if path.stem == "prelude" else f"std::{path.stem}"
+        compiled[name] = driver.compile_to_llvm_ir(leech_src.SrcFile(path), name)
+    return types.MappingProxyType(compiled)
 
 
 class ModSrc:
@@ -125,6 +140,8 @@ class CompilerHarness:
         path = (self.workspace / mod.path).resolve()
         if not path.is_relative_to(self.workspace):
             raise ValueError(f"module path escapes the compiler workspace: {str(mod.path)!r}")
+        if path.is_relative_to(self.workspace / ".bundled"):
+            raise ValueError(f"module path uses reserved harness directory: {str(mod.path)!r}")
         return path
 
     @staticmethod
@@ -160,6 +177,126 @@ class CompilerHarness:
             self._write_src(llvm_path, llvm_ir)
             compiled[mod.name] = CompiledMod(mod, src_path, llvm_path, llvm_ir)
         return CompiledProgram(compiled)
+
+    def _tool_failure(
+        self,
+        summary: str,
+        failure: subprocess.CompletedProcess[str] | subprocess.TimeoutExpired,
+    ) -> AssertionError:
+        def format_stream(stream: Optional[str | bytes]) -> str:
+            if stream is None:
+                return ""
+            if isinstance(stream, bytes):
+                return stream.decode(errors="replace")
+            return stream
+
+        if isinstance(failure, subprocess.TimeoutExpired):
+            command = failure.cmd
+            returncode = None
+            stdout = failure.stdout
+            stderr = failure.stderr
+        else:
+            command = failure.args
+            returncode = failure.returncode
+            stdout = failure.stdout
+            stderr = failure.stderr
+
+        return AssertionError(
+            f"{summary}\n"
+            f"command: {command!r}\n"
+            f"return code: {returncode!r}\n"
+            f"stdout:\n{format_stream(stdout)}\n"
+            f"stderr:\n{format_stream(stderr)}\n"
+            f"workspace: {self.workspace}"
+        )
+
+    def _invoke_tool(self, command: list[str]) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_TOOL_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise self._tool_failure(
+                f"command timed out after {_TOOL_TIMEOUT_SECONDS} seconds",
+                exc,
+            ) from exc
+
+    def _link(self, compiled: CompiledProgram) -> pathlib.Path:
+        llvm_paths = [mod.llvm_path for mod in compiled.mods.values()]
+        bundled_root = self.workspace / ".bundled"
+        for name, llvm_ir in _bundled_mod_llvm_ir().items():
+            if name != "prelude" and name in compiled.mods:
+                continue
+            llvm_path = bundled_root.joinpath(*name.split("::")).with_suffix(".ll")
+            self._write_src(llvm_path, llvm_ir)
+            llvm_paths.append(llvm_path)
+
+        bitcode_path = self.workspace / "program.bc"
+        command = ["llvm-link", "-o", str(bitcode_path), *(str(path) for path in llvm_paths)]
+        result = self._invoke_tool(command)
+        if result.returncode != 0:
+            raise self._tool_failure(
+                "llvm-link failed",
+                result,
+            )
+        return bitcode_path
+
+    def run(self, program: str | TestProgram) -> subprocess.CompletedProcess[str]:
+        program = self._coerce_program(program)
+        if program.root.name != "main":
+            raise ValueError("runnable program root module must be named 'main'")
+        compiled = self.compile(program)
+        bitcode_path = self._link(compiled)
+        return self._invoke_tool(["lli", "--disable-symbolication", str(bitcode_path)])
+
+    def check(
+        self,
+        program: str | TestProgram,
+        *,
+        stdout: str = "",
+        stderr: str = "",
+        exit_status: int = 0,
+    ) -> None:
+        result = self.run(program)
+        assert result.stdout == stdout, (
+            f"unexpected stdout: expected {stdout!r}, got {result.stdout!r}; "
+            f"result: {result!r}; workspace: {self.workspace}"
+        )
+        assert result.stderr == stderr, (
+            f"unexpected stderr: expected {stderr!r}, got {result.stderr!r}; "
+            f"result: {result!r}; workspace: {self.workspace}"
+        )
+        assert result.returncode == exit_status, (
+            f"unexpected exit status: expected {exit_status!r}, got {result.returncode!r}; "
+            f"result: {result!r}; workspace: {self.workspace}"
+        )
+
+    def check_signal(
+        self,
+        program: str | TestProgram,
+        *,
+        expected_signal: signal.Signals,
+        stderr_prefix: str,
+        stdout: str = "",
+    ) -> None:
+        result = self.run(program)
+        assert result.stdout == stdout, (
+            f"unexpected stdout: expected {stdout!r}, got {result.stdout!r}; "
+            f"result: {result!r}; workspace: {self.workspace}"
+        )
+        assert result.stderr.startswith(stderr_prefix), (
+            f"unexpected stderr prefix: expected {stderr_prefix!r}, got {result.stderr!r}; "
+            f"result: {result!r}; workspace: {self.workspace}"
+        )
+        expected_returncode = -expected_signal.value
+        assert result.returncode == expected_returncode, (
+            f"unexpected signal status: expected {expected_returncode!r}, "
+            f"got {result.returncode!r}; result: {result!r}; workspace: {self.workspace}"
+        )
 
     def write_mod(self, mod: ModSrc) -> pathlib.Path:
         path = self._mod_path(mod)

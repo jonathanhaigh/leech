@@ -153,7 +153,7 @@ class CompilerHarness:
     def parse(self, src: str | ModSrc) -> ast.Mod: ...
     def build(self, program: str | TestProgram) -> ir_module.Mod: ...
     def compile(self, program: str | TestProgram) -> CompiledProgram: ...
-    def run(self, program: str | TestProgram) -> ProgramResult: ...
+    def run(self, program: str | TestProgram) -> subprocess.CompletedProcess[str]: ...
     def check(
         self,
         program: str | TestProgram,
@@ -222,20 +222,17 @@ implementation wraps its private dictionary rather than exposing mutable result 
 Construction rejects duplicates before compilation. Tests inspect
 `compiled.mods["main"].llvm_ir` rather than unpacking a path tuple and rereading it.
 
-Execution returns:
+Execution returns the standard subprocess result directly:
 
 ```python
-@dataclasses.dataclass(frozen=True)
-class ProgramResult:
-    stdout: str
-    stderr: str
-    returncode: int
+subprocess.CompletedProcess[str]
 ```
 
-Keeping stdout and stderr separate lets ordinary output, panic text, linker diagnostics, and
-LLVM's crash handler be described accurately. `lli --disable-symbolication` remains necessary
-for abort tests. `check_signal` checks exact stdout, the expected negative signal status, and
-only the stable prefix of stderr because `lli` appends an address-dependent crash report.
+The harness invokes `lli` with text output captured separately, so `stdout` and `stderr` are
+strings. Keeping them separate lets ordinary output, panic text, linker diagnostics, and LLVM's
+crash handler be described accurately. `lli --disable-symbolication` remains necessary for
+abort tests. `check_signal` checks exact stdout, the expected negative signal status, and only
+the stable prefix of stderr because `lli` appends an address-dependent crash report.
 
 ## Standard-library linking
 

@@ -168,7 +168,8 @@ execution helpers may still delegate to their legacy compilation path until Task
 
 ### Work
 
-1. Add `ProgramResult(stdout, stderr, returncode)`.
+1. Return `subprocess.CompletedProcess[str]` from runnable programs, with text streams captured
+   separately.
 2. Discover bundled `.leech` files from the compiler package. Compile their LLVM strings under
    `prelude` or `std::<stem>` and cache only immutable strings across tests.
 3. Always link the bundled prelude. Link every other bundled implementation automatically for a
@@ -214,8 +215,8 @@ API is stable before the mechanical full-suite batch.
 2. Use `TestProgram.from_main` plus `ModSrc` for every multi-file case. Keep explicit paths
    only where physical layout differs from the qualified name.
 3. Replace negative signal statuses with `check_signal` and state the stable stderr prefix.
-4. For tests that inspect a `ProgramResult` beyond common expectations, call `run` and keep the
-   assertions in the test.
+4. For tests that inspect a completed process beyond common expectations, call `run` and keep
+   the assertions in the test.
 5. Audit every previously nonempty expected output. Classify it as stdout or stderr rather than
    mechanically assigning merged output to one stream.
 6. Remove every `std_modules` argument.

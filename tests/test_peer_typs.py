@@ -7,7 +7,6 @@ import signal
 import pytest
 
 from leech import errors
-from tests import util
 
 # --- if/else arms ---
 
@@ -19,7 +18,7 @@ from tests import util
         ("1", "2u8"),
     ),
 )
-def test_if_arm_typ_independent_of_order(then_arm, els_arm, tmp_path):
+def test_if_arm_typ_independent_of_order(then_arm, els_arm, compiler):
     src = f"""
     fn takes_u8(x: u8) u8 {{ return x; }}
     pub fn main() i32 {{
@@ -28,10 +27,10 @@ def test_if_arm_typ_independent_of_order(then_arm, els_arm, tmp_path):
         return takes_u8(x);
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_if_expected_typ_still_wins(tmp_path):
+def test_if_expected_typ_still_wins(compiler):
     src = """
     pub fn main() i32 {
         let c = false;
@@ -39,7 +38,7 @@ def test_if_expected_typ_still_wins(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
 def test_if_two_decided_arms_must_agree(compiler):
@@ -54,7 +53,7 @@ def test_if_two_decided_arms_must_agree(compiler):
         compiler.compile(src)
 
 
-def test_if_diverging_arm_does_not_decide_typ(tmp_path):
+def test_if_diverging_arm_does_not_decide_typ(compiler):
     # The diverging arm says nothing about the type, so the bare literal
     # in the other arm is free to be a u8.
     src = """
@@ -65,14 +64,14 @@ def test_if_diverging_arm_does_not_decide_typ(tmp_path):
         return takes_u8(x);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
 # --- Binary operators ---
 
 
 @pytest.mark.parametrize("expr", ("1u8 + 10", "1 + 10u8"))
-def test_binop_operand_typ_independent_of_order(expr, tmp_path):
+def test_binop_operand_typ_independent_of_order(expr, compiler):
     src = f"""
     fn takes_u8(x: u8) u8 {{ return x; }}
     pub fn main() i32 {{
@@ -80,10 +79,10 @@ def test_binop_operand_typ_independent_of_order(expr, tmp_path):
         return takes_u8(x);
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 11)
+    compiler.check(src, exit_status=11)
 
 
-def test_binop_takes_typ_from_context(tmp_path):
+def test_binop_takes_typ_from_context(compiler):
     # Neither operand decides its own type, so both take the declared
     # type of the variable the result goes into.
     src = """
@@ -92,17 +91,17 @@ def test_binop_takes_typ_from_context(tmp_path):
         return if (x == 255u8) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 @pytest.mark.parametrize("expr", ("1u8 < 10", "1 < 10u8"))
-def test_comparison_operand_typ_independent_of_order(expr, tmp_path):
+def test_comparison_operand_typ_independent_of_order(expr, compiler):
     src = f"""
     pub fn main() i32 {{
         return if ({expr}) {{ 7 }} else {{ 0 }};
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 @pytest.mark.parametrize("expr", ("1u8 + 2u16", "1u16 + 2u8"))
@@ -135,7 +134,7 @@ def test_binop_flexible_operand_does_not_adopt_non_int_typ(compiler):
 # --- Evaluation order is left-to-right ---
 
 
-def test_binop_evaluation_order_is_left_to_right(tmp_path):
+def test_binop_evaluation_order_is_left_to_right(compiler):
     # Lowering is plain left-to-right, so the literal is lowered first
     # here; it emits nothing, so the call still happens exactly once.
     src = """
@@ -146,26 +145,24 @@ def test_binop_evaluation_order_is_left_to_right(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "a\n", 0)
+    compiler.check(src, stdout="a\n")
 
 
-def test_binop_double_negation_is_evaluated_before_rhs(tmp_path):
+def test_binop_double_negation_is_evaluated_before_rhs(compiler):
     # A doubly-negated literal is still treated as a flexible literal by
     # TypCheck, but lowering only folds a single negation, so the left
     # operand emits an overflow check before the right-hand call runs.
     # Left-to-right evaluation means the overflow panic must happen first.
     src = """
-    extern fn puts(s: *u8) i32;
-    fn a() i32 { puts("a"); return 5; }
+    import std::io;
+    fn a() i32 { io::print("a"); return 5; }
     pub fn main() i32 {
         let x = - -2147483648 + a();
         return 0;
     }
     """
-    llir = util.compile_modules(tmp_path, main=src)
-    proc = util.link_and_run(tmp_path, llir)
-    assert proc.returncode == -signal.SIGABRT
-    assert proc.stdout.startswith("integer overflow\n")
-    # The side effect would precede the panic if the right operand ran
-    # first; only ignore the crash backtrace that follows the panic text.
-    assert "a\n" not in proc.stdout.split("integer overflow\n", 1)[0]
+    result = compiler.run(src)
+    assert result.returncode == -signal.SIGABRT
+    assert result.stderr.startswith("integer overflow\n")
+    # The side effect would appear if the right operand ran first.
+    assert result.stdout == ""

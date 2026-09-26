@@ -2,10 +2,8 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-from tests import util
 
-
-def test_println_adds_a_newline(tmp_path):
+def test_println_adds_a_newline(compiler):
     main_src = """
     import std::io;
     pub fn main() i32 {
@@ -13,10 +11,10 @@ def test_println_adds_a_newline(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "hello\n", 0, std_modules=("io",))
+    compiler.check(main_src, stdout="hello\n")
 
 
-def test_print_does_not_add_a_newline(tmp_path):
+def test_print_does_not_add_a_newline(compiler):
     main_src = """
     import std::io;
     pub fn main() i32 {
@@ -24,10 +22,10 @@ def test_print_does_not_add_a_newline(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "hello", 0, std_modules=("io",))
+    compiler.check(main_src, stdout="hello")
 
 
-def test_print_and_println_compose_across_multiple_calls(tmp_path):
+def test_print_and_println_compose_across_multiple_calls(compiler):
     main_src = """
     import std::io;
     pub fn main() i32 {
@@ -39,4 +37,4 @@ def test_print_and_println_compose_across_multiple_calls(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "abc\nde\n", 0, std_modules=("io",))
+    compiler.check(main_src, stdout="abc\nde\n")

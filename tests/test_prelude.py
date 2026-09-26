@@ -5,40 +5,48 @@
 import signal
 
 from leech import ir_module, ir_values
-from tests import util
+from tests import harness
 
 
-def test_panic_usable_with_no_import(tmp_path):
+def test_panic_usable_with_no_import(compiler):
     main_src = """
     pub fn main() i32 {
         panic("boom");
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "boom\n", -signal.SIGABRT)
+    compiler.check_signal(
+        main_src,
+        expected_signal=signal.SIGABRT,
+        stderr_prefix="boom\n",
+    )
 
 
-def test_assert_true_is_a_no_op(tmp_path):
+def test_assert_true_is_a_no_op(compiler):
     main_src = """
     pub fn main() i32 {
         assert(true);
         return 42;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 42)
+    compiler.check(main_src, exit_status=42)
 
 
-def test_assert_false_panics(tmp_path):
+def test_assert_false_panics(compiler):
     main_src = """
     pub fn main() i32 {
         assert(false);
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "assertion failed\n", -signal.SIGABRT)
+    compiler.check_signal(
+        main_src,
+        expected_signal=signal.SIGABRT,
+        stderr_prefix="assertion failed\n",
+    )
 
 
-def test_own_panic_shadows_prelude_panic_within_its_own_module(tmp_path):
+def test_own_panic_shadows_prelude_panic_within_its_own_module(compiler):
     # A module defining its own `fn panic(...)` shadows the ambient
     # prelude binding, but only within that module - the same
     # child-scope-shadows-ancestor guarantee as usize/isize/bool.
@@ -58,10 +66,15 @@ def test_own_panic_shadows_prelude_panic_within_its_own_module(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "from a\n", -signal.SIGABRT, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check_signal(
+        program,
+        expected_signal=signal.SIGABRT,
+        stderr_prefix="from a\n",
+    )
 
 
-def test_synthesized_check_uses_real_panic_even_when_shadowed(tmp_path):
+def test_synthesized_check_uses_real_panic_even_when_shadowed(compiler):
     # Unlike an explicit call, a compiler-synthesized safety check (here,
     # integer overflow) always calls the real prelude panic - never a
     # module's own shadowing definition - so user code can't opt out of
@@ -77,7 +90,11 @@ def test_synthesized_check_uses_real_panic_even_when_shadowed(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "integer overflow\n", -signal.SIGABRT)
+    compiler.check_signal(
+        main_src,
+        expected_signal=signal.SIGABRT,
+        stderr_prefix="integer overflow\n",
+    )
 
 
 def test_source_and_synthesized_panic_calls_share_reference(compiler):

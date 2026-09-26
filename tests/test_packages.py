@@ -8,7 +8,7 @@ from leech import errors
 from tests import harness, util
 
 
-def test_sibling_import_unaffected(tmp_path):
+def test_sibling_import_unaffected(compiler):
     # Regression: a plain single-segment import still resolves next to the
     # importing file, exactly as before ::-paths existed.
     main_src = """
@@ -22,10 +22,11 @@ def test_sibling_import_unaffected(tmp_path):
         return 42;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=42)
 
 
-def test_nested_import_resolves_subdirectory(tmp_path):
+def test_nested_import_resolves_subdirectory(compiler):
     # `import sub::helper;` binds only the last segment, `helper` - `sub`
     # is a pure filesystem path component, never bound anywhere.
     main_src = """
@@ -39,10 +40,14 @@ def test_nested_import_resolves_subdirectory(tmp_path):
         return 7;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 7, **{"sub/helper": helper_src})
+    program = harness.TestProgram.from_main(
+        main_src,
+        harness.ModSrc("sub::helper", helper_src),
+    )
+    compiler.check(program, exit_status=7)
 
 
-def test_nested_import_allows_reserved_directory_name(tmp_path):
+def test_nested_import_allows_reserved_directory_name(compiler):
     main_src = """
     import array::helper;
     pub fn main() i32 {
@@ -54,13 +59,17 @@ def test_nested_import_allows_reserved_directory_name(tmp_path):
         return 7;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 7, **{"array/helper": helper_src})
+    program = harness.TestProgram.from_main(
+        main_src,
+        harness.ModSrc("array::helper", helper_src),
+    )
+    compiler.check(program, exit_status=7)
 
 
-def test_transitive_nested_import_resolves_relative_to_its_own_file(tmp_path):
+def test_transitive_nested_import_resolves_relative_to_its_own_file(compiler):
     # a's own `import sub::helper;` must resolve relative to a's directory
-    # (tmp_path/pkg), not the root's (tmp_path) - if it resolved relative
-    # to the root instead, tmp_path/sub/helper.leech wouldn't exist.
+    # (pkg), not the root - if it resolved relative to the root instead,
+    # sub/helper.leech wouldn't exist.
     main_src = """
     import pkg::a;
     pub fn main() i32 {
@@ -78,15 +87,16 @@ def test_transitive_nested_import_resolves_relative_to_its_own_file(tmp_path):
         return 10;
     }
     """
-    llir_mod_paths = util.compile_modules(
-        tmp_path,
-        {"pkg/sub/helper": "sub::helper"},
-        main=main_src,
-        **{"pkg/a": a_src, "pkg/sub/helper": helper_src},
+    program = harness.TestProgram.from_main(
+        main_src,
+        harness.ModSrc("pkg::a", a_src),
+        harness.ModSrc(
+            "sub::helper",
+            helper_src,
+            path="pkg/sub/helper.leech",
+        ),
     )
-    proc = util.link_and_run(tmp_path, llir_mod_paths)
-    assert proc.stdout == ""
-    assert proc.returncode == 11
+    compiler.check(program, exit_status=11)
 
 
 def test_nested_import_does_not_exist(compiler):
@@ -137,7 +147,7 @@ def test_module_path_seg_rejects_comptime_args(compiler):
     assert (span.start_line, span.start_col) == util.find_pos(main_src, "a[i32]::f")
 
 
-def test_same_stem_modules_in_different_subdirectories(tmp_path):
+def test_same_stem_modules_in_different_subdirectories(compiler):
     # Two files both named mem.leech, in different packages, each
     # reached only through one intermediate wrapper module (so neither
     # bare name "mem" is ever bound twice in the same scope - only the
@@ -175,12 +185,11 @@ def test_same_stem_modules_in_different_subdirectories(tmp_path):
         return 4;
     }
     """
-    util.check_prog_output(
-        tmp_path,
+    program = harness.TestProgram.from_main(
         main_src,
-        "",
-        7,
-        a=a_src,
-        b=b_src,
-        **{"a_pkg/mem": a_pkg_mem_src, "b_pkg/mem": b_pkg_mem_src},
+        harness.ModSrc("a", a_src),
+        harness.ModSrc("b", b_src),
+        harness.ModSrc("a_pkg::mem", a_pkg_mem_src),
+        harness.ModSrc("b_pkg::mem", b_pkg_mem_src),
     )
+    compiler.check(program, exit_status=7)

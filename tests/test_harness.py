@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pathlib
+import signal
+import subprocess
 from typing import cast
 
 import pytest
@@ -156,6 +158,7 @@ def test_build_propagates_user_error(compiler: harness.CompilerHarness):
 def test_success_does_not_print(compiler: harness.CompilerHarness, capsys):
     compiler.build("pub fn main() i32 { 0 }")
     compiler.compile("pub fn main() i32 { 0 }")
+    compiler.run("pub fn main() i32 { 0 }")
 
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -258,3 +261,101 @@ def test_compiled_mod_mapping_is_read_only(compiler: harness.CompilerHarness):
 
     with pytest.raises(TypeError):
         mutable_view["other"] = compiled.mods["main"]
+
+
+def test_run_returns_separate_streams_and_status(compiler: harness.CompilerHarness):
+    result = compiler.run('pub fn main() i32 { panic("failed"); }')
+
+    assert result.stdout == ""
+    assert result.stderr.startswith("failed\n")
+    assert result.returncode == -signal.SIGABRT
+
+
+def test_check_uses_exact_expectations(compiler: harness.CompilerHarness):
+    compiler.check("pub fn main() i32 { 7 }", exit_status=7)
+
+
+def test_check_signal_accepts_stable_stderr_prefix(compiler: harness.CompilerHarness):
+    compiler.check_signal(
+        'pub fn main() i32 { panic("failed"); }',
+        expected_signal=signal.SIGABRT,
+        stderr_prefix="failed\n",
+    )
+
+
+def test_run_automatically_links_standard_library(compiler: harness.CompilerHarness):
+    compiler.check(
+        'import std::io; pub fn main() i32 { io::println("hello"); 0 }',
+        stdout="hello\n",
+    )
+
+
+def test_program_std_mod_shadows_bundled_mod(compiler: harness.CompilerHarness):
+    program = harness.TestProgram.from_main(
+        'import std::io; pub fn main() i32 { io::print("unused"); 9 }',
+        harness.ModSrc("std::io", "pub fn print(msg: *u8) {}"),
+    )
+
+    compiler.check(program, stdout="", exit_status=9)
+
+
+def test_run_requires_main_root(compiler: harness.CompilerHarness):
+    program = harness.TestProgram(harness.ModSrc("app", "pub fn main() i32 { 0 }"))
+
+    with pytest.raises(ValueError, match="root module must be named 'main'"):
+        compiler.run(program)
+
+
+def test_check_failure_reports_expected_and_actual(compiler: harness.CompilerHarness):
+    with pytest.raises(AssertionError) as exc_info:
+        compiler.check("pub fn main() i32 { 7 }", exit_status=8)
+
+    message = str(exc_info.value)
+    assert "unexpected exit status" in message
+    assert "expected 8" in message
+    assert "got 7" in message
+    assert str(compiler.workspace) in message
+
+
+def test_materialization_rejects_reserved_runtime_path(compiler: harness.CompilerHarness):
+    program = harness.TestProgram.from_main(
+        "pub fn main() i32 { 0 }",
+        harness.ModSrc("helper", "", path=".bundled/helper.leech"),
+    )
+
+    with pytest.raises(ValueError, match="reserved harness directory"):
+        compiler.compile(program)
+
+
+def test_link_failure_reports_process_details(compiler: harness.CompilerHarness, monkeypatch):
+    def fail(command, **kwargs):
+        return subprocess.CompletedProcess(command, 1, stdout="link stdout", stderr="link stderr")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+
+    with pytest.raises(AssertionError) as exc_info:
+        compiler.run("pub fn main() i32 { 0 }")
+
+    message = str(exc_info.value)
+    assert "llvm-link failed" in message
+    assert "link stdout" in message
+    assert "link stderr" in message
+    assert str(compiler.workspace) in message
+
+
+def test_link_timeout_reports_process_details(compiler: harness.CompilerHarness, monkeypatch):
+    def time_out(command, **kwargs):
+        raise subprocess.TimeoutExpired(
+            command, 30, output="partial stdout", stderr="partial stderr"
+        )
+
+    monkeypatch.setattr(subprocess, "run", time_out)
+
+    with pytest.raises(AssertionError) as exc_info:
+        compiler.run("pub fn main() i32 { 0 }")
+
+    message = str(exc_info.value)
+    assert "timed out after 30 seconds" in message
+    assert "partial stdout" in message
+    assert "partial stderr" in message
+    assert str(compiler.workspace) in message

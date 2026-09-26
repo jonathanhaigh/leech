@@ -2,10 +2,8 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-from tests import util
 
-
-def test_alloc_write_read_dealloc_round_trips_an_int(tmp_path):
+def test_alloc_write_read_dealloc_round_trips_an_int(compiler):
     main_src = """
     import std::mem;
     pub fn main() i32 {
@@ -16,10 +14,10 @@ def test_alloc_write_read_dealloc_round_trips_an_int(tmp_path):
         return v;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 42, std_modules=("mem",))
+    compiler.check(main_src, exit_status=42)
 
 
-def test_alloc_write_read_dealloc_round_trips_a_struct(tmp_path):
+def test_alloc_write_read_dealloc_round_trips_a_struct(compiler):
     main_src = """
     import std::mem;
     struct Pair { mut a: i32, mut b: i32 }
@@ -32,10 +30,10 @@ def test_alloc_write_read_dealloc_round_trips_a_struct(tmp_path):
         return sum;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 7, std_modules=("mem",))
+    compiler.check(main_src, exit_status=7)
 
 
-def test_two_allocs_do_not_alias(tmp_path):
+def test_two_allocs_do_not_alias(compiler):
     main_src = """
     import std::mem;
     pub fn main() i32 {
@@ -49,10 +47,10 @@ def test_two_allocs_do_not_alias(tmp_path):
         return result;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 3, std_modules=("mem",))
+    compiler.check(main_src, exit_status=3)
 
 
-def test_dealloc_of_null_pointer_is_a_no_op(tmp_path):
+def test_dealloc_of_null_pointer_is_a_no_op(compiler):
     # getenv is a portable, always-available libc function that returns a
     # genuine null pointer for an unset variable - the only way to
     # observe one, since Leech has no null-pointer literal.
@@ -66,7 +64,7 @@ def test_dealloc_of_null_pointer_is_a_no_op(tmp_path):
         return 7;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 7, std_modules=("mem",))
+    compiler.check(main_src, exit_status=7)
 
 
 def test_alloc_different_typs_use_distinct_size_of_instantiations(compiler):
