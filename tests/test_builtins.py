@@ -5,7 +5,6 @@
 import pytest
 
 from leech import asserts, errors, ir_env, ir_module, target, typs
-from tests import util
 
 
 def _get_intrinsic(mod, name: str) -> ir_module.IntrinsicFnSymbol:
@@ -39,7 +38,7 @@ _UNAMBIGUOUS_TYPS = [
 
 
 @pytest.mark.parametrize(("typ", "expected_size"), _UNAMBIGUOUS_TYPS)
-def test_size_of_runtime_unambiguous_typs(tmp_path, typ, expected_size):
+def test_size_of_runtime_unambiguous_typs(compiler, typ, expected_size):
     src = f"""
     pub fn main() i32 {{
         if (__size_of[{typ}]() == {expected_size}usize) {{
@@ -48,7 +47,7 @@ def test_size_of_runtime_unambiguous_typs(tmp_path, typ, expected_size):
         return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 # Widths whose byte size isn't target-independent: LLVM's own ABI-alignment
@@ -68,7 +67,7 @@ _PADDED_TYPS = [
 
 
 @pytest.mark.parametrize(("typ", "expected_size"), _PADDED_TYPS)
-def test_size_of_runtime_padded_typs(tmp_path, typ, expected_size):
+def test_size_of_runtime_padded_typs(compiler, typ, expected_size):
     # Confirmed against the real compiled-and-run output by hand, not
     # derived from any formula - this is the ground truth
     # test_size_of_padded_typ_at_comptime_matches_runtime checks the
@@ -81,10 +80,10 @@ def test_size_of_runtime_padded_typs(tmp_path, typ, expected_size):
         return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_size_of_struct_is_at_least_sum_of_field_sizes(tmp_path):
+def test_size_of_struct_is_at_least_sum_of_field_sizes(compiler):
     # A loose bound, not exact equality - padding is legitimately
     # platform-dependent.
     src = """
@@ -96,7 +95,7 @@ def test_size_of_struct_is_at_least_sum_of_field_sizes(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 def test_size_of_wrong_number_of_typ_args(compiler):
@@ -111,7 +110,7 @@ def test_size_of_wrong_number_of_typ_args(compiler):
 
 
 @pytest.mark.parametrize(("typ", "expected_size"), _UNAMBIGUOUS_TYPS)
-def test_size_of_at_comptime_matches_runtime(tmp_path, typ, expected_size):
+def test_size_of_at_comptime_matches_runtime(compiler, typ, expected_size):
     # Regression guard for comptime.py's and codegen.py's independent
     # SizeOfInstr call sites (both backed by the same target-data
     # machinery, but each with its own path to it) ever drifting apart.
@@ -126,10 +125,10 @@ def test_size_of_at_comptime_matches_runtime(tmp_path, typ, expected_size):
         return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_is_null_false_at_comptime(tmp_path):
+def test_is_null_false_at_comptime(compiler):
     # No Comptime* pointer value the interpreter can ever produce is null
     # (see comptime.py's IsNullInstr handling) - unlike a real runtime
     # pointer, comptime pointers always refer to something real.
@@ -144,10 +143,10 @@ def test_is_null_false_at_comptime(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_size_of_ptr_typ_at_comptime_matches_runtime(tmp_path):
+def test_size_of_ptr_typ_at_comptime_matches_runtime(compiler):
     src = f"""
     let comptime_size = __size_of[*i32]();
     pub fn main() i32 {{
@@ -159,11 +158,11 @@ def test_size_of_ptr_typ_at_comptime_matches_runtime(tmp_path):
         return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 @pytest.mark.parametrize(("typ", "expected_size"), _PADDED_TYPS)
-def test_size_of_padded_typ_at_comptime_matches_runtime(tmp_path, typ, expected_size):
+def test_size_of_padded_typ_at_comptime_matches_runtime(compiler, typ, expected_size):
     # Regression guard for comptime.py's and codegen.py's independent
     # SizeOfInstr call sites ever drifting apart, for widths whose byte
     # size isn't target-independent (see test_size_of_runtime_padded_typs).
@@ -178,10 +177,10 @@ def test_size_of_padded_typ_at_comptime_matches_runtime(tmp_path, typ, expected_
         return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_size_of_struct_at_comptime_matches_runtime(tmp_path):
+def test_size_of_struct_at_comptime_matches_runtime(compiler):
     # A field layout with a real padding gap (i8 followed by i64 forces 7
     # bytes of padding before the i64, for 16 bytes total, not the 9 a
     # naive sum-of-field-sizes would give) - this is the case that would
@@ -199,10 +198,10 @@ def test_size_of_struct_at_comptime_matches_runtime(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_size_of_array_typ_at_comptime_matches_runtime(tmp_path):
+def test_size_of_array_typ_at_comptime_matches_runtime(compiler):
     src = """
     let comptime_size = __size_of[array[i32, 4]]();
     pub fn main() i32 {
@@ -214,10 +213,10 @@ def test_size_of_array_typ_at_comptime_matches_runtime(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_size_of_enum_typ_at_comptime_matches_runtime(tmp_path):
+def test_size_of_enum_typ_at_comptime_matches_runtime(compiler):
     src = """
     enum Color(u8) { Red, Green, Blue }
     let comptime_size = __size_of[Color]();
@@ -230,7 +229,7 @@ def test_size_of_enum_typ_at_comptime_matches_runtime(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 def test_compiled_module_carries_nonempty_datalayout(compiler):
@@ -244,7 +243,7 @@ def test_compiled_module_carries_nonempty_datalayout(compiler):
     assert 'target datalayout = "' in ir_text
 
 
-def test_ptr_cast_mut_round_trips_pointer_value(tmp_path):
+def test_ptr_cast_mut_round_trips_pointer_value(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 42;
@@ -254,7 +253,7 @@ def test_ptr_cast_mut_round_trips_pointer_value(tmp_path):
         return r.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_ptr_cast_mut_at_comptime_raises_even_for_same_typ(compiler):
@@ -301,7 +300,7 @@ def test_ptr_cast_mut_wrong_number_of_typ_args(compiler):
     assert '"__ptr_cast_mut"' in str(exc_info.value)
 
 
-def test_is_null_false_for_real_pointer(tmp_path):
+def test_is_null_false_for_real_pointer(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 42;
@@ -312,10 +311,10 @@ def test_is_null_false_for_real_pointer(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_is_null_true_for_genuine_null_pointer(tmp_path):
+def test_is_null_true_for_genuine_null_pointer(compiler):
     # getenv is a portable, always-available libc function that returns a
     # genuine null pointer for an unset variable - the only way to
     # observe one, since Leech has no null-pointer literal.
@@ -329,7 +328,7 @@ def test_is_null_true_for_genuine_null_pointer(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 def test_size_of_intrinsic_instance_caches_by_typ_args(compiler):
@@ -368,7 +367,7 @@ def test_size_of_intrinsic_compiled_once_across_multiple_calls(compiler):
         ("union U { L(i64) }\nstruct S { a: i8, u: U }", "S", 24),
     ],
 )
-def test_size_of_union_typs(tmp_path, decls, typ, expected_size):
+def test_size_of_union_typs(compiler, decls, typ, expected_size):
     # Confirmed against the real compiled-and-run output by hand, as with
     # the struct sizes above.
     src = f"""
@@ -380,4 +379,4 @@ def test_size_of_union_typs(tmp_path, decls, typ, expected_size):
         return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)

@@ -6,10 +6,9 @@ import lark
 import pytest
 
 from leech import errors, parse
-from tests import util
 
 
-def test_while_stmt_no_semicolon(tmp_path):
+def test_while_stmt_no_semicolon(compiler):
     src = """
     pub fn main() i32 {
         let mut i = 0;
@@ -19,10 +18,10 @@ def test_while_stmt_no_semicolon(tmp_path):
         return i;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 10)
+    compiler.check(src, exit_status=10)
 
 
-def test_if_stmt_no_semicolon(tmp_path):
+def test_if_stmt_no_semicolon(compiler):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -33,10 +32,10 @@ def test_if_stmt_no_semicolon(tmp_path):
         return 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 5)
+    compiler.check(src, exit_status=5)
 
 
-def test_block_expr_stmt_no_semicolon(tmp_path):
+def test_block_expr_stmt_no_semicolon(compiler):
     src = """
     pub fn main() i32 {
         {
@@ -45,7 +44,7 @@ def test_block_expr_stmt_no_semicolon(tmp_path):
         return 7;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 def test_match_stmt_no_semicolon_parses():
@@ -84,7 +83,7 @@ def test_semicolon_still_required_to_discard_tail_value(compiler):
         compiler.compile(src)
 
 
-def test_semicolon_discards_tail_value(tmp_path):
+def test_semicolon_discards_tail_value(compiler):
     src = """
     pub fn main() i32 {
         while (true) {
@@ -94,4 +93,4 @@ def test_semicolon_discards_tail_value(tmp_path):
         return 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)

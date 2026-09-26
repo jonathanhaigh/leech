@@ -8,7 +8,7 @@ from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_trait
 from tests import harness, util
 
 
-def test_trait_impl_for_builtin_typ(tmp_path):
+def test_trait_impl_for_builtin_typ(compiler):
     src = """
     trait Show {
         fn show(*self) i32;
@@ -21,10 +21,10 @@ def test_trait_impl_for_builtin_typ(tmp_path):
         return x.show() - 11;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_trait_impl_for_struct(tmp_path):
+def test_trait_impl_for_struct(compiler):
     src = """
     trait Show {
         fn show(*self) i32;
@@ -38,10 +38,10 @@ def test_trait_impl_for_struct(tmp_path):
         return f.show() - 22;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_trait_impl_with_mut_receiver(tmp_path):
+def test_trait_impl_with_mut_receiver(compiler):
     src = """
     trait Reset {
         fn reset(*mut self);
@@ -56,10 +56,10 @@ def test_trait_impl_with_mut_receiver(tmp_path):
         return c.n;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_inherent_and_trait_methods_coexist(tmp_path):
+def test_inherent_and_trait_methods_coexist(compiler):
     # A struct's own inherent members are checked first - an inherent
     # method of the same name as a trait method (on a different type, so
     # no actual clash) doesn't interfere.
@@ -78,7 +78,7 @@ def test_inherent_and_trait_methods_coexist(tmp_path):
         return (f.show() - 7) + (x.show() - 101);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_inherent_impl_is_registered(compiler):
@@ -148,7 +148,7 @@ def test_generic_trait_impl_lookup_does_not_instantiate_method(compiler):
     assert selection.impl_args == (typs.I32,)
 
 
-def test_trait_method_call_on_generic_typ_param(tmp_path):
+def test_trait_method_call_on_generic_typ_param(compiler):
     src = """
     trait Show {
         fn show(*self) i32;
@@ -164,10 +164,10 @@ def test_trait_method_call_on_generic_typ_param(tmp_path):
         return double_show(n) - 22;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_trait_method_call_on_generic_typ_param_with_struct(tmp_path):
+def test_trait_method_call_on_generic_typ_param_with_struct(compiler):
     src = """
     trait Show {
         fn show(*self) i32;
@@ -184,10 +184,10 @@ def test_trait_method_call_on_generic_typ_param_with_struct(tmp_path):
         return double_show(f) - 10;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_trait_bound_call_uses_trait_method_over_inherent_method(tmp_path):
+def test_trait_bound_call_uses_trait_method_over_inherent_method(compiler):
     # A call on a type parameter resolves against its declared bound, even
     # when the eventual concrete type has an inherent method of that name.
     src = """
@@ -207,10 +207,10 @@ def test_trait_bound_call_uses_trait_method_over_inherent_method(tmp_path):
         return call_show(n) - 2;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_trait_impl_method_calls_sibling(tmp_path):
+def test_generic_trait_impl_method_calls_sibling(compiler):
     # `show` resolves against the impl's own abstract self type, so it
     # has to be remapped to this instantiation rather than called as the
     # unsubstituted template it was resolved to.
@@ -226,10 +226,10 @@ def test_generic_trait_impl_method_calls_sibling(tmp_path):
         return b.twice() - 10;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_trait_declares_value_param(tmp_path):
+def test_trait_declares_value_param(compiler):
     src = """
     trait Sized[value N: i32] {
         fn size(*self) i32;
@@ -243,10 +243,10 @@ def test_trait_declares_value_param(tmp_path):
         return b.size() - 4;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_bounded_generic_trait_impl_method_calls_sibling(tmp_path):
+def test_bounded_generic_trait_impl_method_calls_sibling(compiler):
     # `twice` resolves `self.*.show()` against the impl's own abstract
     # `Box[T]`, where the impl's `T: Show` is a premise rather than
     # something to discharge - no concrete type is in hand to check it
@@ -264,10 +264,10 @@ def test_bounded_generic_trait_impl_method_calls_sibling(tmp_path):
         return b.twice() - 10;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_trait_impl_method_calls_sibling_for_non_struct_self_typ(tmp_path):
+def test_generic_trait_impl_method_calls_sibling_for_non_struct_self_typ(compiler):
     src = """
     trait Show { fn show(*self) i32; fn twice(*self) i32; }
     impl[T] Show for array[T, 3] {
@@ -279,7 +279,7 @@ def test_generic_trait_impl_method_calls_sibling_for_non_struct_self_typ(tmp_pat
         return a.twice() - 10;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(compiler):
@@ -302,7 +302,7 @@ def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(compiler):
     assert "unused" not in ir_text
 
 
-def test_generic_trait_impl_method_calls_free_fn(tmp_path):
+def test_generic_trait_impl_method_calls_free_fn(compiler):
     # Substituting an enclosing impl's arguments while lowering a function
     # reference must remain a no-op for an ordinary free function.
     src = """
@@ -314,10 +314,10 @@ def test_generic_trait_impl_method_calls_free_fn(tmp_path):
         return a.show() - 4;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_trait_impl_for_non_struct_self_typ(tmp_path):
+def test_generic_trait_impl_for_non_struct_self_typ(compiler):
     # A trait impl's self type isn't restricted to a struct the way an
     # inherent impl's target is, so a generic one can be built over any
     # type constructor.
@@ -329,10 +329,10 @@ def test_generic_trait_impl_for_non_struct_self_typ(tmp_path):
         return a.show() - 7;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_non_struct_self_typs_differing_only_by_an_enum_elements_module(tmp_path):
+def test_non_struct_self_typs_differing_only_by_an_enum_elements_module(compiler):
     # The self type is qualified by recursing into it, so a nominal type
     # nested inside one has to qualify itself for the whole to be
     # distinct.
@@ -349,10 +349,13 @@ def test_non_struct_self_typs_differing_only_by_an_enum_elements_module(tmp_path
         return x.show() + y.show() - 2;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("b", b_src)
+    )
+    compiler.check(program)
 
 
-def test_two_traits_with_same_method_name_for_one_generic_typ(tmp_path):
+def test_two_traits_with_same_method_name_for_one_generic_typ(compiler):
     # Both instances are methods called `go` on the same `Box[i32]`, so
     # the self type alone doesn't tell their symbols apart - the trait is
     # what discriminates them.
@@ -369,10 +372,10 @@ def test_two_traits_with_same_method_name_for_one_generic_typ(tmp_path):
         return call_a(b) + call_b(b) - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_same_named_traits_in_different_mods(tmp_path):
+def test_same_named_traits_in_different_mods(compiler):
     # Two distinct traits both named `Show`, both implemented for the
     # same generic struct: only the trait's own module tells the two
     # instantiated methods' symbols apart.
@@ -391,10 +394,13 @@ def test_same_named_traits_in_different_mods(tmp_path):
         return call_a(x) + call_b(x) - 3;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("b", b_src)
+    )
+    compiler.check(program)
 
 
-def test_generic_impl_body_typechecks(tmp_path):
+def test_generic_impl_body_typechecks(compiler):
     # A generic impl block's methods are checked eagerly, like a free
     # generic function's body - whether or not anything ever calls one.
     src = """
@@ -406,7 +412,7 @@ def test_generic_impl_body_typechecks(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_generic_impl_body_rejects_invalid_op(compiler):
@@ -422,7 +428,7 @@ def test_generic_impl_body_rejects_invalid_op(compiler):
         compiler.compile(src)
 
 
-def test_calling_method_through_generic_impl(tmp_path):
+def test_calling_method_through_generic_impl(compiler):
     # Dispatching to a generic trait impl's method substitutes the impl's
     # own type parameters throughout its body, the same way a generic
     # inherent impl's methods are monomorphized.
@@ -438,10 +444,10 @@ def test_calling_method_through_generic_impl(tmp_path):
         return p.show() - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_trait_bound_call_through_generic_impl(tmp_path):
+def test_trait_bound_call_through_generic_impl(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     struct Box[T] { val: T }
@@ -456,10 +462,10 @@ def test_trait_bound_call_through_generic_impl(tmp_path):
         return call_show(b) - 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_trait_impl_instantiated_twice(tmp_path):
+def test_generic_trait_impl_instantiated_twice(compiler):
     # Each instantiation gets its own monomorphized body and its own
     # symbol; one must not stand in for the other.
     src = """
@@ -476,7 +482,7 @@ def test_generic_trait_impl_instantiated_twice(tmp_path):
         return a.show() + b.show() - 17;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_generic_impl_with_unsatisfied_bound_does_not_apply(compiler):
@@ -536,7 +542,7 @@ def test_generic_impl_bound_unsatisfied_by_callers_typ_param(compiler):
         compiler.compile(src)
 
 
-def test_generic_impl_bound_satisfied_by_callers_typ_param(tmp_path):
+def test_generic_impl_bound_satisfied_by_callers_typ_param(compiler):
     # `U: Show` is an assumption in scope, and discharges the impl's own
     # `T: Show` without any concrete type being known.
     src = """
@@ -550,10 +556,10 @@ def test_generic_impl_bound_satisfied_by_callers_typ_param(tmp_path):
         return f(b) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_impl_bound_satisfied_through_another_generic_impl(tmp_path):
+def test_generic_impl_bound_satisfied_through_another_generic_impl(compiler):
     # Selecting the impl for `Box[Box[i32]]` checks `Box[i32]: Show`,
     # which selects the same impl again - the recursion between impl
     # selection and bound checking has to bottom out.
@@ -570,10 +576,10 @@ def test_generic_impl_bound_satisfied_through_another_generic_impl(tmp_path):
         return outer.show() - 6;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_impl_selection_descends_beyond_old_depth_limit(tmp_path):
+def test_impl_selection_descends_beyond_old_depth_limit(compiler):
     nested_typ = "i32"
     nested_value = "1"
     for _ in range(40):
@@ -592,7 +598,7 @@ def test_impl_selection_descends_beyond_old_depth_limit(tmp_path):
         return nested.show() - 1;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_unsatisfied_bound_on_generic_fn_call(compiler):
@@ -627,7 +633,7 @@ def test_unsatisfied_bound_on_generic_struct_instantiation(compiler):
         compiler.compile(src)
 
 
-def test_bound_satisfied_on_generic_struct_instantiation(tmp_path):
+def test_bound_satisfied_on_generic_struct_instantiation(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -637,7 +643,7 @@ def test_bound_satisfied_on_generic_struct_instantiation(tmp_path):
         return b.val.show() - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_ambiguous_method_call_between_two_traits(compiler):
@@ -682,7 +688,7 @@ _BOUND_USER = """
 
 
 @pytest.mark.parametrize("forward", (False, True))
-def test_bound_resolves_the_same_either_declaration_order(tmp_path, forward):
+def test_bound_resolves_the_same_either_declaration_order(compiler, forward):
     parts = (_BOUND_USER, _SHOW_DECLS) if forward else (_SHOW_DECLS, _BOUND_USER)
     src = (
         "".join(parts)
@@ -690,7 +696,7 @@ def test_bound_resolves_the_same_either_declaration_order(tmp_path, forward):
     pub fn main() i32 { return f(7i32) - 7; }
     """
     )
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 @pytest.mark.parametrize("forward", (False, True))
@@ -932,7 +938,7 @@ def test_blanket_trait_impl_conflicts_with_concrete_impl(compiler, impls):
         compiler.compile(src)
 
 
-def test_blanket_trait_impl_is_selected_for_concrete_typ(tmp_path):
+def test_blanket_trait_impl_is_selected_for_concrete_typ(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl[T] Show for T { fn show(*self) i32 { 42 } }
@@ -941,10 +947,10 @@ def test_blanket_trait_impl_is_selected_for_concrete_typ(tmp_path):
         return val.show();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_impls_of_different_traits_for_same_typ_do_not_conflict(tmp_path):
+def test_impls_of_different_traits_for_same_typ_do_not_conflict(compiler):
     src = """
     trait A { fn a(*self) i32; }
     trait B { fn b(*self) i32; }
@@ -955,10 +961,10 @@ def test_impls_of_different_traits_for_same_typ_do_not_conflict(tmp_path):
         return x.a() + x.b() - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_impls_of_same_trait_for_different_int_typs_do_not_conflict(tmp_path):
+def test_impls_of_same_trait_for_different_int_typs_do_not_conflict(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -969,7 +975,7 @@ def test_impls_of_same_trait_for_different_int_typs_do_not_conflict(tmp_path):
         return x.show() + y.show() - 10;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_orphan_impl_neither_trait_nor_typ_local(compiler):
@@ -983,7 +989,7 @@ def test_orphan_impl_neither_trait_nor_typ_local(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_impl_local_trait_for_foreign_typ_not_orphan(tmp_path):
+def test_impl_local_trait_for_foreign_typ_not_orphan(compiler):
     a_src = "pub struct Foo { pub a: i32 }"
     main_src = """
     import a;
@@ -994,10 +1000,11 @@ def test_impl_local_trait_for_foreign_typ_not_orphan(tmp_path):
         return f.show() - 9;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
-def test_impl_foreign_trait_for_local_typ_not_orphan(tmp_path):
+def test_impl_foreign_trait_for_local_typ_not_orphan(compiler):
     a_src = "pub trait Show { fn show(*self) i32; }"
     main_src = """
     import a;
@@ -1008,7 +1015,8 @@ def test_impl_foreign_trait_for_local_typ_not_orphan(tmp_path):
         return f.show() - 9;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
 def test_impl_for_non_trait(compiler):
@@ -1099,7 +1107,7 @@ def test_explicit_generic_fn_bound_error_uses_path_span(compiler):
     assert span.file.src[span.start : span.end] == "double_show[bool]"
 
 
-def test_cross_module_trait_and_impl(tmp_path):
+def test_cross_module_trait_and_impl(compiler):
     a_src = """
     pub trait Show { fn show(*self) i32; }
     impl Show for i32 { pub fn show(*self) i32 { self.* + 1 } }
@@ -1111,7 +1119,8 @@ def test_cross_module_trait_and_impl(tmp_path):
         return x.show() - 11;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
 def test_get_trait_item_from_mod(compiler):
@@ -1324,7 +1333,7 @@ def test_bound_on_sibling_typ_param_must_be_carried_by_its_declaration(compiler,
     assert '"Show"' in str(exc_info.value)
 
 
-def test_bound_referencing_sibling_typ_param_carrying_the_needed_bound(tmp_path):
+def test_bound_referencing_sibling_typ_param_carrying_the_needed_bound(compiler):
     # `A: Show` discharges what `Container[A]` requires, so the
     # declaration stands and only the application is left to judge.
     src = (
@@ -1334,7 +1343,7 @@ def test_bound_referencing_sibling_typ_param_carrying_the_needed_bound(tmp_path)
     pub fn main() i32 { return 0; }
     """
     )
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_bound_referencing_sibling_typ_param_rejects_unsatisfying_arg(compiler):
@@ -1635,7 +1644,7 @@ def test_legal_nested_bound_chain_is_not_treated_as_recursive(compiler):
         compiler.compile(src)
 
 
-def test_self_as_param_typ_in_trait_method(tmp_path):
+def test_self_as_param_typ_in_trait_method(compiler):
     src = """
     trait Comparable { fn cmp(*self, other: *Self) i32; }
     impl Comparable for i32 { fn cmp(*self, other: *i32) i32 { self.* - other.* } }
@@ -1645,10 +1654,10 @@ def test_self_as_param_typ_in_trait_method(tmp_path):
         return a.cmp(&b);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_self_as_ret_typ_in_trait_method(tmp_path):
+def test_self_as_ret_typ_in_trait_method(compiler):
     src = """
     trait Dup { fn dup(*self) Self; }
     impl Dup for i32 { fn dup(*self) i32 { self.* } }
@@ -1657,10 +1666,10 @@ def test_self_as_ret_typ_in_trait_method(tmp_path):
         return a.dup() - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_impl_may_write_self_instead_of_concrete_typ(tmp_path):
+def test_impl_may_write_self_instead_of_concrete_typ(compiler):
     src = """
     trait Comparable { fn cmp(*self, other: *Self) i32; }
     impl Comparable for i32 { fn cmp(*self, other: *Self) i32 { self.* - other.* } }
@@ -1670,7 +1679,7 @@ def test_impl_may_write_self_instead_of_concrete_typ(tmp_path):
         return a.cmp(&b);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_impl_with_wrong_typ_for_self_param_still_rejected(compiler):
@@ -1683,7 +1692,7 @@ def test_impl_with_wrong_typ_for_self_param_still_rejected(compiler):
         compiler.compile(src)
 
 
-def test_self_resolves_to_typ_param_through_trait_bound(tmp_path):
+def test_self_resolves_to_typ_param_through_trait_bound(compiler):
     src = """
     trait Comparable { fn cmp(*self, other: *Self) i32; }
     impl Comparable for i32 { fn cmp(*self, other: *i32) i32 { self.* - other.* } }
@@ -1694,7 +1703,7 @@ def test_self_resolves_to_typ_param_through_trait_bound(tmp_path):
         return cmp_them(a, &b);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_self_reserved_as_struct_name(compiler):

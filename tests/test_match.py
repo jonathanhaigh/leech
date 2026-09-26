@@ -5,10 +5,9 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_match_exhaustive_enum(tmp_path):
+def test_match_exhaustive_enum(compiler):
     src = """
     enum Color { Red, Green, Blue }
     pub fn main() i32 {
@@ -19,10 +18,10 @@ def test_match_exhaustive_enum(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_enum_with_wildcard(tmp_path):
+def test_match_enum_with_wildcard(compiler):
     src = """
     enum Color { Red, Green, Blue }
     pub fn main() i32 {
@@ -33,10 +32,10 @@ def test_match_enum_with_wildcard(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_bool_exhaustion(tmp_path):
+def test_match_bool_exhaustion(compiler):
     src = """
     pub fn main() i32 {
         let b = true;
@@ -46,10 +45,10 @@ def test_match_bool_exhaustion(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_int_with_required_wildcard(tmp_path):
+def test_match_int_with_required_wildcard(compiler):
     src = """
     pub fn main() i32 {
         return match (2) {
@@ -58,10 +57,10 @@ def test_match_int_with_required_wildcard(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_negative_int_pattern(tmp_path):
+def test_match_negative_int_pattern(compiler):
     src = """
     pub fn main() i32 {
         return match (-1) {
@@ -70,10 +69,10 @@ def test_match_negative_int_pattern(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_or_pattern_routes_every_alternative(tmp_path):
+def test_match_or_pattern_routes_every_alternative(compiler):
     src = """
     enum Color { Red, Green, Blue, Cyan }
     fn classify(c: Color) i32 {
@@ -87,10 +86,10 @@ def test_match_or_pattern_routes_every_alternative(tmp_path):
             + classify(Color::Cyan) - 5i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_or_pattern_of_int_literals(tmp_path):
+def test_match_or_pattern_of_int_literals(compiler):
     src = """
     fn classify(n: i32) i32 {
         return match (n) {
@@ -102,10 +101,10 @@ def test_match_or_pattern_of_int_literals(tmp_path):
         return classify(-1i32) + classify(0i32) + classify(1i32) + classify(7i32) - 10i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_binding(tmp_path):
+def test_match_binding(compiler):
     src = """
     pub fn main() i32 {
         return match (7) {
@@ -113,10 +112,10 @@ def test_match_binding(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_mut_binding(tmp_path):
+def test_match_mut_binding(compiler):
     src = """
     pub fn main() i32 {
         return match (4) {
@@ -127,10 +126,10 @@ def test_match_mut_binding(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_block_bodied_arms(tmp_path):
+def test_match_block_bodied_arms(compiler):
     src = """
     pub fn main() i32 {
         return match (true) {
@@ -139,10 +138,10 @@ def test_match_block_bodied_arms(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_as_tail_expression(tmp_path):
+def test_match_as_tail_expression(compiler):
     src = """
     pub fn main() i32 {
         match (true) {
@@ -151,10 +150,10 @@ def test_match_as_tail_expression(tmp_path):
         }
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_as_statement_with_semicolon(tmp_path):
+def test_match_as_statement_with_semicolon(compiler):
     src = """
     pub fn main() i32 {
         match (true) {
@@ -164,10 +163,10 @@ def test_match_as_statement_with_semicolon(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_as_statement_without_semicolon(tmp_path):
+def test_match_as_statement_without_semicolon(compiler):
     src = """
     pub fn main() i32 {
         match (true) {
@@ -177,10 +176,10 @@ def test_match_as_statement_without_semicolon(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_as_call_argument(tmp_path):
+def test_match_as_call_argument(compiler):
     src = """
     fn id(x: i32) i32 { return x; }
     pub fn main() i32 {
@@ -190,10 +189,10 @@ def test_match_as_call_argument(tmp_path):
         }) - 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_nested_match(tmp_path):
+def test_nested_match(compiler):
     src = """
     pub fn main() i32 {
         return match (true) {
@@ -205,10 +204,10 @@ def test_nested_match(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_diverging_arm(tmp_path):
+def test_match_diverging_arm(compiler):
     src = """
     pub fn main() i32 {
         return match (true) {
@@ -217,10 +216,10 @@ def test_match_diverging_arm(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_all_arms_diverge(tmp_path):
+def test_match_all_arms_diverge(compiler):
     src = """
     pub fn main() i32 {
         match (true) {
@@ -229,7 +228,7 @@ def test_match_all_arms_diverge(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_empty_match_on_never_scrutinee(compiler):
@@ -242,7 +241,7 @@ def test_empty_match_on_never_scrutinee(compiler):
     compiler.compile(src)
 
 
-def test_comptime_match_enum(tmp_path):
+def test_comptime_match_enum(compiler):
     src = """
     enum Color { Red, Green, Blue }
     let x = match (Color::Green) {
@@ -254,10 +253,10 @@ def test_comptime_match_enum(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_match_bool(tmp_path):
+def test_comptime_match_bool(compiler):
     src = """
     let answer = match (false) {
         true => 1,
@@ -267,10 +266,10 @@ def test_comptime_match_bool(tmp_path):
         return answer;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_match_int_with_wildcard(tmp_path):
+def test_comptime_match_int_with_wildcard(compiler):
     src = """
     let answer = match (2) {
         1 => 1,
@@ -280,10 +279,10 @@ def test_comptime_match_int_with_wildcard(tmp_path):
         return answer;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_match_negative_int_pattern(tmp_path):
+def test_comptime_match_negative_int_pattern(compiler):
     src = """
     let answer = match (-1) {
         -1 => 0,
@@ -293,10 +292,10 @@ def test_comptime_match_negative_int_pattern(tmp_path):
         return answer;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_match_or_pattern(tmp_path):
+def test_comptime_match_or_pattern(compiler):
     src = """
     enum Color { Red, Green, Blue }
     let answer = match (Color::Blue) {
@@ -307,10 +306,10 @@ def test_comptime_match_or_pattern(tmp_path):
         return answer;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_match_binding(tmp_path):
+def test_comptime_match_binding(compiler):
     src = """
     let answer = match (7) {
         let x => x - 7,
@@ -319,10 +318,10 @@ def test_comptime_match_binding(tmp_path):
         return answer;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_match_mut_binding(tmp_path):
+def test_comptime_match_mut_binding(compiler):
     src = """
     let answer = match (4) {
         let mut x => {
@@ -334,10 +333,10 @@ def test_comptime_match_mut_binding(tmp_path):
         return answer;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_match_block_bodied_arms(tmp_path):
+def test_comptime_match_block_bodied_arms(compiler):
     src = """
     let answer = match (true) {
         true => { 0 },
@@ -347,10 +346,10 @@ def test_comptime_match_block_bodied_arms(tmp_path):
         return answer;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_nested_match(tmp_path):
+def test_comptime_nested_match(compiler):
     src = """
     let answer = match (true) {
         true => match (1) {
@@ -363,10 +362,10 @@ def test_comptime_nested_match(tmp_path):
         return answer;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_match_in_place_context_copies_temporary(tmp_path):
+def test_match_in_place_context_copies_temporary(compiler):
     src = """
     pub fn main() i32 {
         let mut a = 1;
@@ -377,10 +376,10 @@ def test_match_in_place_context_copies_temporary(tmp_path):
         return p.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_match_in_place_context_merges_value_arms(tmp_path):
+def test_match_in_place_context_merges_value_arms(compiler):
     src = """
     pub fn main() i32 {
         let mut a = 1;
@@ -393,10 +392,10 @@ def test_match_in_place_context_merges_value_arms(tmp_path):
         return p.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_match_aliased_discriminants(tmp_path):
+def test_match_aliased_discriminants(compiler):
     src = """
     enum Alias(u8) { A = 1, B = 1 }
     pub fn main() i32 {
@@ -406,7 +405,7 @@ def test_match_aliased_discriminants(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_match_aliased_discriminant_warns(compiler, monkeypatch):
@@ -428,7 +427,7 @@ def test_match_aliased_discriminant_warns(compiler, monkeypatch):
     assert errors.error_level() == errors.WARNING
 
 
-def test_match_arm_typs_peer_across_multiple_arms(tmp_path):
+def test_match_arm_typs_peer_across_multiple_arms(compiler):
     src = """
     fn takes_u8(x: u8) u8 { return x; }
     pub fn main() i32 {
@@ -440,10 +439,10 @@ def test_match_arm_typs_peer_across_multiple_arms(tmp_path):
         return takes_u8(x);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 3)
+    compiler.check(src, exit_status=3)
 
 
-def test_match_expected_typ_still_wins(tmp_path):
+def test_match_expected_typ_still_wins(compiler):
     src = """
     pub fn main() i32 {
         let x: u8 = match (2) {
@@ -454,7 +453,7 @@ def test_match_expected_typ_still_wins(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 3)
+    compiler.check(src, exit_status=3)
 
 
 def test_match_non_exhaustive_error(compiler):

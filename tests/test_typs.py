@@ -38,7 +38,7 @@ def test_typ_kind_covers_every_concrete_typ_subclass():
         ("isize", "54isize"),
     ),
 )
-def test_builtin_typ_lookup(tmp_path, typ, value):
+def test_builtin_typ_lookup(compiler, typ, value):
     src = f"""
     fn f() {typ} {{ {value} }}
 
@@ -47,17 +47,17 @@ def test_builtin_typ_lookup(tmp_path, typ, value):
         return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_int_lit_at_typ_width_boundary_is_allowed(tmp_path):
+def test_int_lit_at_typ_width_boundary_is_allowed(compiler):
     src = """
     pub fn main() i32 {
         let x = 255u8;
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_int_lit_overflow(compiler):
@@ -98,14 +98,14 @@ def test_comptime_int_lit_overflow(compiler):
     assert (span.start_line, span.start_col) == util.find_pos(src, "256u8")
 
 
-def test_int_lit_at_signed_typ_max_is_allowed(tmp_path):
+def test_int_lit_at_signed_typ_max_is_allowed(compiler):
     src = """
     pub fn main() i32 {
         let x = 127i8;
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_int_lit_overflow_signed(compiler):
@@ -149,7 +149,7 @@ def test_comptime_int_lit_overflow_signed(compiler):
     assert (span.start_line, span.start_col) == util.find_pos(src, "128i8")
 
 
-def test_int_lit_infers_declared_let_typ(tmp_path):
+def test_int_lit_infers_declared_let_typ(compiler):
     # 10 is a u8 here, not an i32 that coerces to one - i32 -> u8 is a
     # narrowing conversion the language rejects.
     src = """
@@ -159,7 +159,7 @@ def test_int_lit_infers_declared_let_typ(tmp_path):
         return if (y == 210u8) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 @pytest.mark.parametrize(
@@ -174,7 +174,7 @@ def test_int_lit_infers_declared_let_typ(tmp_path):
         ("fn cond() u8 { if (true) { 200 } else { 1 } }", "cond()"),
     ),
 )
-def test_int_lit_infers_at_coercion_points(tmp_path, prelude, expr):
+def test_int_lit_infers_at_coercion_points(compiler, prelude, expr):
     # 200 doesn't fit i8 and i32 doesn't coerce to u8, so each of these
     # only compiles if the literal is inferred as u8 in the first place.
     src = f"""
@@ -184,10 +184,10 @@ def test_int_lit_infers_at_coercion_points(tmp_path, prelude, expr):
         return if (x == 200u8) {{ 7 }} else {{ 0 }};
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_int_lit_infers_in_assignment(tmp_path):
+def test_int_lit_infers_in_assignment(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 0u8;
@@ -195,20 +195,20 @@ def test_int_lit_infers_in_assignment(tmp_path):
         return if (x == 200u8) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_comptime_int_lit_infers_declared_typ(tmp_path):
+def test_comptime_int_lit_infers_declared_typ(compiler):
     src = """
     let x: u8 = 200;
     pub fn main() i32 {
         return if (x == 200u8) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_int_lit_inference_reaches_operands(tmp_path):
+def test_int_lit_inference_reaches_operands(compiler):
     # Neither operand's type is decided by the operand itself, so both
     # take the declared type of the variable they end up in.
     src = """
@@ -217,7 +217,7 @@ def test_int_lit_inference_reaches_operands(tmp_path):
         return if (x == 255u8) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 def test_int_lit_inference_does_not_reach_across_a_typed_operand(compiler):

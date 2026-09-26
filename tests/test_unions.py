@@ -18,7 +18,7 @@ from leech import (
     typs,
 )
 from leech import src as leech_src
-from tests import harness, util
+from tests import harness
 
 
 def _get_union_typ(mod, name: str) -> typs.UnionTyp:
@@ -1000,7 +1000,7 @@ fn as_d(u: U) i64 { return match (u) { U::D(let x) => x, U::I(_) => 0i64, }; }
 """
 
 
-def test_union_round_trips_at_runtime(tmp_path):
+def test_union_round_trips_at_runtime(compiler):
     src = (
         _RUNTIME_UNIONS
         + """
@@ -1013,10 +1013,10 @@ def test_union_round_trips_at_runtime(tmp_path):
     }
     """
     )
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_module_level_union_constants_read_back_at_runtime(tmp_path):
+def test_module_level_union_constants_read_back_at_runtime(compiler):
     # A size check alone cannot see a wrong field offset or array stride,
     # so the values are read back out of each constant.
     src = (
@@ -1041,10 +1041,10 @@ def test_module_level_union_constants_read_back_at_runtime(tmp_path):
     }
     """
     )
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_union_constant_pointing_at_a_later_module_variable(tmp_path):
+def test_union_constant_pointing_at_a_later_module_variable(compiler):
     # The global has to be declared out of source order, because lowering
     # this constant needs the one it points at.
     src = """
@@ -1056,10 +1056,10 @@ def test_union_constant_pointing_at_a_later_module_variable(tmp_path):
         return p.* - 42i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_module_level_union_global_has_its_typs_abi_size(tmp_path):
+def test_module_level_union_global_has_its_typs_abi_size(compiler):
     # The one place two independently built LLVM types must agree: the
     # ad-hoc constant type and the union's own.
     src = """
@@ -1070,10 +1070,10 @@ def test_module_level_union_global_has_its_typs_abi_size(tmp_path):
         return match (g) { U::I(let x) => x - 5i32, U::D(_) => 2i32, };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_recursive_union_walks_at_runtime(tmp_path):
+def test_recursive_union_walks_at_runtime(compiler):
     src = """
     union List[T] { Nil, Cons(T, *List[T]) }
     fn length(l: *List[i32]) i32 {
@@ -1095,7 +1095,7 @@ def test_recursive_union_walks_at_runtime(tmp_path):
         return length(&head) - 2i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def _discovered(compiler, src: str) -> tuple[list[str], list[str]]:
@@ -1169,7 +1169,7 @@ def test_discovery_alternates_along_a_struct_union_chain(compiler):
         ("bool, i64", "true, 55i64", [("b", "i64", "55i64")]),
     ],
 )
-def test_module_level_constant_of_a_padded_payload_reads_back(tmp_path, payload, args, reads):
+def test_module_level_constant_of_a_padded_payload_reads_back(compiler, payload, args, reads):
     accessors = "".join(
         f"fn get_{name}(v: V) {typ} {{ return match (v) {{ V::P(let a, let b) => {name}, }}; }}\n"
         for name, typ, _expected in reads
@@ -1186,10 +1186,10 @@ def test_module_level_constant_of_a_padded_payload_reads_back(tmp_path, payload,
 {checks}        return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_imported_union_constant_pointing_at_a_private_global(tmp_path):
+def test_imported_union_constant_pointing_at_a_private_global(compiler):
     # The importing module needs the exported global's ad-hoc type but must
     # not build its constant: doing so would reach a global that module
     # keeps to itself.
@@ -1205,13 +1205,14 @@ def test_imported_union_constant_pointing_at_a_private_global(tmp_path):
         return p.* - 42i32;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
 # --- impl blocks on unions ---
 
 
-def test_inherent_method_on_generic_union_called_on_a_value(tmp_path):
+def test_inherent_method_on_generic_union_called_on_a_value(compiler):
     src = """
     union Option[T] { None, Some(T) }
     impl[T] Option[T] {
@@ -1228,10 +1229,10 @@ def test_inherent_method_on_generic_union_called_on_a_value(tmp_path):
         return some.unwrap_or(0i32) + none.unwrap_or(35i32) - 42i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_inherent_method_on_generic_union_called_through_a_pointer(tmp_path):
+def test_inherent_method_on_generic_union_called_through_a_pointer(compiler):
     src = """
     union Option[T] { None, Some(T) }
     impl[T] Option[T] {
@@ -1253,10 +1254,10 @@ def test_inherent_method_on_generic_union_called_through_a_pointer(tmp_path):
         return 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_assoc_fn_on_a_union_reached_through_explicit_comptime_args(tmp_path):
+def test_assoc_fn_on_a_union_reached_through_explicit_comptime_args(compiler):
     src = """
     union Option[T] { None, Some(T) }
     impl[T] Option[T] {
@@ -1269,10 +1270,10 @@ def test_assoc_fn_on_a_union_reached_through_explicit_comptime_args(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_trait_impl_for_a_union(tmp_path):
+def test_trait_impl_for_a_union(compiler):
     src = """
     trait Code { fn code(*self) i32; }
     union Option[T] { None, Some(T) }
@@ -1289,7 +1290,7 @@ def test_trait_impl_for_a_union(tmp_path):
         return some.code();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_overlapping_trait_impls_for_one_union_rejected(compiler):
@@ -1324,7 +1325,7 @@ def test_orphan_trait_impl_for_a_non_local_union_rejected(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_foreign_trait_impl_for_a_local_union_is_not_an_orphan(tmp_path):
+def test_foreign_trait_impl_for_a_local_union_is_not_an_orphan(compiler):
     # The union is this module's own, which is what makes the impl
     # allowed - the orphan rule needs either side to be local.
     a_src = "pub trait Code { fn code(*self) i32; }"
@@ -1344,7 +1345,8 @@ def test_foreign_trait_impl_for_a_local_union_is_not_an_orphan(tmp_path):
         return some.code();
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
 def test_inherent_impl_for_a_non_local_union_rejected(compiler):
@@ -1392,17 +1394,17 @@ def test_assoc_fn_named_after_a_variant_of_a_generic_union_rejected(compiler):
         compiler.compile(src)
 
 
-def test_assoc_fn_not_named_after_a_variant_is_accepted(tmp_path):
+def test_assoc_fn_not_named_after_a_variant_is_accepted(compiler):
     # The clash check must not reject a name merely near a variant's.
     src = """
     union U { A, B }
     impl U { fn c() i32 { return 3i32; } }
     pub fn main() i32 { return U::c() - 3i32; }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_trait_method_may_share_a_variant_name(tmp_path):
+def test_trait_method_may_share_a_variant_name(compiler):
     # The clash rule is about inherent functions only. A trait fixes its
     # methods' names, so rejecting the overlap would bar the union from
     # implementing the trait at all; the method is reached through the
@@ -1418,7 +1420,7 @@ def test_trait_method_may_share_a_variant_name(tmp_path):
         return u.Some();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_inherent_method_named_after_a_variant_rejected(compiler):
@@ -1439,7 +1441,7 @@ def test_inherent_method_named_after_a_variant_rejected(compiler):
 # --- end-to-end runtime and comptime behaviour ---
 
 
-def test_unwrap_or_over_an_option(tmp_path):
+def test_unwrap_or_over_an_option(compiler):
     src = """
     union Option[T] { None, Some(T) }
     fn unwrap_or[T](o: Option[T], fallback: T) T {
@@ -1454,10 +1456,10 @@ def test_unwrap_or_over_an_option(tmp_path):
         return unwrap_or(some, 0i32) + unwrap_or(none, 2i32) - 42i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_result_carrying_a_struct_payload(tmp_path):
+def test_result_carrying_a_struct_payload(compiler):
     src = """
     struct Point { x: i32, y: i32 }
     union Result[T, E] { Ok(T), Err(E) }
@@ -1469,10 +1471,10 @@ def test_result_carrying_a_struct_payload(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_multi_payload_variant_read_back(tmp_path):
+def test_multi_payload_variant_read_back(compiler):
     # Differently sized and aligned payload fields, each checked against
     # the value put in - a wrong field offset would show up here.
     src = """
@@ -1487,10 +1489,10 @@ def test_multi_payload_variant_read_back(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_union_stored_in_a_struct_field(tmp_path):
+def test_union_stored_in_a_struct_field(compiler):
     src = """
     union Option[T] { None, Some(T) }
     struct Holder { tag: i32, opt: Option[i64] }
@@ -1502,10 +1504,10 @@ def test_union_stored_in_a_struct_field(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_union_in_an_array(tmp_path):
+def test_union_in_an_array(compiler):
     src = """
     union Option[T] { None, Some(T) }
     pub fn main() i32 {
@@ -1527,10 +1529,10 @@ def test_union_in_an_array(tmp_path):
         return total - 42i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_recursive_list_union_walked_to_a_length(tmp_path):
+def test_recursive_list_union_walked_to_a_length(compiler):
     src = """
     union List[T] { Nil, Cons(T, *List[T]) }
     fn length[T](list: *List[T]) i32 {
@@ -1553,7 +1555,7 @@ def test_recursive_list_union_walked_to_a_length(tmp_path):
         return length(&first) - 3i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_zero_variant_union_is_lowered_but_uninhabited(compiler):
@@ -1574,7 +1576,7 @@ def test_zero_variant_union_is_lowered_but_uninhabited(compiler):
     assert "unreachable" in ir_text
 
 
-def test_comptime_union_constant_read_at_runtime(tmp_path):
+def test_comptime_union_constant_read_at_runtime(compiler):
     src = """
     union Option[T] { None, Some(T) }
     pub let G = Option::Some(1i32);
@@ -1585,10 +1587,10 @@ def test_comptime_union_constant_read_at_runtime(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_match_over_a_union_in_a_module_initializer(tmp_path):
+def test_comptime_match_over_a_union_in_a_module_initializer(compiler):
     # The initializer is folded by the interpreter, so the match itself
     # never reaches codegen - only the integer it produces.
     src = """
@@ -1601,4 +1603,4 @@ def test_comptime_match_over_a_union_in_a_module_initializer(tmp_path):
         return x - 42i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)

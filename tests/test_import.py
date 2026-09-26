@@ -5,7 +5,7 @@
 import pytest
 
 from leech import errors, mono
-from tests import harness, util
+from tests import harness
 
 
 def test_import_of_module_with_syntax_error(compiler):
@@ -25,7 +25,7 @@ def test_import_of_module_with_syntax_error(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_fn(tmp_path):
+def test_import_fn(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -40,7 +40,8 @@ def test_import_fn(tmp_path):
         return 101;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "abc\n", 101, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, stdout="abc\n", exit_status=101)
 
 
 def test_imported_non_generic_fn_is_a_monomorphization_leaf(compiler):
@@ -115,7 +116,7 @@ def test_imported_unreachable_body_can_request_unused_struct_instance(compiler):
     assert '%"a::Widget[bool]" = type' in ir_text
 
 
-def test_comptime_import_fn(tmp_path):
+def test_comptime_import_fn(compiler):
     main_src = """
     import a;
     let x = a::f();
@@ -128,7 +129,8 @@ def test_comptime_import_fn(tmp_path):
         return 101;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 101, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=101)
 
 
 def test_import_private_fn(compiler):
@@ -167,7 +169,7 @@ def test_import_private_fn_use_comptime(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_var(tmp_path):
+def test_import_var(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -177,10 +179,11 @@ def test_import_var(tmp_path):
     a_src = """
     pub let x = 11;
     """
-    util.check_prog_output(tmp_path, main_src, "", 11, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=11)
 
 
-def test_import_var_use_comptime(tmp_path):
+def test_import_var_use_comptime(compiler):
     main_src = """
     import a;
     let y = a::x;
@@ -191,7 +194,8 @@ def test_import_var_use_comptime(tmp_path):
     a_src = """
     pub let x = 11;
     """
-    util.check_prog_output(tmp_path, main_src, "", 11, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=11)
 
 
 def test_import_private_var(compiler):
@@ -223,7 +227,7 @@ def test_import_private_var_use_comptime(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_typ(tmp_path):
+def test_import_typ(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -236,10 +240,11 @@ def test_import_typ(tmp_path):
         pub int: i32,
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 32, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=32)
 
 
-def test_import_typ_use_comptime(tmp_path):
+def test_import_typ_use_comptime(compiler):
     main_src = """
     import a;
     let x = a::T{int: 32};
@@ -252,7 +257,8 @@ def test_import_typ_use_comptime(tmp_path):
         pub int: i32,
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 32, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=32)
 
 
 def test_import_private_typ(compiler):
@@ -289,7 +295,7 @@ def test_import_private_typ_use_comptime(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_typ_with_var_of_same_name(tmp_path):
+def test_import_typ_with_var_of_same_name(compiler):
     # A module can hold a variable and a type of the same name, since they
     # live in separate namespaces. Resolving a::T in a type position must
     # find the struct, not the variable that happens to be declared first.
@@ -307,10 +313,11 @@ def test_import_typ_with_var_of_same_name(tmp_path):
         pub v: i32,
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 32, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=32)
 
 
-def test_import_var_with_typ_of_same_name(tmp_path):
+def test_import_var_with_typ_of_same_name(compiler):
     # The mirror image of test_import_typ_with_var_of_same_name: a::T in a
     # value position must find the variable, not the struct type.
     main_src = """
@@ -326,10 +333,11 @@ def test_import_var_with_typ_of_same_name(tmp_path):
 
     pub let T = 5;
     """
-    util.check_prog_output(tmp_path, main_src, "", 5, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=5)
 
 
-def test_import_var_with_private_typ_of_same_name(tmp_path):
+def test_import_var_with_private_typ_of_same_name(compiler):
     # The access check has to be made against the item in the namespace
     # being resolved: a private type doesn't make a public variable of the
     # same name inaccessible.
@@ -346,7 +354,8 @@ def test_import_var_with_private_typ_of_same_name(tmp_path):
 
     pub let T = 5;
     """
-    util.check_prog_output(tmp_path, main_src, "", 5, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=5)
 
 
 def test_import_private_struct_field_construct(compiler):
@@ -431,7 +440,7 @@ def test_import_private_struct_field_write(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(tmp_path):
+def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(compiler):
     # main can't touch T::val directly, but can go through T's own public
     # assoc fns, which - being defined in the same module as T - can.
     main_src = """
@@ -456,7 +465,8 @@ def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(tmp_pat
         }
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=42)
 
 
 def test_mod_does_not_exist(compiler):
@@ -540,7 +550,7 @@ def test_import_and_struct_same_name(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_and_var_same_name(tmp_path):
+def test_import_and_var_same_name(compiler):
     # Variables are in the other namespace, though, so an import and a
     # variable - or a function - may share a name.
     main_src = """
@@ -556,10 +566,11 @@ def test_import_and_var_same_name(tmp_path):
         return 1;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 12, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=12)
 
 
-def test_import_chain(tmp_path):
+def test_import_chain(compiler):
     # main -> a -> b -> c: each module is reached only through the one
     # above it, so the whole chain has to be loaded transitively.
     main_src = """
@@ -585,10 +596,13 @@ def test_import_chain(tmp_path):
         return 100;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 111, a=a_src, b=b_src, c=c_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("b", b_src), harness.ModSrc("c", c_src)
+    )
+    compiler.check(program, exit_status=111)
 
 
-def test_diamond_import(tmp_path):
+def test_diamond_import(compiler):
     # main and a both import c, so c is reached by two paths. Its Foo must
     # be one type across both, or the value a::wrap() returns wouldn't be
     # usable as the c::Foo that main's own import names.
@@ -616,10 +630,13 @@ def test_diamond_import(tmp_path):
         return Foo { v: n };
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("c", c_src)
+    )
+    compiler.check(program, exit_status=42)
 
 
-def test_diamond_import_reversed_order(tmp_path):
+def test_diamond_import_reversed_order(compiler):
     # Same as test_diamond_import but importing a before c, which is the
     # order that used to leave c::Foo undeclared when a's signature
     # referring to it was declared first.
@@ -647,10 +664,13 @@ def test_diamond_import_reversed_order(tmp_path):
         return Foo { v: n };
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("c", c_src)
+    )
+    compiler.check(program, exit_status=42)
 
 
-def test_import_of_typ_re_exported_by_imported_mod(tmp_path):
+def test_import_of_typ_re_exported_by_imported_mod(compiler):
     # main never imports c itself; c::Foo reaches it only through a's
     # public signature, so c has to be lowered on a's behalf.
     main_src = """
@@ -675,10 +695,13 @@ def test_import_of_typ_re_exported_by_imported_mod(tmp_path):
         return Foo { v: n };
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src, c=c_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("c", c_src)
+    )
+    compiler.check(program, exit_status=42)
 
 
-def test_import_of_var_re_exported_by_imported_mod(tmp_path):
+def test_import_of_var_re_exported_by_imported_mod(compiler):
     # A module variable reached only transitively still needs an imported
     # declaration in main's output for the link to resolve.
     main_src = """
@@ -696,10 +719,13 @@ def test_import_of_var_re_exported_by_imported_mod(tmp_path):
     c_src = """
     pub let cvar = 30;
     """
-    util.check_prog_output(tmp_path, main_src, "", 30, a=a_src, c=c_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("c", c_src)
+    )
+    compiler.check(program, exit_status=30)
 
 
-def test_circular_import(tmp_path):
+def test_circular_import(compiler):
     # a and b import each other. Loading registers each module before
     # building it, so the cycle resolves to the module already under
     # construction instead of recursing forever.
@@ -725,10 +751,13 @@ def test_circular_import(tmp_path):
         return a::only_from_b() * 2;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 11, a=a_src, b=b_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("b", b_src)
+    )
+    compiler.check(program, exit_status=11)
 
 
-def test_circular_import_of_typ(tmp_path):
+def test_circular_import_of_typ(compiler):
     # The cycle carries a struct type as well as functions, so the
     # partially-built module has to be usable for type resolution too.
     main_src = """
@@ -753,10 +782,13 @@ def test_circular_import_of_typ(tmp_path):
         return a::Foo { v: 42 };
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 42, a=a_src, b=b_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("b", b_src)
+    )
+    compiler.check(program, exit_status=42)
 
 
-def test_self_import(tmp_path):
+def test_self_import(compiler):
     # Degenerate cycle: a module importing itself resolves to itself.
     main_src = """
     import main;
@@ -768,4 +800,4 @@ def test_self_import(tmp_path):
         return 7;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 7)
+    compiler.check(main_src, exit_status=7)

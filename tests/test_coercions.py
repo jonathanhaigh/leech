@@ -5,10 +5,9 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_mut_ptr_coerces_to_const_ptr_arg(tmp_path):
+def test_mut_ptr_coerces_to_const_ptr_arg(compiler):
     src = """
     fn get(p: *i32) i32 {
         return p.*;
@@ -18,10 +17,10 @@ def test_mut_ptr_coerces_to_const_ptr_arg(tmp_path):
         return get(&x);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_mut_ptr_coerces_to_const_ptr_return(tmp_path):
+def test_mut_ptr_coerces_to_const_ptr_return(compiler):
     src = """
     fn f(p: *mut i32) *i32 {
         return p;
@@ -31,10 +30,10 @@ def test_mut_ptr_coerces_to_const_ptr_return(tmp_path):
         return f(&x).*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_mut_ptr_coerces_to_const_ptr_tail_expr(tmp_path):
+def test_mut_ptr_coerces_to_const_ptr_tail_expr(compiler):
     src = """
     fn f(p: *mut i32) *i32 { p }
     pub fn main() i32 {
@@ -42,10 +41,10 @@ def test_mut_ptr_coerces_to_const_ptr_tail_expr(tmp_path):
         return f(&x).*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_mut_ptr_coerces_to_const_ptr_assignment(tmp_path):
+def test_mut_ptr_coerces_to_const_ptr_assignment(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 42;
@@ -55,10 +54,10 @@ def test_mut_ptr_coerces_to_const_ptr_assignment(tmp_path):
         return p.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_mut_ptr_coerces_to_const_ptr_struct_field(tmp_path):
+def test_mut_ptr_coerces_to_const_ptr_struct_field(compiler):
     src = """
     struct Holder { p: *i32 }
     pub fn main() i32 {
@@ -67,10 +66,10 @@ def test_mut_ptr_coerces_to_const_ptr_struct_field(tmp_path):
         return h.p.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_mut_ptr_coerces_to_const_ptr_array_element(tmp_path):
+def test_mut_ptr_coerces_to_const_ptr_array_element(compiler):
     # The element type comes from the parameter, so the elements coerce.
     src = """
     fn first(a: array[*i32, 2]) i32 {
@@ -82,7 +81,7 @@ def test_mut_ptr_coerces_to_const_ptr_array_element(tmp_path):
         return first(array[*i32, 2]{&x, &y});
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_const_ptr_does_not_coerce_to_mut_ptr_arg(compiler):
@@ -144,7 +143,7 @@ def test_ptr_coercion_does_not_change_pointee(compiler):
         compiler.compile(src)
 
 
-def test_comptime_mut_ptr_coerces_to_const_ptr(tmp_path):
+def test_comptime_mut_ptr_coerces_to_const_ptr(compiler):
     src = """
     struct Holder { p: *i32 }
     fn f() i32 {
@@ -157,7 +156,7 @@ def test_comptime_mut_ptr_coerces_to_const_ptr(tmp_path):
         return y;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 @pytest.mark.parametrize(
@@ -175,7 +174,7 @@ def test_comptime_mut_ptr_coerces_to_const_ptr(tmp_path):
         ("u31", "i32"),
     ),
 )
-def test_widening_int_coercion_allowed(src_typ, dst_typ, tmp_path):
+def test_widening_int_coercion_allowed(src_typ, dst_typ, compiler):
     src = f"""
     fn f(x: {dst_typ}) {dst_typ} {{
         return x;
@@ -186,7 +185,7 @@ def test_widening_int_coercion_allowed(src_typ, dst_typ, tmp_path):
         return 0;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 @pytest.mark.parametrize(
@@ -219,7 +218,7 @@ def test_narrowing_int_coercion_rejected(compiler, src_typ, dst_typ):
         compiler.compile(src)
 
 
-def test_widening_sign_extends_signed_source(tmp_path):
+def test_widening_sign_extends_signed_source(compiler):
     # -5i8 must widen to -5, not to 251. Tested with a comparison rather
     # than by returning the value: the two candidates differ by exactly
     # 256, which an exit status can't tell apart.
@@ -236,10 +235,10 @@ def test_widening_sign_extends_signed_source(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_widening_zero_extends_unsigned_source(tmp_path):
+def test_widening_zero_extends_unsigned_source(compiler):
     # 200u8 must widen to 200, not to -56.
     src = """
     fn as_i32(x: i32) i32 {
@@ -254,10 +253,10 @@ def test_widening_zero_extends_unsigned_source(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_widening_int_coercion_return(tmp_path):
+def test_widening_int_coercion_return(compiler):
     src = """
     fn f() i64 {
         let a = 42i8;
@@ -268,10 +267,10 @@ def test_widening_int_coercion_return(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_widening_int_coercion_tail_expr(tmp_path):
+def test_widening_int_coercion_tail_expr(compiler):
     src = """
     fn f() i64 { 42i8 }
     pub fn main() i32 {
@@ -279,10 +278,10 @@ def test_widening_int_coercion_tail_expr(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_widening_int_coercion_assignment(tmp_path):
+def test_widening_int_coercion_assignment(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 0i32;
@@ -291,10 +290,10 @@ def test_widening_int_coercion_assignment(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_widening_int_coercion_struct_field(tmp_path):
+def test_widening_int_coercion_struct_field(compiler):
     src = """
     struct T { a: i32 }
     pub fn main() i32 {
@@ -303,10 +302,10 @@ def test_widening_int_coercion_struct_field(tmp_path):
         return t.a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_widening_int_coercion_array_element(tmp_path):
+def test_widening_int_coercion_array_element(compiler):
     src = """
     fn first(a: array[i32, 2]) i32 {
         return a.[0usize];
@@ -317,10 +316,10 @@ def test_widening_int_coercion_array_element(tmp_path):
         return first(array[i32, 2]{small, other});
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_widening_int_coercion_let_initializer(tmp_path):
+def test_widening_int_coercion_let_initializer(compiler):
     # The `: i64` annotation makes the let statement a coercion point.
     # The suffix on -10i8 is what keeps this a coercion test: without it
     # the literal would simply be inferred as an i64 and nothing would be
@@ -333,17 +332,17 @@ def test_widening_int_coercion_let_initializer(tmp_path):
         return if (y == 10i64) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_let_widening_int_initializer_stores_into_declared_type(tmp_path):
+def test_let_widening_int_initializer_stores_into_declared_type(compiler):
     src = """
     pub fn main() i32 {
         let x: i64 = 1i32;
         return if (x == 1i64) { 5 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 5)
+    compiler.check(src, exit_status=5)
 
 
 def test_narrowing_int_coercion_let_rejected(compiler):
@@ -357,7 +356,7 @@ def test_narrowing_int_coercion_let_rejected(compiler):
         compiler.compile(src)
 
 
-def test_mut_ptr_coerces_to_const_ptr_let_initializer(tmp_path):
+def test_mut_ptr_coerces_to_const_ptr_let_initializer(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 42;
@@ -365,10 +364,10 @@ def test_mut_ptr_coerces_to_const_ptr_let_initializer(tmp_path):
         return p.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_let_mut_ptr_initializer_stores_into_declared_const_ptr(tmp_path):
+def test_let_mut_ptr_initializer_stores_into_declared_const_ptr(compiler):
     src = """
     pub fn main() i32 {
         let mut a = 5i32;
@@ -376,10 +375,10 @@ def test_let_mut_ptr_initializer_stores_into_declared_const_ptr(tmp_path):
         return p.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 5)
+    compiler.check(src, exit_status=5)
 
 
-def test_comptime_widening_int_coercion_let(tmp_path):
+def test_comptime_widening_int_coercion_let(compiler):
     # Module-level initializers are evaluated by the interpreter, so an
     # annotated `let` has to widen there too.
     src = """
@@ -389,10 +388,10 @@ def test_comptime_widening_int_coercion_let(tmp_path):
         return if (y == 43i64) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_comptime_widening_int_coercion(tmp_path):
+def test_comptime_widening_int_coercion(compiler):
     # Module-level initializers are evaluated by the interpreter, so it
     # has to understand the widening instruction too.
     src = """
@@ -409,7 +408,7 @@ def test_comptime_widening_int_coercion(tmp_path):
         return as_i32(small) + 35i32;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_no_coercion_in_arithmetic(compiler):
@@ -440,7 +439,7 @@ def test_no_coercion_in_comparison(compiler):
         compiler.compile(src)
 
 
-def test_no_coercion_in_let_initializer(tmp_path):
+def test_no_coercion_in_let_initializer(compiler):
     # A `let` has no declared type to coerce towards, so the initializer
     # keeps its own type rather than widening.
     src = """
@@ -452,7 +451,7 @@ def test_no_coercion_in_let_initializer(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_bool_does_not_coerce_to_int(compiler):

@@ -5,10 +5,9 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_mod_array(tmp_path):
+def test_mod_array(compiler):
     src = """
     let a = 9;
     let arr = array[i32, 4]{a, 10, 11, 12};
@@ -17,10 +16,10 @@ def test_mod_array(tmp_path):
         return arr.[idx] + arr.[1usize];
     }
     """
-    util.check_prog_output(tmp_path, src, "", 19)
+    compiler.check(src, exit_status=19)
 
 
-def test_comptime_array_access(tmp_path):
+def test_comptime_array_access(compiler):
     src = """
     let arr = array[i32, 4]{1, 2, 3, 4};
     let x = arr.[2usize];
@@ -32,10 +31,10 @@ def test_comptime_array_access(tmp_path):
         return x + y + z;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 27)
+    compiler.check(src, exit_status=27)
 
 
-def test_array_index_int_lit_infers_usize(tmp_path):
+def test_array_index_int_lit_infers_usize(compiler):
     # An index is a coercion point, so a bare literal is a usize - no
     # explicit `0usize` suffix needed.
     src = """
@@ -44,10 +43,10 @@ def test_array_index_int_lit_infers_usize(tmp_path):
         return arr.[0] + arr.[2];
     }
     """
-    util.check_prog_output(tmp_path, src, "", 40)
+    compiler.check(src, exit_status=40)
 
 
-def test_array_index_widens_to_usize(tmp_path):
+def test_array_index_widens_to_usize(compiler):
     # A u8 index isn't a usize, but widens to one.
     src = """
     pub fn main() i32 {
@@ -56,7 +55,7 @@ def test_array_index_widens_to_usize(tmp_path):
         return arr.[i];
     }
     """
-    util.check_prog_output(tmp_path, src, "", 30)
+    compiler.check(src, exit_status=30)
 
 
 def test_array_index_signed_is_rejected(compiler):
@@ -72,7 +71,7 @@ def test_array_index_signed_is_rejected(compiler):
         compiler.compile(src)
 
 
-def test_comptime_array_index_int_lit_infers_usize(tmp_path):
+def test_comptime_array_index_int_lit_infers_usize(compiler):
     src = """
     let arr = array[i32, 4]{1, 2, 3, 4};
     let x = arr.[2];
@@ -80,7 +79,7 @@ def test_comptime_array_index_int_lit_infers_usize(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 3)
+    compiler.check(src, exit_status=3)
 
 
 def test_comptime_array_invalid_index(compiler):
@@ -109,7 +108,7 @@ def test_comptime_index_into_non_array(compiler):
         compiler.compile(src)
 
 
-def test_local_array(tmp_path):
+def test_local_array(compiler):
     src = """
     pub fn main() i32 {
         let a = 5;
@@ -118,7 +117,7 @@ def test_local_array(tmp_path):
         return arr.[idx + 1usize];
     }
     """
-    util.check_prog_output(tmp_path, src, "", 5)
+    compiler.check(src, exit_status=5)
 
 
 def test_local_array_incompatible_typs(compiler):
@@ -161,7 +160,7 @@ def test_local_index_into_non_array(compiler):
         compiler.compile(src)
 
 
-def test_array_ret_typ_and_param_typ(tmp_path):
+def test_array_ret_typ_and_param_typ(compiler):
     src = """
     fn f(a: array[i32, 4]) array[i32, 2] {
         array[i32, 2]{a.[2usize], a.[3usize]}
@@ -171,10 +170,10 @@ def test_array_ret_typ_and_param_typ(tmp_path):
         return f(array[i32, 4]{1, 2, 3, 4}).[1usize];
     }
     """
-    util.check_prog_output(tmp_path, src, "", 4)
+    compiler.check(src, exit_status=4)
 
 
-def test_empty_array_as_call_arg(tmp_path):
+def test_empty_array_as_call_arg(compiler):
     src = """
     fn f(a: array[i32, 0]) i32 {
         return 42;
@@ -183,10 +182,10 @@ def test_empty_array_as_call_arg(tmp_path):
         return f(array[i32, 0]{});
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_comptime_empty_array_as_call_arg(tmp_path):
+def test_comptime_empty_array_as_call_arg(compiler):
     src = """
     fn f(a: array[i32, 0]) i32 {
         return 42;
@@ -196,7 +195,7 @@ def test_comptime_empty_array_as_call_arg(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_empty_array_wrong_expected_length(compiler):
@@ -212,7 +211,7 @@ def test_empty_array_wrong_expected_length(compiler):
         compiler.compile(src)
 
 
-def test_empty_array_return(tmp_path):
+def test_empty_array_return(compiler):
     src = """
     fn f() array[i32, 0] {
         return array[i32, 0]{};
@@ -222,10 +221,10 @@ def test_empty_array_return(tmp_path):
         return 42;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_empty_array_struct_field(tmp_path):
+def test_empty_array_struct_field(compiler):
     src = """
     struct T {
         arr: array[i32, 0],
@@ -235,10 +234,10 @@ def test_empty_array_struct_field(tmp_path):
         return 55;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 55)
+    compiler.check(src, exit_status=55)
 
 
-def test_empty_array_assignment(tmp_path):
+def test_empty_array_assignment(compiler):
     src = """
     fn f(a: array[i32, 0]) i32 {
         let mut x = a;
@@ -249,10 +248,10 @@ def test_empty_array_assignment(tmp_path):
         return f(array[i32, 0]{});
     }
     """
-    util.check_prog_output(tmp_path, src, "", 99)
+    compiler.check(src, exit_status=99)
 
 
-def test_nested_empty_array_as_call_arg(tmp_path):
+def test_nested_empty_array_as_call_arg(compiler):
     src = """
     fn f(a: array[array[i32, 0], 2]) i32 {
         return 7;
@@ -261,7 +260,7 @@ def test_nested_empty_array_as_call_arg(tmp_path):
         return f(array[array[i32, 0], 2]{array[i32, 0]{}, array[i32, 0]{}});
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 def test_array_lit_wrong_number_of_elements(compiler):
@@ -297,11 +296,11 @@ def test_array_lit_length_not_concrete(compiler):
         compiler.compile(src)
 
 
-def test_generic_fn_body_uses_array_typ_with_value_param(tmp_path):
+def test_generic_fn_body_uses_array_typ_with_value_param(compiler):
     src = """
     fn sum3[value N: usize](x: array[i32, N]) i32 { return x.[0] + x.[1] + x.[2]; }
     pub fn main() i32 {
         return sum3[3](array[i32, 3]{4, 5, 6}) - 15;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)

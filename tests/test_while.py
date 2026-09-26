@@ -5,10 +5,9 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_while(tmp_path):
+def test_while(compiler):
     src = """
     pub fn main() i32 {
         let mut i = 0;
@@ -18,10 +17,10 @@ def test_while(tmp_path):
         return i;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 10)
+    compiler.check(src, exit_status=10)
 
 
-def test_comptime_while(tmp_path):
+def test_comptime_while(compiler):
     src = """
     let x = {
         let mut i = 0;
@@ -34,10 +33,10 @@ def test_comptime_while(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 10)
+    compiler.check(src, exit_status=10)
 
 
-def test_if_in_while(tmp_path):
+def test_if_in_while(compiler):
     src = """
     pub fn main() i32 {
         let mut i = 1;
@@ -50,7 +49,7 @@ def test_if_in_while(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 128)
+    compiler.check(src, exit_status=128)
 
 
 def test_while_body_not_void(compiler):

@@ -5,26 +5,25 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_int_arith(tmp_path):
+def test_int_arith(compiler):
     src = """
     pub fn main() i32 {
         return 1 - 2 * 3 + 4 - 5 * 6 / 10;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 256 - 4)
+    compiler.check(src, exit_status=256 - 4)
 
 
-def test_comptime_int_arith(tmp_path):
+def test_comptime_int_arith(compiler):
     src = """
     let x = 1 - 2 * 3 + 4 - 5 * 6 / 10;
     pub fn main() i32 {
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 256 - 4)
+    compiler.check(src, exit_status=256 - 4)
 
 
 @pytest.mark.parametrize(
@@ -106,7 +105,7 @@ def test_comptime_signed_division_by_zero(compiler):
         compiler.compile(src)
 
 
-def test_comptime_unsigned_division(tmp_path):
+def test_comptime_unsigned_division(compiler):
     src = """
     let x = 7usize / 2usize;
     pub fn main() i32 {
@@ -116,7 +115,7 @@ def test_comptime_unsigned_division(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 def test_comptime_unsigned_division_by_zero(compiler):
@@ -144,7 +143,7 @@ def test_comptime_division_by_zero_in_called_fn(compiler):
         compiler.compile(src)
 
 
-def test_comptime_add_at_typ_max_is_allowed(tmp_path):
+def test_comptime_add_at_typ_max_is_allowed(compiler):
     src = """
     let x = 254u8 + 1u8;
     pub fn main() i32 {
@@ -154,7 +153,7 @@ def test_comptime_add_at_typ_max_is_allowed(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 def test_comptime_add_overflow(compiler):
@@ -220,7 +219,7 @@ def test_comptime_signed_div_overflow(compiler):
         compiler.compile(src)
 
 
-def test_comptime_signed_div_truncates_toward_zero(tmp_path):
+def test_comptime_signed_div_truncates_toward_zero(compiler):
     # LLVM's sdiv truncates toward zero, unlike Python's `//`, which floors
     # toward negative infinity: -7 / 2 and 7 / -2 must both be -3, not -4.
     src = """
@@ -233,27 +232,27 @@ def test_comptime_signed_div_truncates_toward_zero(tmp_path):
         return if (a == neg3 and b == neg3) { 1 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_int_arith_unary_minus(tmp_path):
+def test_int_arith_unary_minus(compiler):
     src = """
     pub fn main() i32 {
         let x = 5;
         return -x - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 256 - 8)
+    compiler.check(src, exit_status=256 - 8)
 
 
-def test_comptime_unary_minus(tmp_path):
+def test_comptime_unary_minus(compiler):
     src = """
     let x = -5 - 3;
     pub fn main() i32 {
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 256 - 8)
+    compiler.check(src, exit_status=256 - 8)
 
 
 def test_comptime_neg_overflow(compiler):
@@ -281,44 +280,44 @@ def test_comptime_neg_overflow(compiler):
         "let x = -128i8;",
     ),
 )
-def test_negated_int_lit_at_signed_typ_min(tmp_path, decl):
+def test_negated_int_lit_at_signed_typ_min(compiler, decl):
     src = f"""
     pub fn main() i32 {{
         {decl}
         return if (x == 0i8 - 127i8 - 1i8) {{ 7 }} else {{ 0 }};
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_comptime_negated_int_lit_at_signed_typ_min(tmp_path):
+def test_comptime_negated_int_lit_at_signed_typ_min(compiler):
     src = """
     let x: i8 = -128;
     pub fn main() i32 {
         return if (x == 0i8 - 127i8 - 1i8) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_negated_int_lit_at_i32_min(tmp_path):
+def test_negated_int_lit_at_i32_min(compiler):
     src = """
     pub fn main() i32 {
         let x = -2147483648i32;
         return if (x == 0i32 - 2147483647 - 1) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_bare_negated_int_lit_in_peer_position(tmp_path):
+def test_bare_negated_int_lit_in_peer_position(compiler):
     src = """
     pub fn main() i32 {
         let x = -1 + 10i8;
         return if (x == 9) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 def test_negated_int_lit_overflow(compiler):

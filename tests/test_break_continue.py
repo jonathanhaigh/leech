@@ -5,10 +5,9 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_break(tmp_path):
+def test_break(compiler):
     src = """
     pub fn main() i32 {
         let mut i = 0;
@@ -19,10 +18,10 @@ def test_break(tmp_path):
         return i;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 5)
+    compiler.check(src, exit_status=5)
 
 
-def test_continue(tmp_path):
+def test_continue(compiler):
     src = """
     pub fn main() i32 {
         let mut i = 0;
@@ -36,10 +35,10 @@ def test_continue(tmp_path):
     }
     """
     # 1+2+4+5+6+7+8+9+10, skipping 3
-    util.check_prog_output(tmp_path, src, "", 52)
+    compiler.check(src, exit_status=52)
 
 
-def test_labeled_break_outer_from_inner(tmp_path):
+def test_labeled_break_outer_from_inner(compiler):
     src = """
     pub fn main() i32 {
         let mut count = 0;
@@ -56,10 +55,10 @@ def test_labeled_break_outer_from_inner(tmp_path):
     """
     # If `break outer;` only broke the inner loop, this would loop forever
     # (or count well past 3).
-    util.check_prog_output(tmp_path, src, "", 3)
+    compiler.check(src, exit_status=3)
 
 
-def test_labeled_continue_outer_from_inner(tmp_path):
+def test_labeled_continue_outer_from_inner(compiler):
     src = """
     pub fn main() i32 {
         let mut i = 0;
@@ -79,10 +78,10 @@ def test_labeled_continue_outer_from_inner(tmp_path):
     # Each outer iteration's inner loop runs exactly twice (j=1, j=2) before
     # `continue outer;` skips the rest of the inner loop and the rest of
     # the outer body, for 3 outer iterations total.
-    util.check_prog_output(tmp_path, src, "", 6)
+    compiler.check(src, exit_status=6)
 
 
-def test_shadowed_label_targets_inner_loop(tmp_path):
+def test_shadowed_label_targets_inner_loop(compiler):
     src = """
     pub fn main() i32 {
         let mut outer_iters = 0;
@@ -101,10 +100,10 @@ def test_shadowed_label_targets_inner_loop(tmp_path):
     """
     # If `break lbl;` had escaped to the outer loop instead of the inner
     # one shadowing it, outer_iters would be 1, not 3.
-    util.check_prog_output(tmp_path, src, "", (3 * 100 + 4 * 3) % 256)
+    compiler.check(src, exit_status=(3 * 100 + 4 * 3) % 256)
 
 
-def test_sibling_loops_reuse_label(tmp_path):
+def test_sibling_loops_reuse_label(compiler):
     src = """
     pub fn main() i32 {
         let mut total = 0;
@@ -119,10 +118,10 @@ def test_sibling_loops_reuse_label(tmp_path):
         return total;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 22)
+    compiler.check(src, exit_status=22)
 
 
-def test_break_terminates_block_as_never(tmp_path):
+def test_break_terminates_block_as_never(compiler):
     # Mirrors test_never.py's equivalent `return`-based test: a block
     # whose only statement diverges (here, via `break`) is `never`-typed,
     # so it coerces into an annotated `let`'s declared type.
@@ -136,10 +135,10 @@ def test_break_terminates_block_as_never(tmp_path):
         return i;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_break_in_if_arm_inside_while(tmp_path):
+def test_break_in_if_arm_inside_while(compiler):
     src = """
     pub fn main() i32 {
         let mut i = 1;
@@ -152,10 +151,10 @@ def test_break_in_if_arm_inside_while(tmp_path):
         return i;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 128)
+    compiler.check(src, exit_status=128)
 
 
-def test_comptime_break(tmp_path):
+def test_comptime_break(compiler):
     src = """
     let x = {
         let mut i = 0;
@@ -169,10 +168,10 @@ def test_comptime_break(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
-def test_comptime_continue(tmp_path):
+def test_comptime_continue(compiler):
     src = """
     let x = {
         let mut i = 0;
@@ -189,7 +188,7 @@ def test_comptime_continue(tmp_path):
     }
     """
     # 1+3+4+5, skipping 2
-    util.check_prog_output(tmp_path, src, "", 13)
+    compiler.check(src, exit_status=13)
 
 
 def test_break_outside_loop(compiler):

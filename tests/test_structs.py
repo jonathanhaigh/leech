@@ -5,10 +5,10 @@
 import pytest
 
 from leech import errors
-from tests import harness, util
+from tests import harness
 
 
-def test_struct_access(tmp_path):
+def test_struct_access(compiler):
     src = """
     extern fn puts(s: *u8) i32;
 
@@ -27,10 +27,10 @@ def test_struct_access(tmp_path):
         return t.a + t.c.[3usize];
     }
     """
-    util.check_prog_output(tmp_path, src, "abc\n", 13)
+    compiler.check(src, stdout="abc\n", exit_status=13)
 
 
-def test_empty_struct(tmp_path):
+def test_empty_struct(compiler):
     src = """
     struct T {}
     pub fn main() i32 {
@@ -38,10 +38,10 @@ def test_empty_struct(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_empty_struct(tmp_path):
+def test_comptime_empty_struct(compiler):
     src = """
     struct T {}
     let t = T {};
@@ -49,10 +49,10 @@ def test_comptime_empty_struct(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_private_field_accessible_within_defining_module(tmp_path):
+def test_private_field_accessible_within_defining_module(compiler):
     # Private (the default - no `pub`) fields are freely readable,
     # writable, and settable from within the same module as the struct.
     src = """
@@ -66,7 +66,7 @@ def test_private_field_accessible_within_defining_module(tmp_path):
         return t.val;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_duplicate_field_in_struct_defn(compiler):
@@ -97,7 +97,7 @@ def test_unknown_typ_for_struct_field(compiler):
         compiler.compile(src)
 
 
-def test_struct_in_struct(tmp_path):
+def test_struct_in_struct(compiler):
     src = """
     struct T {
       a: i32,
@@ -110,10 +110,10 @@ def test_struct_in_struct(tmp_path):
         return x.b.a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
-def test_struct_with_ptr_to_same_struct(tmp_path):
+def test_struct_with_ptr_to_same_struct(compiler):
     src = """
     struct T {
       a: i32,
@@ -123,10 +123,10 @@ def test_struct_with_ptr_to_same_struct(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
+def test_struct_with_array_of_ptr_to_same_struct(compiler):
     # An array of pointers is fine: each element is a fixed-size pointer,
     # regardless of what it points to.
     src = """
@@ -138,7 +138,7 @@ def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_duplicate_field_in_unused_private_struct_in_imported_module(compiler):
@@ -239,7 +239,7 @@ def test_mutual_struct_recursion_by_value(compiler):
         compiler.compile(src)
 
 
-def test_mutual_struct_recursion_by_ptr(tmp_path):
+def test_mutual_struct_recursion_by_ptr(compiler):
     # The by-value cycle check must not follow pointer fields at all:
     # A and B each contain the other only behind a pointer, so neither
     # has unbounded size.
@@ -254,10 +254,10 @@ def test_mutual_struct_recursion_by_ptr(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_struct_diamond_containment_is_not_a_cycle(tmp_path):
+def test_struct_diamond_containment_is_not_a_cycle(compiler):
     # A contains B twice (by value), but B doesn't contain A - not a
     # cycle, just two fields sharing a type.
     src = """
@@ -272,7 +272,7 @@ def test_struct_diamond_containment_is_not_a_cycle(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_typ_of_brace_expr_invalid(compiler):
@@ -372,7 +372,7 @@ def test_field_access_into_non_struct(compiler):
         compiler.compile(src)
 
 
-def test_comptime_struct_access(tmp_path):
+def test_comptime_struct_access(compiler):
     src = """
     struct T {
       a: i32,
@@ -389,7 +389,7 @@ def test_comptime_struct_access(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 10)
+    compiler.check(src, exit_status=10)
 
 
 def test_typ_of_comptime_struct_expr_not_struct(compiler):
@@ -475,7 +475,7 @@ def test_comptime_field_access_into_non_struct(compiler):
         compiler.compile(src)
 
 
-def test_self_as_ret_typ_in_inherent_impl(tmp_path):
+def test_self_as_ret_typ_in_inherent_impl(compiler):
     src = """
     struct Foo { mut x: i32 }
     impl Foo {
@@ -488,10 +488,10 @@ def test_self_as_ret_typ_in_inherent_impl(tmp_path):
         return g.get() - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_self_in_generic_inherent_impl_substitutes_per_instance(tmp_path):
+def test_self_in_generic_inherent_impl_substitutes_per_instance(compiler):
     src = """
     struct Box[T] { mut val: T }
     impl[T] Box[T] {
@@ -507,4 +507,4 @@ def test_self_in_generic_inherent_impl_substitutes_per_instance(tmp_path):
         return 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)

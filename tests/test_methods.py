@@ -5,10 +5,10 @@
 import pytest
 
 from leech import errors
-from tests import harness, util
+from tests import harness
 
 
-def test_const_ptr_method_call(tmp_path):
+def test_const_ptr_method_call(compiler):
     src = """
     struct Counter { n: i32 }
     impl Counter {
@@ -19,10 +19,10 @@ def test_const_ptr_method_call(tmp_path):
         return c.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_mut_ptr_method_call(tmp_path):
+def test_mut_ptr_method_call(compiler):
     src = """
     struct Counter { mut n: i32 }
     impl Counter {
@@ -35,7 +35,7 @@ def test_mut_ptr_method_call(tmp_path):
         return c.n;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
 def test_mut_ptr_method_call_on_const_place_rejected(compiler):
@@ -56,7 +56,7 @@ def test_mut_ptr_method_call_on_const_place_rejected(compiler):
         compiler.compile(src)
 
 
-def test_const_ptr_method_call_on_mut_place(tmp_path):
+def test_const_ptr_method_call_on_mut_place(compiler):
     # A `let mut` place gives a *mut receiver, which coerces to the *self
     # method's const one - giving up write access is always safe.
     src = """
@@ -69,10 +69,10 @@ def test_const_ptr_method_call_on_mut_place(tmp_path):
         return c.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_dot_call_and_explicit_path_call_equivalent_const_receiver(tmp_path):
+def test_dot_call_and_explicit_path_call_equivalent_const_receiver(compiler):
     src = """
     struct Counter { n: i32 }
     impl Counter {
@@ -83,10 +83,10 @@ def test_dot_call_and_explicit_path_call_equivalent_const_receiver(tmp_path):
         return c.get() - Counter::get(&c);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_dot_call_and_explicit_path_call_equivalent_mut_receiver(tmp_path):
+def test_dot_call_and_explicit_path_call_equivalent_mut_receiver(compiler):
     src = """
     struct Counter { mut n: i32 }
     impl Counter {
@@ -99,10 +99,10 @@ def test_dot_call_and_explicit_path_call_equivalent_mut_receiver(tmp_path):
         return c.n;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
-def test_dot_call_private_method_accessible_within_defining_module(tmp_path):
+def test_dot_call_private_method_accessible_within_defining_module(compiler):
     src = """
     struct Counter { n: i32 }
     impl Counter {
@@ -113,7 +113,7 @@ def test_dot_call_private_method_accessible_within_defining_module(tmp_path):
         return c.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_dot_call_private_method_cross_module_rejected(compiler):
@@ -170,7 +170,7 @@ def test_dot_call_on_receiverless_assoc_fn_rejected(compiler):
         compiler.compile(src)
 
 
-def test_method_passes_self_by_value_to_free_function(tmp_path):
+def test_method_passes_self_by_value_to_free_function(compiler):
     # `self` used bare, as a plain value argument, exercises Receiver
     # resolution as an ordinary VarExpr - distinct from every other test
     # here, which only ever reaches self through self.* / self.*.field.
@@ -185,10 +185,10 @@ def test_method_passes_self_by_value_to_free_function(tmp_path):
         return c.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_field_access_of_non_method_name_still_works(tmp_path):
+def test_field_access_of_non_method_name_still_works(compiler):
     # Non-call field access (no trailing `(...)`) is untouched by method
     # resolution - it never goes through _build_call_expr at all.
     src = """
@@ -201,7 +201,7 @@ def test_field_access_of_non_method_name_still_works(tmp_path):
         return c.n;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 def test_dot_call_falls_back_to_field_access_when_no_method_matches(compiler):
@@ -221,7 +221,7 @@ def test_dot_call_falls_back_to_field_access_when_no_method_matches(compiler):
         compiler.compile(src)
 
 
-def test_dot_call_falls_back_to_callable_struct_field(tmp_path):
+def test_dot_call_falls_back_to_callable_struct_field(compiler):
     src = """
     fn answer() i32 { 42 }
     struct Holder[T] { f: T }
@@ -231,4 +231,4 @@ def test_dot_call_falls_back_to_callable_struct_field(tmp_path):
         return h.f();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)

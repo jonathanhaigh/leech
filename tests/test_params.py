@@ -5,7 +5,6 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
 def test_param_typ_not_defined(compiler):
@@ -17,7 +16,7 @@ def test_param_typ_not_defined(compiler):
         compiler.compile(src)
 
 
-def test_param_shadows_mod_var(tmp_path):
+def test_param_shadows_mod_var(compiler):
     # Inside f, x refers to the parameter, not the module-level variable
     # of the same name.
     src = """
@@ -29,7 +28,7 @@ def test_param_shadows_mod_var(tmp_path):
         return f(5);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 5)
+    compiler.check(src, exit_status=5)
 
 
 def test_duplicate_param_name(compiler):

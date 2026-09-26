@@ -5,10 +5,9 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_if_false_else_expr_val(tmp_path):
+def test_if_false_else_expr_val(compiler):
     src = """
     pub fn main() i32 {
         return if (false) {
@@ -18,10 +17,10 @@ def test_if_false_else_expr_val(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
-def test_comptime_if_false_else_expr_val(tmp_path):
+def test_comptime_if_false_else_expr_val(compiler):
     src = """
     let x = if (false) {
         1
@@ -32,10 +31,10 @@ def test_comptime_if_false_else_expr_val(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
-def test_if_true_else_expr_val(tmp_path):
+def test_if_true_else_expr_val(compiler):
     src = """
     pub fn main() i32 {
         return if (true) {
@@ -45,10 +44,10 @@ def test_if_true_else_expr_val(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_comptime_if_true_else_expr_val(tmp_path):
+def test_comptime_if_true_else_expr_val(compiler):
     src = """
     let x = if (true) {
         1
@@ -59,10 +58,10 @@ def test_comptime_if_true_else_expr_val(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_if_false_ret_else_expr_val(tmp_path):
+def test_if_false_ret_else_expr_val(compiler):
     src = """
     pub fn main() i32 {
         return if (false) {
@@ -72,10 +71,10 @@ def test_if_false_ret_else_expr_val(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
-def test_if_true_ret_else_expr_val(tmp_path):
+def test_if_true_ret_else_expr_val(compiler):
     src = """
     pub fn main() i32 {
         return if (true) {
@@ -85,10 +84,10 @@ def test_if_true_ret_else_expr_val(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 5)
+    compiler.check(src, exit_status=5)
 
 
-def test_if_false_else_ret_expr_val(tmp_path):
+def test_if_false_else_ret_expr_val(compiler):
     src = """
     pub fn main() i32 {
         return if (false) {
@@ -98,10 +97,10 @@ def test_if_false_else_ret_expr_val(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 5)
+    compiler.check(src, exit_status=5)
 
 
-def test_if_true_else_ret_expr_val(tmp_path):
+def test_if_true_else_ret_expr_val(compiler):
     src = """
     pub fn main() i32 {
         return if (true) {
@@ -111,10 +110,10 @@ def test_if_true_else_ret_expr_val(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_if_ret_else_ret_expr_val(tmp_path):
+def test_if_ret_else_ret_expr_val(compiler):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -124,10 +123,10 @@ def test_if_ret_else_ret_expr_val(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_if_ret_expr_val(tmp_path):
+def test_if_ret_expr_val(compiler):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -136,7 +135,7 @@ def test_if_ret_expr_val(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 def test_if_with_tail_expr(compiler):
@@ -182,7 +181,7 @@ def test_void_call_as_if_cond(compiler):
         compiler.compile(src)
 
 
-def test_if_els_two_void_branches(tmp_path):
+def test_if_els_two_void_branches(compiler):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -193,10 +192,10 @@ def test_if_els_two_void_branches(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_if_els_divergent_and_void_branch(tmp_path):
+def test_if_els_divergent_and_void_branch(compiler):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -207,10 +206,10 @@ def test_if_els_divergent_and_void_branch(tmp_path):
         return 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_if_els_two_void_call_arms(tmp_path):
+def test_if_els_two_void_call_arms(compiler):
     src = """
     fn a() { }
     fn b() { }
@@ -224,10 +223,10 @@ def test_if_els_two_void_call_arms(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_if_els_two_void_branches_void_fn(tmp_path):
+def test_if_els_two_void_branches_void_fn(compiler):
     src = """
     fn f(c: bool) {
         if (c) {
@@ -242,4 +241,4 @@ def test_if_els_two_void_branches_void_fn(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)

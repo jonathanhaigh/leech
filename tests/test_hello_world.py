@@ -2,10 +2,8 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-from tests import util
 
-
-def test_hello_world(tmp_path):
+def test_hello_world(compiler):
     src = """
     extern fn puts(s: *u8) i32;
 
@@ -14,10 +12,10 @@ def test_hello_world(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "hello world\n", 0)
+    compiler.check(src, stdout="hello world\n")
 
 
-def test_recursive_factorial_fn(tmp_path):
+def test_recursive_factorial_fn(compiler):
     src = """
     fn fact(n: i32) i32 {
         if (n == 1) {
@@ -29,10 +27,10 @@ def test_recursive_factorial_fn(tmp_path):
         return fact(5);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 120)
+    compiler.check(src, exit_status=120)
 
 
-def test_comptime_recursive_factorial_fn(tmp_path):
+def test_comptime_recursive_factorial_fn(compiler):
     src = """
     fn fact(n: i32) i32 {
         if (n == 1) {
@@ -45,10 +43,10 @@ def test_comptime_recursive_factorial_fn(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 120)
+    compiler.check(src, exit_status=120)
 
 
-def test_mutually_recursive_fns(tmp_path):
+def test_mutually_recursive_fns(compiler):
     # is_even is defined before is_odd but calls it, so this also
     # exercises a forward reference between top-level functions.
     src = """
@@ -74,10 +72,10 @@ def test_mutually_recursive_fns(tmp_path):
         }
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_comptime_mutually_recursive_fns(tmp_path):
+def test_comptime_mutually_recursive_fns(compiler):
     src = """
     fn is_even(n: i32) bool {
         if (n == 0) {
@@ -103,4 +101,4 @@ def test_comptime_mutually_recursive_fns(tmp_path):
         }
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)

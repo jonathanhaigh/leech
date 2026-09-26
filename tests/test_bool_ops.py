@@ -5,7 +5,6 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 AND_CASES = (
     (True, True, True),
@@ -32,79 +31,79 @@ def _lit(b: bool) -> str:
 
 
 @pytest.mark.parametrize("lhs,rhs,result", AND_CASES)
-def test_and(lhs, rhs, result, tmp_path):
+def test_and(lhs, rhs, result, compiler):
     src = f"""
     pub fn main() i32 {{
         return if ({_lit(lhs)} and {_lit(rhs)}) {{ 100 }} else {{ 200 }};
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
+    compiler.check(src, exit_status=100 if result else 200)
 
 
 @pytest.mark.parametrize("lhs,rhs,result", AND_CASES)
-def test_comptime_and(lhs, rhs, result, tmp_path):
+def test_comptime_and(lhs, rhs, result, compiler):
     src = f"""
     let x = if ({_lit(lhs)} and {_lit(rhs)}) {{ 100 }} else {{ 200 }};
     pub fn main() i32 {{
         return x;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
+    compiler.check(src, exit_status=100 if result else 200)
 
 
 @pytest.mark.parametrize("lhs,rhs,result", OR_CASES)
-def test_or(lhs, rhs, result, tmp_path):
+def test_or(lhs, rhs, result, compiler):
     src = f"""
     pub fn main() i32 {{
         return if ({_lit(lhs)} or {_lit(rhs)}) {{ 100 }} else {{ 200 }};
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
+    compiler.check(src, exit_status=100 if result else 200)
 
 
 @pytest.mark.parametrize("lhs,rhs,result", OR_CASES)
-def test_comptime_or(lhs, rhs, result, tmp_path):
+def test_comptime_or(lhs, rhs, result, compiler):
     src = f"""
     let x = if ({_lit(lhs)} or {_lit(rhs)}) {{ 100 }} else {{ 200 }};
     pub fn main() i32 {{
         return x;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
+    compiler.check(src, exit_status=100 if result else 200)
 
 
 @pytest.mark.parametrize("operand,result", NOT_CASES)
-def test_not(operand, result, tmp_path):
+def test_not(operand, result, compiler):
     src = f"""
     pub fn main() i32 {{
         return if (not {_lit(operand)}) {{ 100 }} else {{ 200 }};
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
+    compiler.check(src, exit_status=100 if result else 200)
 
 
 @pytest.mark.parametrize("operand,result", NOT_CASES)
-def test_comptime_not(operand, result, tmp_path):
+def test_comptime_not(operand, result, compiler):
     src = f"""
     let x = if (not {_lit(operand)}) {{ 100 }} else {{ 200 }};
     pub fn main() i32 {{
         return x;
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 100 if result else 200)
+    compiler.check(src, exit_status=100 if result else 200)
 
 
-def test_not_binds_tighter_than_and(tmp_path):
+def test_not_binds_tighter_than_and(compiler):
     # not false and false == (not false) and false == true and false == false
     src = """
     pub fn main() i32 {
         return if (not false and false) { 100 } else { 200 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 200)
+    compiler.check(src, exit_status=200)
 
 
-def test_and_binds_tighter_than_or(tmp_path):
+def test_and_binds_tighter_than_or(compiler):
     # If `and` binds tighter (correct): true or (false and false) == true.
     # If `or` bound tighter instead: (true or false) and false == false.
     # The two groupings must disagree for this to actually test precedence.
@@ -113,23 +112,23 @@ def test_and_binds_tighter_than_or(tmp_path):
         return if (true or false and false) { 100 } else { 200 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
-def test_logic_ops_bind_looser_than_comparison(tmp_path):
+def test_logic_ops_bind_looser_than_comparison(compiler):
     # not 1 == 2  ==  not (1 == 2)  ==  not false  ==  true
     src = """
     pub fn main() i32 {
         return if (not 1 == 2) { 100 } else { 200 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
 # --- Short-circuiting is actually observed, not assumed ---
 
 
-def test_and_short_circuits_at_runtime(tmp_path):
+def test_and_short_circuits_at_runtime(compiler):
     src = """
     extern fn puts(s: *u8) i32;
     fn side_effect() bool {
@@ -142,10 +141,10 @@ def test_and_short_circuits_at_runtime(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_and_evaluates_rhs_when_lhs_true(tmp_path):
+def test_and_evaluates_rhs_when_lhs_true(compiler):
     src = """
     extern fn puts(s: *u8) i32;
     fn side_effect() bool {
@@ -158,10 +157,10 @@ def test_and_evaluates_rhs_when_lhs_true(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "side effect\n", 0)
+    compiler.check(src, stdout="side effect\n")
 
 
-def test_or_short_circuits_at_runtime(tmp_path):
+def test_or_short_circuits_at_runtime(compiler):
     src = """
     extern fn puts(s: *u8) i32;
     fn side_effect() bool {
@@ -174,10 +173,10 @@ def test_or_short_circuits_at_runtime(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_or_evaluates_rhs_when_lhs_false(tmp_path):
+def test_or_evaluates_rhs_when_lhs_false(compiler):
     src = """
     extern fn puts(s: *u8) i32;
     fn side_effect() bool {
@@ -190,10 +189,10 @@ def test_or_evaluates_rhs_when_lhs_false(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "side effect\n", 0)
+    compiler.check(src, stdout="side effect\n")
 
 
-def test_comptime_and_short_circuits(tmp_path):
+def test_comptime_and_short_circuits(compiler):
     # Without short-circuiting, the interpreter would evaluate the
     # division and raise PanicAtComptimeError (division by zero).
     src = """
@@ -202,17 +201,17 @@ def test_comptime_and_short_circuits(tmp_path):
         return if (x) { 1 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_comptime_or_short_circuits(tmp_path):
+def test_comptime_or_short_circuits(compiler):
     src = """
     let x = true or (1i32 / 0i32 == 0i32);
     pub fn main() i32 {
         return if (x) { 1 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 # --- Type errors ---
@@ -254,7 +253,7 @@ def test_invalid_not_operand(compiler):
 
 
 @pytest.mark.parametrize("op", ("and", "or"))
-def test_never_lhs_compiles(op, tmp_path):
+def test_never_lhs_compiles(op, compiler):
     # A diverging left operand makes the whole and/or expression diverge
     # too - symmetric with the already-working diverging-rhs case below.
     src = f"""
@@ -266,7 +265,7 @@ def test_never_lhs_compiles(op, tmp_path):
         return f();
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 @pytest.mark.parametrize(
@@ -276,7 +275,7 @@ def test_never_lhs_compiles(op, tmp_path):
         ("or", "false"),  # `or` only evaluates its rhs when the lhs is false
     ),
 )
-def test_never_rhs_compiles(op, lhs, tmp_path):
+def test_never_rhs_compiles(op, lhs, compiler):
     src = f"""
     fn f() i32 {{
         let a = {lhs} {op} ({{ return 1; }});
@@ -286,10 +285,10 @@ def test_never_rhs_compiles(op, lhs, tmp_path):
         return f();
     }}
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_deeply_nested_logic_ops(tmp_path):
+def test_deeply_nested_logic_ops(compiler):
     # Regression coverage for correct block-compile ordering: a
     # short-circuit's direct edge into its merge block, chained several
     # levels deep, must not be compiled before the (deeper) block that
@@ -304,4 +303,4 @@ def test_deeply_nested_logic_ops(tmp_path):
         return if (a and (b or (c and (d or e)))) { 7 } else { 0 };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)

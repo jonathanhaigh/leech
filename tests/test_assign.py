@@ -5,10 +5,9 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_assign_to_local_var(tmp_path):
+def test_assign_to_local_var(compiler):
     src = """
     pub fn main() i32 {
         let mut a = 1;
@@ -16,10 +15,10 @@ def test_assign_to_local_var(tmp_path):
         return a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
-def test_assign_to_mod_var(tmp_path):
+def test_assign_to_mod_var(compiler):
     src = """
     let mut a = 1;
     pub fn main() i32 {
@@ -27,7 +26,7 @@ def test_assign_to_mod_var(tmp_path):
         return a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
 def test_comptime_assign_to_mod_var(compiler):
@@ -70,7 +69,7 @@ def test_assign_to_const_mod_var(compiler):
         compiler.compile(src)
 
 
-def test_assign_to_local_arr_element(tmp_path):
+def test_assign_to_local_arr_element(compiler):
     src = """
     pub fn main() i32 {
         let mut a = array[i32, 4]{1, 2, 3, 4};
@@ -78,10 +77,10 @@ def test_assign_to_local_arr_element(tmp_path):
         return a.[2usize] + a.[0usize];
     }
     """
-    util.check_prog_output(tmp_path, src, "", 11)
+    compiler.check(src, exit_status=11)
 
 
-def test_assign_to_local_nested_arr_element(tmp_path):
+def test_assign_to_local_nested_arr_element(compiler):
     src = """
     pub fn main() i32 {
         let mut a = array[array[i32, 2], 2]{array[i32, 2]{1, 2}, array[i32, 2]{3, 4}};
@@ -89,7 +88,7 @@ def test_assign_to_local_nested_arr_element(tmp_path):
         return a.[1usize].[0usize];
     }
     """
-    util.check_prog_output(tmp_path, src, "", 10)
+    compiler.check(src, exit_status=10)
 
 
 def test_assign_to_const_local_arr_element(compiler):
@@ -116,7 +115,7 @@ def test_assign_to_const_local_nested_arr_element(compiler):
         compiler.compile(src)
 
 
-def test_assign_to_local_struct_field(tmp_path):
+def test_assign_to_local_struct_field(compiler):
     src = """
     struct T {mut a: i32, mut b: i32}
 
@@ -127,10 +126,10 @@ def test_assign_to_local_struct_field(tmp_path):
         return x.a + x.b;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 210)
+    compiler.check(src, exit_status=210)
 
 
-def test_assign_to_local_nested_struct_field(tmp_path):
+def test_assign_to_local_nested_struct_field(compiler):
     src = """
     struct T {mut a: i32}
     struct U {mut b: T}
@@ -142,7 +141,7 @@ def test_assign_to_local_nested_struct_field(tmp_path):
         return x.c.b.a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 101)
+    compiler.check(src, exit_status=101)
 
 
 def test_assign_to_const_local_struct_field(compiler):
@@ -201,7 +200,7 @@ def test_assign_to_local_nested_struct_const_field(compiler):
         compiler.compile(src)
 
 
-def test_assign_through_ptr_deref(tmp_path):
+def test_assign_through_ptr_deref(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 1;
@@ -210,7 +209,7 @@ def test_assign_through_ptr_deref(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
 def test_assign_through_const_ptr_deref(compiler):
@@ -229,7 +228,7 @@ def test_assign_through_const_ptr_deref(compiler):
         compiler.compile(src)
 
 
-def test_assign_through_explicit_mut_ptr_param(tmp_path):
+def test_assign_through_explicit_mut_ptr_param(compiler):
     # `*mut T`, written explicitly as a parameter's type (as opposed to
     # arising implicitly from `&` on a `let mut` local, which
     # test_assign_through_ptr_deref already covers), is writable through
@@ -244,7 +243,7 @@ def test_assign_through_explicit_mut_ptr_param(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
 def test_assign_wrong_typ_to_local(compiler):
@@ -333,7 +332,7 @@ def test_assign_to_temporary(compiler):
         compiler.compile(src)
 
 
-def test_assign_evaluates_place_before_value(tmp_path):
+def test_assign_evaluates_place_before_value(compiler):
     # `mark_place` has the side effect of setting `order` to 1 before
     # yielding the (const, always-0) index of the assignment's place.
     # `read_order` has no side effect; it just reports what `order` was
@@ -360,4 +359,4 @@ def test_assign_evaluates_place_before_value(tmp_path):
         return arr.[0usize];
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)

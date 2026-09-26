@@ -53,7 +53,7 @@ def test_extern_instance_cfg_is_rejected(compiler):
         _ = decl.instantiate(()).cfg
 
 
-def test_generic_fn_body_typechecks_with_identity_only_ops(tmp_path):
+def test_generic_fn_body_typechecks_with_identity_only_ops(compiler):
     # A generic function's body is checked eagerly, whether or not it's
     # ever called - so this only has to compile and run, never invoking
     # `id`.
@@ -68,7 +68,7 @@ def test_generic_fn_body_typechecks_with_identity_only_ops(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_uncalled_private_fn_body_is_still_typechecked(compiler):
@@ -160,7 +160,7 @@ def test_function_instance_symbols_and_linkage(compiler):
     assert 'define linkonce_odr i32 @"main::Box[i32]::unwrap"' in ir_text
 
 
-def test_generic_fn_with_multiple_typ_params_typechecks(tmp_path):
+def test_generic_fn_with_multiple_typ_params_typechecks(compiler):
     src = """
     fn pair_first[T, U](x: T, y: U) T {
         let a: T = x;
@@ -172,10 +172,10 @@ def test_generic_fn_with_multiple_typ_params_typechecks(tmp_path):
         return 0;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_let_stmt_declared_typ_param_is_substituted_when_invoked(tmp_path):
+def test_generic_fn_let_stmt_declared_typ_param_is_substituted_when_invoked(compiler):
     # The declared type `T` TypCheck resolved (still abstract) must be
     # substituted to the concrete instantiation's own type.
     src = """
@@ -187,10 +187,10 @@ def test_generic_fn_let_stmt_declared_typ_param_is_substituted_when_invoked(tmp_
         return first(42i32, 0) - 42;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_typ_arg_inferred_through_array_param(tmp_path):
+def test_generic_fn_typ_arg_inferred_through_array_param(compiler):
     # Exercises ArrayTyp.infer_typ_args: T must be inferred from the
     # actual argument's element type, not just from a bare-T parameter.
     src = """
@@ -201,10 +201,10 @@ def test_generic_fn_typ_arg_inferred_through_array_param(tmp_path):
         return first(array[i32, 3]{1, 2, 3}) - 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_let_stmt_declared_generic_struct_typ_is_substituted(tmp_path):
+def test_generic_fn_let_stmt_declared_generic_struct_typ_is_substituted(compiler):
     # The declared type can itself be a generic struct instantiation that
     # depends on the enclosing function's own type parameter, not just a
     # bare type parameter.
@@ -218,7 +218,7 @@ def test_generic_fn_let_stmt_declared_generic_struct_typ_is_substituted(tmp_path
         return wrap(5i32) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_generic_fn_body_rejects_arithmetic_on_typ_param(compiler):
@@ -329,7 +329,7 @@ def test_address_of_generic_fn_requires_typ_args(compiler):
     assert '"id"' in str(exc_info.value)
 
 
-def test_generic_fn_instance_as_function_pointer(tmp_path):
+def test_generic_fn_instance_as_function_pointer(compiler):
     # id[i32], applied but never called directly, is itself a value - an
     # ordinary function pointer from here on.
     src = """
@@ -340,10 +340,10 @@ def test_generic_fn_instance_as_function_pointer(tmp_path):
         return f(5) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_instance_pointer_called_multiple_times(tmp_path):
+def test_generic_fn_instance_pointer_called_multiple_times(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -354,10 +354,10 @@ def test_generic_fn_instance_pointer_called_multiple_times(tmp_path):
         return (a + b) - 7;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_address_of_explicit_generic_fn_instance_is_a_noop(tmp_path):
+def test_address_of_explicit_generic_fn_instance_is_a_noop(compiler):
     # Taking the address of a function reference is a no-op (it's
     # already a pointer) - true of an explicitly-applied generic one too.
     src = """
@@ -368,7 +368,7 @@ def test_address_of_explicit_generic_fn_instance_is_a_noop(tmp_path):
         return f(5) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_wrong_number_of_explicit_typ_args_on_bare_generic_fn_reference(compiler):
@@ -397,7 +397,7 @@ def test_explicit_typ_args_on_non_generic_fn_reference(compiler):
     assert '"f"' in str(exc_info.value)
 
 
-def test_calling_generic_fn_infers_typ_args_from_argument(tmp_path):
+def test_calling_generic_fn_infers_typ_args_from_argument(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -406,10 +406,10 @@ def test_calling_generic_fn_infers_typ_args_from_argument(tmp_path):
         return id(n) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_inferred_generic_arg_block_local_binding_survives_probe(tmp_path):
+def test_inferred_generic_arg_block_local_binding_survives_probe(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -418,10 +418,10 @@ def test_inferred_generic_arg_block_local_binding_survives_probe(tmp_path):
         return x - 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_inferred_generic_arg_match_binding_survives_probe(tmp_path):
+def test_inferred_generic_arg_match_binding_survives_probe(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -432,10 +432,10 @@ def test_inferred_generic_arg_match_binding_survives_probe(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
+def test_calling_generic_fn_with_explicit_typ_args(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -443,10 +443,10 @@ def test_calling_generic_fn_with_explicit_typ_args(tmp_path):
         return id[i32](5) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
+def test_calling_generic_fn_infers_typ_args_across_multiple_params(compiler):
     src = """
     fn pair_first[T, U](x: T, y: U) T {
         return x;
@@ -458,10 +458,10 @@ def test_calling_generic_fn_infers_typ_args_across_multiple_params(tmp_path):
         return pair_first(a, b) - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_calling_generic_fn_from_another_module(tmp_path):
+def test_calling_generic_fn_from_another_module(compiler):
     a_src = "pub fn id[T](x: T) T { return x; }"
     main_src = """
     import a;
@@ -471,10 +471,11 @@ def test_calling_generic_fn_from_another_module(tmp_path):
         return a::id(n) - 7;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
-def test_generic_fn_instance_merges_across_modules(tmp_path):
+def test_generic_fn_instance_merges_across_modules(compiler):
     # Both a (compiled as its own root, since it's given as a separate
     # module below) and main independently request id[i32] - each emits
     # its own linkonce_odr copy, and the linker has to merge them rather
@@ -494,10 +495,11 @@ def test_generic_fn_instance_merges_across_modules(tmp_path):
         return (a::id(n) - 7) + a::use_id_internally();
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
-def test_multiple_typ_args_coexist_for_the_same_generic_fn(tmp_path):
+def test_multiple_typ_args_coexist_for_the_same_generic_fn(compiler):
     # id[i32] and id[bool] are different instances of the same generic
     # function, each with their own body and symbol name - using both in
     # the same program shouldn't let one clobber the other.
@@ -511,10 +513,10 @@ def test_multiple_typ_args_coexist_for_the_same_generic_fn(tmp_path):
         return 99;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_over_pointer_typ_param(tmp_path):
+def test_generic_fn_over_pointer_typ_param(compiler):
     src = """
     fn deref[T](p: *T) T { return p.*; }
 
@@ -523,10 +525,10 @@ def test_generic_fn_over_pointer_typ_param(tmp_path):
         return deref(&n) - 42;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_with_struct_typ_arg(tmp_path):
+def test_generic_fn_with_struct_typ_arg(compiler):
     # Structs aren't generic themselves, but a struct type can still be
     # used as the concrete type argument applying a generic function.
     src = """
@@ -539,10 +541,10 @@ def test_generic_fn_with_struct_typ_arg(tmp_path):
         return (p.x + p.y) - 7;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_infers_typ_arg_through_generic_struct_arg(tmp_path):
+def test_generic_fn_infers_typ_arg_through_generic_struct_arg(compiler):
     # The declared parameter type is itself a generic struct application,
     # `Box[T]` - inferring T has to look inside the argument's own type
     # arguments, not just match the whole argument type as an opaque unit.
@@ -556,10 +558,10 @@ def test_generic_fn_infers_typ_arg_through_generic_struct_arg(tmp_path):
         return unwrap(b) - 42;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_recursion_runtime_output(tmp_path):
+def test_generic_fn_recursion_runtime_output(compiler):
     src = """
     fn depth[T](x: T, n: i32) T {
         if (n <= 0) {
@@ -573,10 +575,10 @@ def test_generic_fn_recursion_runtime_output(tmp_path):
         return depth(start, 3) - 11;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_mod_var_initializer_calls_generic_fn_with_explicit_typ_args(tmp_path):
+def test_mod_var_initializer_calls_generic_fn_with_explicit_typ_args(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -586,10 +588,10 @@ def test_mod_var_initializer_calls_generic_fn_with_explicit_typ_args(tmp_path):
         return x - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_mod_var_initializer_calls_generic_fn_with_inferred_typ_args(tmp_path):
+def test_mod_var_initializer_calls_generic_fn_with_inferred_typ_args(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -600,10 +602,10 @@ def test_mod_var_initializer_calls_generic_fn_with_inferred_typ_args(tmp_path):
         return x - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_mod_var_initializer_stores_generic_fn_instance_as_function_pointer(tmp_path):
+def test_mod_var_initializer_stores_generic_fn_instance_as_function_pointer(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -613,10 +615,10 @@ def test_mod_var_initializer_stores_generic_fn_instance_as_function_pointer(tmp_
         return f(5) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_two_mod_var_initializers_use_different_typ_args_of_same_generic_fn(tmp_path):
+def test_two_mod_var_initializers_use_different_typ_args_of_same_generic_fn(compiler):
     src = """
     fn id[T](x: T) T { return x; }
 
@@ -628,7 +630,7 @@ def test_two_mod_var_initializers_use_different_typ_args_of_same_generic_fn(tmp_
         return 99;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(compiler):
@@ -887,25 +889,25 @@ def test_source_function_call_kinds_lower_to_fn_refs(compiler):
     assert all(isinstance(callees[name], ir_module.FnRef) for name in expected_names)
 
 
-def test_value_param_declaration_typechecks(tmp_path):
+def test_value_param_declaration_typechecks(compiler):
     src = """
     fn f[value N: usize]() usize { return N; }
     pub fn main() i32 { return 0; }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_calling_generic_fn_with_explicit_value_arg(tmp_path):
+def test_calling_generic_fn_with_explicit_value_arg(compiler):
     src = """
     fn f[value N: i32]() i32 { return N; }
     pub fn main() i32 {
         return f[4]() - 4;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_calling_generic_fn_with_explicit_bool_arg(tmp_path):
+def test_calling_generic_fn_with_explicit_bool_arg(compiler):
     src = """
     fn f[value B: bool]() bool { return B; }
     pub fn main() i32 {
@@ -913,17 +915,17 @@ def test_calling_generic_fn_with_explicit_bool_arg(tmp_path):
         return 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_value_and_typ_params_coexist(tmp_path):
+def test_value_and_typ_params_coexist(compiler):
     src = """
     fn f[T, value N: i32](x: T) i32 { return N; }
     pub fn main() i32 {
         return f[i32, 3](9) - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_equal_value_args_share_one_instance(compiler):
@@ -1095,17 +1097,17 @@ def test_int_lit_against_bool_value_param_is_rejected(compiler):
         compiler.compile(src)
 
 
-def test_value_param_inferred_from_array_arg(tmp_path):
+def test_value_param_inferred_from_array_arg(compiler):
     src = """
     fn first[T, value N: usize](x: array[T, N]) T { return x.[0]; }
     pub fn main() i32 {
         return first(array[i32, 3]{7, 8, 9}) - 7;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_value_param_inference_distinguishes_array_lengths(tmp_path):
+def test_value_param_inference_distinguishes_array_lengths(compiler):
     # N must stay usize here (array lengths are always usize), so the
     # result is compared rather than turned into main's i32 return value -
     # there's no int-to-int cast operator in this language.
@@ -1116,10 +1118,10 @@ def test_value_param_inference_distinguishes_array_lengths(tmp_path):
         return 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_first_from_generic_struct_with_value_param(tmp_path):
+def test_first_from_generic_struct_with_value_param(compiler):
     src = """
     struct Buf[T, value N: usize] {
         data: array[T, N],
@@ -1134,4 +1136,4 @@ def test_first_from_generic_struct_with_value_param(tmp_path):
         return first(&buf) - 11;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)

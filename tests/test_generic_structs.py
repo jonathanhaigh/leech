@@ -60,7 +60,7 @@ def test_reserved_struct_typ_param_precedes_body_error(compiler):
     assert '"i32"' in str(exc_info.value)
 
 
-def test_generic_struct_single_typ_param(tmp_path):
+def test_generic_struct_single_typ_param(compiler):
     src = """
     struct Box[T] { mut val: T }
     pub fn main() i32 {
@@ -68,10 +68,10 @@ def test_generic_struct_single_typ_param(tmp_path):
         return b.val - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_struct_multiple_typ_params(tmp_path):
+def test_generic_struct_multiple_typ_params(compiler):
     src = """
     struct Pair[A, B] { mut first: A, mut second: B }
     pub fn main() i32 {
@@ -79,10 +79,10 @@ def test_generic_struct_multiple_typ_params(tmp_path):
         return (p.first + p.second) - 7;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_struct_field_indices_work_for_multiple_instances(tmp_path):
+def test_generic_struct_field_indices_work_for_multiple_instances(compiler):
     src = """
     struct Pair[A, B] { first: A, second: B }
     pub fn main() i32 {
@@ -92,7 +92,7 @@ def test_generic_struct_field_indices_work_for_multiple_instances(tmp_path):
         return 99;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_struct_lowering_uses_typechecked_field_indices(compiler):
@@ -126,7 +126,7 @@ def test_struct_lowering_uses_typechecked_field_indices(compiler):
     _ = fn.instantiate(()).cfg
 
 
-def test_generic_struct_distinct_typ_args_produce_distinct_fields(tmp_path):
+def test_generic_struct_distinct_typ_args_produce_distinct_fields(compiler):
     src = """
     struct Pair[A, B] { mut first: A, mut second: B }
     pub fn main() i32 {
@@ -135,10 +135,10 @@ def test_generic_struct_distinct_typ_args_produce_distinct_fields(tmp_path):
         return 99;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_struct_field_write(tmp_path):
+def test_generic_struct_field_write(compiler):
     src = """
     struct Box[T] { mut val: T }
     pub fn main() i32 {
@@ -147,10 +147,10 @@ def test_generic_struct_field_write(tmp_path):
         return b.val;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_nested_generic_struct_instantiation(tmp_path):
+def test_nested_generic_struct_instantiation(compiler):
     src = """
     struct Box[T] { mut val: T }
     pub fn main() i32 {
@@ -158,10 +158,10 @@ def test_nested_generic_struct_instantiation(tmp_path):
         return b.val.val - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_nested_same_declaration_struct_field_is_finite(tmp_path):
+def test_nested_same_declaration_struct_field_is_finite(compiler):
     src = """
     struct Box[T] { val: T }
     struct Outer[U] { nested: Box[Box[U]] }
@@ -170,7 +170,7 @@ def test_nested_same_declaration_struct_field_is_finite(tmp_path):
         return outer.nested.val.val - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_multi_param_nested_struct_does_not_count_as_growth(compiler):
@@ -182,7 +182,7 @@ def test_multi_param_nested_struct_does_not_count_as_growth(compiler):
     compiler.compile(src)
 
 
-def test_generic_struct_array_element(tmp_path):
+def test_generic_struct_array_element(compiler):
     src = """
     struct Box[T] { mut val: T }
     pub fn main() i32 {
@@ -190,10 +190,10 @@ def test_generic_struct_array_element(tmp_path):
         return (a.[0].val + a.[1].val) - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_struct_behind_pointer(tmp_path):
+def test_generic_struct_behind_pointer(compiler):
     src = """
     struct Box[T] { mut val: T }
     pub fn main() i32 {
@@ -202,10 +202,10 @@ def test_generic_struct_behind_pointer(tmp_path):
         return p.*.val - 9;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_struct_used_as_generic_fn_typ_arg(tmp_path):
+def test_generic_struct_used_as_generic_fn_typ_arg(compiler):
     # A generic struct instantiation is a perfectly ordinary type, usable
     # to apply an unrelated generic function - the two features compose.
     src = """
@@ -217,10 +217,10 @@ def test_generic_struct_used_as_generic_fn_typ_arg(tmp_path):
         return b.val - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_fn_returning_generic_struct(tmp_path):
+def test_generic_fn_returning_generic_struct(compiler):
     src = """
     struct Box[T] { mut val: T }
     fn wrap[T](x: T) Box[T] { return Box[T] { val: x }; }
@@ -230,10 +230,10 @@ def test_generic_fn_returning_generic_struct(tmp_path):
         return b.val - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_struct_cross_module(tmp_path):
+def test_generic_struct_cross_module(compiler):
     a_src = """
     pub struct Pair[A, B] { pub mut first: A, pub mut second: B }
     """
@@ -244,10 +244,11 @@ def test_generic_struct_cross_module(tmp_path):
         return (p.first + p.second) - 7;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
-def test_generic_struct_instance_merges_across_modules(tmp_path):
+def test_generic_struct_instance_merges_across_modules(compiler):
     # Both a (compiled as its own root) and main independently request
     # Pair[i32, i32] - each module declares its own identified LLVM struct
     # type under the same name, which is fine: unlike function symbols,
@@ -266,7 +267,8 @@ def test_generic_struct_instance_merges_across_modules(tmp_path):
         return (p.first + p.second) + a::make_pair() - 10;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
 def test_bare_reference_to_generic_struct_requires_typ_args(compiler):
@@ -306,7 +308,7 @@ def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(compiler):
     assert (span.start_line, span.start_col) == util.find_pos(src, "Box::make")
 
 
-def test_generic_struct_assoc_fn_scope_accepts_args_on_struct_seg(tmp_path):
+def test_generic_struct_assoc_fn_scope_accepts_args_on_struct_seg(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T] Box[T] {
@@ -318,10 +320,10 @@ def test_generic_struct_assoc_fn_scope_accepts_args_on_struct_seg(tmp_path):
     }
     """
 
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_cross_module_generic_struct_assoc_fn_scope(tmp_path):
+def test_cross_module_generic_struct_assoc_fn_scope(compiler):
     a_src = """
     pub struct Box[T] { pub val: T }
     impl[T] Box[T] {
@@ -336,7 +338,8 @@ def test_cross_module_generic_struct_assoc_fn_scope(tmp_path):
     }
     """
 
-    util.check_prog_output(tmp_path, main_src, "", 7, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=7)
 
 
 def test_generic_struct_assoc_fn_scope_checks_arg_arity(compiler):
@@ -355,7 +358,7 @@ def test_generic_struct_assoc_fn_scope_checks_arg_arity(compiler):
         compiler.compile(src)
 
 
-def test_generic_struct_assoc_fn_scope_forwards_value_param(tmp_path):
+def test_generic_struct_assoc_fn_scope_forwards_value_param(compiler):
     src = """
     struct Buf[value N: usize] { val: i32 }
     impl[value N: usize] Buf[N] {
@@ -368,10 +371,10 @@ def test_generic_struct_assoc_fn_scope_forwards_value_param(tmp_path):
     }
     """
 
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_generic_struct_assoc_fn_scope_forwards_typ_param(tmp_path):
+def test_generic_struct_assoc_fn_scope_forwards_typ_param(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T] Box[T] {
@@ -384,7 +387,7 @@ def test_generic_struct_assoc_fn_scope_forwards_typ_param(tmp_path):
     }
     """
 
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_comptime_args_on_non_generic_assoc_fn_scope(compiler):
@@ -484,14 +487,14 @@ def test_generic_struct_infinite_size_via_own_typ_param(compiler):
     assert exc_info.value.extra[0].message == 'Field "x" of struct "L" contains "L[T]" by value'
 
 
-def test_generic_struct_ptr_to_self_is_finite(tmp_path):
+def test_generic_struct_ptr_to_self_is_finite(compiler):
     src = """
     struct L[T] {
         next: *L[T],
     }
     pub fn main() i32 { return 0; }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_growing_generic_struct_declaration_cycle(compiler):
@@ -556,7 +559,7 @@ def test_generic_struct_nested_cycle_keeps_nested_root_name(compiler):
     ]
 
 
-def test_generic_impl_block_body_typechecks(tmp_path):
+def test_generic_impl_block_body_typechecks(compiler):
     # A generic impl block's methods are checked eagerly, the same as a
     # free generic function's body - whether or not main ever calls one.
     src = """
@@ -566,10 +569,10 @@ def test_generic_impl_block_body_typechecks(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_impl_block_method_callable_through_concrete_instantiation(tmp_path):
+def test_generic_impl_block_method_callable_through_concrete_instantiation(compiler):
     src = """
     struct Box[T] { mut val: T }
     impl[T] Box[T] {
@@ -580,10 +583,10 @@ def test_generic_impl_block_method_callable_through_concrete_instantiation(tmp_p
         return b.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_generic_impl_block_method_mutates_and_reads_through_typ_param(tmp_path):
+def test_generic_impl_block_method_mutates_and_reads_through_typ_param(compiler):
     src = """
     struct Box[T] { mut val: T }
     impl[T] Box[T] {
@@ -596,10 +599,10 @@ def test_generic_impl_block_method_mutates_and_reads_through_typ_param(tmp_path)
         return b.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 9)
+    compiler.check(src, exit_status=9)
 
 
-def test_generic_impl_block_method_called_through_distinct_instantiations(tmp_path):
+def test_generic_impl_block_method_called_through_distinct_instantiations(compiler):
     # Box[i32] and Box[bool] each monomorphize their own `get`.
     src = """
     struct Box[T] { mut val: T }
@@ -614,7 +617,7 @@ def test_generic_impl_block_method_called_through_distinct_instantiations(tmp_pa
         return 99;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_generic_impl_block_method_instances_get_distinct_mangled_symbols(compiler):
@@ -636,7 +639,7 @@ def test_generic_impl_block_method_instances_get_distinct_mangled_symbols(compil
     assert '@"main::Box[bool]::get"' in ir_text
 
 
-def test_instances_differing_only_by_a_typ_argument_s_module(tmp_path):
+def test_instances_differing_only_by_a_typ_argument_s_module(compiler):
     # `Box`'s own module qualifies the instance, but the argument types
     # need qualifying too - two same-named structs from different modules
     # are different types and must not share a symbol.
@@ -655,10 +658,13 @@ def test_instances_differing_only_by_a_typ_argument_s_module(tmp_path):
         return x.get() + y.get() - 2;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("b", b_src)
+    )
+    compiler.check(program)
 
 
-def test_free_generic_fn_instances_differing_only_by_an_arguments_module(tmp_path):
+def test_free_generic_fn_instances_differing_only_by_an_arguments_module(compiler):
     # A generic function's instances are mangled with their type
     # arguments too, so those need qualifying just as a generic struct's
     # do.
@@ -674,10 +680,13 @@ def test_free_generic_fn_instances_differing_only_by_an_arguments_module(tmp_pat
         return x.val + y.val - 3;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("b", b_src)
+    )
+    compiler.check(program)
 
 
-def test_instances_differing_only_by_an_enum_arguments_module(tmp_path):
+def test_instances_differing_only_by_an_enum_arguments_module(compiler):
     # Same as above for an enum type argument. An enum is nominal, so two
     # same-named ones from different modules are as distinct as two
     # structs are, and must not share a symbol.
@@ -696,7 +705,10 @@ def test_instances_differing_only_by_an_enum_arguments_module(tmp_path):
         return x.get() + y.get() - 2;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
+    program = harness.TestProgram.from_main(
+        main_src, harness.ModSrc("a", a_src), harness.ModSrc("b", b_src)
+    )
+    compiler.check(program)
 
 
 def test_generic_inherent_impl_does_not_inherit_struct_typ_param_name(compiler):
@@ -731,7 +743,7 @@ def test_generic_inherent_impl_with_unsatisfied_bound_does_not_apply(compiler):
         compiler.compile(src)
 
 
-def test_bounded_generic_inherent_impl_method_calls_sibling(tmp_path):
+def test_bounded_generic_inherent_impl_method_calls_sibling(compiler):
     # `outer` resolves `get` against the impl's own abstract `Box[T]`,
     # where `T: Show` is the impl's premise and nothing concrete is in
     # hand to check it against.
@@ -748,10 +760,10 @@ def test_bounded_generic_inherent_impl_method_calls_sibling(tmp_path):
         return b.outer() - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_bounded_generic_inherent_impl_method_called_on_abstract_typ(tmp_path):
+def test_bounded_generic_inherent_impl_method_called_on_abstract_typ(compiler):
     # `use_box`'s own `Box[U]` isn't the `Box[T]` the impl registered its
     # methods on, so finding `get` scans for a structurally matching
     # generic impl. `U` is abstract, so the impl's `T: Show` can't be
@@ -769,7 +781,7 @@ def test_bounded_generic_inherent_impl_method_called_on_abstract_typ(tmp_path):
         return use_box(b) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_generic_inherent_impl_bound_unsatisfied_by_callers_typ_param(compiler):
@@ -788,7 +800,7 @@ def test_generic_inherent_impl_bound_unsatisfied_by_callers_typ_param(compiler):
         compiler.compile(src)
 
 
-def test_declared_bound_discharges_a_structs_own_bound(tmp_path):
+def test_declared_bound_discharges_a_structs_own_bound(compiler):
     # `Box[U]` needs `U: Show`, which `wrap` declares. Nothing concrete is
     # in hand, so only the assumption in scope can prove it.
     src = """
@@ -804,10 +816,10 @@ def test_declared_bound_discharges_a_structs_own_bound(tmp_path):
         return wrap(v) - 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_typ_param_bound_resolves_in_its_own_declaring_mod(tmp_path):
+def test_typ_param_bound_resolves_in_its_own_declaring_mod(compiler):
     # `U`'s bound is spelled `a::Show`, which resolves only in `main`,
     # where `U` is declared - not in `a`, whose scope is where the impl
     # being matched against was written.
@@ -825,10 +837,11 @@ def test_typ_param_bound_resolves_in_its_own_declaring_mod(tmp_path):
         return f(b) - 5;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
-def test_generic_inherent_impl_with_satisfied_bound_applies(tmp_path):
+def test_generic_inherent_impl_with_satisfied_bound_applies(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -841,10 +854,10 @@ def test_generic_inherent_impl_with_satisfied_bound_applies(tmp_path):
         return b.get() - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_impl_block_method_calls_free_generic_function(tmp_path):
+def test_generic_impl_block_method_calls_free_generic_function(compiler):
     # A generic-impl method's own body can request a free generic function
     # instance the compiled module's own bodies never directly request -
     # discovery must find that instance too, not just ones reachable from
@@ -860,10 +873,10 @@ def test_generic_impl_block_method_calls_free_generic_function(tmp_path):
         return b.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_free_generic_fn_dot_calls_generic_impl_method_through_typ_param(tmp_path):
+def test_free_generic_fn_dot_calls_generic_impl_method_through_typ_param(compiler):
     # A free generic function's own type parameter can flow into a struct
     # type it dot-calls a method on (`b: *Box[T]`). TypCheck resolves that
     # dot-call against Box[T] parameterized by use_box's own T - a distinct
@@ -885,10 +898,10 @@ def test_free_generic_fn_dot_calls_generic_impl_method_through_typ_param(tmp_pat
         return 99;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
+def test_generic_impl_block_sibling_method_calls_by_bare_name(compiler):
     # A generic-impl method's body can call a sibling method from the same
     # impl block by bare name, not just via `self.method()`. The sibling is
     # bound in the impl block's environment with the impl's abstract arguments;
@@ -904,10 +917,10 @@ def test_generic_impl_block_sibling_method_calls_by_bare_name(tmp_path):
         return b.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_bare_sibling_reference_in_generic_impl_needs_no_fn_args(tmp_path):
+def test_bare_sibling_reference_in_generic_impl_needs_no_fn_args(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T] Box[T] {
@@ -923,10 +936,10 @@ def test_bare_sibling_reference_in_generic_impl_needs_no_fn_args(tmp_path):
     }
     """
 
-    util.check_prog_output(tmp_path, src, "", 9)
+    compiler.check(src, exit_status=9)
 
 
-def test_generic_impl_block_sibling_method_calls_by_dot_call(tmp_path):
+def test_generic_impl_block_sibling_method_calls_by_dot_call(compiler):
     # A generic-impl method's body can call a sibling method through
     # `self.*.method()` too (leech has no automatic dereferencing, so the
     # explicit deref is required, same as `self.*.val` for a field) -
@@ -945,10 +958,10 @@ def test_generic_impl_block_sibling_method_calls_by_dot_call(tmp_path):
         return b.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_generic_impl_block_sibling_method_calls_across_instantiations(tmp_path):
+def test_generic_impl_block_sibling_method_calls_across_instantiations(compiler):
     # Each concrete body must substitute its own arguments into the sibling
     # application; sharing them would call a different `helper` instance.
     src = """
@@ -969,7 +982,7 @@ def test_generic_impl_block_sibling_method_calls_across_instantiations(tmp_path)
         return 3;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(compiler):
@@ -1012,7 +1025,7 @@ def test_mono_discovers_struct_requested_while_resolving_fields(compiler):
     assert names == {"main::Outer[i32]", "main::Inner[i32]"}
 
 
-def test_codegen_accepts_forward_reference_to_nested_generic_struct(tmp_path):
+def test_codegen_accepts_forward_reference_to_nested_generic_struct(compiler):
     src = """
     struct Inner[T] { val: T }
     struct Outer[T] { inner: Inner[T] }
@@ -1022,7 +1035,7 @@ def test_codegen_accepts_forward_reference_to_nested_generic_struct(tmp_path):
     }
     """
 
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_generic_struct_instance_qualified_name(compiler):
@@ -1067,7 +1080,7 @@ def test_impl_on_generic_struct_target_qualified_path(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_struct_value_param_used_in_array_field(tmp_path):
+def test_struct_value_param_used_in_array_field(compiler):
     src = """
     struct Buf[T, value N: usize] {
         data: array[T, N],
@@ -1077,7 +1090,7 @@ def test_struct_value_param_used_in_array_field(tmp_path):
         return buf.data.[0] + buf.data.[1] + buf.data.[2] - 6;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_struct_value_param_mangled_name(compiler):

@@ -5,7 +5,6 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 CMP_OPS = ("<", "<=", "==", "!=", ">=", ">")
 
@@ -38,18 +37,18 @@ CMP_CASES = (
 
 
 @pytest.mark.parametrize("op,lhs,rhs,result", CMP_CASES)
-def test_cmp(op, lhs, rhs, result, tmp_path):
+def test_cmp(op, lhs, rhs, result, compiler):
     src = f"""
     pub fn main() i32 {{
         return if ({lhs} {op} {rhs}) {{ 100 }} else {{ 200 }};
     }}
     """
     expected_status = 100 if result else 200
-    util.check_prog_output(tmp_path, src, "", expected_status)
+    compiler.check(src, exit_status=expected_status)
 
 
 @pytest.mark.parametrize("op,lhs,rhs,result", CMP_CASES)
-def test_comptime_cmp(op, lhs, rhs, result, tmp_path):
+def test_comptime_cmp(op, lhs, rhs, result, compiler):
     src = f"""
     let x = if ({lhs} {op} {rhs}) {{ 100 }} else {{ 200 }};
     pub fn main() i32 {{
@@ -57,7 +56,7 @@ def test_comptime_cmp(op, lhs, rhs, result, tmp_path):
     }}
     """
     expected_status = 100 if result else 200
-    util.check_prog_output(tmp_path, src, "", expected_status)
+    compiler.check(src, exit_status=expected_status)
 
 
 @pytest.mark.parametrize("op", CMP_OPS)

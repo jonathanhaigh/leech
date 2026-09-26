@@ -8,7 +8,7 @@ from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_trait
 from tests import harness, util
 
 
-def test_assoc_fn_call(tmp_path):
+def test_assoc_fn_call(compiler):
     src = """
     struct Foo { a: i32 }
     impl Foo {
@@ -19,10 +19,10 @@ def test_assoc_fn_call(tmp_path):
         return f.a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_generic_inherent_impl_method_found_through_registry(tmp_path):
+def test_generic_inherent_impl_method_found_through_registry(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T] Box[T] {
@@ -33,7 +33,7 @@ def test_generic_inherent_impl_method_found_through_registry(tmp_path):
         return b.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 def test_generic_impl_lookup_does_not_instantiate_method(compiler):
@@ -61,7 +61,7 @@ def test_generic_impl_lookup_does_not_instantiate_method(compiler):
     assert selection.impl_args == (typs.I32,)
 
 
-def test_field_and_method_same_name_coexist(tmp_path):
+def test_field_and_method_same_name_coexist(compiler):
     src = """
     struct Counter { get: i32 }
     impl Counter {
@@ -72,10 +72,10 @@ def test_field_and_method_same_name_coexist(tmp_path):
         return counter.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
-def test_comptime_assoc_fn_call(tmp_path):
+def test_comptime_assoc_fn_call(compiler):
     src = """
     struct Foo { a: i32 }
     impl Foo {
@@ -86,10 +86,10 @@ def test_comptime_assoc_fn_call(tmp_path):
         return x.a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 99)
+    compiler.check(src, exit_status=99)
 
 
-def test_multiple_assoc_fns_one_impl_block(tmp_path):
+def test_multiple_assoc_fns_one_impl_block(compiler):
     src = """
     struct Foo { a: i32 }
     impl Foo {
@@ -100,10 +100,10 @@ def test_multiple_assoc_fns_one_impl_block(tmp_path):
         return Foo::new().a + Foo::other();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 3)
+    compiler.check(src, exit_status=3)
 
 
-def test_multiple_impl_blocks_same_struct(tmp_path):
+def test_multiple_impl_blocks_same_struct(compiler):
     src = """
     struct Foo { a: i32 }
     impl Foo {
@@ -116,10 +116,10 @@ def test_multiple_impl_blocks_same_struct(tmp_path):
         return Foo::new().a + Foo::other();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 3)
+    compiler.check(src, exit_status=3)
 
 
-def test_two_structs_with_same_assoc_fn_name(tmp_path):
+def test_two_structs_with_same_assoc_fn_name(compiler):
     src = """
     struct Foo { a: i32 }
     struct Bar { b: i32 }
@@ -133,7 +133,7 @@ def test_two_structs_with_same_assoc_fn_name(tmp_path):
         return Foo::new().a + Bar::new().b;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 3)
+    compiler.check(src, exit_status=3)
 
 
 def test_assoc_fn_lookup_does_not_leak_module_scope(compiler):
@@ -162,7 +162,7 @@ def test_assoc_fn_lookup_does_not_leak_builtin_scope(compiler):
         compiler.compile(src)
 
 
-def test_impl_before_struct_defn(tmp_path):
+def test_impl_before_struct_defn(compiler):
     src = """
     impl Foo {
         pub fn new() Foo { Foo { a: 1 } }
@@ -172,7 +172,7 @@ def test_impl_before_struct_defn(tmp_path):
         return Foo::new().a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 def test_duplicate_assoc_fn_name(compiler):
@@ -204,7 +204,7 @@ def test_duplicate_assoc_fn_name_across_impl_blocks(compiler):
         compiler.compile(src)
 
 
-def test_field_and_receiverless_assoc_fn_same_name_coexist(tmp_path):
+def test_field_and_receiverless_assoc_fn_same_name_coexist(compiler):
     src = """
     struct Foo { new: i32 }
     impl Foo {
@@ -212,7 +212,7 @@ def test_field_and_receiverless_assoc_fn_same_name_coexist(tmp_path):
     }
     pub fn main() i32 { return Foo::new().new; }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_overlapping_generic_inherent_impls_with_same_fn_name_rejected_at_declaration(compiler):
@@ -387,7 +387,7 @@ def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(compiler):
     assert (span.start_line, span.start_col) == util.find_pos(src, "duplicate() i32 { 2 }")
 
 
-def test_same_name_field_and_method_in_different_structs(tmp_path):
+def test_same_name_field_and_method_in_different_structs(compiler):
     # Member namespaces are per-struct: A's field `get` and B's method
     # `get` don't clash with each other.
     src = """
@@ -402,7 +402,7 @@ def test_same_name_field_and_method_in_different_structs(tmp_path):
         return a.get + b.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_field_not_reachable_by_assoc_fn_path(compiler):
@@ -436,7 +436,7 @@ def test_assoc_fn_not_usable_as_typ(compiler):
         compiler.compile(src)
 
 
-def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
+def test_sibling_assoc_fn_call_by_bare_name(compiler):
     # Associated functions are bound in their impl block's scope, which a
     # function body's scope descends from, so they can call each other without
     # qualification.
@@ -451,7 +451,7 @@ def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
         return s.get();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_separate_inherent_impl_blocks_do_not_share_bare_assoc_fn_names(compiler):
@@ -504,7 +504,7 @@ def test_impl_on_qualified_path_typ(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_cross_module_assoc_fn_call(tmp_path):
+def test_cross_module_assoc_fn_call(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -518,10 +518,11 @@ def test_cross_module_assoc_fn_call(tmp_path):
         pub fn new() Foo { Foo { a: 7 } }
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 7, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program, exit_status=7)
 
 
-def test_private_assoc_fn_accessible_within_defining_module(tmp_path):
+def test_private_assoc_fn_accessible_within_defining_module(compiler):
     # Private (the default - no `pub`) associated functions are freely
     # callable from within the same module as the struct.
     src = """
@@ -533,7 +534,7 @@ def test_private_assoc_fn_accessible_within_defining_module(tmp_path):
         return Foo::new().a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 42)
+    compiler.check(src, exit_status=42)
 
 
 def test_cross_module_private_assoc_fn_call(compiler):
@@ -575,7 +576,7 @@ def test_comptime_cross_module_private_assoc_fn_call(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_impl_value_param_used_in_method_body(tmp_path):
+def test_impl_value_param_used_in_method_body(compiler):
     src = """
     struct Box[value N: i32] {}
     impl[value N: i32] Box[N] {
@@ -586,4 +587,4 @@ def test_impl_value_param_used_in_method_body(tmp_path):
         return b.get() - 4;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)

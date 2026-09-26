@@ -5,14 +5,13 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_tail_expr_return(tmp_path):
+def test_tail_expr_return(compiler):
     src = """
     pub fn main() i32 { 100 }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
 def test_missing_return(compiler):

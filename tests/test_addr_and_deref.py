@@ -5,10 +5,9 @@
 import pytest
 
 from leech import errors
-from tests import util
 
 
-def test_addr_and_deref(tmp_path):
+def test_addr_and_deref(compiler):
     src = """
     pub fn main() i32 {
         let x = 10;
@@ -16,10 +15,10 @@ def test_addr_and_deref(tmp_path):
         return y.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 10)
+    compiler.check(src, exit_status=10)
 
 
-def test_comptime_addr_and_deref(tmp_path):
+def test_comptime_addr_and_deref(compiler):
     src = """
     let x = 10;
     let y = &x;
@@ -28,7 +27,7 @@ def test_comptime_addr_and_deref(tmp_path):
         return z;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 10)
+    compiler.check(src, exit_status=10)
 
 
 def test_addr_and_deref_fn(compiler):
@@ -57,7 +56,7 @@ def test_comptime_addr_and_deref_fn(compiler):
         compiler.compile(src)
 
 
-def test_addr_and_deref_field(tmp_path):
+def test_addr_and_deref_field(compiler):
     src = """
     struct T {
         a: i32,
@@ -73,10 +72,10 @@ def test_addr_and_deref_field(tmp_path):
         return y.b.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 11)
+    compiler.check(src, exit_status=11)
 
 
-def test_addr_and_deref_comptime_field(tmp_path):
+def test_addr_and_deref_comptime_field(compiler):
     src = """
     struct T {
         a: i32,
@@ -94,10 +93,10 @@ def test_addr_and_deref_comptime_field(tmp_path):
         return z;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 11)
+    compiler.check(src, exit_status=11)
 
 
-def test_addr_and_deref_array_elt(tmp_path):
+def test_addr_and_deref_array_elt(compiler):
     src = """
     pub fn main() i32 {
         let x = array[i32, 3]{101, 102, 103};
@@ -105,10 +104,10 @@ def test_addr_and_deref_array_elt(tmp_path):
         return y.[1usize].*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 102)
+    compiler.check(src, exit_status=102)
 
 
-def test_addr_and_deref_comptime_array_elt(tmp_path):
+def test_addr_and_deref_comptime_array_elt(compiler):
     src = """
     let x = array[i32, 3]{101, 102, 103};
     let y = array[*i32, 3]{&x.[2usize], &x.[1usize], &x.[0usize]};
@@ -118,10 +117,10 @@ def test_addr_and_deref_comptime_array_elt(tmp_path):
         return z;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 102)
+    compiler.check(src, exit_status=102)
 
 
-def test_addr_and_deref_nested(tmp_path):
+def test_addr_and_deref_nested(compiler):
     src = """
 
     struct T {
@@ -139,10 +138,10 @@ def test_addr_and_deref_nested(tmp_path):
         return ret;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 103)
+    compiler.check(src, exit_status=103)
 
 
-def test_addr_and_deref_comptime_nested(tmp_path):
+def test_addr_and_deref_comptime_nested(compiler):
     src = """
 
     struct T {
@@ -161,10 +160,10 @@ def test_addr_and_deref_comptime_nested(tmp_path):
         return ret;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 103)
+    compiler.check(src, exit_status=103)
 
 
-def test_addr_of_tmp(tmp_path):
+def test_addr_of_tmp(compiler):
     src = """
     fn deref(ptr: *i32) i32 {
         return ptr.*;
@@ -174,7 +173,7 @@ def test_addr_of_tmp(tmp_path):
         return deref(&100);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
 def test_addr_of_comptime_value(compiler):
@@ -188,7 +187,7 @@ def test_addr_of_comptime_value(compiler):
         compiler.compile(src)
 
 
-def test_addr_of_comptime_addr_of_deref(tmp_path):
+def test_addr_of_comptime_addr_of_deref(compiler):
     src = """
     let x = 1;
     let y = &x;
@@ -197,7 +196,7 @@ def test_addr_of_comptime_addr_of_deref(tmp_path):
         return z.*;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
 def test_deref_non_ptr(compiler):

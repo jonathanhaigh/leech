@@ -5,10 +5,10 @@
 import pytest
 
 from leech import errors
-from tests import harness, util
+from tests import harness
 
 
-def test_enum_to_int_explicit_typ_args_uncalled_reference(tmp_path):
+def test_enum_to_int_explicit_typ_args_uncalled_reference(compiler):
     # `__enum_to_int[Color]` named explicitly but not called immediately -
     # a regression guard for the concrete-return-type override needing to
     # apply here too, not just at a direct call or an instance's own typ.
@@ -20,10 +20,10 @@ def test_enum_to_int_explicit_typ_args_uncalled_reference(tmp_path):
         return x - 2;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_to_int_at_comptime(tmp_path):
+def test_enum_to_int_at_comptime(compiler):
     src = """
     enum Color(u8) { Red, Green, Blue }
     let c = __enum_to_int(Color::Green);
@@ -31,10 +31,10 @@ def test_enum_to_int_at_comptime(tmp_path):
         return c - 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_variant_address_of_copies_to_a_temporary(tmp_path):
+def test_enum_variant_address_of_copies_to_a_temporary(compiler):
     # A variant is a value, not a place (it has no address of its own) -
     # `&` on one falls back to the general "copy into a temporary, take
     # that temporary's address" case any non-place expression gets.
@@ -45,10 +45,10 @@ def test_enum_variant_address_of_copies_to_a_temporary(tmp_path):
         return __enum_to_int(p.*) - 2;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_variant_value_with_explicit_backing_typ(tmp_path):
+def test_enum_variant_value_with_explicit_backing_typ(compiler):
     src = """
     enum Color(u8) { Red, Green = 5, Blue }
     pub fn main() i32 {
@@ -56,20 +56,20 @@ def test_enum_variant_value_with_explicit_backing_typ(tmp_path):
         return __enum_to_int(c) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_variant_value_matching_explicit_suffix_allowed(tmp_path):
+def test_enum_variant_value_matching_explicit_suffix_allowed(compiler):
     src = """
     enum Color(u8) { Red, Green = 5u8, Blue }
     pub fn main() i32 {
         return __enum_to_int(Color::Green) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_variant_value_widening_suffix_allowed(tmp_path):
+def test_enum_variant_value_widening_suffix_allowed(compiler):
     # A u8-suffixed literal coerces to a wider u16 backing type, the same
     # as it would in any other typed context (let, assignment, return).
     src = """
@@ -78,7 +78,7 @@ def test_enum_variant_value_widening_suffix_allowed(tmp_path):
         return __enum_to_int(Color::Green) - 5;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_enum_variant_value_mismatched_suffix_rejected(compiler):
@@ -90,7 +90,7 @@ def test_enum_variant_value_mismatched_suffix_rejected(compiler):
         compiler.compile(src)
 
 
-def test_enum_auto_increment_without_explicit_backing_typ(tmp_path):
+def test_enum_auto_increment_without_explicit_backing_typ(compiler):
     src = """
     enum Plain { A, B, C }
     pub fn main() i32 {
@@ -98,40 +98,40 @@ def test_enum_auto_increment_without_explicit_backing_typ(tmp_path):
         return __enum_to_int(b) - 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_value_resumes_auto_increment_after_explicit_override(tmp_path):
+def test_enum_value_resumes_auto_increment_after_explicit_override(compiler):
     src = """
     enum Color(u8) { Red, Green = 5, Blue }
     pub fn main() i32 {
         return __enum_to_int(Color::Blue) - 6;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_negative_explicit_variant_value(tmp_path):
+def test_enum_negative_explicit_variant_value(compiler):
     src = """
     enum Temp(i8) { Freezing = -1, Boiling = 99 }
     pub fn main() i32 {
         return __enum_to_int(Temp::Freezing) + 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_negative_value_resumes_auto_increment(tmp_path):
+def test_enum_negative_value_resumes_auto_increment(compiler):
     src = """
     enum Signed(i8) { A = -1, B, C }
     pub fn main() i32 {
         return __enum_to_int(Signed::C) - 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_infers_signed_backing_typ_from_negative_value(tmp_path):
+def test_enum_infers_signed_backing_typ_from_negative_value(compiler):
     # No explicit backing type, but a negative discriminant is present -
     # the inferred type must be signed, not just wide enough.
     src = """
@@ -143,10 +143,10 @@ def test_enum_infers_signed_backing_typ_from_negative_value(tmp_path):
         return 99;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_infers_unsigned_backing_typ_without_negative_value(tmp_path):
+def test_enum_infers_unsigned_backing_typ_without_negative_value(compiler):
     src = """
     enum Plain { A, B, C }
     pub fn main() i32 {
@@ -156,20 +156,20 @@ def test_enum_infers_unsigned_backing_typ_without_negative_value(tmp_path):
         return 99;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_first_variant_defaults_to_zero(tmp_path):
+def test_enum_first_variant_defaults_to_zero(compiler):
     src = """
     enum Plain { A, B, C }
     pub fn main() i32 {
         return __enum_to_int(Plain::A);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_used_as_struct_field_typ(tmp_path):
+def test_enum_used_as_struct_field_typ(compiler):
     src = """
     enum Color(u8) { Red, Green, Blue }
     struct Pixel { mut color: Color }
@@ -178,10 +178,10 @@ def test_enum_used_as_struct_field_typ(tmp_path):
         return __enum_to_int(p.color) - 2;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_used_as_fn_param_and_ret_typ(tmp_path):
+def test_enum_used_as_fn_param_and_ret_typ(compiler):
     src = """
     enum Color(u8) { Red, Green, Blue }
     fn identity(c: Color) Color { return c; }
@@ -189,7 +189,7 @@ def test_enum_used_as_fn_param_and_ret_typ(tmp_path):
         return __enum_to_int(identity(Color::Green)) - 1;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_enum_inferred_discriminant_overflows_unsigned_64_bit(compiler):
@@ -210,7 +210,7 @@ def test_enum_inferred_discriminant_overflows_signed_64_bit(compiler):
         compiler.compile(src)
 
 
-def test_enum_duplicate_discriminant_values_allowed(tmp_path):
+def test_enum_duplicate_discriminant_values_allowed(compiler):
     # Deliberately permissive, matching C's own enum semantics - this is a
     # C-ABI-facing feature.
     src = """
@@ -219,7 +219,7 @@ def test_enum_duplicate_discriminant_values_allowed(tmp_path):
         return __enum_to_int(Alias::A) - __enum_to_int(Alias::B);
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
 def test_enum_duplicate_variant_name_rejected(compiler):
@@ -259,7 +259,7 @@ def test_enum_negative_discriminant_overflows_unsigned_backing_typ(compiler):
         compiler.compile(src)
 
 
-def test_enum_to_int_on_signed_backing_typ(tmp_path):
+def test_enum_to_int_on_signed_backing_typ(compiler):
     # An auto-incremented (non-explicit) discriminant is never negative -
     # but the backing type itself may still be explicitly signed, e.g. to
     # match a signed C enum's ABI.
@@ -269,10 +269,10 @@ def test_enum_to_int_on_signed_backing_typ(tmp_path):
         return __enum_to_int(Signed::Two) - 2;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
 
 
-def test_enum_cross_module(tmp_path):
+def test_enum_cross_module(compiler):
     a_src = """
     pub enum Color(u8) { Red, Green, Blue }
     """
@@ -282,7 +282,8 @@ def test_enum_cross_module(tmp_path):
         return __enum_to_int(a::Color::Blue) - 2;
     }
     """
-    util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
+    compiler.check(program)
 
 
 def test_private_enum_inaccessible_from_other_module(compiler):

@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, ir_values, typs
-from tests import harness, util
+from tests import harness
 
 
 def test_env_rejects_bound_value_without_pointer_typ(compiler):
@@ -29,17 +29,17 @@ def test_env_rejects_bound_value_without_pointer_typ(compiler):
         env.resolve_var(var_ast.path)
 
 
-def test_int_mod_var_ref_in_fn(tmp_path):
+def test_int_mod_var_ref_in_fn(compiler):
     src = """
     let a = 100;
     pub fn main() i32 {
         return a;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
-def test_str_mod_var_ref_in_fn(tmp_path):
+def test_str_mod_var_ref_in_fn(compiler):
     src = """
     let s = "abcd";
 
@@ -50,10 +50,10 @@ def test_str_mod_var_ref_in_fn(tmp_path):
         return 100;
     }
     """
-    util.check_prog_output(tmp_path, src, "abcd\n", 100)
+    compiler.check(src, stdout="abcd\n", exit_status=100)
 
 
-def test_int_mod_var_ref_in_mod(tmp_path):
+def test_int_mod_var_ref_in_mod(compiler):
     src = """
     let a = 100;
     let b = a;
@@ -64,10 +64,10 @@ def test_int_mod_var_ref_in_mod(tmp_path):
         return b;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
-def test_str_mod_var_ref_in_mod(tmp_path):
+def test_str_mod_var_ref_in_mod(compiler):
     src = """
     let b = a;
     let a = "abcd";
@@ -79,10 +79,10 @@ def test_str_mod_var_ref_in_mod(tmp_path):
         return 100;
     }
     """
-    util.check_prog_output(tmp_path, src, "abcd\n", 100)
+    compiler.check(src, stdout="abcd\n", exit_status=100)
 
 
-def test_fn_mod_var(tmp_path):
+def test_fn_mod_var(compiler):
     src = """
     fn f() i32 {
         return 99;
@@ -94,7 +94,7 @@ def test_fn_mod_var(tmp_path):
         return g();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 99)
+    compiler.check(src, exit_status=99)
 
 
 def test_extern_fn_value_remains_global_initializer(compiler):
@@ -125,7 +125,7 @@ def test_non_generic_fn_mod_var_initializer_is_fn_ref(compiler):
     assert var.initializer.instance.src_fn.name == "f"
 
 
-def test_fn_local_var(tmp_path):
+def test_fn_local_var(compiler):
     src = """
     fn f() i32 {
         return 99;
@@ -136,7 +136,7 @@ def test_fn_local_var(tmp_path):
         return g();
     }
     """
-    util.check_prog_output(tmp_path, src, "", 99)
+    compiler.check(src, exit_status=99)
 
 
 def test_var_not_found_at_mod_scope(compiler):
@@ -180,7 +180,7 @@ def test_var_not_found_behind_addr_of(compiler):
         compiler.compile(src)
 
 
-def test_shadowed_mod_var(tmp_path):
+def test_shadowed_mod_var(compiler):
     src = """
     let x = 100;
     pub fn main() i32 {
@@ -188,10 +188,10 @@ def test_shadowed_mod_var(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 200)
+    compiler.check(src, exit_status=200)
 
 
-def test_unshadowed_mod_var(tmp_path):
+def test_unshadowed_mod_var(compiler):
     src = """
     let x = 100;
     pub fn main() i32 {
@@ -201,10 +201,10 @@ def test_unshadowed_mod_var(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
-def test_shadowed_local_var(tmp_path):
+def test_shadowed_local_var(compiler):
     src = """
     pub fn main() i32 {
         let x = 100;
@@ -214,10 +214,10 @@ def test_shadowed_local_var(tmp_path):
         };
     }
     """
-    util.check_prog_output(tmp_path, src, "", 200)
+    compiler.check(src, exit_status=200)
 
 
-def test_unshadowed_local_var(tmp_path):
+def test_unshadowed_local_var(compiler):
     src = """
     pub fn main() i32 {
         let x = 100;
@@ -227,7 +227,7 @@ def test_unshadowed_local_var(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 100)
+    compiler.check(src, exit_status=100)
 
 
 def test_cannot_access_inner_scope(compiler):
@@ -289,7 +289,7 @@ def test_void_mod_var(compiler):
         compiler.compile(src)
 
 
-def test_diverging_if_els_local_var_true(tmp_path):
+def test_diverging_if_els_local_var_true(compiler):
     # Both branches diverge, so the if/else's type is `never`, not `void`
     # - unlike test_void_local_var, this is legitimate, unreachable-after
     # code, analogous to Rust's `let x: i32 = if c { return 1 } else {
@@ -304,10 +304,10 @@ def test_diverging_if_els_local_var_true(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 1)
+    compiler.check(src, exit_status=1)
 
 
-def test_diverging_if_els_local_var_false(tmp_path):
+def test_diverging_if_els_local_var_false(compiler):
     src = """
     pub fn main() i32 {
         let x = if (false) {
@@ -318,10 +318,10 @@ def test_diverging_if_els_local_var_false(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 2)
+    compiler.check(src, exit_status=2)
 
 
-def test_diverging_bare_block_local_var(tmp_path):
+def test_diverging_bare_block_local_var(compiler):
     # A block with no tail expression is `never`-typed (not `void`) if its
     # statements already diverged, the same distinction as above but
     # without an if/else - a bare `{ ... }` is a valid expression on its
@@ -334,7 +334,7 @@ def test_diverging_bare_block_local_var(tmp_path):
         return x;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 7)
+    compiler.check(src, exit_status=7)
 
 
 def test_mod_var_self_cycle(compiler):
@@ -430,7 +430,7 @@ def test_mod_var_cycle_can_be_retried_after_failure(compiler):
     assert diagnostics[0] == diagnostics[1]
 
 
-def test_mod_var_diamond_dependency_is_not_a_cycle(tmp_path):
+def test_mod_var_diamond_dependency_is_not_a_cycle(compiler):
     src = """
     let a = 1;
     let b = a;
@@ -440,4 +440,4 @@ def test_mod_var_diamond_dependency_is_not_a_cycle(tmp_path):
         return d - 2;
     }
     """
-    util.check_prog_output(tmp_path, src, "", 0)
+    compiler.check(src)
