@@ -5,7 +5,7 @@
 import pytest
 
 from leech import errors
-from tests import util
+from tests import harness, util
 
 
 def test_sibling_import_unaffected(tmp_path):
@@ -89,7 +89,7 @@ def test_transitive_nested_import_resolves_relative_to_its_own_file(tmp_path):
     assert proc.returncode == 11
 
 
-def test_nested_import_does_not_exist(tmp_path):
+def test_nested_import_does_not_exist(compiler):
     main_src = """
     import sub::nope;
     pub fn main() i32 {
@@ -97,7 +97,7 @@ def test_nested_import_does_not_exist(tmp_path):
     }
     """
     with pytest.raises(errors.ModDoesNotExistError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src)
+        compiler.compile(main_src)
     assert "sub::nope" in str(exc_info.value)
 
 
@@ -106,7 +106,7 @@ def test_nested_import_does_not_exist(tmp_path):
     [("a[i32]", "a"), ("sub::a[i32]", "a"), ("sub[i32]::a", "sub")],
 )
 def test_import_path_rejects_comptime_args_before_missing_module_lookup(
-    tmp_path, import_path, offending_seg
+    compiler, import_path, offending_seg
 ):
     main_src = f"""
     import {import_path};
@@ -114,7 +114,7 @@ def test_import_path_rejects_comptime_args_before_missing_module_lookup(
     """
 
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src)
+        compiler.compile(main_src)
 
     assert f'"{offending_seg}"' in str(exc_info.value)
     span = exc_info.value.message.span
@@ -122,7 +122,7 @@ def test_import_path_rejects_comptime_args_before_missing_module_lookup(
     assert (span.start_line, span.start_col) == util.find_pos(main_src, f"{offending_seg}[i32]")
 
 
-def test_module_path_seg_rejects_comptime_args(tmp_path):
+def test_module_path_seg_rejects_comptime_args(compiler):
     main_src = """
     import a;
     pub fn main() i32 { return a[i32]::f(); }
@@ -130,7 +130,7 @@ def test_module_path_seg_rejects_comptime_args(tmp_path):
     a_src = "pub fn f() i32 { 0 }"
 
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert '"a"' in str(exc_info.value)
     span = exc_info.value.message.span
     assert span is not None

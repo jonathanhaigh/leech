@@ -31,7 +31,7 @@ def test_comptime_addr_and_deref(tmp_path):
     util.check_prog_output(tmp_path, src, "", 10)
 
 
-def test_addr_and_deref_fn(tmp_path):
+def test_addr_and_deref_fn(compiler):
     src = """
     fn f() i32 { return 10; }
     pub fn main() i32 {
@@ -41,10 +41,10 @@ def test_addr_and_deref_fn(tmp_path):
     }
     """
     with pytest.raises(errors.DerefInvalidTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_addr_and_deref_fn(tmp_path):
+def test_comptime_addr_and_deref_fn(compiler):
     src = """
     fn f() i32 { return 10; }
     let x = &f;
@@ -54,7 +54,7 @@ def test_comptime_addr_and_deref_fn(tmp_path):
     }
     """
     with pytest.raises(errors.DerefInvalidTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_addr_and_deref_field(tmp_path):
@@ -177,7 +177,7 @@ def test_addr_of_tmp(tmp_path):
     util.check_prog_output(tmp_path, src, "", 100)
 
 
-def test_addr_of_comptime_value(tmp_path):
+def test_addr_of_comptime_value(compiler):
     src = """
     let x = &1;
     pub fn main() i32 {
@@ -185,7 +185,7 @@ def test_addr_of_comptime_value(tmp_path):
     }
     """
     with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_addr_of_comptime_addr_of_deref(tmp_path):
@@ -200,7 +200,7 @@ def test_addr_of_comptime_addr_of_deref(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_deref_non_ptr(tmp_path):
+def test_deref_non_ptr(compiler):
     src = """
     pub fn main() i32 {
         let x = 10;
@@ -208,10 +208,10 @@ def test_deref_non_ptr(tmp_path):
     }
     """
     with pytest.raises(errors.DerefInvalidTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_deref_comptime_non_ptr(tmp_path):
+def test_deref_comptime_non_ptr(compiler):
     src = """
     let x = 10;
     let y = x.*;
@@ -220,10 +220,10 @@ def test_deref_comptime_non_ptr(tmp_path):
     }
     """
     with pytest.raises(errors.DerefInvalidTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_return_addr_of_local(tmp_path):
+def test_comptime_return_addr_of_local(compiler):
     src = """
     fn f() *i32 {
         let a = 1;
@@ -235,10 +235,10 @@ def test_comptime_return_addr_of_local(tmp_path):
     }
     """
     with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_return_addr_of_local_in_array(tmp_path):
+def test_comptime_return_addr_of_local_in_array(compiler):
     src = """
     fn f() array[*i32, 1] {
         let a = 1;
@@ -250,10 +250,10 @@ def test_comptime_return_addr_of_local_in_array(tmp_path):
     }
     """
     with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_return_addr_of_local_in_struct(tmp_path):
+def test_comptime_return_addr_of_local_in_struct(compiler):
     src = """
     struct T {
         a: *i32,
@@ -268,4 +268,4 @@ def test_comptime_return_addr_of_local_in_struct(tmp_path):
     }
     """
     with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

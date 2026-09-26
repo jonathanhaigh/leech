@@ -1292,7 +1292,7 @@ def test_trait_impl_for_a_union(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_overlapping_trait_impls_for_one_union_rejected(tmp_path):
+def test_overlapping_trait_impls_for_one_union_rejected(compiler):
     src = """
     trait Code { fn code(*self) i32; }
     union Option[T] { None, Some(T) }
@@ -1305,10 +1305,10 @@ def test_overlapping_trait_impls_for_one_union_rejected(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ConflictingImplsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_orphan_trait_impl_for_a_non_local_union_rejected(tmp_path):
+def test_orphan_trait_impl_for_a_non_local_union_rejected(compiler):
     a_src = """
     pub trait Code { fn code(*self) i32; }
     pub union Option[T] { None, Some(T) }
@@ -1321,7 +1321,7 @@ def test_orphan_trait_impl_for_a_non_local_union_rejected(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.OrphanImplError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_foreign_trait_impl_for_a_local_union_is_not_an_orphan(tmp_path):
@@ -1347,7 +1347,7 @@ def test_foreign_trait_impl_for_a_local_union_is_not_an_orphan(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
-def test_inherent_impl_for_a_non_local_union_rejected(tmp_path):
+def test_inherent_impl_for_a_non_local_union_rejected(compiler):
     a_src = "pub union Option[T] { None, Some(T) }"
     main_src = """
     import a;
@@ -1357,7 +1357,7 @@ def test_inherent_impl_for_a_non_local_union_rejected(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ImplForNonLocalTypError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 @pytest.mark.parametrize(
@@ -1368,7 +1368,7 @@ def test_inherent_impl_for_a_non_local_union_rejected(tmp_path):
     ),
     ids=("union-first", "impl-first"),
 )
-def test_assoc_fn_named_after_a_variant_rejected(order, tmp_path):
+def test_assoc_fn_named_after_a_variant_rejected(compiler, order):
     # A path into a union resolves a variant before an associated
     # function, so either declaration order must be rejected rather than
     # leaving the function unnameable.
@@ -1377,10 +1377,10 @@ def test_assoc_fn_named_after_a_variant_rejected(order, tmp_path):
     pub fn main() i32 {{ return 0; }}
     """
     with pytest.raises(errors.FnNameClashesWithUnionVariantError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assoc_fn_named_after_a_variant_of_a_generic_union_rejected(tmp_path):
+def test_assoc_fn_named_after_a_variant_of_a_generic_union_rejected(compiler):
     src = """
     union Option[T] { None, Some(T) }
     impl[T] Option[T] {
@@ -1389,7 +1389,7 @@ def test_assoc_fn_named_after_a_variant_of_a_generic_union_rejected(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.FnNameClashesWithUnionVariantError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_assoc_fn_not_named_after_a_variant_is_accepted(tmp_path):
@@ -1421,7 +1421,7 @@ def test_trait_method_may_share_a_variant_name(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_inherent_method_named_after_a_variant_rejected(tmp_path):
+def test_inherent_method_named_after_a_variant_rejected(compiler):
     # A method keeps its dot-call when the variant takes its name, but
     # loses the explicit path form that is meant to be equivalent to it:
     # `U::Some(&u)` would build a variant instead of calling the method.
@@ -1433,7 +1433,7 @@ def test_inherent_method_named_after_a_variant_rejected(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.FnNameClashesWithUnionVariantError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 # --- end-to-end runtime and comptime behaviour ---
@@ -1556,7 +1556,7 @@ def test_recursive_list_union_walked_to_a_length(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_zero_variant_union_is_lowered_but_uninhabited(tmp_path):
+def test_zero_variant_union_is_lowered_but_uninhabited(compiler):
     # Compile-only: Empty has no constructor, so there is no value to call
     # absurd with. It must be `pub`, or mono would never force its body and
     # the test would pass without lowering anything.
@@ -1565,7 +1565,7 @@ def test_zero_variant_union_is_lowered_but_uninhabited(tmp_path):
     pub fn absurd(e: Empty) i32 { return match (e) {}; }
     pub fn main() i32 { return 0; }
     """
-    ir_text = util.compile_str(tmp_path, src).read_text()
+    ir_text = compiler.compile(src).mods["main"].llvm_ir
     # A definition, not the declaration that carries the same spelling:
     # the point is that the empty match was lowered, not that the symbol
     # was named. Its one block falls straight through to `unreachable`,

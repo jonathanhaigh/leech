@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, ir_values, typs
-from tests import util
+from tests import harness, util
 
 
 def test_env_rejects_bound_value_without_pointer_typ(compiler):
@@ -97,7 +97,7 @@ def test_fn_mod_var(tmp_path):
     util.check_prog_output(tmp_path, src, "", 99)
 
 
-def test_extern_fn_value_remains_global_initializer(compiler, tmp_path):
+def test_extern_fn_value_remains_global_initializer(compiler):
     source = "extern fn puts(s: *u8) i32;\nlet p = puts;\npub fn main() i32 { 0 }"
     mod = compiler.build(source)
     item = mod.get_item(ir_env.Env.Namespace.VARS, "p")
@@ -105,10 +105,7 @@ def test_extern_fn_value_remains_global_initializer(compiler, tmp_path):
     var = asserts.checked_cast(item.value, ir_module.ModVar)
     assert isinstance(var.initializer, ir_module.FnRef)
 
-    ir_text = util.compile_str(
-        tmp_path,
-        source,
-    ).read_text()
+    ir_text = compiler.compile(source).mods["main"].llvm_ir
 
     assert '@"main::p" = private global i32 (i8*)* @"puts"' in ir_text
 
@@ -142,24 +139,24 @@ def test_fn_local_var(tmp_path):
     util.check_prog_output(tmp_path, src, "", 99)
 
 
-def test_var_not_found_at_mod_scope(tmp_path):
+def test_var_not_found_at_mod_scope(compiler):
     src = """
     let a = x;
     pub fn main() i32 { 0 }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_var_not_found_at_fn_scope(tmp_path):
+def test_var_not_found_at_fn_scope(compiler):
     src = """
     pub fn main() i32 { x }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_var_not_found_as_assignment_target(tmp_path):
+def test_var_not_found_as_assignment_target(compiler):
     # An assignment target is resolved through _place_mut, not _check_var_expr.
     src = """
     pub fn main() i32 {
@@ -168,10 +165,10 @@ def test_var_not_found_as_assignment_target(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_var_not_found_behind_addr_of(tmp_path):
+def test_var_not_found_behind_addr_of(compiler):
     # `&x` is resolved through _check_place, not _check_var_expr.
     src = """
     pub fn main() i32 {
@@ -180,7 +177,7 @@ def test_var_not_found_behind_addr_of(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_shadowed_mod_var(tmp_path):
@@ -233,7 +230,7 @@ def test_unshadowed_local_var(tmp_path):
     util.check_prog_output(tmp_path, src, "", 100)
 
 
-def test_cannot_access_inner_scope(tmp_path):
+def test_cannot_access_inner_scope(compiler):
     src = """
     pub fn main() i32 {
         {
@@ -243,20 +240,20 @@ def test_cannot_access_inner_scope(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_duplicate_mod_var(tmp_path):
+def test_duplicate_mod_var(compiler):
     src = """
     let x = 100;
     let x = 200;
     pub fn main() i32 { 0 }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_duplicate_local_var(tmp_path):
+def test_duplicate_local_var(compiler):
     src = """
     pub fn main() i32 {
         let x = 100;
@@ -265,10 +262,10 @@ def test_duplicate_local_var(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_void_local_var(tmp_path):
+def test_void_local_var(compiler):
     src = """
     fn f() { }
     pub fn main() i32 {
@@ -277,10 +274,10 @@ def test_void_local_var(tmp_path):
     }
     """
     with pytest.raises(errors.VoidVarInitializerError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_void_mod_var(tmp_path):
+def test_void_mod_var(compiler):
     src = """
     fn f() { }
     let x = f();
@@ -289,7 +286,7 @@ def test_void_mod_var(tmp_path):
     }
     """
     with pytest.raises(errors.VoidVarInitializerError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_diverging_if_els_local_var_true(tmp_path):
@@ -340,7 +337,7 @@ def test_diverging_bare_block_local_var(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
-def test_mod_var_self_cycle(tmp_path):
+def test_mod_var_self_cycle(compiler):
     src = """
     let a = a;
     pub fn main() i32 {
@@ -348,13 +345,13 @@ def test_mod_var_self_cycle(tmp_path):
     }
     """
     with pytest.raises(errors.CircularVarInitializerError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert exc_info.value.message.message == 'Initializer of variable "a" depends on itself'
     assert [note.message for note in exc_info.value.extra] == ['Variable "a" defined here']
 
 
-def test_mod_var_cycle(tmp_path):
+def test_mod_var_cycle(compiler):
     src = """
     let b = a;
     let a = b;
@@ -363,10 +360,10 @@ def test_mod_var_cycle(tmp_path):
     }
     """
     with pytest.raises(errors.CircularVarInitializerError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_mod_var_three_way_cycle(tmp_path):
+def test_mod_var_three_way_cycle(compiler):
     src = """
     let a = b;
     let b = c;
@@ -376,7 +373,7 @@ def test_mod_var_three_way_cycle(tmp_path):
     }
     """
     with pytest.raises(errors.CircularVarInitializerError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert exc_info.value.message.message == 'Initializer of variable "a" depends on itself'
     assert [note.message for note in exc_info.value.extra] == [
@@ -386,7 +383,7 @@ def test_mod_var_three_way_cycle(tmp_path):
     ]
 
 
-def test_cross_module_var_cycle(tmp_path):
+def test_cross_module_var_cycle(compiler):
     # Circular imports are legal (see A5), so a mod-var cycle can now
     # span modules too - the cycle-check has to catch this, not just the
     # single-module case.
@@ -402,7 +399,7 @@ def test_cross_module_var_cycle(tmp_path):
     pub let y = main::x;
     """
     with pytest.raises(errors.CircularVarInitializerError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
     assert exc_info.value.message.message == 'Initializer of variable "x" depends on itself'
     assert [note.message for note in exc_info.value.extra] == [

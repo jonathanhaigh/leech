@@ -42,7 +42,7 @@ def test_if_expected_typ_still_wins(tmp_path):
     util.check_prog_output(tmp_path, src, "", 2)
 
 
-def test_if_two_decided_arms_must_agree(tmp_path):
+def test_if_two_decided_arms_must_agree(compiler):
     src = """
     pub fn main() i32 {
         let c = true;
@@ -51,7 +51,7 @@ def test_if_two_decided_arms_must_agree(tmp_path):
     }
     """
     with pytest.raises(errors.IfElsTypMismatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_if_diverging_arm_does_not_decide_typ(tmp_path):
@@ -106,7 +106,7 @@ def test_comparison_operand_typ_independent_of_order(expr, tmp_path):
 
 
 @pytest.mark.parametrize("expr", ("1u8 + 2u16", "1u16 + 2u8"))
-def test_binop_two_decided_operands_must_agree(expr, tmp_path):
+def test_binop_two_decided_operands_must_agree(compiler, expr):
     src = f"""
     pub fn main() i32 {{
         let x = {expr};
@@ -114,10 +114,10 @@ def test_binop_two_decided_operands_must_agree(expr, tmp_path):
     }}
     """
     with pytest.raises(errors.IncompatibleBinOpArgTypsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_binop_flexible_operand_does_not_adopt_non_int_typ(tmp_path):
+def test_binop_flexible_operand_does_not_adopt_non_int_typ(compiler):
     # A bare literal only ever takes an *integer* type from its peer, so
     # it stays an i32 here and the mismatch with bool is still caught.
     # This is what will let a future `2 * matrix` resolve through an impl
@@ -129,7 +129,7 @@ def test_binop_flexible_operand_does_not_adopt_non_int_typ(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleBinOpArgTypsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 # --- Evaluation order is left-to-right ---

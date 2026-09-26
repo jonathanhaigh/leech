@@ -219,7 +219,7 @@ def test_comptime_or_short_circuits(tmp_path):
 
 
 @pytest.mark.parametrize("op", ("and", "or"))
-def test_invalid_logic_bin_op_lhs(op, tmp_path):
+def test_invalid_logic_bin_op_lhs(compiler, op):
     src = f"""
     pub fn main() i32 {{
         let x = 1 {op} true;
@@ -227,11 +227,11 @@ def test_invalid_logic_bin_op_lhs(op, tmp_path):
     }}
     """
     with pytest.raises(errors.InvalidBinOpArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 @pytest.mark.parametrize("op", ("and", "or"))
-def test_invalid_logic_bin_op_rhs(op, tmp_path):
+def test_invalid_logic_bin_op_rhs(compiler, op):
     src = f"""
     pub fn main() i32 {{
         let x = true {op} 1;
@@ -239,10 +239,10 @@ def test_invalid_logic_bin_op_rhs(op, tmp_path):
     }}
     """
     with pytest.raises(errors.InvalidBinOpArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_invalid_not_operand(tmp_path):
+def test_invalid_not_operand(compiler):
     src = """
     pub fn main() i32 {
         let x = not 1;
@@ -250,7 +250,7 @@ def test_invalid_not_operand(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidUnaryOpArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 @pytest.mark.parametrize("op", ("and", "or"))

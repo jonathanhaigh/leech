@@ -8,13 +8,13 @@ from leech import errors
 from tests import util
 
 
-def test_param_typ_not_defined(tmp_path):
+def test_param_typ_not_defined(compiler):
     src = """
     pub fn f(p: not_a_typ) { }
     pub fn main() i32 { 0 }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_param_shadows_mod_var(tmp_path):
@@ -32,7 +32,7 @@ def test_param_shadows_mod_var(tmp_path):
     util.check_prog_output(tmp_path, src, "", 5)
 
 
-def test_duplicate_param_name(tmp_path):
+def test_duplicate_param_name(compiler):
     src = """
     fn f(x: i32, x: i32) i32 {
         return x;
@@ -42,4 +42,4 @@ def test_duplicate_param_name(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

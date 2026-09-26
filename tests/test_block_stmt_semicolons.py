@@ -71,7 +71,7 @@ def test_match_stmt_with_semicolon_parses():
     assert match_expr.data == "match_expr"
 
 
-def test_semicolon_still_required_to_discard_tail_value(tmp_path):
+def test_semicolon_still_required_to_discard_tail_value(compiler):
     src = """
     pub fn main() i32 {
         while (true) {
@@ -81,7 +81,7 @@ def test_semicolon_still_required_to_discard_tail_value(tmp_path):
     }
     """
     with pytest.raises(errors.WhileTypNotVoidError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_semicolon_discards_tail_value(tmp_path):

@@ -192,27 +192,27 @@ def test_comptime_continue(tmp_path):
     util.check_prog_output(tmp_path, src, "", 13)
 
 
-def test_break_outside_loop(tmp_path):
+def test_break_outside_loop(compiler):
     src = """
     pub fn main() i32 {
         break;
     }
     """
     with pytest.raises(errors.BreakNotInLoopError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_continue_outside_loop(tmp_path):
+def test_continue_outside_loop(compiler):
     src = """
     pub fn main() i32 {
         continue;
     }
     """
     with pytest.raises(errors.ContinueNotInLoopError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_labeled_break_outside_loop(tmp_path):
+def test_labeled_break_outside_loop(compiler):
     # No enclosing loop at all beats "unknown label" - same shape as
     # BreakNotInLoopError firing regardless of whether a label is given.
     src = """
@@ -221,10 +221,10 @@ def test_labeled_break_outside_loop(tmp_path):
     }
     """
     with pytest.raises(errors.BreakNotInLoopError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_break_unknown_label(tmp_path):
+def test_break_unknown_label(compiler):
     src = """
     pub fn main() i32 {
         while (true) {
@@ -234,10 +234,10 @@ def test_break_unknown_label(tmp_path):
     }
     """
     with pytest.raises(errors.LoopLabelNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_continue_unknown_label(tmp_path):
+def test_continue_unknown_label(compiler):
     src = """
     pub fn main() i32 {
         while (true) {
@@ -247,10 +247,10 @@ def test_continue_unknown_label(tmp_path):
     }
     """
     with pytest.raises(errors.LoopLabelNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_break_outside_loop(tmp_path):
+def test_comptime_break_outside_loop(compiler):
     src = """
     let x = {
         break;
@@ -258,4 +258,4 @@ def test_comptime_break_outside_loop(tmp_path):
     pub fn main() i32 { 0 }
     """
     with pytest.raises(errors.BreakNotInLoopError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

@@ -5,7 +5,7 @@
 import pytest
 
 from leech import errors
-from tests import util
+from tests import harness, util
 
 
 def test_const_ptr_method_call(tmp_path):
@@ -38,7 +38,7 @@ def test_mut_ptr_method_call(tmp_path):
     util.check_prog_output(tmp_path, src, "", 2)
 
 
-def test_mut_ptr_method_call_on_const_place_rejected(tmp_path):
+def test_mut_ptr_method_call_on_const_place_rejected(compiler):
     # Calling a *mut self method requires a place that can be written
     # through; a non-`mut` local can't provide one.
     src = """
@@ -53,7 +53,7 @@ def test_mut_ptr_method_call_on_const_place_rejected(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_const_ptr_method_call_on_mut_place(tmp_path):
@@ -116,7 +116,7 @@ def test_dot_call_private_method_accessible_within_defining_module(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_dot_call_private_method_cross_module_rejected(tmp_path):
+def test_dot_call_private_method_cross_module_rejected(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -132,28 +132,28 @@ def test_dot_call_private_method_cross_module_rejected(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_self_param_outside_impl_rejected(tmp_path):
+def test_self_param_outside_impl_rejected(compiler):
     src = """
     pub fn f(*self) i32 { 0 }
     pub fn main() i32 { 0 }
     """
     with pytest.raises(errors.SelfParamOutsideImplError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_self_param_on_extern_rejected(tmp_path):
+def test_self_param_on_extern_rejected(compiler):
     src = """
     extern fn f(*self) i32;
     pub fn main() i32 { 0 }
     """
     with pytest.raises(errors.SelfParamOutsideImplError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_dot_call_on_receiverless_assoc_fn_rejected(tmp_path):
+def test_dot_call_on_receiverless_assoc_fn_rejected(compiler):
     # `new` is a real associated function of Counter, but has no `self`
     # receiver, so it can't be dot-called - only `Counter::new()`.
     src = """
@@ -167,7 +167,7 @@ def test_dot_call_on_receiverless_assoc_fn_rejected(tmp_path):
     }
     """
     with pytest.raises(errors.NotAMethodError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_method_passes_self_by_value_to_free_function(tmp_path):
@@ -204,7 +204,7 @@ def test_field_access_of_non_method_name_still_works(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
-def test_dot_call_falls_back_to_field_access_when_no_method_matches(tmp_path):
+def test_dot_call_falls_back_to_field_access_when_no_method_matches(compiler):
     # No method named "n" exists, so `h.n()` falls back to ordinary field
     # access (per test_field_access_of_non_method_name_still_works) and
     # then fails because the field's value (an i32) isn't callable -
@@ -218,7 +218,7 @@ def test_dot_call_falls_back_to_field_access_when_no_method_matches(tmp_path):
     }
     """
     with pytest.raises(errors.NotCallableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_dot_call_falls_back_to_callable_struct_field(tmp_path):

@@ -5,7 +5,7 @@
 import pytest
 
 from leech import errors
-from tests import util
+from tests import harness, util
 
 
 def test_enum_to_int_explicit_typ_args_uncalled_reference(tmp_path):
@@ -81,13 +81,13 @@ def test_enum_variant_value_widening_suffix_allowed(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_enum_variant_value_mismatched_suffix_rejected(tmp_path):
+def test_enum_variant_value_mismatched_suffix_rejected(compiler):
     src = """
     enum Color(u8) { Red, Green = 5i32, Blue }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.EnumVariantValueTypMismatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_enum_auto_increment_without_explicit_backing_typ(tmp_path):
@@ -192,22 +192,22 @@ def test_enum_used_as_fn_param_and_ret_typ(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_enum_inferred_discriminant_overflows_unsigned_64_bit(tmp_path):
+def test_enum_inferred_discriminant_overflows_unsigned_64_bit(compiler):
     src = """
     enum Huge { A = 18446744073709551616 }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.EnumDiscriminantOverflowError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_enum_inferred_discriminant_overflows_signed_64_bit(tmp_path):
+def test_enum_inferred_discriminant_overflows_signed_64_bit(compiler):
     src = """
     enum Huge { A = -9223372036854775809 }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.EnumDiscriminantOverflowError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_enum_duplicate_discriminant_values_allowed(tmp_path):
@@ -222,41 +222,41 @@ def test_enum_duplicate_discriminant_values_allowed(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_enum_duplicate_variant_name_rejected(tmp_path):
+def test_enum_duplicate_variant_name_rejected(compiler):
     src = """
     enum Color { Red, Red }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateVariantInEnumDefnError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Red"' in str(exc_info.value)
 
 
-def test_enum_explicit_backing_typ_not_int(tmp_path):
+def test_enum_explicit_backing_typ_not_int(compiler):
     src = """
     enum Bad(bool) { A, B }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.EnumBackingTypNotIntError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_enum_discriminant_overflows_explicit_backing_typ(tmp_path):
+def test_enum_discriminant_overflows_explicit_backing_typ(compiler):
     src = """
     enum TooBig(u8) { A = 300 }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.IntLitOverflowError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_enum_negative_discriminant_overflows_unsigned_backing_typ(tmp_path):
+def test_enum_negative_discriminant_overflows_unsigned_backing_typ(compiler):
     src = """
     enum Bad(u8) { A = -1 }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.IntLitOverflowError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_enum_to_int_on_signed_backing_typ(tmp_path):
@@ -285,7 +285,7 @@ def test_enum_cross_module(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
-def test_private_enum_inaccessible_from_other_module(tmp_path):
+def test_private_enum_inaccessible_from_other_module(compiler):
     a_src = """
     enum Color(u8) { Red, Green, Blue }
     """
@@ -297,10 +297,10 @@ def test_private_enum_inaccessible_from_other_module(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_enum_variant_typ_args_on_non_generic_enum(tmp_path):
+def test_enum_variant_typ_args_on_non_generic_enum(compiler):
     src = """
     enum Color { Red, Green, Blue }
     pub fn main() i32 {
@@ -309,10 +309,10 @@ def test_enum_variant_typ_args_on_non_generic_enum(tmp_path):
     }
     """
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_enum_unknown_variant(tmp_path):
+def test_enum_unknown_variant(compiler):
     src = """
     enum Color { Red, Green, Blue }
     pub fn main() i32 {
@@ -321,4 +321,4 @@ def test_enum_unknown_variant(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

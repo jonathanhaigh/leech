@@ -5,7 +5,7 @@
 import pytest
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, typs
-from tests import util
+from tests import harness, util
 
 
 def test_trait_impl_for_builtin_typ(tmp_path):
@@ -282,7 +282,7 @@ def test_generic_trait_impl_method_calls_sibling_for_non_struct_self_typ(tmp_pat
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(tmp_path):
+def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(compiler):
     # A selected method is instantiated only when lowering reaches its
     # reference, so resolving the impl must not emit every method in it.
     src = """
@@ -297,8 +297,7 @@ def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(tmp_path):
         return b.used() - 1;
     }
     """
-    (llir_path,) = util.compile_modules(tmp_path, main=src)
-    ir_text = llir_path.read_text()
+    ir_text = compiler.compile(src).mods["main"].llvm_ir
     assert "used" in ir_text
     assert "unused" not in ir_text
 
@@ -410,7 +409,7 @@ def test_generic_impl_body_typechecks(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_generic_impl_body_rejects_invalid_op(tmp_path):
+def test_generic_impl_body_rejects_invalid_op(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     struct Box[T] { mut val: T }
@@ -420,7 +419,7 @@ def test_generic_impl_body_rejects_invalid_op(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InvalidBinOpArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_calling_method_through_generic_impl(tmp_path):
@@ -480,7 +479,7 @@ def test_generic_trait_impl_instantiated_twice(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_generic_impl_with_unsatisfied_bound_does_not_apply(tmp_path):
+def test_generic_impl_with_unsatisfied_bound_does_not_apply(compiler):
     # `Box[bool]` doesn't satisfy the impl's own `T: Show`, so the impl
     # doesn't apply to it and `Box[bool]` implements nothing - which is
     # what the call site's own bound check then reports.
@@ -498,10 +497,10 @@ def test_generic_impl_with_unsatisfied_bound_does_not_apply(tmp_path):
     }
     """
     with pytest.raises(errors.UnsatisfiedBoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_generic_impl_with_unsatisfied_bound_provides_no_method(tmp_path):
+def test_generic_impl_with_unsatisfied_bound_provides_no_method(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -515,10 +514,10 @@ def test_generic_impl_with_unsatisfied_bound_provides_no_method(tmp_path):
     }
     """
     with pytest.raises(errors.NotCallableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_generic_impl_bound_unsatisfied_by_callers_typ_param(tmp_path):
+def test_generic_impl_bound_unsatisfied_by_callers_typ_param(compiler):
     # `f` never declares `U: Show`, so nothing proves the impl's own
     # `T: Show` for `Box[U]` - the impl doesn't apply, and that has to be
     # settled here rather than left for `f[bool]` to discover.
@@ -534,7 +533,7 @@ def test_generic_impl_bound_unsatisfied_by_callers_typ_param(tmp_path):
     }
     """
     with pytest.raises(errors.NotCallableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_generic_impl_bound_satisfied_by_callers_typ_param(tmp_path):
@@ -596,7 +595,7 @@ def test_impl_selection_descends_beyond_old_depth_limit(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_unsatisfied_bound_on_generic_fn_call(tmp_path):
+def test_unsatisfied_bound_on_generic_fn_call(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     fn double_show[T: Show](x: T) i32 {
@@ -608,14 +607,14 @@ def test_unsatisfied_bound_on_generic_fn_call(tmp_path):
     }
     """
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     msg = str(exc_info.value)
     assert '"bool"' in msg
     assert '"Show"' in msg
     assert '"T"' in msg
 
 
-def test_unsatisfied_bound_on_generic_struct_instantiation(tmp_path):
+def test_unsatisfied_bound_on_generic_struct_instantiation(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     struct Box[T: Show] { mut val: T }
@@ -625,7 +624,7 @@ def test_unsatisfied_bound_on_generic_struct_instantiation(tmp_path):
     }
     """
     with pytest.raises(errors.UnsatisfiedBoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_bound_satisfied_on_generic_struct_instantiation(tmp_path):
@@ -641,7 +640,7 @@ def test_bound_satisfied_on_generic_struct_instantiation(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_ambiguous_method_call_between_two_traits(tmp_path):
+def test_ambiguous_method_call_between_two_traits(compiler):
     src = """
     trait A { fn f(*self) i32; }
     trait B { fn f(*self) i32; }
@@ -653,11 +652,11 @@ def test_ambiguous_method_call_between_two_traits(tmp_path):
     }
     """
     with pytest.raises(errors.AmbiguousMethodError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"f"' in str(exc_info.value)
 
 
-def test_ambiguous_method_call_on_bound_typ_param(tmp_path):
+def test_ambiguous_method_call_on_bound_typ_param(compiler):
     src = """
     trait A { fn f(*self) i32; }
     trait B { fn f(*self) i32; }
@@ -667,7 +666,7 @@ def test_ambiguous_method_call_on_bound_typ_param(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.AmbiguousMethodError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 #: A bound and everything it needs, to be spliced either side of the
@@ -695,7 +694,7 @@ def test_bound_resolves_the_same_either_declaration_order(tmp_path, forward):
 
 
 @pytest.mark.parametrize("forward", (False, True))
-def test_unsatisfied_bound_diagnosed_the_same_either_declaration_order(tmp_path, forward):
+def test_unsatisfied_bound_diagnosed_the_same_either_declaration_order(compiler, forward):
     parts = (_BOUND_USER, _SHOW_DECLS) if forward else (_SHOW_DECLS, _BOUND_USER)
     src = (
         "".join(parts)
@@ -704,12 +703,12 @@ def test_unsatisfied_bound_diagnosed_the_same_either_declaration_order(tmp_path,
     """
     )
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Show"' in str(exc_info.value)
 
 
 @pytest.mark.parametrize("forward", (False, True))
-def test_non_trait_bound_diagnosed_the_same_either_declaration_order(tmp_path, forward):
+def test_non_trait_bound_diagnosed_the_same_either_declaration_order(compiler, forward):
     decls = "struct NotATrait { a: i32 }\n"
     user = "fn f[T: NotATrait]() {}\n"
     src = (
@@ -719,10 +718,10 @@ def test_non_trait_bound_diagnosed_the_same_either_declaration_order(tmp_path, f
     """
     )
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_names_non_trait_via_method_call(tmp_path):
+def test_bound_names_non_trait_via_method_call(compiler):
     src = """
     struct NotATrait { a: i32 }
     fn f[T: NotATrait](x: T) i32 {
@@ -731,17 +730,17 @@ def test_bound_names_non_trait_via_method_call(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_names_unapplied_generic_non_trait(tmp_path):
+def test_bound_names_unapplied_generic_non_trait(compiler):
     src = """
     struct NotATrait[T] { val: T }
     fn f[T: NotATrait](x: T) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 #: One never-applied declaration of each kind that can take comptime
@@ -755,7 +754,7 @@ _UNUSED_BAD_BOUND_DECLS = {
 
 
 @pytest.mark.parametrize("decl", list(_UNUSED_BAD_BOUND_DECLS))
-def test_non_trait_bound_on_unused_declaration_is_rejected(tmp_path, decl):
+def test_non_trait_bound_on_unused_declaration_is_rejected(compiler, decl):
     # Every kind of declaration must hand its parameters to the
     # whole-graph declaration check, whether or not anything applies it.
     src = f"""
@@ -764,10 +763,10 @@ def test_non_trait_bound_on_unused_declaration_is_rejected(tmp_path, decl):
     pub fn main() i32 {{ return 0; }}
     """
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_names_non_trait_on_unused_typ_param(tmp_path):
+def test_bound_names_non_trait_on_unused_typ_param(compiler):
     # The bound is never consulted: the body doesn't use it and nothing
     # calls the function, so only validating the declaration itself
     # catches it.
@@ -777,10 +776,10 @@ def test_bound_names_non_trait_on_unused_typ_param(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_names_non_trait_on_generic_struct_instantiation(tmp_path):
+def test_bound_names_non_trait_on_generic_struct_instantiation(compiler):
     src = """
     struct NotATrait { a: i32 }
     struct Box[T: NotATrait] { mut val: T }
@@ -790,22 +789,22 @@ def test_bound_names_non_trait_on_generic_struct_instantiation(tmp_path):
     }
     """
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_trait_missing_method_not_implemented(tmp_path):
+def test_trait_missing_method_not_implemented(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 {}
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.TraitMethodNotImplementedError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"show"' in str(exc_info.value)
     assert '"Show"' in str(exc_info.value)
 
 
-def test_trait_impl_extra_method(tmp_path):
+def test_trait_impl_extra_method(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 {
@@ -815,11 +814,11 @@ def test_trait_impl_extra_method(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ExtraMethodInImplError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"other"' in str(exc_info.value)
 
 
-def test_trait_impl_duplicate_method(tmp_path):
+def test_trait_impl_duplicate_method(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 {
@@ -829,7 +828,7 @@ def test_trait_impl_duplicate_method(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert "method" in str(exc_info.value)
 
 
@@ -858,7 +857,7 @@ def test_trait_impl_duplicate_extra_method_is_rejected_atomically(compiler):
         assert not trait_impl.fn_symbols
 
 
-def test_trait_impl_method_signature_mismatch(tmp_path):
+def test_trait_impl_method_signature_mismatch(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 {
@@ -867,11 +866,11 @@ def test_trait_impl_method_signature_mismatch(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.TraitMethodSignatureMismatchError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"show"' in str(exc_info.value)
 
 
-def test_trait_impl_method_wrong_receiver_mutability(tmp_path):
+def test_trait_impl_method_wrong_receiver_mutability(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 {
@@ -880,10 +879,10 @@ def test_trait_impl_method_wrong_receiver_mutability(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.TraitMethodSignatureMismatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_conflicting_impls_of_same_trait_same_typ(tmp_path):
+def test_conflicting_impls_of_same_trait_same_typ(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -891,10 +890,10 @@ def test_conflicting_impls_of_same_trait_same_typ(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ConflictingImplsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_partially_overlapping_generic_trait_impls_conflict(tmp_path):
+def test_partially_overlapping_generic_trait_impls_conflict(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     struct Pair[A, B] {}
@@ -903,7 +902,7 @@ def test_partially_overlapping_generic_trait_impls_conflict(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ConflictingImplsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 @pytest.mark.parametrize(
@@ -919,7 +918,7 @@ def test_partially_overlapping_generic_trait_impls_conflict(tmp_path):
         """,
     ),
 )
-def test_blanket_trait_impl_conflicts_with_concrete_impl(tmp_path, impls):
+def test_blanket_trait_impl_conflicts_with_concrete_impl(compiler, impls):
     src = (
         """
     trait Show { fn show(*self) i32; }
@@ -930,7 +929,7 @@ def test_blanket_trait_impl_conflicts_with_concrete_impl(tmp_path, impls):
     """
     )
     with pytest.raises(errors.ConflictingImplsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_blanket_trait_impl_is_selected_for_concrete_typ(tmp_path):
@@ -973,7 +972,7 @@ def test_impls_of_same_trait_for_different_int_typs_do_not_conflict(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_orphan_impl_neither_trait_nor_typ_local(tmp_path):
+def test_orphan_impl_neither_trait_nor_typ_local(compiler):
     a_src = "pub trait Show { fn show(*self) i32; }"
     main_src = """
     import a;
@@ -981,7 +980,7 @@ def test_orphan_impl_neither_trait_nor_typ_local(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.OrphanImplError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_impl_local_trait_for_foreign_typ_not_orphan(tmp_path):
@@ -1012,58 +1011,58 @@ def test_impl_foreign_trait_for_local_typ_not_orphan(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
-def test_impl_for_non_trait(tmp_path):
+def test_impl_for_non_trait(compiler):
     src = """
     struct NotATrait { a: i32 }
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_impl_for_unapplied_generic_non_trait(tmp_path):
+def test_impl_for_unapplied_generic_non_trait(compiler):
     src = """
     struct NotATrait[T] { val: T }
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_trait_used_as_typ(tmp_path):
+def test_trait_used_as_typ(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     fn f(x: Show) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.TraitUsedAsTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Show"' in str(exc_info.value)
 
 
 @pytest.mark.parametrize("trait_typ", ("Container", "Container[i32]"))
-def test_generic_trait_used_as_typ(tmp_path, trait_typ):
+def test_generic_trait_used_as_typ(compiler, trait_typ):
     src = f"""
     trait Container[T] {{ fn get(*self) T; }}
     pub fn main(x: {trait_typ}) i32 {{ return 0; }}
     """
     with pytest.raises(errors.TraitUsedAsTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Container"' in str(exc_info.value)
 
 
-def test_trait_method_missing_receiver(tmp_path):
+def test_trait_method_missing_receiver(compiler):
     src = """
     trait Show { fn show() i32; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.TraitMethodMissingReceiverError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_trait_method_call_span(tmp_path):
+def test_trait_method_call_span(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     fn double_show[T: Show](x: T) i32 {
@@ -1075,13 +1074,13 @@ def test_trait_method_call_span(tmp_path):
     }
     """
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == util.find_pos(src, "double_show(n)")
 
 
-def test_explicit_generic_fn_bound_error_uses_path_span(tmp_path):
+def test_explicit_generic_fn_bound_error_uses_path_span(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     fn double_show[T: Show](x: T) i32 {
@@ -1093,7 +1092,7 @@ def test_explicit_generic_fn_bound_error_uses_path_span(tmp_path):
     }
     """
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == util.find_pos(src, "double_show[bool](n)")
@@ -1124,7 +1123,7 @@ def test_get_trait_item_from_mod(compiler):
     assert [m.name for m in item.value.trait_methods] == ["show"]
 
 
-def test_bound_with_generic_args_parses(tmp_path):
+def test_bound_with_generic_args_parses(compiler):
     # Bounds are lazy: an uninstantiated generic fn never has its bounds
     # checked, so this exercises parsing alone.
     src = """
@@ -1132,7 +1131,7 @@ def test_bound_with_generic_args_parses(tmp_path):
     fn unused[T: Container[i32]](x: T) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
 def test_generic_trait_exposes_typ_params(compiler):
@@ -1173,7 +1172,7 @@ def test_trait_application_keeps_argument_order(compiler):
     assert application == ir_traits.TraitApplication(trait, (typs.BOOL, typs.I32))
 
 
-def test_bound_with_generic_args_on_non_generic_trait(tmp_path):
+def test_bound_with_generic_args_on_non_generic_trait(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -1184,21 +1183,21 @@ def test_bound_with_generic_args_on_non_generic_trait(tmp_path):
     }
     """
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Show"' in str(exc_info.value)
 
 
-def test_unused_bound_with_generic_args_on_non_generic_trait(tmp_path):
+def test_unused_bound_with_generic_args_on_non_generic_trait(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     fn f[T: Show[i32]](x: T) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_on_generic_trait_without_typ_args(tmp_path):
+def test_bound_on_generic_trait_without_typ_args(compiler):
     src = """
     trait Container[T] { fn get(*self) T; }
     fn f[T: Container](x: T) i32 { return 0; }
@@ -1208,11 +1207,11 @@ def test_bound_on_generic_trait_without_typ_args(tmp_path):
     }
     """
     with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Container"' in str(exc_info.value)
 
 
-def test_bound_with_wrong_number_of_typ_args(tmp_path):
+def test_bound_with_wrong_number_of_typ_args(compiler):
     src = """
     trait Container[T] { fn get(*self) T; }
     fn f[T: Container[i32, i32]](x: T) i32 { return 0; }
@@ -1222,11 +1221,11 @@ def test_bound_with_wrong_number_of_typ_args(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Container"' in str(exc_info.value)
 
 
-def test_checking_bound_with_generic_args_not_supported_yet(tmp_path):
+def test_checking_bound_with_generic_args_not_supported_yet(compiler):
     src = """
     trait Container[T] { fn get(*self) T; }
     fn f[T: Container[i32]](x: T) i32 { return 0; }
@@ -1238,10 +1237,10 @@ def test_checking_bound_with_generic_args_not_supported_yet(tmp_path):
     with pytest.raises(
         NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
     ):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_typ_arg_violating_traits_own_bound(tmp_path):
+def test_bound_typ_arg_violating_traits_own_bound(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -1253,13 +1252,13 @@ def test_bound_typ_arg_violating_traits_own_bound(tmp_path):
     }
     """
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     msg = str(exc_info.value)
     assert '"bool"' in msg
     assert '"Show"' in msg
 
 
-def test_bound_typ_arg_satisfying_traits_own_bound(tmp_path):
+def test_bound_typ_arg_satisfying_traits_own_bound(compiler):
     # Reaches the unsupported-feature guard, which means the nested bound
     # check ran and accepted i32 rather than rejecting it.
     src = """
@@ -1275,7 +1274,7 @@ def test_bound_typ_arg_satisfying_traits_own_bound(tmp_path):
     with pytest.raises(
         NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
     ):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 _SIBLING_PRELUDE = """
@@ -1285,7 +1284,7 @@ _SIBLING_PRELUDE = """
 """
 
 
-def test_unsatisfied_bound_trait_arg_on_unused_declaration(tmp_path):
+def test_unsatisfied_bound_trait_arg_on_unused_declaration(compiler):
     # Nothing applies `f`, so only checking its declaration catches that
     # `Container`'s own bound rules out `bool`.
     src = (
@@ -1296,7 +1295,7 @@ def test_unsatisfied_bound_trait_arg_on_unused_declaration(tmp_path):
     """
     )
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"bool"' in str(exc_info.value)
 
 
@@ -1308,7 +1307,7 @@ def test_unsatisfied_bound_trait_arg_on_unused_declaration(tmp_path):
         ("fn f[A, B: Container[A]]() {}", "A"),
     ),
 )
-def test_bound_on_sibling_typ_param_must_be_carried_by_its_declaration(tmp_path, decl, unbounded):
+def test_bound_on_sibling_typ_param_must_be_carried_by_its_declaration(compiler, decl, unbounded):
     # `Container[A]` requires `A: Show`, and a bare `A` promises nothing,
     # so the declaration is rejected where it is written rather than at
     # each application.
@@ -1320,7 +1319,7 @@ def test_bound_on_sibling_typ_param_must_be_carried_by_its_declaration(tmp_path,
     """
     )
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert f'"{unbounded}"' in str(exc_info.value)
     assert '"Show"' in str(exc_info.value)
 
@@ -1338,7 +1337,7 @@ def test_bound_referencing_sibling_typ_param_carrying_the_needed_bound(tmp_path)
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_bound_referencing_sibling_typ_param_rejects_unsatisfying_arg(tmp_path):
+def test_bound_referencing_sibling_typ_param_rejects_unsatisfying_arg(compiler):
     src = (
         _SIBLING_PRELUDE
         + """
@@ -1350,11 +1349,11 @@ def test_bound_referencing_sibling_typ_param_rejects_unsatisfying_arg(tmp_path):
     """
     )
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"bool"' in str(exc_info.value)
 
 
-def test_bound_referencing_sibling_typ_param_satisfied(tmp_path):
+def test_bound_referencing_sibling_typ_param_satisfied(compiler):
     # Reaching the unsupported-feature guard means `A` resolved to i32 and
     # passed Container's own Show bound.
     src = (
@@ -1370,7 +1369,7 @@ def test_bound_referencing_sibling_typ_param_satisfied(tmp_path):
     with pytest.raises(
         NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
     ):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def _assert_recursive_trait_bound_error(exc, primary: str, cycle: list[str]) -> None:
@@ -1382,7 +1381,7 @@ def _assert_recursive_trait_bound_error(exc, primary: str, cycle: list[str]) -> 
     ]
 
 
-def test_self_referential_trait_bound(tmp_path):
+def test_self_referential_trait_bound(compiler):
     src = """
     trait Foo[T: Foo[T]] { fn get(*self) T; }
     fn f[U: Foo[i32]](x: U) i32 { return 0; }
@@ -1392,7 +1391,7 @@ def test_self_referential_trait_bound(tmp_path):
     }
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_trait_bound_error(exc_info, "Foo[T]", ["Foo[T]"])
 
     span = exc_info.value.message.span
@@ -1400,7 +1399,7 @@ def test_self_referential_trait_bound(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "Foo[T]")
 
 
-def test_mutually_recursive_trait_bounds(tmp_path):
+def test_mutually_recursive_trait_bounds(compiler):
     src = """
     trait A[T: B[T]] { fn a(*self) T; }
     trait B[T: A[T]] { fn b(*self) T; }
@@ -1411,11 +1410,11 @@ def test_mutually_recursive_trait_bounds(tmp_path):
     }
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_trait_bound_error(exc_info, "A[T]", ["A[T]", "B[T]"])
 
 
-def test_growing_recursive_trait_bound_via_pointer(tmp_path):
+def test_growing_recursive_trait_bound_via_pointer(compiler):
     # The type argument grows each step, so no resolved (trait, args) key repeats.
     src = """
     trait Foo[T: Foo[*T]] { fn get(*self) T; }
@@ -1426,11 +1425,11 @@ def test_growing_recursive_trait_bound_via_pointer(tmp_path):
     }
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_trait_bound_error(exc_info, "Foo[*T]", ["Foo[*T]"])
 
 
-def test_growing_recursive_trait_bound_via_array(tmp_path):
+def test_growing_recursive_trait_bound_via_array(compiler):
     src = """
     trait Bar[T: Bar[array[T, 2]]] { fn get(*self) T; }
     fn f[U: Bar[i32]](x: U) i32 { return 0; }
@@ -1440,11 +1439,11 @@ def test_growing_recursive_trait_bound_via_array(tmp_path):
     }
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_trait_bound_error(exc_info, "Bar[array[T, 2]]", ["Bar[array[T, 2]]"])
 
 
-def test_growing_mutually_recursive_trait_bounds(tmp_path):
+def test_growing_mutually_recursive_trait_bounds(compiler):
     src = """
     trait P[T: Q[*T]] { fn p(*self) T; }
     trait Q[T: P[*T]] { fn q(*self) T; }
@@ -1455,7 +1454,7 @@ def test_growing_mutually_recursive_trait_bounds(tmp_path):
     }
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_trait_bound_error(exc_info, "P[*T]", ["P[*T]", "Q[*T]"])
 
 
@@ -1471,18 +1470,18 @@ def _assert_recursive_impl_selection_error(
     ]
 
 
-def test_direct_recursive_impl_selection(tmp_path):
+def test_direct_recursive_impl_selection(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl[T: Show] Show for T { fn show(*self) i32 { 0 } }
     pub fn main() i32 { let x: i32 = 1; return x.show(); }
     """
     with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_impl_selection_error(exc_info, "Show", "i32", ["<T as Show>"])
 
 
-def test_mutual_recursive_impl_selection(tmp_path):
+def test_mutual_recursive_impl_selection(compiler):
     src = """
     trait A { fn a(*self) i32; }
     trait B { fn b(*self) i32; }
@@ -1491,7 +1490,7 @@ def test_mutual_recursive_impl_selection(tmp_path):
     pub fn main() i32 { let x: i32 = 1; return x.a(); }
     """
     with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_impl_selection_error(
         exc_info,
         "A",
@@ -1500,7 +1499,7 @@ def test_mutual_recursive_impl_selection(tmp_path):
     )
 
 
-def test_recursive_impl_selection_excludes_path_into_cycle(tmp_path):
+def test_recursive_impl_selection_excludes_path_into_cycle(compiler):
     src = """
     trait A { fn a(*self) i32; }
     trait B { fn b(*self) i32; }
@@ -1513,7 +1512,7 @@ def test_recursive_impl_selection_excludes_path_into_cycle(tmp_path):
     pub fn main() i32 { let x: i32 = 1; return x.d(); }
     """
     with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_impl_selection_error(
         exc_info,
         "A",
@@ -1522,7 +1521,7 @@ def test_recursive_impl_selection_excludes_path_into_cycle(tmp_path):
     )
 
 
-def test_recursive_impl_selection_through_trait_owned_bound(tmp_path):
+def test_recursive_impl_selection_through_trait_owned_bound(compiler):
     src = """
     trait S { fn s(*self) i32; }
     trait G[T: S] { fn g(*self) T; }
@@ -1530,11 +1529,11 @@ def test_recursive_impl_selection_through_trait_owned_bound(tmp_path):
     pub fn main() i32 { let x: i32 = 1; return x.s(); }
     """
     with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     _assert_recursive_impl_selection_error(exc_info, "S", "i32", ["<T as S>"])
 
 
-def test_calling_method_through_bound_with_generic_args_not_supported_yet(tmp_path):
+def test_calling_method_through_bound_with_generic_args_not_supported_yet(compiler):
     # The bound is never checked (f is never instantiated), but f's body is
     # type-checked once, which resolves `get` against U's bounds.
     src = """
@@ -1546,40 +1545,40 @@ def test_calling_method_through_bound_with_generic_args_not_supported_yet(tmp_pa
         NotImplementedError,
         match="calling a method through a bound with generic arguments isn't supported yet",
     ):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_method_reports_missing_trait_args_instead_of_crashing(tmp_path):
+def test_bound_method_reports_missing_trait_args_instead_of_crashing(compiler):
     src = """
     trait Container[T] { fn get(*self) T; }
     fn f[U: Container](x: U) i32 { return x.get(); }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.MissingComptimeArgsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_method_reports_wrong_trait_arg_count_before_unsupported_error(tmp_path):
+def test_bound_method_reports_wrong_trait_arg_count_before_unsupported_error(compiler):
     src = """
     trait Container[T] { fn get(*self) T; }
     fn f[U: Container[i32, bool]](x: U) i32 { return x.get(); }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.WrongNumberOfComptimeArgsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_method_reports_wrong_trait_arg_kind_before_unsupported_error(tmp_path):
+def test_bound_method_reports_wrong_trait_arg_kind_before_unsupported_error(compiler):
     src = """
     trait Sized[value N: i32] { fn get(*self) i32; }
     fn f[U: Sized[i32]](x: U) i32 { return x.get(); }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.PathTargetKindError, match="names a type, not a comptime value"):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_method_reports_trait_arg_bound_error_before_unsupported_error(tmp_path):
+def test_bound_method_reports_trait_arg_bound_error_before_unsupported_error(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     trait Container[T: Show] { fn get(*self) T; }
@@ -1587,10 +1586,10 @@ def test_bound_method_reports_trait_arg_bound_error_before_unsupported_error(tmp
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.UnsatisfiedBoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_same_trait_at_different_typ_args_is_not_a_cycle(tmp_path):
+def test_same_trait_at_different_typ_args_is_not_a_cycle(compiler):
     # Container is reached twice with different arguments; a trait-only
     # cycle key would wrongly reject this before the unsupported guard.
     src = """
@@ -1605,20 +1604,20 @@ def test_same_trait_at_different_typ_args_is_not_a_cycle(tmp_path):
     with pytest.raises(
         NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
     ):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_bound_with_generic_args_combined_with_plain_bound_parses(tmp_path):
+def test_bound_with_generic_args_combined_with_plain_bound_parses(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     trait Container[T] { fn get(*self) T; }
     fn unused[T: Container[i32] + Show](x: T) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
-def test_legal_nested_bound_chain_is_not_treated_as_recursive(tmp_path):
+def test_legal_nested_bound_chain_is_not_treated_as_recursive(compiler):
     # Three distinct declaration-site bounds terminate without recurrence.
     src = """
     trait C[T] { fn c(*self) T; }
@@ -1633,7 +1632,7 @@ def test_legal_nested_bound_chain_is_not_treated_as_recursive(tmp_path):
     with pytest.raises(
         NotImplementedError, match="checking bounds with generic arguments isn't supported yet"
     ):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_self_as_param_typ_in_trait_method(tmp_path):
@@ -1674,14 +1673,14 @@ def test_impl_may_write_self_instead_of_concrete_typ(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_impl_with_wrong_typ_for_self_param_still_rejected(tmp_path):
+def test_impl_with_wrong_typ_for_self_param_still_rejected(compiler):
     src = """
     trait Comparable { fn cmp(*self, other: *Self) i32; }
     impl Comparable for i32 { fn cmp(*self, other: *bool) i32 { 0 } }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.TraitMethodSignatureMismatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_self_resolves_to_typ_param_through_trait_bound(tmp_path):
@@ -1698,44 +1697,44 @@ def test_self_resolves_to_typ_param_through_trait_bound(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_self_reserved_as_struct_name(tmp_path):
+def test_self_reserved_as_struct_name(compiler):
     src = """
     struct Self { mut x: i32 }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ReservedNameError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_self_reserved_as_trait_name(tmp_path):
+def test_self_reserved_as_trait_name(compiler):
     src = """
     trait Self { fn f(*self) i32; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ReservedNameError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_self_reserved_as_fn_generic_param_name(tmp_path):
+def test_self_reserved_as_fn_generic_param_name(compiler):
     src = """
     fn f[Self](x: Self) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ReservedNameError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_self_reserved_as_impl_generic_param_name(tmp_path):
+def test_self_reserved_as_impl_generic_param_name(compiler):
     src = """
     struct Foo[T] { mut val: T }
     impl[Self] Foo[Self] { fn get(*self) Self { self.*.val } }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ReservedNameError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_self_does_not_resolve_in_trait_generic_param_bound(tmp_path):
+def test_self_does_not_resolve_in_trait_generic_param_bound(compiler):
     # Documented limitation: bounds resolve in an env derived from the
     # instantiation site, not from the trait, so Self isn't in scope.
     src = """
@@ -1748,15 +1747,15 @@ def test_self_does_not_resolve_in_trait_generic_param_bound(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Self"' in str(exc_info.value)
 
 
-def test_self_does_not_resolve_in_free_fn(tmp_path):
+def test_self_does_not_resolve_in_free_fn(compiler):
     src = """
     fn f(x: Self) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ItemNotFoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Self"' in str(exc_info.value)

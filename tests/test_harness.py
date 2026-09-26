@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import pathlib
+from typing import cast
 
 import pytest
 
@@ -154,6 +155,7 @@ def test_build_propagates_user_error(compiler: harness.CompilerHarness):
 
 def test_success_does_not_print(compiler: harness.CompilerHarness, capsys):
     compiler.build("pub fn main() i32 { 0 }")
+    compiler.compile("pub fn main() i32 { 0 }")
 
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -185,3 +187,74 @@ def test_write_mod_returns_materialized_path(compiler: harness.CompilerHarness):
 
     assert path == compiler.workspace / "helper.leech"
     assert path.read_text(encoding="utf-8") == mod.src
+
+
+def test_compile_returns_structured_main_artifact(compiler: harness.CompilerHarness):
+    compiled = compiler.compile("pub fn main() i32 { 0 }")
+
+    main = compiled.mods["main"]
+    assert main.mod.name == "main"
+    assert main.src_path == compiler.workspace / "main.leech"
+    assert main.llvm_path == compiler.workspace / "main.ll"
+    assert main.llvm_path.read_text(encoding="utf-8") == main.llvm_ir
+    assert 'define i32 @"main"' in main.llvm_ir
+    assert "llvm_ir" not in repr(main)
+    assert repr(compiled) == "CompiledProgram(mods=('main',))"
+
+
+def test_compile_returns_artifacts_in_declaration_order(compiler: harness.CompilerHarness):
+    program = harness.TestProgram.from_main(
+        "import a; pub fn main() i32 { a::answer() }",
+        harness.ModSrc("a", "pub fn answer() i32 { 42 }"),
+    )
+
+    compiled = compiler.compile(program)
+
+    assert tuple(compiled.mods) == ("main", "a")
+    assert compiled.mods["a"].llvm_path == compiler.workspace / "a.ll"
+
+
+def test_compile_supports_transitive_relative_import(compiler: harness.CompilerHarness):
+    program = harness.TestProgram.from_main(
+        "import pkg::a; pub fn main() i32 { a::answer() }",
+        harness.ModSrc(
+            "pkg::a",
+            "import sub::helper; pub fn answer() i32 { helper::answer() }",
+        ),
+        harness.ModSrc(
+            "sub::helper",
+            "pub fn answer() i32 { 42 }",
+            path="pkg/sub/helper.leech",
+        ),
+    )
+
+    compiled = compiler.compile(program)
+
+    assert tuple(compiled.mods) == ("main", "pkg::a", "sub::helper")
+    assert 'define i32 @"sub::helper::answer"' in compiled.mods["sub::helper"].llvm_ir
+
+
+def test_compile_keeps_same_stem_mods_distinct(compiler: harness.CompilerHarness):
+    program = harness.TestProgram.from_main(
+        "pub fn main() i32 { 0 }",
+        harness.ModSrc("a_pkg::helper", "pub fn a() i32 { 1 }"),
+        harness.ModSrc("b_pkg::helper", "pub fn b() i32 { 2 }"),
+    )
+
+    compiled = compiler.compile(program)
+
+    assert compiled.mods["a_pkg::helper"].llvm_path == compiler.workspace / "a_pkg/helper.ll"
+    assert compiled.mods["b_pkg::helper"].llvm_path == compiler.workspace / "b_pkg/helper.ll"
+
+
+def test_compile_propagates_user_error(compiler: harness.CompilerHarness):
+    with pytest.raises(errors.InvalidRetTypError):
+        compiler.compile("pub fn main() i32 { true }")
+
+
+def test_compiled_mod_mapping_is_read_only(compiler: harness.CompilerHarness):
+    compiled = compiler.compile("pub fn main() i32 { 0 }")
+    mutable_view = cast(dict[str, harness.CompiledMod], compiled.mods)
+
+    with pytest.raises(TypeError):
+        mutable_view["other"] = compiled.mods["main"]

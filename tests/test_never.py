@@ -224,7 +224,7 @@ def test_array_first_element_diverges(tmp_path):
     util.check_prog_output(tmp_path, src, "", 5)
 
 
-def test_not_diverges_does_not_propagate_past_bool(tmp_path):
+def test_not_diverges_does_not_propagate_past_bool(compiler):
     # not's operand coerces to bool via _coerce (like if/while's condition
     # and and/or's operands), rather than propagating never as the whole
     # not-expression's own type. Its result is only ever used as bool -
@@ -239,7 +239,7 @@ def test_not_diverges_does_not_propagate_past_bool(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleLetTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 # --- `never` as a written return-type annotation - the source-level
@@ -279,7 +279,7 @@ def test_never_as_bare_statement_terminates_block(tmp_path):
     util.check_prog_output(tmp_path, src, "", 9)
 
 
-def test_fn_defn_returning_never_via_self_call(tmp_path):
+def test_fn_defn_returning_never_via_self_call(compiler):
     src = """
     fn diverge() never {
         return diverge();
@@ -288,10 +288,10 @@ def test_fn_defn_returning_never_via_self_call(tmp_path):
         return 0;
     }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
-def test_never_fn_falling_off_end_is_missing_ret(tmp_path):
+def test_never_fn_falling_off_end_is_missing_ret(compiler):
     src = """
     fn f() never {
     }
@@ -300,10 +300,10 @@ def test_never_fn_falling_off_end_is_missing_ret(tmp_path):
     }
     """
     with pytest.raises(errors.MissingRetError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_never_fn_returning_a_value_is_invalid_ret_typ(tmp_path):
+def test_never_fn_returning_a_value_is_invalid_ret_typ(compiler):
     src = """
     fn f() never {
         return 5;
@@ -313,7 +313,7 @@ def test_never_fn_returning_a_value_is_invalid_ret_typ(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidRetTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 @pytest.mark.parametrize(
@@ -326,6 +326,6 @@ def test_never_fn_returning_a_value_is_invalid_ret_typ(tmp_path):
         "pub fn main() i32 { let x: never = 0; return 0; }",
     ],
 )
-def test_never_not_nameable_outside_ret_typ(tmp_path, src):
+def test_never_not_nameable_outside_ret_typ(compiler, src):
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

@@ -60,7 +60,7 @@ def test_int_lit_at_typ_width_boundary_is_allowed(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_int_lit_overflow(tmp_path):
+def test_int_lit_overflow(compiler):
     src = """
     pub fn main() i32 {
         let x = 256u8;
@@ -68,7 +68,7 @@ def test_int_lit_overflow(tmp_path):
     }
     """
     with pytest.raises(errors.IntLitOverflowError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "256" in msg
@@ -79,7 +79,7 @@ def test_int_lit_overflow(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "256u8")
 
 
-def test_comptime_int_lit_overflow(tmp_path):
+def test_comptime_int_lit_overflow(compiler):
     src = """
     let x = 256u8;
     pub fn main() i32 {
@@ -87,7 +87,7 @@ def test_comptime_int_lit_overflow(tmp_path):
     }
     """
     with pytest.raises(errors.IntLitOverflowError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "256" in msg
@@ -108,7 +108,7 @@ def test_int_lit_at_signed_typ_max_is_allowed(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_int_lit_overflow_signed(tmp_path):
+def test_int_lit_overflow_signed(compiler):
     # 128 doesn't fit in i8 even though it fits in 8 bits, since i8's
     # range is -128..127, not 0..255 - a signed literal one past its
     # type's max positive value must still be rejected.
@@ -119,7 +119,7 @@ def test_int_lit_overflow_signed(tmp_path):
     }
     """
     with pytest.raises(errors.IntLitOverflowError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "128" in msg
@@ -130,7 +130,7 @@ def test_int_lit_overflow_signed(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "128i8")
 
 
-def test_comptime_int_lit_overflow_signed(tmp_path):
+def test_comptime_int_lit_overflow_signed(compiler):
     src = """
     let x = 128i8;
     pub fn main() i32 {
@@ -138,7 +138,7 @@ def test_comptime_int_lit_overflow_signed(tmp_path):
     }
     """
     with pytest.raises(errors.IntLitOverflowError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "128" in msg
@@ -220,7 +220,7 @@ def test_int_lit_inference_reaches_operands(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
-def test_int_lit_inference_does_not_reach_across_a_typed_operand(tmp_path):
+def test_int_lit_inference_does_not_reach_across_a_typed_operand(compiler):
     # An operand whose type *is* decided still has to match its peer
     # exactly: nothing coerces i32 to u8, so this stays an error.
     src = """
@@ -230,10 +230,10 @@ def test_int_lit_inference_does_not_reach_across_a_typed_operand(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleLetTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_explicit_int_lit_suffix_beats_inference(tmp_path):
+def test_explicit_int_lit_suffix_beats_inference(compiler):
     # A written suffix fixes the type, so this is an i32 -> u8 narrowing.
     src = """
     pub fn main() i32 {
@@ -242,10 +242,10 @@ def test_explicit_int_lit_suffix_beats_inference(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleLetTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_int_lit_too_big_for_inferred_typ(tmp_path):
+def test_int_lit_too_big_for_inferred_typ(compiler):
     src = """
     pub fn main() i32 {
         let x: u8 = 300;
@@ -253,7 +253,7 @@ def test_int_lit_too_big_for_inferred_typ(tmp_path):
     }
     """
     with pytest.raises(errors.IntLitOverflowError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "300" in msg
@@ -504,12 +504,12 @@ def test_typs_overlap_enum_backing_typs_symmetrically(compiler):
     )
 
 
-def test_int_typ_name_with_unparseable_width_is_not_a_typ(tmp_path):
+def test_int_typ_name_with_unparseable_width_is_not_a_typ(compiler):
     # The width exceeds CPython's int-from-string digit limit; resolving it
     # must diagnose an unknown type rather than crash.
     name = "i" + "9" * 5000
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, f"pub fn main() i32 {{ let x: {name} = 5; return 0; }}")
+        compiler.compile(f"pub fn main() i32 {{ let x: {name} = 5; return 0; }}")
 
 
 def test_comptime_value_typ_interns_equal_values():

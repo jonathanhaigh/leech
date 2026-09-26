@@ -211,9 +211,10 @@ class CompiledMod:
     llvm_ir: str
 
 
-@dataclasses.dataclass(frozen=True)
 class CompiledProgram:
-    mods: Mapping[str, CompiledMod]
+    mods: Final[Mapping[str, CompiledMod]]
+
+    def __init__(self, mods: Mapping[str, CompiledMod]) -> None: ...
 ```
 
 The read-only mapping is keyed by qualified module name and retains source order; the

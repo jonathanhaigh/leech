@@ -53,7 +53,7 @@ def test_if_in_while(tmp_path):
     util.check_prog_output(tmp_path, src, "", 128)
 
 
-def test_while_body_not_void(tmp_path):
+def test_while_body_not_void(compiler):
     src = """
     pub fn main() i32 {
         while (true) {
@@ -63,10 +63,10 @@ def test_while_body_not_void(tmp_path):
     }
     """
     with pytest.raises(errors.WhileTypNotVoidError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_void_call_as_while_cond(tmp_path):
+def test_void_call_as_while_cond(compiler):
     src = """
     fn f() { }
     pub fn main() i32 {
@@ -76,4 +76,4 @@ def test_void_call_as_while_cond(tmp_path):
     }
     """
     with pytest.raises(errors.WhileCondNotBoolError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

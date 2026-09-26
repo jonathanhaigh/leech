@@ -6,7 +6,6 @@ import lark
 import pytest
 
 from leech import errors, parse, reserved
-from tests import util
 
 _DECLARATIONS = {
     "struct_name": "struct if { mut x: i32 }\npub fn main() i32 { return 0; }",
@@ -41,9 +40,9 @@ _DECLARATIONS = {
 
 
 @pytest.mark.parametrize("decl", list(_DECLARATIONS))
-def test_keyword_rejected_as_declared_name(tmp_path, decl):
+def test_keyword_rejected_as_declared_name(compiler, decl):
     with pytest.raises(errors.ReservedNameError):
-        util.compile_str(tmp_path, _DECLARATIONS[decl])
+        compiler.compile(_DECLARATIONS[decl])
 
 
 _BUILTIN_TYP_NAMES = {
@@ -58,9 +57,9 @@ _BUILTIN_TYP_NAMES = {
 
 
 @pytest.mark.parametrize("decl", list(_BUILTIN_TYP_NAMES))
-def test_compiler_bound_typ_name_rejected_as_declared_name(tmp_path, decl):
+def test_compiler_bound_typ_name_rejected_as_declared_name(compiler, decl):
     with pytest.raises(errors.ReservedNameError):
-        util.compile_str(tmp_path, _BUILTIN_TYP_NAMES[decl])
+        compiler.compile(_BUILTIN_TYP_NAMES[decl])
 
 
 def test_keyword_set_matches_grammar():
@@ -96,9 +95,9 @@ _LOOP_LABELS = {
 
 
 @pytest.mark.parametrize("label", list(_LOOP_LABELS))
-def test_reserved_name_rejected_as_loop_label(tmp_path, label):
+def test_reserved_name_rejected_as_loop_label(compiler, label):
     with pytest.raises(errors.ReservedNameError):
-        util.compile_str(tmp_path, _LOOP_LABELS[label])
+        compiler.compile(_LOOP_LABELS[label])
 
 
 #: Longer than CPython's int-from-string digit limit, so parsing the width
@@ -112,9 +111,9 @@ def test_int_typ_name_is_reserved_however_long_its_width():
     assert reserved.is_reserved(_UNPARSEABLE_WIDTH_TYP_NAME)
 
 
-def test_int_typ_name_with_unparseable_width_rejected_as_declaration(tmp_path):
+def test_int_typ_name_with_unparseable_width_rejected_as_declaration(compiler):
     src = (
         f"struct {_UNPARSEABLE_WIDTH_TYP_NAME} {{ mut x: i32 }}\npub fn main() i32 {{ return 0; }}"
     )
     with pytest.raises(errors.ReservedNameError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

@@ -59,7 +59,7 @@ def test_array_index_widens_to_usize(tmp_path):
     util.check_prog_output(tmp_path, src, "", 30)
 
 
-def test_array_index_signed_is_rejected(tmp_path):
+def test_array_index_signed_is_rejected(compiler):
     # i32 -> usize is signed-to-unsigned, which never coerces.
     src = """
     pub fn main() i32 {
@@ -69,7 +69,7 @@ def test_array_index_signed_is_rejected(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidIndexTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_comptime_array_index_int_lit_infers_usize(tmp_path):
@@ -83,7 +83,7 @@ def test_comptime_array_index_int_lit_infers_usize(tmp_path):
     util.check_prog_output(tmp_path, src, "", 3)
 
 
-def test_comptime_array_invalid_index(tmp_path):
+def test_comptime_array_invalid_index(compiler):
     src = """
     let arr = array[i32, 2]{1, 2};
     let x = arr.[true];
@@ -93,10 +93,10 @@ def test_comptime_array_invalid_index(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidIndexTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_index_into_non_array(tmp_path):
+def test_comptime_index_into_non_array(compiler):
     src = """
     let not_an_arr = 1;
     let x = not_an_arr.[0usize];
@@ -106,7 +106,7 @@ def test_comptime_index_into_non_array(tmp_path):
     }
     """
     with pytest.raises(errors.IndexIntoInvalidTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_local_array(tmp_path):
@@ -121,7 +121,7 @@ def test_local_array(tmp_path):
     util.check_prog_output(tmp_path, src, "", 5)
 
 
-def test_local_array_incompatible_typs(tmp_path):
+def test_local_array_incompatible_typs(compiler):
     src = """
 
     pub fn main() i32 {
@@ -131,10 +131,10 @@ def test_local_array_incompatible_typs(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleTypInArrayExprError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_local_array_invalid_index(tmp_path):
+def test_local_array_invalid_index(compiler):
     src = """
 
     pub fn main() i32 {
@@ -145,10 +145,10 @@ def test_local_array_invalid_index(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidIndexTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_local_index_into_non_array(tmp_path):
+def test_local_index_into_non_array(compiler):
     src = """
 
     pub fn main() i32 {
@@ -158,7 +158,7 @@ def test_local_index_into_non_array(tmp_path):
     }
     """
     with pytest.raises(errors.IndexIntoInvalidTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_array_ret_typ_and_param_typ(tmp_path):
@@ -199,7 +199,7 @@ def test_comptime_empty_array_as_call_arg(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_empty_array_wrong_expected_length(tmp_path):
+def test_empty_array_wrong_expected_length(compiler):
     src = """
     fn f(a: array[i32, 3]) i32 {
         return 0;
@@ -209,7 +209,7 @@ def test_empty_array_wrong_expected_length(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_empty_array_return(tmp_path):
@@ -264,7 +264,7 @@ def test_nested_empty_array_as_call_arg(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
-def test_array_lit_wrong_number_of_elements(tmp_path):
+def test_array_lit_wrong_number_of_elements(compiler):
     src = """
     pub fn main() i32 {
         let arr = array[i32, 3]{1, 2};
@@ -272,10 +272,10 @@ def test_array_lit_wrong_number_of_elements(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfArrayLitElementsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_array_lit_named_field_rejected(tmp_path):
+def test_array_lit_named_field_rejected(compiler):
     src = """
     pub fn main() i32 {
         let arr = array[i32, 1]{x: 1};
@@ -283,10 +283,10 @@ def test_array_lit_named_field_rejected(tmp_path):
     }
     """
     with pytest.raises(errors.NamedFieldInArrayLitError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_array_lit_length_not_concrete(tmp_path):
+def test_array_lit_length_not_concrete(compiler):
     # The literal's length is stated explicitly (3 elements), but the
     # declared array type's length is still an abstract value parameter
     # at this point - there's nothing to check the element count against.
@@ -294,7 +294,7 @@ def test_array_lit_length_not_concrete(tmp_path):
     fn f[value N: usize]() array[i32, N] { return array[i32, N]{1, 2, 3}; }
     """
     with pytest.raises(errors.ArrayLitLengthNotConcreteError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_generic_fn_body_uses_array_typ_with_value_param(tmp_path):

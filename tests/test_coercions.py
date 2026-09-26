@@ -85,7 +85,7 @@ def test_mut_ptr_coerces_to_const_ptr_array_element(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_const_ptr_does_not_coerce_to_mut_ptr_arg(tmp_path):
+def test_const_ptr_does_not_coerce_to_mut_ptr_arg(compiler):
     # The reverse is unsound: it would hand out write access that the
     # place never granted.
     src = """
@@ -99,10 +99,10 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_arg(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_const_ptr_does_not_coerce_to_mut_ptr_return(tmp_path):
+def test_const_ptr_does_not_coerce_to_mut_ptr_return(compiler):
     src = """
     fn f(p: *i32) *mut i32 {
         return p;
@@ -112,10 +112,10 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_return(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidRetTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_const_ptr_does_not_coerce_to_mut_ptr_assignment(tmp_path):
+def test_const_ptr_does_not_coerce_to_mut_ptr_assignment(compiler):
     src = """
     pub fn main() i32 {
         let x = 42;
@@ -126,10 +126,10 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_assignment(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleAssignmentTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_ptr_coercion_does_not_change_pointee(tmp_path):
+def test_ptr_coercion_does_not_change_pointee(compiler):
     # Only the mutability may differ - the pointee type still has to
     # match exactly.
     src = """
@@ -141,7 +141,7 @@ def test_ptr_coercion_does_not_change_pointee(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleStructFieldTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_comptime_mut_ptr_coerces_to_const_ptr(tmp_path):
@@ -204,7 +204,7 @@ def test_widening_int_coercion_allowed(src_typ, dst_typ, tmp_path):
         ("u32", "i32"),
     ),
 )
-def test_narrowing_int_coercion_rejected(src_typ, dst_typ, tmp_path):
+def test_narrowing_int_coercion_rejected(compiler, src_typ, dst_typ):
     src = f"""
     fn f(x: {dst_typ}) {dst_typ} {{
         return x;
@@ -216,7 +216,7 @@ def test_narrowing_int_coercion_rejected(src_typ, dst_typ, tmp_path):
     }}
     """
     with pytest.raises(errors.InvalidArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_widening_sign_extends_signed_source(tmp_path):
@@ -346,7 +346,7 @@ def test_let_widening_int_initializer_stores_into_declared_type(tmp_path):
     util.check_prog_output(tmp_path, src, "", 5)
 
 
-def test_narrowing_int_coercion_let_rejected(tmp_path):
+def test_narrowing_int_coercion_let_rejected(compiler):
     src = """
     pub fn main() i32 {
         let x: i8 = 1i16;
@@ -354,7 +354,7 @@ def test_narrowing_int_coercion_let_rejected(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleLetTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_mut_ptr_coerces_to_const_ptr_let_initializer(tmp_path):
@@ -412,7 +412,7 @@ def test_comptime_widening_int_coercion(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_no_coercion_in_arithmetic(tmp_path):
+def test_no_coercion_in_arithmetic(compiler):
     # Operands have no single target type, so they never coerce - even
     # when one would legally widen to the other.
     src = """
@@ -424,10 +424,10 @@ def test_no_coercion_in_arithmetic(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleBinOpArgTypsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_no_coercion_in_comparison(tmp_path):
+def test_no_coercion_in_comparison(compiler):
     src = """
     pub fn main() i32 {
         let a = 1i8;
@@ -437,7 +437,7 @@ def test_no_coercion_in_comparison(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleBinOpArgTypsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_no_coercion_in_let_initializer(tmp_path):
@@ -455,7 +455,7 @@ def test_no_coercion_in_let_initializer(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_bool_does_not_coerce_to_int(tmp_path):
+def test_bool_does_not_coerce_to_int(compiler):
     src = """
     fn f(x: i32) i32 { return x; }
     pub fn main() i32 {
@@ -464,4 +464,4 @@ def test_bool_does_not_coerce_to_int(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

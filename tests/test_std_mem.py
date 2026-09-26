@@ -69,7 +69,7 @@ def test_dealloc_of_null_pointer_is_a_no_op(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 7, std_modules=("mem",))
 
 
-def test_alloc_different_typs_use_distinct_size_of_instantiations(tmp_path):
+def test_alloc_different_typs_use_distinct_size_of_instantiations(compiler):
     # A regression guard for generic type-argument substitution
     # (FnInstance's _mapping) ever being broken across two sibling
     # monomorphizations of the same generic function (here, alloc[T]'s own
@@ -84,7 +84,6 @@ def test_alloc_different_typs_use_distinct_size_of_instantiations(tmp_path):
         return 0;
     }
     """
-    (llir_path,) = util.compile_modules(tmp_path, main=main_src)
-    ir_text = llir_path.read_text()
+    ir_text = compiler.compile(main_src).mods["main"].llvm_ir
     assert 'call i64 @"__size_of[i32]"' in ir_text
     assert 'call i64 @"__size_of[bool]"' in ir_text

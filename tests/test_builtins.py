@@ -14,11 +14,11 @@ def _get_intrinsic(mod, name: str) -> ir_module.IntrinsicFnSymbol:
     return asserts.checked_cast(var, ir_module.IntrinsicFnSymbol)
 
 
-def test_bare_generic_builtin_reference_requires_typ_args(tmp_path):
+def test_bare_generic_builtin_reference_requires_typ_args(compiler):
     src = "pub fn main() i32 { let size = __size_of; return 0; }"
 
     with pytest.raises(errors.MissingComptimeArgsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 # Widths whose byte size is unambiguous and target-independent: these are
@@ -99,14 +99,14 @@ def test_size_of_struct_is_at_least_sum_of_field_sizes(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_size_of_wrong_number_of_typ_args(tmp_path):
+def test_size_of_wrong_number_of_typ_args(compiler):
     src = """
     pub fn main() i32 {
         return __size_of[i32, bool]();
     }
     """
     with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"__size_of"' in str(exc_info.value)
 
 
@@ -233,14 +233,13 @@ def test_size_of_enum_typ_at_comptime_matches_runtime(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_compiled_module_carries_nonempty_datalayout(tmp_path):
+def test_compiled_module_carries_nonempty_datalayout(compiler):
     src = """
     pub fn main() i32 {
         return 0;
     }
     """
-    ll_path = util.compile_str(tmp_path, src)
-    ir_text = ll_path.read_text()
+    ir_text = compiler.compile(src).mods["main"].llvm_ir
     assert 'target datalayout = ""' not in ir_text
     assert 'target datalayout = "' in ir_text
 
@@ -258,7 +257,7 @@ def test_ptr_cast_mut_round_trips_pointer_value(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_ptr_cast_mut_at_comptime_raises_even_for_same_typ(tmp_path):
+def test_ptr_cast_mut_at_comptime_raises_even_for_same_typ(compiler):
     # The Comptime* value model is value-oriented, not byte-oriented (a
     # ComptimeAlloc holds a typed ComptimeValue, not a byte buffer) and
     # never records a pointer's mutability separately from its pointee -
@@ -273,10 +272,10 @@ def test_ptr_cast_mut_at_comptime_raises_even_for_same_typ(tmp_path):
     }
     """
     with pytest.raises(errors.PtrCastNotComptimeEvaluableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_ptr_cast_mut_across_different_pointee_typs_at_comptime_raises(tmp_path):
+def test_ptr_cast_mut_across_different_pointee_typs_at_comptime_raises(compiler):
     src = """
     let mut x = 5;
     let p = &x;
@@ -286,10 +285,10 @@ def test_ptr_cast_mut_across_different_pointee_typs_at_comptime_raises(tmp_path)
     }
     """
     with pytest.raises(errors.PtrCastNotComptimeEvaluableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_ptr_cast_mut_wrong_number_of_typ_args(tmp_path):
+def test_ptr_cast_mut_wrong_number_of_typ_args(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 42;
@@ -298,7 +297,7 @@ def test_ptr_cast_mut_wrong_number_of_typ_args(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"__ptr_cast_mut"' in str(exc_info.value)
 
 
@@ -341,7 +340,7 @@ def test_size_of_intrinsic_instance_caches_by_typ_args(compiler):
     assert size_of.instantiate((typs.I32,)) is not size_of.instantiate((typs.BOOL,))
 
 
-def test_size_of_intrinsic_compiled_once_across_multiple_calls(tmp_path):
+def test_size_of_intrinsic_compiled_once_across_multiple_calls(compiler):
     src = """
     pub fn main() i32 {
         let a = __size_of[i32]();
@@ -349,8 +348,7 @@ def test_size_of_intrinsic_compiled_once_across_multiple_calls(tmp_path):
         return 0;
     }
     """
-    ll_path = util.compile_str(tmp_path, src)
-    ir_text = ll_path.read_text()
+    ir_text = compiler.compile(src).mods["main"].llvm_ir
     assert ir_text.count('define linkonce_odr i64 @"__size_of[i32]"') == 1
 
 

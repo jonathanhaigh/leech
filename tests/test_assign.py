@@ -30,7 +30,7 @@ def test_assign_to_mod_var(tmp_path):
     util.check_prog_output(tmp_path, src, "", 2)
 
 
-def test_comptime_assign_to_mod_var(tmp_path):
+def test_comptime_assign_to_mod_var(compiler):
     src = """
     let mut a = 1;
     fn f() i32 {
@@ -43,10 +43,10 @@ def test_comptime_assign_to_mod_var(tmp_path):
     }
     """
     with pytest.raises(errors.SetNonLocalVarAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_to_const_local_var(tmp_path):
+def test_assign_to_const_local_var(compiler):
     src = """
     pub fn main() i32 {
         let a = 1;
@@ -55,10 +55,10 @@ def test_assign_to_const_local_var(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_to_const_mod_var(tmp_path):
+def test_assign_to_const_mod_var(compiler):
     src = """
     let a = 1;
     pub fn main() i32 {
@@ -67,7 +67,7 @@ def test_assign_to_const_mod_var(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_assign_to_local_arr_element(tmp_path):
@@ -92,7 +92,7 @@ def test_assign_to_local_nested_arr_element(tmp_path):
     util.check_prog_output(tmp_path, src, "", 10)
 
 
-def test_assign_to_const_local_arr_element(tmp_path):
+def test_assign_to_const_local_arr_element(compiler):
     src = """
     pub fn main() i32 {
         let a = array[i32, 4]{1, 2, 3, 4};
@@ -101,10 +101,10 @@ def test_assign_to_const_local_arr_element(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_to_const_local_nested_arr_element(tmp_path):
+def test_assign_to_const_local_nested_arr_element(compiler):
     src = """
     pub fn main() i32 {
         let a = array[array[i32, 2], 2]{array[i32, 2]{1, 2}, array[i32, 2]{3, 4}};
@@ -113,7 +113,7 @@ def test_assign_to_const_local_nested_arr_element(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_assign_to_local_struct_field(tmp_path):
@@ -145,7 +145,7 @@ def test_assign_to_local_nested_struct_field(tmp_path):
     util.check_prog_output(tmp_path, src, "", 101)
 
 
-def test_assign_to_const_local_struct_field(tmp_path):
+def test_assign_to_const_local_struct_field(compiler):
     src = """
     struct T {mut a: i32}
 
@@ -156,10 +156,10 @@ def test_assign_to_const_local_struct_field(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_to_local_struct_const_field(tmp_path):
+def test_assign_to_local_struct_const_field(compiler):
     src = """
     struct T {a: i32}
 
@@ -170,10 +170,10 @@ def test_assign_to_local_struct_const_field(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_to_const_local_nested_struct_field(tmp_path):
+def test_assign_to_const_local_nested_struct_field(compiler):
     src = """
     struct T {mut a: i32}
     struct U {mut b: T}
@@ -184,10 +184,10 @@ def test_assign_to_const_local_nested_struct_field(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_to_local_nested_struct_const_field(tmp_path):
+def test_assign_to_local_nested_struct_const_field(compiler):
     src = """
     struct T {a: i32}
     struct U {mut b: T}
@@ -198,7 +198,7 @@ def test_assign_to_local_nested_struct_const_field(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_assign_through_ptr_deref(tmp_path):
@@ -213,7 +213,7 @@ def test_assign_through_ptr_deref(tmp_path):
     util.check_prog_output(tmp_path, src, "", 2)
 
 
-def test_assign_through_const_ptr_deref(tmp_path):
+def test_assign_through_const_ptr_deref(compiler):
     # &x on a const local produces a pointer whose pointee is const too,
     # so assigning through it is rejected the same way any other const
     # place is.
@@ -226,7 +226,7 @@ def test_assign_through_const_ptr_deref(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_assign_through_explicit_mut_ptr_param(tmp_path):
@@ -247,7 +247,7 @@ def test_assign_through_explicit_mut_ptr_param(tmp_path):
     util.check_prog_output(tmp_path, src, "", 2)
 
 
-def test_assign_wrong_typ_to_local(tmp_path):
+def test_assign_wrong_typ_to_local(compiler):
     # Assignment used not to type-check at all, so a mismatch tripped an
     # internal assertion in StoreInstr instead of being diagnosed. i32
     # into a u8 place narrows, so it doesn't coerce either.
@@ -259,10 +259,10 @@ def test_assign_wrong_typ_to_local(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleAssignmentTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_wrong_typ_through_ptr_deref(tmp_path):
+def test_assign_wrong_typ_through_ptr_deref(compiler):
     src = """
     pub fn main() i32 {
         let mut x = 1u8;
@@ -272,10 +272,10 @@ def test_assign_wrong_typ_through_ptr_deref(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleAssignmentTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_wrong_typ_to_struct_field(tmp_path):
+def test_assign_wrong_typ_to_struct_field(compiler):
     src = """
     struct T { mut a: i32 }
     pub fn main() i32 {
@@ -285,10 +285,10 @@ def test_assign_wrong_typ_to_struct_field(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleAssignmentTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_to_const_reported_before_typ_mismatch(tmp_path):
+def test_assign_to_const_reported_before_typ_mismatch(compiler):
     # Both wrong at once: the place being const is reported first, since
     # it's a problem with the assignment itself rather than the value.
     src = """
@@ -299,10 +299,10 @@ def test_assign_to_const_reported_before_typ_mismatch(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_through_explicit_const_ptr_param(tmp_path):
+def test_assign_through_explicit_const_ptr_param(compiler):
     # `*T` (no `mut`) is still const by default when written explicitly.
     src = """
     fn set(p: *i32) {
@@ -315,10 +315,10 @@ def test_assign_through_explicit_const_ptr_param(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assign_to_temporary(tmp_path):
+def test_assign_to_temporary(compiler):
     src = """
     fn f() array[i32, 4] {
         return array[i32, 4]{1, 2, 3, 4};
@@ -330,7 +330,7 @@ def test_assign_to_temporary(tmp_path):
     }
     """
     with pytest.raises(errors.AssignToConstError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_assign_evaluates_place_before_value(tmp_path):

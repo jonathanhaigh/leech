@@ -5,7 +5,7 @@
 import pytest
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, opt_util, typs
-from tests import util
+from tests import harness, util
 
 
 def test_assoc_fn_call(tmp_path):
@@ -136,7 +136,7 @@ def test_two_structs_with_same_assoc_fn_name(tmp_path):
     util.check_prog_output(tmp_path, src, "", 3)
 
 
-def test_assoc_fn_lookup_does_not_leak_module_scope(tmp_path):
+def test_assoc_fn_lookup_does_not_leak_module_scope(compiler):
     src = """
     struct Foo {}
     pub fn helper() i32 { 1 }
@@ -145,10 +145,10 @@ def test_assoc_fn_lookup_does_not_leak_module_scope(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assoc_fn_lookup_does_not_leak_builtin_scope(tmp_path):
+def test_assoc_fn_lookup_does_not_leak_builtin_scope(compiler):
     src = """
     struct Foo {}
     impl Foo {
@@ -159,7 +159,7 @@ def test_assoc_fn_lookup_does_not_leak_builtin_scope(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_impl_before_struct_defn(tmp_path):
@@ -175,7 +175,7 @@ def test_impl_before_struct_defn(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_duplicate_assoc_fn_name(tmp_path):
+def test_duplicate_assoc_fn_name(compiler):
     src = """
     struct Foo { a: i32 }
     impl Foo {
@@ -185,11 +185,11 @@ def test_duplicate_assoc_fn_name(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert "associated function" in str(exc_info.value)
 
 
-def test_duplicate_assoc_fn_name_across_impl_blocks(tmp_path):
+def test_duplicate_assoc_fn_name_across_impl_blocks(compiler):
     src = """
     struct Foo { a: i32 }
     impl Foo {
@@ -201,7 +201,7 @@ def test_duplicate_assoc_fn_name_across_impl_blocks(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_field_and_receiverless_assoc_fn_same_name_coexist(tmp_path):
@@ -215,7 +215,7 @@ def test_field_and_receiverless_assoc_fn_same_name_coexist(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_overlapping_generic_inherent_impls_with_same_fn_name_rejected_at_declaration(tmp_path):
+def test_overlapping_generic_inherent_impls_with_same_fn_name_rejected_at_declaration(compiler):
     src = """
     struct Box[T] {}
     impl[T] Box[T] {
@@ -227,10 +227,10 @@ def test_overlapping_generic_inherent_impls_with_same_fn_name_rejected_at_declar
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_partially_overlapping_generic_inherent_impls_with_same_fn_name_rejected(tmp_path):
+def test_partially_overlapping_generic_inherent_impls_with_same_fn_name_rejected(compiler):
     src = """
     struct Pair[A, B] {}
     impl[T] Pair[T, i32] {
@@ -242,10 +242,10 @@ def test_partially_overlapping_generic_inherent_impls_with_same_fn_name_rejected
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_unconstrained_impl_typ_param_rejected(tmp_path):
+def test_unconstrained_impl_typ_param_rejected(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T, U] Box[T] {
@@ -254,10 +254,10 @@ def test_unconstrained_impl_typ_param_rejected(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.UnconstrainedImplComptimeParamError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_impl_typ_param_nested_in_self_typ_is_constrained(tmp_path):
+def test_impl_typ_param_nested_in_self_typ_is_constrained(compiler):
     src = """
     struct Box[T] { val: T }
     struct Pair[A, B] { first: A, second: B }
@@ -266,7 +266,7 @@ def test_impl_typ_param_nested_in_self_typ_is_constrained(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
 def test_generic_impl_instance_args_follow_declaration_order(compiler):
@@ -292,7 +292,7 @@ def test_generic_impl_instance_args_follow_declaration_order(compiler):
     assert inst is fn.instantiate((typs.I32, typs.BOOL))
 
 
-def test_impl_typ_param_used_only_by_method_is_unconstrained(tmp_path):
+def test_impl_typ_param_used_only_by_method_is_unconstrained(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T, U] Box[T] {
@@ -301,10 +301,10 @@ def test_impl_typ_param_used_only_by_method_is_unconstrained(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.UnconstrainedImplComptimeParamError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_uncalled_private_impl_method_body_is_still_typechecked(tmp_path):
+def test_uncalled_private_impl_method_body_is_still_typechecked(compiler):
     src = """
     struct Foo {}
     impl Foo {
@@ -313,10 +313,10 @@ def test_uncalled_private_impl_method_body_is_still_typechecked(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InvalidRetTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_disjoint_inherent_impls_reuse_assoc_fn_name(tmp_path):
+def test_disjoint_inherent_impls_reuse_assoc_fn_name(compiler):
     src = """
     struct Pair[A, B] {}
     impl[T] Pair[i32, T] {
@@ -327,10 +327,10 @@ def test_disjoint_inherent_impls_reuse_assoc_fn_name(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
-def test_repeated_generic_inherent_impl_is_disjoint_from_unequal_concrete_args(tmp_path):
+def test_repeated_generic_inherent_impl_is_disjoint_from_unequal_concrete_args(compiler):
     src = """
     struct Pair[A, B] {}
     impl[T] Pair[T, T] {
@@ -341,10 +341,10 @@ def test_repeated_generic_inherent_impl_is_disjoint_from_unequal_concrete_args(t
     }
     pub fn main() i32 { return 0; }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
-def test_recursive_generic_inherent_impl_equation_does_not_overlap(tmp_path):
+def test_recursive_generic_inherent_impl_equation_does_not_overlap(compiler):
     src = """
     struct Box[T] {}
     struct Pair[A, B] {}
@@ -356,7 +356,7 @@ def test_recursive_generic_inherent_impl_equation_does_not_overlap(tmp_path):
     }
     pub fn main() i32 { return 0; }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
 def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(compiler):
@@ -405,7 +405,7 @@ def test_same_name_field_and_method_in_different_structs(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_field_not_reachable_by_assoc_fn_path(tmp_path):
+def test_field_not_reachable_by_assoc_fn_path(compiler):
     # Fields are only reachable through a value, never a ``Foo::a`` path.
     src = """
     struct Foo { a: i32 }
@@ -417,10 +417,10 @@ def test_field_not_reachable_by_assoc_fn_path(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_assoc_fn_not_usable_as_typ(tmp_path):
+def test_assoc_fn_not_usable_as_typ(compiler):
     # A struct's members are all values, so an associated function must not
     # resolve in a type position even though the member lookup is keyed on
     # name alone.
@@ -433,7 +433,7 @@ def test_assoc_fn_not_usable_as_typ(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
@@ -454,7 +454,7 @@ def test_sibling_assoc_fn_call_by_bare_name(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_separate_inherent_impl_blocks_do_not_share_bare_assoc_fn_names(tmp_path):
+def test_separate_inherent_impl_blocks_do_not_share_bare_assoc_fn_names(compiler):
     src = """
     struct S {}
     impl S {
@@ -466,7 +466,7 @@ def test_separate_inherent_impl_blocks_do_not_share_bare_assoc_fn_names(tmp_path
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 @pytest.mark.parametrize(
@@ -477,7 +477,7 @@ def test_separate_inherent_impl_blocks_do_not_share_bare_assoc_fn_names(tmp_path
         "array[Foo, 3]",
     ),
 )
-def test_impl_on_non_struct_typ(impl_typ, tmp_path):
+def test_impl_on_non_struct_typ(compiler, impl_typ):
     src = f"""
     struct Foo {{}}
     impl {impl_typ} {{
@@ -486,10 +486,10 @@ def test_impl_on_non_struct_typ(impl_typ, tmp_path):
     pub fn main() i32 {{ return 0; }}
     """
     with pytest.raises(errors.ImplForNonNominalTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_impl_on_qualified_path_typ(tmp_path):
+def test_impl_on_qualified_path_typ(compiler):
     main_src = """
     import a;
     impl a::Foo {
@@ -501,7 +501,7 @@ def test_impl_on_qualified_path_typ(tmp_path):
     pub struct Foo {}
     """
     with pytest.raises(errors.ImplForNonLocalTypError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_cross_module_assoc_fn_call(tmp_path):
@@ -536,7 +536,7 @@ def test_private_assoc_fn_accessible_within_defining_module(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_cross_module_private_assoc_fn_call(tmp_path):
+def test_cross_module_private_assoc_fn_call(compiler):
     # Foo itself is public, but new() isn't, so it can't be called as
     # a::Foo::new() from outside a's module even though it names a real
     # associated function.
@@ -554,10 +554,10 @@ def test_cross_module_private_assoc_fn_call(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_comptime_cross_module_private_assoc_fn_call(tmp_path):
+def test_comptime_cross_module_private_assoc_fn_call(compiler):
     main_src = """
     import a;
     let f = a::Foo::new();
@@ -572,7 +572,7 @@ def test_comptime_cross_module_private_assoc_fn_call(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_impl_value_param_used_in_method_body(tmp_path):

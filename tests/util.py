@@ -40,12 +40,6 @@ def compile_file(path: pathlib.Path, qualified_name: Optional[str] = None) -> pa
     return llir_path
 
 
-def compile_str(tmp_path: pathlib.Path, src: str) -> pathlib.Path:
-    path = tmp_path / "main.leech"
-    write_whole_file(path, src)
-    return compile_file(path)
-
-
 def compile_modules(
     tmp_path: pathlib.Path,
     qualified_names: Optional[dict[str, str]] = None,

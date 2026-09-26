@@ -5,7 +5,7 @@
 import pytest
 
 from leech import errors
-from tests import util
+from tests import harness, util
 
 
 def test_struct_access(tmp_path):
@@ -69,7 +69,7 @@ def test_private_field_accessible_within_defining_module(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_duplicate_field_in_struct_defn(tmp_path):
+def test_duplicate_field_in_struct_defn(compiler):
     src = """
     struct T {
       a: i32,
@@ -81,10 +81,10 @@ def test_duplicate_field_in_struct_defn(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateFieldInStructDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_unknown_typ_for_struct_field(tmp_path):
+def test_unknown_typ_for_struct_field(compiler):
     src = """
     struct T {
       a: *xyz,
@@ -94,7 +94,7 @@ def test_unknown_typ_for_struct_field(tmp_path):
     }
     """
     with pytest.raises(errors.ItemNotFoundError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_struct_in_struct(tmp_path):
@@ -141,12 +141,9 @@ def test_struct_with_array_of_ptr_to_same_struct(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_duplicate_field_in_unused_private_struct_in_imported_module(tmp_path):
-    # Field names are registered when the struct is built, not lazily when
-    # something first looks at its fields, so a duplicate is caught even in
-    # a struct nothing ever uses. Compiles only main.leech on purpose:
-    # compile_modules would compile a.leech as a root module too, and a root
-    # module's structs are all reached by codegen regardless.
+def test_duplicate_field_in_unused_private_struct_in_imported_module(compiler):
+    # Field names are registered when the struct is built, so a duplicate is
+    # caught even in a struct nothing ever uses.
     a_src = """
     struct T {
       x: i32,
@@ -160,12 +157,12 @@ def test_duplicate_field_in_unused_private_struct_in_imported_module(tmp_path):
         return a::g();
     }
     """
-    util.write_whole_file(tmp_path / "a.leech", a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
     with pytest.raises(errors.DuplicateFieldInStructDefnError):
-        util.compile_str(tmp_path, main_src)
+        compiler.compile(program)
 
 
-def test_struct_contains_itself_by_value(tmp_path):
+def test_struct_contains_itself_by_value(compiler):
     src = """
     struct T {
       t: T,
@@ -175,10 +172,10 @@ def test_struct_contains_itself_by_value(tmp_path):
     }
     """
     with pytest.raises(errors.InfiniteSizeTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_duplicate_field_reported_before_infinite_size(tmp_path):
+def test_duplicate_field_reported_before_infinite_size(compiler):
     # A duplicate field name wins over the infinite-size error: it's a
     # local, syntactic problem that needs no type resolution to diagnose,
     # whereas the infinite-size diagnostic names fields - which is exactly
@@ -194,10 +191,10 @@ def test_duplicate_field_reported_before_infinite_size(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateFieldInStructDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_struct_contains_itself_via_zero_length_array(tmp_path):
+def test_struct_contains_itself_via_zero_length_array(compiler):
     # Unlike Rust, a zero-length array doesn't break the cycle here:
     # LLVM rejects a recursive identified struct type outright, whatever
     # the array's length.
@@ -210,10 +207,10 @@ def test_struct_contains_itself_via_zero_length_array(tmp_path):
     }
     """
     with pytest.raises(errors.InfiniteSizeTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_struct_contains_itself_via_nonempty_array(tmp_path):
+def test_struct_contains_itself_via_nonempty_array(compiler):
     src = """
     struct T {
       t: array[T, 3],
@@ -223,10 +220,10 @@ def test_struct_contains_itself_via_nonempty_array(tmp_path):
     }
     """
     with pytest.raises(errors.InfiniteSizeTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_mutual_struct_recursion_by_value(tmp_path):
+def test_mutual_struct_recursion_by_value(compiler):
     src = """
     struct A {
       b: B,
@@ -239,7 +236,7 @@ def test_mutual_struct_recursion_by_value(tmp_path):
     }
     """
     with pytest.raises(errors.InfiniteSizeTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_mutual_struct_recursion_by_ptr(tmp_path):
@@ -278,7 +275,7 @@ def test_struct_diamond_containment_is_not_a_cycle(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_typ_of_brace_expr_invalid(tmp_path):
+def test_typ_of_brace_expr_invalid(compiler):
     src = """
     pub fn main() i32 {
         let a = i32 {a: 0};
@@ -286,10 +283,10 @@ def test_typ_of_brace_expr_invalid(tmp_path):
     }
     """
     with pytest.raises(errors.TypeOfBraceExprInvalidError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_missing_field_in_struct_expr(tmp_path):
+def test_missing_field_in_struct_expr(compiler):
     src = """
     struct T {
         a: i32,
@@ -301,10 +298,10 @@ def test_missing_field_in_struct_expr(tmp_path):
     }
     """
     with pytest.raises(errors.MissingFieldInStructExprError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_invalid_field_in_struct_expr(tmp_path):
+def test_invalid_field_in_struct_expr(compiler):
     src = """
     struct T {
         a: i32,
@@ -316,10 +313,10 @@ def test_invalid_field_in_struct_expr(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidStructFieldError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_duplicate_field_in_struct_expr(tmp_path):
+def test_duplicate_field_in_struct_expr(compiler):
     src = """
     struct T {
         a: i32,
@@ -331,10 +328,10 @@ def test_duplicate_field_in_struct_expr(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateFieldInStructExprError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_incompatible_struct_field_typ(tmp_path):
+def test_incompatible_struct_field_typ(compiler):
     src = """
     struct T {
         a: i32,
@@ -345,10 +342,10 @@ def test_incompatible_struct_field_typ(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleStructFieldTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_void_call_as_struct_field_initializer(tmp_path):
+def test_void_call_as_struct_field_initializer(compiler):
     src = """
     fn f() { }
     struct T {
@@ -360,10 +357,10 @@ def test_void_call_as_struct_field_initializer(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleStructFieldTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_field_access_into_non_struct(tmp_path):
+def test_field_access_into_non_struct(compiler):
     src = """
     pub fn main() i32 {
         let x = array[i32, 4]{0, 1, 2, 3};
@@ -372,7 +369,7 @@ def test_field_access_into_non_struct(tmp_path):
     }
     """
     with pytest.raises(errors.FieldAccessIntoInvalidTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_comptime_struct_access(tmp_path):
@@ -395,7 +392,7 @@ def test_comptime_struct_access(tmp_path):
     util.check_prog_output(tmp_path, src, "", 10)
 
 
-def test_typ_of_comptime_struct_expr_not_struct(tmp_path):
+def test_typ_of_comptime_struct_expr_not_struct(compiler):
     src = """
     let a = i32 {a: 0};
     pub fn main() i32 {
@@ -403,10 +400,10 @@ def test_typ_of_comptime_struct_expr_not_struct(tmp_path):
     }
     """
     with pytest.raises(errors.TypeOfBraceExprInvalidError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_missing_field_in_comptime_struct_expr(tmp_path):
+def test_missing_field_in_comptime_struct_expr(compiler):
     src = """
     struct T {
         a: i32,
@@ -418,10 +415,10 @@ def test_missing_field_in_comptime_struct_expr(tmp_path):
     }
     """
     with pytest.raises(errors.MissingFieldInStructExprError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_invalid_field_in_comptime_struct_expr(tmp_path):
+def test_invalid_field_in_comptime_struct_expr(compiler):
     src = """
     struct T {
         a: i32,
@@ -433,10 +430,10 @@ def test_invalid_field_in_comptime_struct_expr(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidStructFieldError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_duplicate_field_in_comptime_struct_expr(tmp_path):
+def test_duplicate_field_in_comptime_struct_expr(compiler):
     src = """
     struct T {
         a: i32,
@@ -448,10 +445,10 @@ def test_duplicate_field_in_comptime_struct_expr(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateFieldInStructExprError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_incompatible_comptime_struct_field_typ(tmp_path):
+def test_incompatible_comptime_struct_field_typ(compiler):
     src = """
     struct T {
         a: i32,
@@ -462,10 +459,10 @@ def test_incompatible_comptime_struct_field_typ(tmp_path):
     }
     """
     with pytest.raises(errors.IncompatibleStructFieldTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_field_access_into_non_struct(tmp_path):
+def test_comptime_field_access_into_non_struct(compiler):
     src = """
     let x = array[i32, 4]{0, 1, 2, 3};
     let y = x.a;
@@ -475,7 +472,7 @@ def test_comptime_field_access_into_non_struct(tmp_path):
     }
     """
     with pytest.raises(errors.FieldAccessIntoInvalidTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_self_as_ret_typ_in_inherent_impl(tmp_path):

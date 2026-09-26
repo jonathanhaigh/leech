@@ -139,7 +139,7 @@ def test_if_ret_expr_val(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_if_with_tail_expr(tmp_path):
+def test_if_with_tail_expr(compiler):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -149,10 +149,10 @@ def test_if_with_tail_expr(tmp_path):
     }
     """
     with pytest.raises(errors.IfTypNotVoidError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_if_els_with_mismatching_typs(tmp_path):
+def test_if_els_with_mismatching_typs(compiler):
     src = """
     pub fn main() i32 {
         if (true) {
@@ -165,10 +165,10 @@ def test_if_els_with_mismatching_typs(tmp_path):
     }
     """
     with pytest.raises(errors.IfElsTypMismatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_void_call_as_if_cond(tmp_path):
+def test_void_call_as_if_cond(compiler):
     src = """
     fn f() { }
     pub fn main() i32 {
@@ -179,7 +179,7 @@ def test_void_call_as_if_cond(tmp_path):
     }
     """
     with pytest.raises(errors.IfCondNotBoolError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_if_els_two_void_branches(tmp_path):

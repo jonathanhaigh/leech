@@ -4,6 +4,8 @@
 
 import dataclasses
 import pathlib
+import types
+from collections.abc import Mapping
 from typing import ClassVar, Final, Optional
 
 from leech import ast, driver, ir_module, parse, reserved
@@ -49,6 +51,9 @@ class ModSrc:
         self.src = src
         self.path = mod_path
 
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(name={self.name!r}, path={self.path!r})"
+
 
 @dataclasses.dataclass(frozen=True)
 class TestProgram:
@@ -72,6 +77,28 @@ class TestProgram:
     @classmethod
     def from_main(cls, src: str, *mods: ModSrc) -> TestProgram:
         return cls(ModSrc("main", src), mods)
+
+
+@dataclasses.dataclass(frozen=True)
+class CompiledMod:
+    """One compiled source module and its materialized LLVM artifact."""
+
+    mod: ModSrc
+    src_path: pathlib.Path
+    llvm_path: pathlib.Path
+    llvm_ir: str = dataclasses.field(repr=False)
+
+
+class CompiledProgram:
+    """Compiled modules keyed by qualified name in declaration order."""
+
+    mods: Final[Mapping[str, CompiledMod]]
+
+    def __init__(self, mods: Mapping[str, CompiledMod]) -> None:
+        self.mods = types.MappingProxyType(dict(mods))
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(mods={tuple(self.mods)!r})"
 
 
 class CompilerHarness:
@@ -121,6 +148,18 @@ class CompilerHarness:
         program = self._coerce_program(program)
         paths = self._materialize(program)
         return driver.compile_to_ir(leech_src.SrcFile(paths[program.root.name]), program.root.name)
+
+    def compile(self, program: str | TestProgram) -> CompiledProgram:
+        program = self._coerce_program(program)
+        src_paths = self._materialize(program)
+        compiled = dict[str, CompiledMod]()
+        for mod in (program.root, *program.mods):
+            src_path = src_paths[mod.name]
+            llvm_ir = driver.compile_to_llvm_ir(leech_src.SrcFile(src_path), mod.name)
+            llvm_path = src_path.with_suffix(".ll")
+            self._write_src(llvm_path, llvm_ir)
+            compiled[mod.name] = CompiledMod(mod, src_path, llvm_path, llvm_ir)
+        return CompiledProgram(compiled)
 
     def write_mod(self, mod: ModSrc) -> pathlib.Path:
         path = self._mod_path(mod)

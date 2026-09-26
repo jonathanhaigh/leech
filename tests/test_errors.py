@@ -5,16 +5,16 @@
 import pytest
 
 from leech import errors
-from tests import util
+from tests import harness, util
 
 
-def test_unexpected_character_message(tmp_path):
+def test_unexpected_character_message(compiler):
     src = """pub fn main() i32 {
     return 0 @ 1;
 }
 """
     with pytest.raises(errors.UnexpectedCharacterError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"@"' in msg
@@ -28,13 +28,13 @@ def test_unexpected_character_message(tmp_path):
     assert exc_info.value.extra == []
 
 
-def test_unexpected_token_message(tmp_path):
+def test_unexpected_token_message(compiler):
     src = """pub fn main() i32 {
     return 0
 }
 """
     with pytest.raises(errors.UnexpectedTokenError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"}"' in msg
@@ -49,12 +49,12 @@ def test_unexpected_token_message(tmp_path):
     assert note.span is None
 
 
-def test_unexpected_end_of_input_message(tmp_path):
+def test_unexpected_end_of_input_message(compiler):
     src = """pub fn main() i32 {
     return 0;
 """
     with pytest.raises(errors.UnexpectedTokenError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "Unexpected end of input" in msg
@@ -76,7 +76,7 @@ def test_unexpected_end_of_input_message(tmp_path):
     assert "IDENT" in note.message
 
 
-def test_private_struct_field_access_message(tmp_path):
+def test_private_struct_field_access_message(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -94,7 +94,7 @@ def test_private_struct_field_access_message(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateStructFieldAccessError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
     msg = str(exc_info.value)
     assert '"val"' in msg
@@ -112,7 +112,7 @@ def test_private_struct_field_access_message(tmp_path):
     assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "val")
 
 
-def test_private_fn_access_message(tmp_path):
+def test_private_fn_access_message(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -125,7 +125,7 @@ def test_private_fn_access_message(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
     msg = str(exc_info.value)
     assert '"f"' in msg
@@ -142,7 +142,7 @@ def test_private_fn_access_message(tmp_path):
     assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "fn f()")
 
 
-def test_private_var_access_message(tmp_path):
+def test_private_var_access_message(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -153,7 +153,7 @@ def test_private_var_access_message(tmp_path):
     let x = 11;
     """
     with pytest.raises(errors.PrivateItemAccessError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
     msg = str(exc_info.value)
     assert '"x"' in msg
@@ -170,7 +170,7 @@ def test_private_var_access_message(tmp_path):
     assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "let x")
 
 
-def test_private_typ_access_message(tmp_path):
+def test_private_typ_access_message(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -184,7 +184,7 @@ def test_private_typ_access_message(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
     msg = str(exc_info.value)
     assert '"T"' in msg
@@ -201,7 +201,7 @@ def test_private_typ_access_message(tmp_path):
     assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "struct T")
 
 
-def test_void_local_var_initializer_message(tmp_path):
+def test_void_local_var_initializer_message(compiler):
     # The message used to say "Module variable initializer cannot be
     # void" even for this local (in-function) let statement, which was
     # actively misleading - it isn't a module variable at all.
@@ -213,14 +213,14 @@ def test_void_local_var_initializer_message(tmp_path):
     }
     """
     with pytest.raises(errors.VoidVarInitializerError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "void" in msg
     assert "Module" not in msg
 
 
-def test_void_mod_var_initializer_message(tmp_path):
+def test_void_mod_var_initializer_message(compiler):
     src = """
     fn f() { }
     let x = f();
@@ -229,13 +229,13 @@ def test_void_mod_var_initializer_message(tmp_path):
     }
     """
     with pytest.raises(errors.VoidVarInitializerError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "void" in msg
 
 
-def test_mod_used_as_typ_message(tmp_path):
+def test_mod_used_as_typ_message(compiler):
     main_src = """
     import a;
     fn g(p: a) i32 {
@@ -251,7 +251,7 @@ def test_mod_used_as_typ_message(tmp_path):
     }
     """
     with pytest.raises(errors.ModUsedAsTypError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
     msg = str(exc_info.value)
     assert '"a"' in msg
@@ -270,7 +270,7 @@ def test_mod_used_as_typ_message(tmp_path):
     assert note.span is None
 
 
-def test_mod_and_typ_name_clash_message(tmp_path):
+def test_mod_and_typ_name_clash_message(compiler):
     # Modules share the container namespace with types, so the duplicate
     # diagnostic has to name both possibilities rather than just "type".
     main_src = """
@@ -286,18 +286,18 @@ def test_mod_and_typ_name_clash_message(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
     assert str(exc_info.value) == 'Duplicate definition of type or module "a"'
 
 
-def test_duplicate_generic_fn_message_has_both_declaration_spans(tmp_path):
+def test_duplicate_generic_fn_message_has_both_declaration_spans(compiler):
     src = """fn id[T](x: T) T { x }
 fn id[U](x: U) U { x }
 pub fn main() i32 { 0 }
 """
     with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     span = exc_info.value.message.span
     assert span is not None
@@ -307,7 +307,7 @@ pub fn main() i32 { 0 }
     assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "fn id[T]")
 
 
-def test_overlapping_inherent_impl_assoc_fn_name_clash_message(tmp_path):
+def test_overlapping_inherent_impl_assoc_fn_name_clash_message(compiler):
     src = """
     struct Counter {}
     impl Counter {
@@ -321,7 +321,7 @@ def test_overlapping_inherent_impl_assoc_fn_name_clash_message(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"get"' in msg
@@ -337,7 +337,7 @@ def test_overlapping_inherent_impl_assoc_fn_name_clash_message(tmp_path):
     assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "get(*self) i32 { 0 }")
 
 
-def test_infinite_size_struct_message(tmp_path):
+def test_infinite_size_struct_message(compiler):
     src = """
     struct A {
         b: B,
@@ -350,7 +350,7 @@ def test_infinite_size_struct_message(tmp_path):
     }
     """
     with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"A"' in msg
@@ -370,7 +370,7 @@ def test_infinite_size_struct_message(tmp_path):
     assert (second.span.start_line, second.span.start_col) == util.find_pos(src, "a: A")
 
 
-def test_wrong_number_of_payload_patterns_message(tmp_path):
+def test_wrong_number_of_payload_patterns_message(compiler):
     src = """
     enum Color { Red, Green }
     pub fn main() i32 {
@@ -382,7 +382,7 @@ def test_wrong_number_of_payload_patterns_message(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfPayloadPatternsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert exc_info.value.message.message == (
         'Wrong number of payload patterns for variant "Color::Red": got 1, expected 0'
@@ -392,7 +392,7 @@ def test_wrong_number_of_payload_patterns_message(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "Color::Red(let x)")
 
 
-def test_circular_var_initializer_message(tmp_path):
+def test_circular_var_initializer_message(compiler):
     src = """
     let b = a;
     let a = b;
@@ -401,7 +401,7 @@ def test_circular_var_initializer_message(tmp_path):
     }
     """
     with pytest.raises(errors.CircularVarInitializerError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"b"' in msg
@@ -421,7 +421,7 @@ def test_circular_var_initializer_message(tmp_path):
     assert (second.span.start_line, second.span.start_col) == util.find_pos(src, "let a")
 
 
-def test_recursive_trait_bound_message(tmp_path):
+def test_recursive_trait_bound_message(compiler):
     src = """
     trait W[T: X[T]] { fn w(*self) T; }
     trait X[T: Y[T]] { fn x(*self) T; }
@@ -434,7 +434,7 @@ def test_recursive_trait_bound_message(tmp_path):
     }
     """
     with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert exc_info.value.message.message == 'Trait bound "Y[T]" is part of a recursive bound cycle'
     span = exc_info.value.message.span
@@ -456,7 +456,7 @@ def test_recursive_trait_bound_message(tmp_path):
     assert actual_spans == expected_spans
 
 
-def test_recursive_impl_selection_message(tmp_path):
+def test_recursive_impl_selection_message(compiler):
     src = """
     trait A { fn a(*self) i32; }
     trait B { fn b(*self) i32; }
@@ -465,7 +465,7 @@ def test_recursive_impl_selection_message(tmp_path):
     pub fn main() i32 { let x: i32 = 1; return x.a(); }
     """
     with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert (
         exc_info.value.message.message
@@ -487,7 +487,7 @@ def test_recursive_impl_selection_message(tmp_path):
     assert actual_spans == expected_spans
 
 
-def test_if_cond_not_bool_message(tmp_path):
+def test_if_cond_not_bool_message(compiler):
     src = """pub fn main() i32 {
     return if (1 + 2) {
         1
@@ -497,7 +497,7 @@ def test_if_cond_not_bool_message(tmp_path):
 }
 """
     with pytest.raises(errors.IfCondNotBoolError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "bool" in msg
@@ -510,7 +510,7 @@ def test_if_cond_not_bool_message(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "1 + 2")
 
 
-def test_while_cond_not_bool_message(tmp_path):
+def test_while_cond_not_bool_message(compiler):
     src = """pub fn main() i32 {
     let x = 1;
     while (&x) {
@@ -519,7 +519,7 @@ def test_while_cond_not_bool_message(tmp_path):
 }
 """
     with pytest.raises(errors.WhileCondNotBoolError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "bool" in msg
@@ -531,7 +531,7 @@ def test_while_cond_not_bool_message(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "&x")
 
 
-def test_loop_label_not_found_message(tmp_path):
+def test_loop_label_not_found_message(compiler):
     src = """pub fn main() i32 {
     while (true) {
         break nope;
@@ -540,7 +540,7 @@ def test_loop_label_not_found_message(tmp_path):
 }
 """
     with pytest.raises(errors.LoopLabelNotFoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "nope" in msg
@@ -550,7 +550,7 @@ def test_loop_label_not_found_message(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "nope")
 
 
-def test_not_callable_message(tmp_path):
+def test_not_callable_message(compiler):
     src = """pub fn main() i32 {
     let x = 100;
     x();
@@ -558,7 +558,7 @@ def test_not_callable_message(tmp_path):
 }
 """
     with pytest.raises(errors.NotCallableError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert 'variable "x"' in msg
@@ -570,7 +570,7 @@ def test_not_callable_message(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "x();")
 
 
-def test_invalid_arg_typ_message(tmp_path):
+def test_invalid_arg_typ_message(compiler):
     src = """pub fn f(x: i32) i32 { x + x }
 pub fn main() i32 {
     f("abc");
@@ -578,7 +578,7 @@ pub fn main() i32 {
 }
 """
     with pytest.raises(errors.InvalidArgTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "Argument 1" in msg
@@ -591,14 +591,14 @@ pub fn main() i32 {
     assert (span.start_line, span.start_col) == util.find_pos(src, '"abc"')
 
 
-def test_invalid_bin_op_arg_typ_message(tmp_path):
+def test_invalid_bin_op_arg_typ_message(compiler):
     src = """pub fn main() i32 {
     let x = true + 1;
     return 0;
 }
 """
     with pytest.raises(errors.InvalidBinOpArgTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "operand" in msg
@@ -617,14 +617,14 @@ def test_invalid_bin_op_arg_typ_message(tmp_path):
     assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "+ 1")
 
 
-def test_if_els_typ_mismatch_message(tmp_path):
+def test_if_els_typ_mismatch_message(compiler):
     src = """pub fn main() i32 {
     if (true) { 1 } else { "abc" };
     return 0;
 }
 """
     with pytest.raises(errors.IfElsTypMismatchError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"if"' in msg
@@ -643,7 +643,7 @@ def test_if_els_typ_mismatch_message(tmp_path):
     assert (els_note.span.start_line, els_note.span.start_col) == util.find_pos(src, '{ "abc" }')
 
 
-def test_non_exhaustive_match_message(tmp_path):
+def test_non_exhaustive_match_message(compiler):
     src = """
     enum Color { Red, Green, Blue }
     pub fn main() i32 {
@@ -652,7 +652,7 @@ def test_non_exhaustive_match_message(tmp_path):
     }
     """
     with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"match"' in msg
@@ -669,7 +669,7 @@ def test_non_exhaustive_match_message(tmp_path):
     assert all(note.span is None for note in exc_info.value.extra)
 
 
-def test_match_arm_typ_mismatch_message(tmp_path):
+def test_match_arm_typ_mismatch_message(compiler):
     src = """
     pub fn main() i32 {
         return match (true) {
@@ -679,7 +679,7 @@ def test_match_arm_typ_mismatch_message(tmp_path):
     }
     """
     with pytest.raises(errors.MatchArmTypMismatchError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"match"' in msg
@@ -696,7 +696,7 @@ def test_match_arm_typ_mismatch_message(tmp_path):
     assert (second_note.span.start_line, second_note.span.start_col) == util.find_pos(src, '"no"')
 
 
-def test_missing_typ_args_message(tmp_path):
+def test_missing_typ_args_message(compiler):
     src = """fn id[T](x: T) T { return x; }
 pub fn main() i32 {
     let f = id;
@@ -704,7 +704,7 @@ pub fn main() i32 {
 }
 """
     with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"id"' in msg
@@ -715,7 +715,7 @@ pub fn main() i32 {
     assert (span.start_line, span.start_col) == util.find_pos(src, "id;")
 
 
-def test_cannot_infer_typ_arg_message(tmp_path):
+def test_cannot_infer_typ_arg_message(compiler):
     src = """fn id[T](x: T) T { return x; }
 pub fn main() i32 {
     id(5);
@@ -723,7 +723,7 @@ pub fn main() i32 {
 }
 """
     with pytest.raises(errors.CannotInferComptimeArgError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"T"' in msg
@@ -739,7 +739,7 @@ pub fn main() i32 {
     assert '"id[' in note.message
 
 
-def test_wrong_number_of_typ_args_message(tmp_path):
+def test_wrong_number_of_typ_args_message(compiler):
     src = """fn id[T](x: T) T { return x; }
 pub fn main() i32 {
     id[i32, bool](5);
@@ -747,7 +747,7 @@ pub fn main() i32 {
 }
 """
     with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"id"' in msg
@@ -759,7 +759,7 @@ pub fn main() i32 {
     assert (span.start_line, span.start_col) == util.find_pos(src, "id[i32, bool](5)")
 
 
-def test_typ_args_on_non_generic_item_message(tmp_path):
+def test_typ_args_on_non_generic_item_message(compiler):
     src = """fn f(x: i32) i32 { return x; }
 pub fn main() i32 {
     f[i32](5);
@@ -767,7 +767,7 @@ pub fn main() i32 {
 }
 """
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"f"' in msg
@@ -808,9 +808,9 @@ pub fn main() i32 {
         ),
     ],
 )
-def test_non_scope_item_cannot_qualify_path(tmp_path, src, qualifier, item_kind, item_name):
+def test_non_scope_item_cannot_qualify_path(compiler, src, qualifier, item_kind, item_name):
     with pytest.raises(errors.ItemCannotQualifyPathError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert str(exc_info.value) == f'{item_kind} "{item_name}" cannot qualify a path'
     span = exc_info.value.message.span
@@ -818,7 +818,7 @@ def test_non_scope_item_cannot_qualify_path(tmp_path, src, qualifier, item_kind,
     assert (span.start_line, span.start_col) == util.find_pos(src, qualifier)
 
 
-def test_unconstrained_impl_typ_param_message(tmp_path):
+def test_unconstrained_impl_typ_param_message(compiler):
     src = """struct Box[T] { val: T }
 impl[T, U] Box[T] {
     fn get(*self) T { return self.*.val; }
@@ -826,7 +826,7 @@ impl[T, U] Box[T] {
 pub fn main() i32 { return 0; }
 """
     with pytest.raises(errors.UnconstrainedImplComptimeParamError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert 'Impl parameter "U"' in msg
@@ -837,7 +837,7 @@ pub fn main() i32 { return 0; }
     assert (span.start_line, span.start_col) == util.find_pos(src, "U]")
 
 
-def test_non_exhaustive_match_over_a_union_message(tmp_path):
+def test_non_exhaustive_match_over_a_union_message(compiler):
     src = """
     union Option[T] { None, Some(T) }
     pub fn main() i32 {
@@ -846,7 +846,7 @@ def test_non_exhaustive_match_over_a_union_message(tmp_path):
     }
     """
     with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"match"' in msg
@@ -863,7 +863,7 @@ def test_non_exhaustive_match_over_a_union_message(tmp_path):
     assert all(note.span is None for note in exc_info.value.extra)
 
 
-def test_wrong_number_of_payload_patterns_over_a_union_message(tmp_path):
+def test_wrong_number_of_payload_patterns_over_a_union_message(compiler):
     src = """
     union Pair { Both(i32, i32) }
     pub fn main() i32 {
@@ -874,7 +874,7 @@ def test_wrong_number_of_payload_patterns_over_a_union_message(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfPayloadPatternsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert exc_info.value.message.message == (
         'Wrong number of payload patterns for variant "Pair::Both": got 1, expected 2'
@@ -884,7 +884,7 @@ def test_wrong_number_of_payload_patterns_over_a_union_message(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "Pair::Both(let x)")
 
 
-def test_infinite_size_union_message(tmp_path):
+def test_infinite_size_union_message(compiler):
     src = """
     union Tree {
         Leaf,
@@ -895,7 +895,7 @@ def test_infinite_size_union_message(tmp_path):
     }
     """
     with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert '"Tree"' in msg

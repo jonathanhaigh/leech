@@ -5,10 +5,9 @@
 import pytest
 
 from leech import asserts, errors, ir_env, ir_module
-from tests import util
 
 
-def test_not_callable(tmp_path):
+def test_not_callable(compiler):
     src = """
     pub fn main() i32 {
         let x = 100;
@@ -17,10 +16,10 @@ def test_not_callable(tmp_path):
     }
     """
     with pytest.raises(errors.NotCallableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_not_callable(tmp_path):
+def test_comptime_not_callable(compiler):
     src = """
     let x = 100;
     let y = x();
@@ -29,10 +28,10 @@ def test_comptime_not_callable(tmp_path):
     }
     """
     with pytest.raises(errors.NotCallableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_invalid_arg_typ(tmp_path):
+def test_invalid_arg_typ(compiler):
     src = """
     pub fn f(x: i32) i32 { x + x }
     pub fn main() i32 {
@@ -41,10 +40,10 @@ def test_invalid_arg_typ(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_invalid_arg_typ(tmp_path):
+def test_comptime_invalid_arg_typ(compiler):
     src = """
     pub fn f(x: i32) i32 { x + x }
     let x = f("abc");
@@ -53,10 +52,10 @@ def test_comptime_invalid_arg_typ(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_void_call_as_arg(tmp_path):
+def test_void_call_as_arg(compiler):
     src = """
     fn f() { }
     fn g(x: i32) i32 { return x; }
@@ -65,10 +64,10 @@ def test_void_call_as_arg(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_too_many_args(tmp_path):
+def test_too_many_args(compiler):
     src = """
     pub fn f(x: i32) i32 { x + x }
     pub fn main() i32 {
@@ -77,10 +76,10 @@ def test_too_many_args(tmp_path):
     }
     """
     with pytest.raises(errors.TooManyArgsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_too_many_args(tmp_path):
+def test_comptime_too_many_args(compiler):
     src = """
     pub fn f(x: i32) i32 { x + x }
     let x = f(1, 2);
@@ -89,10 +88,10 @@ def test_comptime_too_many_args(tmp_path):
     }
     """
     with pytest.raises(errors.TooManyArgsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_not_enough_args(tmp_path):
+def test_not_enough_args(compiler):
     src = """
     pub fn f(x: i32) i32 { x + x }
     pub fn main() i32 {
@@ -101,10 +100,10 @@ def test_not_enough_args(tmp_path):
     }
     """
     with pytest.raises(errors.NotEnoughArgsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_not_enough_args(tmp_path):
+def test_comptime_not_enough_args(compiler):
     src = """
     pub fn f(x: i32) i32 { x + x }
     let x = f();
@@ -113,10 +112,10 @@ def test_comptime_not_enough_args(tmp_path):
     }
     """
     with pytest.raises(errors.NotEnoughArgsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_call_extern(tmp_path):
+def test_comptime_call_extern(compiler):
     src = """
     extern fn puts(s: *u8) i32;
     let x = puts("abc");
@@ -125,7 +124,7 @@ def test_comptime_call_extern(tmp_path):
     }
     """
     with pytest.raises(errors.CallExternFnAtComptimeError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     span = exc_info.value.message.span
     assert span is not None
@@ -150,14 +149,13 @@ def test_extern_fn_has_cached_bodyless_instance(compiler):
     assert inst.qualified_name == "puts"
 
 
-def test_used_extern_emits_one_declaration_and_no_definition(tmp_path):
+def test_used_extern_emits_one_declaration_and_no_definition(compiler):
     src = """
     extern fn puts(s: *u8) i32;
     pub fn main() i32 { puts("hello"); return 0; }
     """
 
-    (main_ir,) = util.compile_modules(tmp_path, main=src)
-    lines = main_ir.read_text().splitlines()
+    lines = compiler.compile(src).mods["main"].llvm_ir.splitlines()
 
     assert sum(line.startswith('declare i32 @"puts"') for line in lines) == 1
     assert not any(line.startswith("define") and '@"puts"' in line for line in lines)

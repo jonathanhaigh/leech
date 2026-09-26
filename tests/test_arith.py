@@ -35,7 +35,7 @@ def test_comptime_int_arith(tmp_path):
         ("0u10", "0u11"),
     ),
 )
-def test_incompatible_bin_op_args(lhs, rhs, tmp_path):
+def test_incompatible_bin_op_args(compiler, lhs, rhs):
     src = f"""
     pub fn main() i32 {{
         let x = {lhs} + {rhs};
@@ -43,10 +43,10 @@ def test_incompatible_bin_op_args(lhs, rhs, tmp_path):
     }}
     """
     with pytest.raises(errors.IncompatibleBinOpArgTypsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_invalid_bin_op_arg(tmp_path):
+def test_invalid_bin_op_arg(compiler):
     src = """
     pub fn main() i32 {
         let x = true + false;
@@ -54,10 +54,10 @@ def test_invalid_bin_op_arg(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidBinOpArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_division_by_non_comptime_value_is_not_a_compile_error(tmp_path):
+def test_division_by_non_comptime_value_is_not_a_compile_error(compiler):
     # A divisor that's only known at runtime (a function parameter, not a
     # comptime-evaluated constant) is never checked against zero at compile
     # time - that's ordinary runtime UB, same as C/LLVM. Only compile-time
@@ -72,10 +72,10 @@ def test_division_by_non_comptime_value_is_not_a_compile_error(tmp_path):
         return 0;
     }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
-def test_signed_division_in_unreachable_code_is_not_a_compile_error(tmp_path):
+def test_signed_division_in_unreachable_code_is_not_a_compile_error(compiler):
     # A signed division built into an already-dead block (see
     # CfgBuilder._build_div_signed) must stay inert rather than build its
     # own overflow-check control flow into dead code.
@@ -89,10 +89,10 @@ def test_signed_division_in_unreachable_code_is_not_a_compile_error(tmp_path):
         return 0;
     }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
-def test_comptime_signed_division_by_zero(tmp_path):
+def test_comptime_signed_division_by_zero(compiler):
     # Compile-time evaluation shares the same runtime safety checks as
     # codegen (see CfgBuilder._panic_if): this hits the same `panic` call
     # a runtime division by zero would, reported as PanicAtComptimeError.
@@ -103,7 +103,7 @@ def test_comptime_signed_division_by_zero(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_comptime_unsigned_division(tmp_path):
@@ -119,7 +119,7 @@ def test_comptime_unsigned_division(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_comptime_unsigned_division_by_zero(tmp_path):
+def test_comptime_unsigned_division_by_zero(compiler):
     src = """
     let x = 5usize / 0usize;
     pub fn main() i32 {
@@ -127,10 +127,10 @@ def test_comptime_unsigned_division_by_zero(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_division_by_zero_in_called_fn(tmp_path):
+def test_comptime_division_by_zero_in_called_fn(compiler):
     src = """
     fn f() i32 {
         return 5 / 0;
@@ -141,7 +141,7 @@ def test_comptime_division_by_zero_in_called_fn(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_comptime_add_at_typ_max_is_allowed(tmp_path):
@@ -157,7 +157,7 @@ def test_comptime_add_at_typ_max_is_allowed(tmp_path):
     util.check_prog_output(tmp_path, src, "", 1)
 
 
-def test_comptime_add_overflow(tmp_path):
+def test_comptime_add_overflow(compiler):
     src = """
     let x = 255u8 + 1u8;
     pub fn main() i32 {
@@ -165,10 +165,10 @@ def test_comptime_add_overflow(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_unsigned_sub_underflow(tmp_path):
+def test_comptime_unsigned_sub_underflow(compiler):
     src = """
     let x = 0u8 - 1u8;
     pub fn main() i32 {
@@ -176,10 +176,10 @@ def test_comptime_unsigned_sub_underflow(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_mul_overflow(tmp_path):
+def test_comptime_mul_overflow(compiler):
     src = """
     let x = 200u8 * 2u8;
     pub fn main() i32 {
@@ -187,10 +187,10 @@ def test_comptime_mul_overflow(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_signed_sub_underflow(tmp_path):
+def test_comptime_signed_sub_underflow(compiler):
     # (0i8 - 127i8) is -127, which fits i8. Subtracting 127i8 again gives
     # -254, which doesn't (i8's range is -128..127) - a signed underflow
     # that a naive bit-length-based overflow check (checking magnitude
@@ -202,10 +202,10 @@ def test_comptime_signed_sub_underflow(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_signed_div_overflow(tmp_path):
+def test_comptime_signed_div_overflow(compiler):
     # -128i8 / -1i8 = 128, which doesn't fit in i8 (max 127): the classic
     # INT_MIN / -1 overflow case.
     src = """
@@ -217,7 +217,7 @@ def test_comptime_signed_div_overflow(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_comptime_signed_div_truncates_toward_zero(tmp_path):
@@ -256,7 +256,7 @@ def test_comptime_unary_minus(tmp_path):
     util.check_prog_output(tmp_path, src, "", 256 - 8)
 
 
-def test_comptime_neg_overflow(tmp_path):
+def test_comptime_neg_overflow(compiler):
     # i8's min value is -128, which has no positive counterpart representable
     # in i8 (max is 127) - negating it must be a compile error.
     src = """
@@ -267,7 +267,7 @@ def test_comptime_neg_overflow(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 @pytest.mark.parametrize(
@@ -321,7 +321,7 @@ def test_bare_negated_int_lit_in_peer_position(tmp_path):
     util.check_prog_output(tmp_path, src, "", 7)
 
 
-def test_negated_int_lit_overflow(tmp_path):
+def test_negated_int_lit_overflow(compiler):
     src = """
     pub fn main() i32 {
         let x: i8 = -200;
@@ -329,14 +329,14 @@ def test_negated_int_lit_overflow(tmp_path):
     }
     """
     with pytest.raises(errors.IntLitOverflowError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     msg = str(exc_info.value)
     assert "-200" in msg
     assert '"i8"' in msg
 
 
-def test_negated_int_lit_infers_unsigned_is_rejected(tmp_path):
+def test_negated_int_lit_infers_unsigned_is_rejected(compiler):
     src = """
     pub fn main() i32 {
         let x: u8 = -1;
@@ -344,10 +344,10 @@ def test_negated_int_lit_infers_unsigned_is_rejected(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidUnaryOpArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_invalid_unary_op_arg_unsigned(tmp_path):
+def test_invalid_unary_op_arg_unsigned(compiler):
     src = """
     pub fn main() i32 {
         let x = -0u32;
@@ -355,10 +355,10 @@ def test_invalid_unary_op_arg_unsigned(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidUnaryOpArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_invalid_unary_op_arg_non_int(tmp_path):
+def test_invalid_unary_op_arg_non_int(compiler):
     src = """
     pub fn main() i32 {
         let x = -true;
@@ -366,10 +366,10 @@ def test_invalid_unary_op_arg_non_int(tmp_path):
     }
     """
     with pytest.raises(errors.InvalidUnaryOpArgTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_comptime_int_operation_overflow_distinct_from_lit_overflow(tmp_path):
+def test_comptime_int_operation_overflow_distinct_from_lit_overflow(compiler):
     # Neither operand literal (100i8) overflows on its own - only the
     # result of adding them does. This must raise PanicAtComptimeError (the
     # runtime overflow check, evaluated at compile time), not
@@ -381,4 +381,4 @@ def test_comptime_int_operation_overflow_distinct_from_lit_overflow(tmp_path):
     }
     """
     with pytest.raises(errors.PanicAtComptimeError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

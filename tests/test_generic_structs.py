@@ -5,7 +5,7 @@
 import pytest
 
 from leech import asserts, ast, errors, ir_env, ir_module, mono, typs
-from tests import util
+from tests import harness, util
 
 
 def _get_struct_typ(mod, name: str) -> typs.StructTyp:
@@ -36,26 +36,26 @@ def test_generic_and_non_generic_struct_module_items_have_distinct_types(compile
     assert plain.template.name == "Plain"
 
 
-def test_duplicate_struct_typ_param_precedes_body_error(tmp_path):
+def test_duplicate_struct_typ_param_precedes_body_error(compiler):
     src = """
     struct Box[T, T] { val: T }
     pub fn main() i32 { let x: NoSuchTyp = 0; return 0; }
     """
 
     with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert '"T"' in str(exc_info.value)
 
 
-def test_reserved_struct_typ_param_precedes_body_error(tmp_path):
+def test_reserved_struct_typ_param_precedes_body_error(compiler):
     src = """
     struct Box[i32] { val: i32 }
     pub fn main() i32 { let x: NoSuchTyp = 0; return 0; }
     """
 
     with pytest.raises(errors.ReservedNameError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert '"i32"' in str(exc_info.value)
 
@@ -173,13 +173,13 @@ def test_nested_same_declaration_struct_field_is_finite(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_multi_param_nested_struct_does_not_count_as_growth(tmp_path):
+def test_multi_param_nested_struct_does_not_count_as_growth(compiler):
     src = """
     struct Pair[A, B] { a: A, b: B }
     struct Holder[U] { h: Pair[U, Pair[U, U]] }
     pub fn main() i32 { return 0; }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
 def test_generic_struct_array_element(tmp_path):
@@ -269,7 +269,7 @@ def test_generic_struct_instance_merges_across_modules(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src)
 
 
-def test_bare_reference_to_generic_struct_requires_typ_args(tmp_path):
+def test_bare_reference_to_generic_struct_requires_typ_args(compiler):
     src = """
     struct Box[T] { val: T }
     pub fn main() i32 {
@@ -278,14 +278,14 @@ def test_bare_reference_to_generic_struct_requires_typ_args(tmp_path):
     }
     """
     with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Box"' in str(exc_info.value)
     span = exc_info.value.message.span
     assert span is not None
     assert (span.start_line, span.start_col) == util.find_pos(src, "Box = ")
 
 
-def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(tmp_path):
+def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T] Box[T] {
@@ -298,7 +298,7 @@ def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(tmp_path):
     """
 
     with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert '"Box"' in str(exc_info.value)
     span = exc_info.value.message.span
@@ -339,7 +339,7 @@ def test_cross_module_generic_struct_assoc_fn_scope(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 7, a=a_src)
 
 
-def test_generic_struct_assoc_fn_scope_checks_arg_arity(tmp_path):
+def test_generic_struct_assoc_fn_scope_checks_arg_arity(compiler):
     src = """
     struct Box[T] { val: T }
     impl[T] Box[T] {
@@ -352,7 +352,7 @@ def test_generic_struct_assoc_fn_scope_checks_arg_arity(tmp_path):
     """
 
     with pytest.raises(errors.WrongNumberOfComptimeArgsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_generic_struct_assoc_fn_scope_forwards_value_param(tmp_path):
@@ -387,7 +387,7 @@ def test_generic_struct_assoc_fn_scope_forwards_typ_param(tmp_path):
     util.check_prog_output(tmp_path, src, "", 42)
 
 
-def test_comptime_args_on_non_generic_assoc_fn_scope(tmp_path):
+def test_comptime_args_on_non_generic_assoc_fn_scope(compiler):
     src = """
     struct Foo { val: i32 }
     impl Foo {
@@ -400,7 +400,7 @@ def test_comptime_args_on_non_generic_assoc_fn_scope(tmp_path):
     """
 
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert '"Foo"' in str(exc_info.value)
     span = exc_info.value.message.span
@@ -408,7 +408,7 @@ def test_comptime_args_on_non_generic_assoc_fn_scope(tmp_path):
     assert (span.start_line, span.start_col) == util.find_pos(src, "Foo[i32]::make")
 
 
-def test_wrong_number_of_typ_args_on_generic_struct(tmp_path):
+def test_wrong_number_of_typ_args_on_generic_struct(compiler):
     src = """
     struct Pair[A, B] { first: A, second: B }
     pub fn main() i32 {
@@ -417,11 +417,11 @@ def test_wrong_number_of_typ_args_on_generic_struct(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Pair"' in str(exc_info.value)
 
 
-def test_explicit_typ_args_on_non_generic_struct(tmp_path):
+def test_explicit_typ_args_on_non_generic_struct(compiler):
     src = """
     struct Foo { a: i32 }
     pub fn main() i32 {
@@ -430,11 +430,11 @@ def test_explicit_typ_args_on_non_generic_struct(tmp_path):
     }
     """
     with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"Foo"' in str(exc_info.value)
 
 
-def test_generic_struct_duplicate_field(tmp_path):
+def test_generic_struct_duplicate_field(compiler):
     src = """
     struct Pair[A, B] {
         a: A,
@@ -443,10 +443,10 @@ def test_generic_struct_duplicate_field(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.DuplicateFieldInStructDefnError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_struct_value_param_typ_resolves_sibling_typ_param(tmp_path):
+def test_struct_value_param_typ_resolves_sibling_typ_param(compiler):
     # The declared type is looked up with the siblings in scope, so `T`
     # is rejected for what it is rather than reported as unknown.
     src = """
@@ -454,20 +454,20 @@ def test_struct_value_param_typ_resolves_sibling_typ_param(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InvalidValueParamTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"T"' in str(exc_info.value)
 
 
-def test_value_param_used_as_struct_field_typ_is_rejected(tmp_path):
+def test_value_param_used_as_struct_field_typ_is_rejected(compiler):
     src = """
     struct S[value N: usize] { f: N }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ValueUsedAsTypError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_generic_struct_infinite_size_via_own_typ_param(tmp_path):
+def test_generic_struct_infinite_size_via_own_typ_param(compiler):
     # Regardless of what T ends up being, L[T] always directly contains
     # another L[T] by value - infinite size, whether or not anything in
     # the program ever instantiates L.
@@ -478,7 +478,7 @@ def test_generic_struct_infinite_size_via_own_typ_param(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert len(exc_info.value.extra) == 1
     assert exc_info.value.extra[0].message == 'Field "x" of struct "L" contains "L[T]" by value'
@@ -494,7 +494,7 @@ def test_generic_struct_ptr_to_self_is_finite(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_growing_generic_struct_declaration_cycle(tmp_path):
+def test_growing_generic_struct_declaration_cycle(compiler):
     # Every field adds an array layer, so exact type identity never repeats.
     # The declaration still recurs with a structurally growing argument.
     src = """
@@ -504,7 +504,7 @@ def test_growing_generic_struct_declaration_cycle(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert exc_info.value.message.message == 'Struct "L" has infinite size'
     assert len(exc_info.value.extra) == 1
@@ -513,27 +513,27 @@ def test_growing_generic_struct_declaration_cycle(tmp_path):
     )
 
 
-def test_growing_generic_struct_declaration_cycle_through_pointer_arg(tmp_path):
+def test_growing_generic_struct_declaration_cycle_through_pointer_arg(compiler):
     src = """
     struct L[T] { x: L[*T] }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert [note.message for note in exc_info.value.extra] == [
         'Field "x" of struct "L" contains "L[*T]" by value'
     ]
 
 
-def test_mutual_growing_generic_struct_declaration_cycle(tmp_path):
+def test_mutual_growing_generic_struct_declaration_cycle(compiler):
     src = """
     struct A[T] { x: B[T] }
     struct B[T] { y: A[array[T, 1]] }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert [note.message for note in exc_info.value.extra] == [
         'Field "x" of struct "A" contains "B[T]" by value',
@@ -541,14 +541,14 @@ def test_mutual_growing_generic_struct_declaration_cycle(tmp_path):
     ]
 
 
-def test_generic_struct_nested_cycle_keeps_nested_root_name(tmp_path):
+def test_generic_struct_nested_cycle_keeps_nested_root_name(compiler):
     src = """
     struct A[T] { x: B[T] }
     struct B[T] { y: B[T] }
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
     assert exc_info.value.message.message == 'Struct "B[T]" has infinite size'
     assert [note.message for note in exc_info.value.extra] == [
@@ -617,7 +617,7 @@ def test_generic_impl_block_method_called_through_distinct_instantiations(tmp_pa
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_generic_impl_block_method_instances_get_distinct_mangled_symbols(tmp_path):
+def test_generic_impl_block_method_instances_get_distinct_mangled_symbols(compiler):
     src = """
     struct Box[T] { mut val: T }
     impl[T] Box[T] {
@@ -631,8 +631,7 @@ def test_generic_impl_block_method_instances_get_distinct_mangled_symbols(tmp_pa
         return 0;
     }
     """
-    (llir_path,) = util.compile_modules(tmp_path, main=src)
-    ir_text = llir_path.read_text()
+    ir_text = compiler.compile(src).mods["main"].llvm_ir
     assert '@"main::Box[i32]::get"' in ir_text
     assert '@"main::Box[bool]::get"' in ir_text
 
@@ -700,7 +699,7 @@ def test_instances_differing_only_by_an_enum_arguments_module(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 0, a=a_src, b=b_src)
 
 
-def test_generic_inherent_impl_does_not_inherit_struct_typ_param_name(tmp_path):
+def test_generic_inherent_impl_does_not_inherit_struct_typ_param_name(compiler):
     src = """
     struct Box[A] { val: A }
     impl[T] Box[T] {
@@ -709,11 +708,11 @@ def test_generic_inherent_impl_does_not_inherit_struct_typ_param_name(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.ItemNotFoundError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"A"' in str(exc_info.value)
 
 
-def test_generic_inherent_impl_with_unsatisfied_bound_does_not_apply(tmp_path):
+def test_generic_inherent_impl_with_unsatisfied_bound_does_not_apply(compiler):
     # An inherent impl's own bounds gate it the same way a trait impl's
     # do: `Box[bool]` doesn't satisfy `T: Show`, so it has no `get`.
     src = """
@@ -729,7 +728,7 @@ def test_generic_inherent_impl_with_unsatisfied_bound_does_not_apply(tmp_path):
     }
     """
     with pytest.raises(errors.NotCallableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_bounded_generic_inherent_impl_method_calls_sibling(tmp_path):
@@ -773,7 +772,7 @@ def test_bounded_generic_inherent_impl_method_called_on_abstract_typ(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_generic_inherent_impl_bound_unsatisfied_by_callers_typ_param(tmp_path):
+def test_generic_inherent_impl_bound_unsatisfied_by_callers_typ_param(compiler):
     src = """
     trait Show { fn show(*self) i32; }
     impl Show for i32 { fn show(*self) i32 { self.* } }
@@ -786,7 +785,7 @@ def test_generic_inherent_impl_bound_unsatisfied_by_callers_typ_param(tmp_path):
     }
     """
     with pytest.raises(errors.NotCallableError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
 def test_declared_bound_discharges_a_structs_own_bound(tmp_path):
@@ -973,7 +972,7 @@ def test_generic_impl_block_sibling_method_calls_across_instantiations(tmp_path)
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(tmp_path):
+def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(compiler):
     src = """
     struct Box[T] { mut val: T }
     impl[T] Box[T] {
@@ -982,7 +981,7 @@ def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(tmp_path):
     pub fn main() i32 { return 0; }
     """
     with pytest.raises(errors.InvalidBinOpArgTypError) as exc_info:
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert '"T"' in str(exc_info.value)
 
 
@@ -1053,7 +1052,7 @@ def test_struct_fields_mapping_is_live(compiler):
     assert fields == {}
 
 
-def test_impl_on_generic_struct_target_qualified_path(tmp_path):
+def test_impl_on_generic_struct_target_qualified_path(compiler):
     main_src = """
     import a;
     impl a::Pair[i32] {
@@ -1065,7 +1064,7 @@ def test_impl_on_generic_struct_target_qualified_path(tmp_path):
     pub struct Pair[T] { val: T }
     """
     with pytest.raises(errors.ImplForNonLocalTypError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_struct_value_param_used_in_array_field(tmp_path):
@@ -1081,7 +1080,7 @@ def test_struct_value_param_used_in_array_field(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_struct_value_param_mangled_name(tmp_path):
+def test_struct_value_param_mangled_name(compiler):
     src = """
     struct Buf[T, value N: usize] { data: array[T, N] }
     pub fn main() i32 {
@@ -1089,5 +1088,5 @@ def test_struct_value_param_mangled_name(tmp_path):
         return buf.data.[0] - 1;
     }
     """
-    ir_text = util.compile_str(tmp_path, src).read_text()
+    ir_text = compiler.compile(src).mods["main"].llvm_ir
     assert '%"main::Buf[i32, 4]"' in ir_text

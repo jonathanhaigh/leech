@@ -62,7 +62,7 @@ def test_comptime_cmp(op, lhs, rhs, result, tmp_path):
 
 @pytest.mark.parametrize("op", CMP_OPS)
 @pytest.mark.parametrize("lhs,rhs", MISMATCHED_TYP_PAIRS)
-def test_incompatible_cmp_args(op, lhs, rhs, tmp_path):
+def test_incompatible_cmp_args(compiler, op, lhs, rhs):
     src = f"""
     pub fn main() i32 {{
         let x = {lhs} {op} {rhs};
@@ -70,4 +70,4 @@ def test_incompatible_cmp_args(op, lhs, rhs, tmp_path):
     }}
     """
     with pytest.raises(errors.IncompatibleBinOpArgTypsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

@@ -232,14 +232,14 @@ def test_match_all_arms_diverge(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_empty_match_on_never_scrutinee(tmp_path):
+def test_empty_match_on_never_scrutinee(compiler):
     src = """
     fn diverge() never { return diverge(); }
     pub fn main() i32 {
         return match (diverge()) {};
     }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
 
 def test_comptime_match_enum(tmp_path):
@@ -409,7 +409,7 @@ def test_match_aliased_discriminants(tmp_path):
     util.check_prog_output(tmp_path, src, "", 0)
 
 
-def test_match_aliased_discriminant_warns(tmp_path, monkeypatch):
+def test_match_aliased_discriminant_warns(compiler, monkeypatch):
     monkeypatch.setattr(errors, "_errors", [])
     monkeypatch.setattr(errors, "_error_level", errors.NOTE)
     src = """
@@ -422,7 +422,7 @@ def test_match_aliased_discriminant_warns(tmp_path, monkeypatch):
         };
     }
     """
-    util.compile_str(tmp_path, src)
+    compiler.compile(src)
 
     assert [type(err) for err in errors.all_errors()] == [errors.UnreachableMatchArmWarning]
     assert errors.error_level() == errors.WARNING
@@ -457,7 +457,7 @@ def test_match_expected_typ_still_wins(tmp_path):
     util.check_prog_output(tmp_path, src, "", 3)
 
 
-def test_match_non_exhaustive_error(tmp_path):
+def test_match_non_exhaustive_error(compiler):
     src = """
     enum Color { Red, Green, Blue }
     pub fn main() i32 {
@@ -466,10 +466,10 @@ def test_match_non_exhaustive_error(tmp_path):
     }
     """
     with pytest.raises(errors.NonExhaustiveMatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_match_non_exhaustive_with_redundant_arm_warns(tmp_path, monkeypatch):
+def test_match_non_exhaustive_with_redundant_arm_warns(compiler, monkeypatch):
     monkeypatch.setattr(errors, "_errors", [])
     monkeypatch.setattr(errors, "_error_level", errors.NOTE)
     src = """
@@ -483,11 +483,11 @@ def test_match_non_exhaustive_with_redundant_arm_warns(tmp_path, monkeypatch):
     }
     """
     with pytest.raises(errors.NonExhaustiveMatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
     assert [type(err) for err in errors.all_errors()] == [errors.UnreachableMatchArmWarning]
 
 
-def test_match_arm_typ_mismatch_error(tmp_path):
+def test_match_arm_typ_mismatch_error(compiler):
     src = """
     pub fn main() i32 {
         return match (true) {
@@ -497,10 +497,10 @@ def test_match_arm_typ_mismatch_error(tmp_path):
     }
     """
     with pytest.raises(errors.MatchArmTypMismatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_pattern_typ_mismatch_error(tmp_path):
+def test_pattern_typ_mismatch_error(compiler):
     src = """
     pub fn main() i32 {
         return match (true) {
@@ -510,10 +510,10 @@ def test_pattern_typ_mismatch_error(tmp_path):
     }
     """
     with pytest.raises(errors.PatternTypMismatchError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_binding_in_or_pattern_error(tmp_path):
+def test_binding_in_or_pattern_error(compiler):
     src = """
     enum Color { Red, Green }
     pub fn main() i32 {
@@ -525,10 +525,10 @@ def test_binding_in_or_pattern_error(tmp_path):
     }
     """
     with pytest.raises(errors.BindingInOrPatternError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_payload_pattern_on_enum_variant_error(tmp_path):
+def test_payload_pattern_on_enum_variant_error(compiler):
     src = """
     enum E { A, B }
     pub fn main() i32 {
@@ -540,10 +540,10 @@ def test_payload_pattern_on_enum_variant_error(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_payload_binding_on_enum_variant_error(tmp_path):
+def test_payload_binding_on_enum_variant_error(compiler):
     src = """
     enum E { A, B }
     pub fn main() i32 {
@@ -555,10 +555,10 @@ def test_payload_binding_on_enum_variant_error(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_payload_pattern_nested_under_or_pattern_error(tmp_path):
+def test_payload_pattern_nested_under_or_pattern_error(compiler):
     src = """
     enum E { A, B }
     pub fn main() i32 {
@@ -569,10 +569,10 @@ def test_payload_pattern_nested_under_or_pattern_error(tmp_path):
     }
     """
     with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)
 
 
-def test_not_a_pattern_error(tmp_path):
+def test_not_a_pattern_error(compiler):
     src = """
     pub fn main() i32 {
         let x = 1;
@@ -583,4 +583,4 @@ def test_not_a_pattern_error(tmp_path):
     }
     """
     with pytest.raises(errors.NotAPatternError):
-        util.compile_str(tmp_path, src)
+        compiler.compile(src)

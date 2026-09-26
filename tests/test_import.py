@@ -8,7 +8,7 @@ from leech import errors, mono
 from tests import harness, util
 
 
-def test_import_of_module_with_syntax_error(tmp_path):
+def test_import_of_module_with_syntax_error(compiler):
     # Parsing happens per-module (main.compile_to_ir recurses for each
     # `import`), so a syntax error in an imported module must be caught
     # and reported the same way as one in the top-level file.
@@ -22,7 +22,7 @@ def test_import_of_module_with_syntax_error(tmp_path):
     pub fn f() i32
     """
     with pytest.raises(errors.UnexpectedTokenError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_import_fn(tmp_path):
@@ -65,12 +65,12 @@ def test_imported_non_generic_fn_is_a_monomorphization_leaf(compiler):
     assert all(inst.qualified_name != "a::id[i32]" for inst in result.fn_instances)
 
 
-def test_unused_imported_extern_keeps_bare_declaration(tmp_path):
+def test_unused_imported_extern_keeps_bare_declaration(compiler):
     main_src = "import a;\npub fn main() i32 { 0 }"
     a_src = "extern fn unused(val: i32) i32;"
 
-    main_ir, _ = util.compile_modules(tmp_path, main=main_src, a=a_src)
-    ir_text = main_ir.read_text()
+    compiled = compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    ir_text = compiled.mods["main"].llvm_ir
 
     declaration = next(line for line in ir_text.splitlines() if '"unused"' in line)
     assert declaration.startswith('declare i32 @"unused"')
@@ -79,7 +79,7 @@ def test_unused_imported_extern_keeps_bare_declaration(tmp_path):
     assert "a::unused" not in declaration
 
 
-def test_uncalled_private_fn_in_imported_module_is_typechecked(tmp_path):
+def test_uncalled_private_fn_in_imported_module_is_typechecked(compiler):
     main_src = """
     import helper;
     pub fn main() i32 { return helper::ok() - 1; }
@@ -88,13 +88,13 @@ def test_uncalled_private_fn_in_imported_module_is_typechecked(tmp_path):
     pub fn ok() i32 { return 1; }
     fn invalid() i32 { return true; }
     """
-    util.write_whole_file(tmp_path / "helper.leech", helper_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("helper", helper_src))
 
     with pytest.raises(errors.InvalidRetTypError):
-        util.compile_str(tmp_path, main_src)
+        compiler.compile(program)
 
 
-def test_imported_unreachable_body_can_request_unused_struct_instance(tmp_path):
+def test_imported_unreachable_body_can_request_unused_struct_instance(compiler):
     main_src = """
     import a;
     pub fn main() i32 { return a::ok() - 1; }
@@ -108,9 +108,9 @@ def test_imported_unreachable_body_can_request_unused_struct_instance(tmp_path):
         return 3;
     }
     """
-    util.write_whole_file(tmp_path / "a.leech", a_src)
+    program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
 
-    ir_text = util.compile_str(tmp_path, main_src).read_text()
+    ir_text = compiler.compile(program).mods["main"].llvm_ir
 
     assert '%"a::Widget[bool]" = type' in ir_text
 
@@ -131,7 +131,7 @@ def test_comptime_import_fn(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 101, a=a_src)
 
 
-def test_import_private_fn(tmp_path):
+def test_import_private_fn(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -147,10 +147,10 @@ def test_import_private_fn(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_private_fn_use_comptime(tmp_path):
+def test_import_private_fn_use_comptime(compiler):
     main_src = """
     import a;
     let y = a::f();
@@ -164,7 +164,7 @@ def test_import_private_fn_use_comptime(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_import_var(tmp_path):
@@ -194,7 +194,7 @@ def test_import_var_use_comptime(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 11, a=a_src)
 
 
-def test_import_private_var(tmp_path):
+def test_import_private_var(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -205,10 +205,10 @@ def test_import_private_var(tmp_path):
     let x = 11;
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_private_var_use_comptime(tmp_path):
+def test_import_private_var_use_comptime(compiler):
     main_src = """
     import a;
     let y = a::x;
@@ -220,7 +220,7 @@ def test_import_private_var_use_comptime(tmp_path):
     let x = 11;
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_import_typ(tmp_path):
@@ -255,7 +255,7 @@ def test_import_typ_use_comptime(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 32, a=a_src)
 
 
-def test_import_private_typ(tmp_path):
+def test_import_private_typ(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -269,10 +269,10 @@ def test_import_private_typ(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_private_typ_use_comptime(tmp_path):
+def test_import_private_typ_use_comptime(compiler):
     main_src = """
     import a;
     let x = a::T{int: 32};
@@ -286,7 +286,7 @@ def test_import_private_typ_use_comptime(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateItemAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_import_typ_with_var_of_same_name(tmp_path):
@@ -349,7 +349,7 @@ def test_import_var_with_private_typ_of_same_name(tmp_path):
     util.check_prog_output(tmp_path, main_src, "", 5, a=a_src)
 
 
-def test_import_private_struct_field_construct(tmp_path):
+def test_import_private_struct_field_construct(compiler):
     # T itself is public, but priv_val isn't, so constructing a T from
     # outside a's module can't set it, even though it names a real field.
     main_src = """
@@ -366,10 +366,10 @@ def test_import_private_struct_field_construct(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateStructFieldAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_comptime_import_private_struct_field_construct(tmp_path):
+def test_comptime_import_private_struct_field_construct(compiler):
     main_src = """
     import a;
     let t = a::T{priv_val: 2};
@@ -383,10 +383,10 @@ def test_comptime_import_private_struct_field_construct(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateStructFieldAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_private_struct_field_read(tmp_path):
+def test_import_private_struct_field_read(compiler):
     # a::make() legitimately returns a T (constructed from within a, where
     # priv_val is accessible), but main still can't read priv_val off it.
     main_src = """
@@ -406,10 +406,10 @@ def test_import_private_struct_field_read(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateStructFieldAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_private_struct_field_write(tmp_path):
+def test_import_private_struct_field_write(compiler):
     main_src = """
     import a;
     pub fn main() i32 {
@@ -428,7 +428,7 @@ def test_import_private_struct_field_write(tmp_path):
     }
     """
     with pytest.raises(errors.PrivateStructFieldAccessError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(tmp_path):
@@ -459,7 +459,7 @@ def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(tmp_pat
     util.check_prog_output(tmp_path, main_src, "", 42, a=a_src)
 
 
-def test_mod_does_not_exist(tmp_path):
+def test_mod_does_not_exist(compiler):
     main_src = """
     import nope;
     pub fn main() i32 {
@@ -467,10 +467,10 @@ def test_mod_does_not_exist(tmp_path):
     }
     """
     with pytest.raises(errors.ModDoesNotExistError):
-        util.compile_modules(tmp_path, main=main_src)
+        compiler.compile(main_src)
 
 
-def test_duplicate_import(tmp_path):
+def test_duplicate_import(compiler):
     # Importing the same module twice binds the same name twice, which is
     # a duplicate definition like any other - not a crash.
     main_src = """
@@ -486,7 +486,7 @@ def test_duplicate_import(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 @pytest.mark.parametrize(
@@ -501,7 +501,7 @@ def test_duplicate_import(tmp_path):
         "fn g() i32 { let x = a { }; return 0; }",
     ),
 )
-def test_mod_used_as_typ(defn, tmp_path):
+def test_mod_used_as_typ(compiler, defn):
     # A module shares a namespace with types but isn't one, so naming it
     # where a type is required is an error rather than something that
     # slips through to crash the compiler later.
@@ -518,10 +518,10 @@ def test_mod_used_as_typ(defn, tmp_path):
     }
     """
     with pytest.raises(errors.ModUsedAsTypError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
-def test_import_and_struct_same_name(tmp_path):
+def test_import_and_struct_same_name(compiler):
     # Modules and types share one namespace, so an import and a struct
     # can't have the same name.
     main_src = """
@@ -537,7 +537,7 @@ def test_import_and_struct_same_name(tmp_path):
     }
     """
     with pytest.raises(errors.DuplicateItemDefnError):
-        util.compile_modules(tmp_path, main=main_src, a=a_src)
+        compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
 
 
 def test_import_and_var_same_name(tmp_path):
