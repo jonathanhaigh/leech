@@ -10,7 +10,89 @@ from typing import cast
 import pytest
 
 from leech import errors
+from leech import src as leech_src
 from tests import harness
+
+
+def test_src_position_returns_first_occurrence():
+    assert harness.src_position("x\n  x", "x") == (1, 1)
+
+
+def test_src_position_reports_multiline_location():
+    assert harness.src_position("first\n  target", "target") == (2, 3)
+
+
+def test_src_position_reports_missing_substring():
+    with pytest.raises(AssertionError, match="substring 'target' not present in the source"):
+        harness.src_position("first", "target")
+
+
+def test_assert_span_at_accepts_matching_start(compiler: harness.CompilerHarness):
+    src = "first\n  target"
+    path = compiler.write_mod(harness.ModSrc("helper", src))
+    file = leech_src.SrcFile(path)
+    span = leech_src.SrcSpan(
+        file=file,
+        start=8,
+        end=14,
+        start_line=2,
+        end_line=2,
+        start_col=3,
+        end_col=9,
+    )
+
+    assert harness.assert_span_at(span, src, "target") is span
+
+
+def test_assert_span_at_reports_path_substring_and_locations(
+    compiler: harness.CompilerHarness,
+):
+    src = "first\n  target"
+    path = compiler.write_mod(harness.ModSrc("helper", src))
+    file = leech_src.SrcFile(path)
+    span = leech_src.SrcSpan(
+        file=file,
+        start=0,
+        end=1,
+        start_line=4,
+        end_line=4,
+        start_col=5,
+        end_col=6,
+    )
+
+    with pytest.raises(AssertionError) as exc_info:
+        harness.assert_span_at(span, src, "target")
+
+    message = str(exc_info.value)
+    assert "helper.leech" in message
+    assert "target" in message
+    assert "(2, 3)" in message
+    assert "(4, 5)" in message
+
+
+def test_assert_span_at_reports_missing_span():
+    with pytest.raises(
+        AssertionError, match="expected span at \\(2, 3\\) for 'target', got no span"
+    ):
+        harness.assert_span_at(None, "first\n  target", "target")
+
+
+def test_assert_span_at_rejects_source_from_another_file(compiler: harness.CompilerHarness):
+    src = "first\n  target"
+    path = compiler.write_mod(harness.ModSrc("helper", src))
+    file = leech_src.SrcFile(path)
+    span = leech_src.SrcSpan(
+        file=file,
+        start=8,
+        end=14,
+        start_line=2,
+        end_line=2,
+        start_col=3,
+        end_col=9,
+    )
+
+    with pytest.raises(AssertionError, match=r"span file .*helper.leech does not match"):
+        harness.assert_span_at(span, "target", "target")
 
 
 def test_mod_src_derives_path_from_name():

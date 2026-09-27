@@ -5,7 +5,7 @@
 import pytest
 
 from leech import errors
-from tests import harness, util
+from tests import harness
 
 
 def test_sibling_import_unaffected(compiler):
@@ -128,8 +128,7 @@ def test_import_path_rejects_comptime_args_before_missing_module_lookup(
 
     assert f'"{offending_seg}"' in str(exc_info.value)
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(main_src, f"{offending_seg}[i32]")
+    harness.assert_span_at(span, main_src, f"{offending_seg}[i32]")
 
 
 def test_module_path_seg_rejects_comptime_args(compiler):
@@ -143,8 +142,7 @@ def test_module_path_seg_rejects_comptime_args(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert '"a"' in str(exc_info.value)
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(main_src, "a[i32]::f")
+    harness.assert_span_at(span, main_src, "a[i32]::f")
 
 
 def test_same_stem_modules_in_different_subdirectories(compiler):

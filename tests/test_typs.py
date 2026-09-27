@@ -10,7 +10,7 @@ import pytest
 
 from leech import ast, compilation, errors, ir_env, ir_traits, parse, typs
 from leech import src as leech_src
-from tests import util
+from tests import harness
 
 
 def test_typ_kind_covers_every_concrete_typ_subclass():
@@ -75,8 +75,7 @@ def test_int_lit_overflow(compiler):
     assert '"u8"' in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "256u8")
+    harness.assert_span_at(span, src, "256u8")
 
 
 def test_comptime_int_lit_overflow(compiler):
@@ -94,8 +93,7 @@ def test_comptime_int_lit_overflow(compiler):
     assert '"u8"' in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "256u8")
+    harness.assert_span_at(span, src, "256u8")
 
 
 def test_int_lit_at_signed_typ_max_is_allowed(compiler):
@@ -126,8 +124,7 @@ def test_int_lit_overflow_signed(compiler):
     assert '"i8"' in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "128i8")
+    harness.assert_span_at(span, src, "128i8")
 
 
 def test_comptime_int_lit_overflow_signed(compiler):
@@ -145,8 +142,7 @@ def test_comptime_int_lit_overflow_signed(compiler):
     assert '"i8"' in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "128i8")
+    harness.assert_span_at(span, src, "128i8")
 
 
 def test_int_lit_infers_declared_let_typ(compiler):
@@ -260,8 +256,7 @@ def test_int_lit_too_big_for_inferred_typ(compiler):
     assert '"u8"' in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "300")
+    harness.assert_span_at(span, src, "300")
 
 
 @pytest.mark.parametrize(

@@ -27,6 +27,32 @@ def _bundled_mod_llvm_ir() -> Mapping[str, str]:
     return types.MappingProxyType(compiled)
 
 
+def src_position(src: str, substring: str) -> tuple[int, int]:
+    """Return the one-based location of ``substring``'s first occurrence."""
+    index = src.find(substring)
+    assert index >= 0, f"substring {substring!r} not present in the source"
+    preceding = src[:index]
+    line = preceding.count("\n") + 1
+    column = index - preceding.rfind("\n")
+    return line, column
+
+
+def assert_span_at(
+    span: Optional[leech_src.SrcSpan], src: str, substring: str
+) -> leech_src.SrcSpan:
+    """Assert that ``span`` starts at ``substring``'s first occurrence and return it."""
+    expected = src_position(src, substring)
+    assert span is not None, f"expected span at {expected} for {substring!r}, got no span"
+    assert span.file.src == src, (
+        f"span file {span.file.path} does not match the supplied source containing {substring!r}"
+    )
+    actual = (span.start_line, span.start_col)
+    assert actual == expected, (
+        f"expected span in {span.file.path} at {expected} for {substring!r}, got {actual}"
+    )
+    return span
+
+
 class ModSrc:
     """A Leech module description with statically final fields.
 

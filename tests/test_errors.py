@@ -5,7 +5,7 @@
 import pytest
 
 from leech import errors
-from tests import harness, util
+from tests import harness
 
 
 def test_unexpected_character_message(compiler):
@@ -20,8 +20,7 @@ def test_unexpected_character_message(compiler):
     assert '"@"' in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "@")
+    harness.assert_span_at(span, src, "@")
 
     # Unlike UnexpectedTokenError, there's no "expected" note: the lexer
     # couldn't form a token at all, so there's nothing to enumerate.
@@ -40,8 +39,7 @@ def test_unexpected_token_message(compiler):
     assert '"}"' in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "}")
+    harness.assert_span_at(span, src, "}")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
@@ -102,14 +100,12 @@ def test_private_struct_field_access_message(compiler):
     assert "private" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(main_src, "val")
+    harness.assert_span_at(span, main_src, "val")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert note.message == 'Field "val" defined here'
-    assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "val")
+    harness.assert_span_at(note.span, a_src, "val")
 
 
 def test_private_fn_access_message(compiler):
@@ -132,14 +128,12 @@ def test_private_fn_access_message(compiler):
     assert "private" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(main_src, "f()")
+    harness.assert_span_at(span, main_src, "f()")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert note.message == 'Function "f" defined here'
-    assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "fn f()")
+    harness.assert_span_at(note.span, a_src, "fn f()")
 
 
 def test_private_var_access_message(compiler):
@@ -160,14 +154,12 @@ def test_private_var_access_message(compiler):
     assert "private" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(main_src, "x")
+    harness.assert_span_at(span, main_src, "x")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert note.message == 'Variable "x" defined here'
-    assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "let x")
+    harness.assert_span_at(note.span, a_src, "let x")
 
 
 def test_private_typ_access_message(compiler):
@@ -191,14 +183,12 @@ def test_private_typ_access_message(compiler):
     assert "private" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(main_src, "T{")
+    harness.assert_span_at(span, main_src, "T{")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert note.message == 'Type "T" defined here'
-    assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == util.find_pos(a_src, "struct T")
+    harness.assert_span_at(note.span, a_src, "struct T")
 
 
 def test_void_local_var_initializer_message(compiler):
@@ -260,8 +250,7 @@ def test_mod_used_as_typ_message(compiler):
     # The caret points at the path segment naming the module, not at the
     # import that bound it.
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(main_src, "a) i32")
+    harness.assert_span_at(span, main_src, "a) i32")
 
     # The note has no span of its own - a module's AST node covers its
     # whole file, so there's nothing useful to point at.
@@ -300,11 +289,9 @@ pub fn main() i32 { 0 }
         compiler.compile(src)
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "fn id[U]")
+    harness.assert_span_at(span, src, "fn id[U]")
     (note,) = exc_info.value.extra
-    assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "fn id[T]")
+    harness.assert_span_at(note.span, src, "fn id[T]")
 
 
 def test_overlapping_inherent_impl_assoc_fn_name_clash_message(compiler):
@@ -328,13 +315,11 @@ def test_overlapping_inherent_impl_assoc_fn_name_clash_message(compiler):
     assert "associated function" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "get(*self) i32 { 1 }")
+    harness.assert_span_at(span, src, "get(*self) i32 { 1 }")
 
     (note,) = exc_info.value.extra
     assert note.message == "Previous definition here"
-    assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "get(*self) i32 { 0 }")
+    harness.assert_span_at(note.span, src, "get(*self) i32 { 0 }")
 
 
 def test_infinite_size_struct_message(compiler):
@@ -357,17 +342,14 @@ def test_infinite_size_struct_message(compiler):
     assert "infinite size" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "struct A")
+    harness.assert_span_at(span, src, "struct A")
 
     assert len(exc_info.value.extra) == 2
     first, second = exc_info.value.extra
     assert first.message == 'Field "b" of struct "A" contains "B" by value'
-    assert first.span is not None
-    assert (first.span.start_line, first.span.start_col) == util.find_pos(src, "b: B")
+    harness.assert_span_at(first.span, src, "b: B")
     assert second.message == 'Field "a" of struct "B" contains "A" by value'
-    assert second.span is not None
-    assert (second.span.start_line, second.span.start_col) == util.find_pos(src, "a: A")
+    harness.assert_span_at(second.span, src, "a: A")
 
 
 def test_wrong_number_of_payload_patterns_message(compiler):
@@ -388,8 +370,7 @@ def test_wrong_number_of_payload_patterns_message(compiler):
         'Wrong number of payload patterns for variant "Color::Red": got 1, expected 0'
     )
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "Color::Red(let x)")
+    harness.assert_span_at(span, src, "Color::Red(let x)")
 
 
 def test_circular_var_initializer_message(compiler):
@@ -408,17 +389,14 @@ def test_circular_var_initializer_message(compiler):
     assert "depends on itself" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "let b")
+    harness.assert_span_at(span, src, "let b")
 
     assert len(exc_info.value.extra) == 2
     first, second = exc_info.value.extra
     assert first.message == 'Variable "b" defined here'
-    assert first.span is not None
-    assert (first.span.start_line, first.span.start_col) == util.find_pos(src, "let b")
+    harness.assert_span_at(first.span, src, "let b")
     assert second.message == 'Variable "a" defined here'
-    assert second.span is not None
-    assert (second.span.start_line, second.span.start_col) == util.find_pos(src, "let a")
+    harness.assert_span_at(second.span, src, "let a")
 
 
 def test_recursive_trait_bound_message(compiler):
@@ -438,8 +416,7 @@ def test_recursive_trait_bound_message(compiler):
 
     assert exc_info.value.message.message == 'Trait bound "Y[T]" is part of a recursive bound cycle'
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "Y[T]] { fn x")
+    harness.assert_span_at(span, src, "Y[T]] { fn x")
 
     assert [note.message for note in exc_info.value.extra] == [
         'Trait bound "Y[T]" participates in this cycle',
@@ -447,7 +424,7 @@ def test_recursive_trait_bound_message(compiler):
         'Trait bound "X[T]" participates in this cycle',
     ]
     expected_spans = [
-        util.find_pos(src, text) for text in ("Y[T]] { fn x", "Z[T]] { fn y", "X[T]] { fn z")
+        harness.src_position(src, text) for text in ("Y[T]] { fn x", "Z[T]] { fn y", "X[T]] { fn z")
     ]
     actual_spans = []
     for note in exc_info.value.extra:
@@ -472,14 +449,13 @@ def test_recursive_impl_selection_message(compiler):
         == 'Selecting an implementation of trait "A" for type "i32" is recursive'
     )
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "impl[T: B]")
+    harness.assert_span_at(span, src, "impl[T: B]")
 
     assert [note.message for note in exc_info.value.extra] == [
         'Implementation "<T as A>" participates in this cycle',
         'Implementation "<T as B>" participates in this cycle',
     ]
-    expected_spans = [util.find_pos(src, text) for text in ("impl[T: B]", "impl[T: A]")]
+    expected_spans = [harness.src_position(src, text) for text in ("impl[T: B]", "impl[T: A]")]
     actual_spans = []
     for note in exc_info.value.extra:
         assert note.span is not None
@@ -506,8 +482,7 @@ def test_if_cond_not_bool_message(compiler):
     assert "binary + operation expression" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "1 + 2")
+    harness.assert_span_at(span, src, "1 + 2")
 
 
 def test_while_cond_not_bool_message(compiler):
@@ -527,8 +502,7 @@ def test_while_cond_not_bool_message(compiler):
     assert "unary & operation expression" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "&x")
+    harness.assert_span_at(span, src, "&x")
 
 
 def test_loop_label_not_found_message(compiler):
@@ -546,8 +520,7 @@ def test_loop_label_not_found_message(compiler):
     assert "nope" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "nope")
+    harness.assert_span_at(span, src, "nope")
 
 
 def test_not_callable_message(compiler):
@@ -566,8 +539,7 @@ def test_not_callable_message(compiler):
     assert "not callable" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "x();")
+    harness.assert_span_at(span, src, "x();")
 
 
 def test_invalid_arg_typ_message(compiler):
@@ -587,8 +559,7 @@ pub fn main() i32 {
     assert '"i32"' in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, '"abc"')
+    harness.assert_span_at(span, src, '"abc"')
 
 
 def test_invalid_bin_op_arg_typ_message(compiler):
@@ -607,14 +578,12 @@ def test_invalid_bin_op_arg_typ_message(compiler):
     assert "an integer type" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "true + 1")
+    harness.assert_span_at(span, src, "true + 1")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
     assert '"+"' in note.message
-    assert note.span is not None
-    assert (note.span.start_line, note.span.start_col) == util.find_pos(src, "+ 1")
+    harness.assert_span_at(note.span, src, "+ 1")
 
 
 def test_if_els_typ_mismatch_message(compiler):
@@ -636,11 +605,9 @@ def test_if_els_typ_mismatch_message(compiler):
     assert len(exc_info.value.extra) == 2
     then_note, els_note = exc_info.value.extra
     assert '"i32"' in then_note.message
-    assert then_note.span is not None
-    assert (then_note.span.start_line, then_note.span.start_col) == util.find_pos(src, "{ 1 }")
+    harness.assert_span_at(then_note.span, src, "{ 1 }")
     assert '"*u8"' in els_note.message
-    assert els_note.span is not None
-    assert (els_note.span.start_line, els_note.span.start_col) == util.find_pos(src, '{ "abc" }')
+    harness.assert_span_at(els_note.span, src, '{ "abc" }')
 
 
 def test_non_exhaustive_match_message(compiler):
@@ -659,8 +626,7 @@ def test_non_exhaustive_match_message(compiler):
     assert "not exhaustive" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "match (c)")
+    harness.assert_span_at(span, src, "match (c)")
 
     assert [note.message for note in exc_info.value.extra] == [
         'Uncovered pattern "Color::Green"',
@@ -689,11 +655,9 @@ def test_match_arm_typ_mismatch_message(compiler):
     assert len(exc_info.value.extra) == 2
     first_note, second_note = exc_info.value.extra
     assert '"i32"' in first_note.message
-    assert first_note.span is not None
-    assert (first_note.span.start_line, first_note.span.start_col) == util.find_pos(src, "0i32")
+    harness.assert_span_at(first_note.span, src, "0i32")
     assert '"*u8"' in second_note.message
-    assert second_note.span is not None
-    assert (second_note.span.start_line, second_note.span.start_col) == util.find_pos(src, '"no"')
+    harness.assert_span_at(second_note.span, src, '"no"')
 
 
 def test_missing_typ_args_message(compiler):
@@ -711,8 +675,7 @@ pub fn main() i32 {
     assert "without required comptime arguments" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "id;")
+    harness.assert_span_at(span, src, "id;")
 
 
 def test_cannot_infer_typ_arg_message(compiler):
@@ -731,8 +694,7 @@ pub fn main() i32 {
     assert "Cannot infer argument" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "id(5)")
+    harness.assert_span_at(span, src, "id(5)")
 
     assert len(exc_info.value.extra) == 1
     note = exc_info.value.extra[0]
@@ -755,8 +717,7 @@ pub fn main() i32 {
     assert "expected 1" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "id[i32, bool](5)")
+    harness.assert_span_at(span, src, "id[i32, bool](5)")
 
 
 def test_typ_args_on_non_generic_item_message(compiler):
@@ -774,8 +735,7 @@ pub fn main() i32 {
     assert "not generic" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "f[i32](5)")
+    harness.assert_span_at(span, src, "f[i32](5)")
 
 
 @pytest.mark.parametrize(
@@ -814,8 +774,7 @@ def test_non_scope_item_cannot_qualify_path(compiler, src, qualifier, item_kind,
 
     assert str(exc_info.value) == f'{item_kind} "{item_name}" cannot qualify a path'
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, qualifier)
+    harness.assert_span_at(span, src, qualifier)
 
 
 def test_unconstrained_impl_typ_param_message(compiler):
@@ -833,8 +792,7 @@ pub fn main() i32 { return 0; }
     assert "not constrained by the impl self type" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "U]")
+    harness.assert_span_at(span, src, "U]")
 
 
 def test_non_exhaustive_match_over_a_union_message(compiler):
@@ -853,8 +811,7 @@ def test_non_exhaustive_match_over_a_union_message(compiler):
     assert "not exhaustive" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "match (o)")
+    harness.assert_span_at(span, src, "match (o)")
 
     # The witness carries a payload column, which a wildcard stands for.
     assert [note.message for note in exc_info.value.extra] == [
@@ -880,8 +837,7 @@ def test_wrong_number_of_payload_patterns_over_a_union_message(compiler):
         'Wrong number of payload patterns for variant "Pair::Both": got 1, expected 2'
     )
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "Pair::Both(let x)")
+    harness.assert_span_at(span, src, "Pair::Both(let x)")
 
 
 def test_infinite_size_union_message(compiler):
@@ -902,13 +858,9 @@ def test_infinite_size_union_message(compiler):
     assert "infinite size" in msg
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "union Tree")
+    harness.assert_span_at(span, src, "union Tree")
 
     assert len(exc_info.value.extra) == 1
     (hop,) = exc_info.value.extra
     assert hop.message == 'Payload 1 of variant "Node" of union "Tree" contains "Tree" by value'
-    assert hop.span is not None
-    # The hop points at the payload type itself, as a struct field hop
-    # points at the field rather than the struct.
-    assert (hop.span.start_line, hop.span.start_col) == util.find_pos(src, "Tree),")
+    harness.assert_span_at(hop.span, src, "Tree),")

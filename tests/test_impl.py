@@ -5,7 +5,7 @@
 import pytest
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, opt_util, typs
-from tests import harness, util
+from tests import harness
 
 
 def test_assoc_fn_call(compiler):
@@ -383,8 +383,7 @@ def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(compiler):
         impl.add_fn_symbol(second)
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "duplicate() i32 { 2 }")
+    harness.assert_span_at(span, src, "duplicate() i32 { 2 }")
 
 
 def test_same_name_field_and_method_in_different_structs(compiler):

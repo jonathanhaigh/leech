@@ -5,7 +5,7 @@
 import pytest
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, typs
-from tests import harness, util
+from tests import harness
 
 
 def test_trait_impl_for_builtin_typ(compiler):
@@ -1084,8 +1084,7 @@ def test_trait_method_call_span(compiler):
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
         compiler.compile(src)
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "double_show(n)")
+    harness.assert_span_at(span, src, "double_show(n)")
 
 
 def test_explicit_generic_fn_bound_error_uses_path_span(compiler):
@@ -1102,8 +1101,7 @@ def test_explicit_generic_fn_bound_error_uses_path_span(compiler):
     with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
         compiler.compile(src)
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "double_show[bool](n)")
+    span = harness.assert_span_at(span, src, "double_show[bool](n)")
     assert span.file.src[span.start : span.end] == "double_show[bool]"
 
 
@@ -1404,8 +1402,7 @@ def test_self_referential_trait_bound(compiler):
     _assert_recursive_trait_bound_error(exc_info, "Foo[T]", ["Foo[T]"])
 
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "Foo[T]")
+    harness.assert_span_at(span, src, "Foo[T]")
 
 
 def test_mutually_recursive_trait_bounds(compiler):

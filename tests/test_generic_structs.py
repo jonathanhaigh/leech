@@ -5,7 +5,7 @@
 import pytest
 
 from leech import asserts, ast, errors, ir_env, ir_module, mono, typs
-from tests import harness, util
+from tests import harness
 
 
 def _get_struct_typ(mod, name: str) -> typs.StructTyp:
@@ -283,8 +283,7 @@ def test_bare_reference_to_generic_struct_requires_typ_args(compiler):
         compiler.compile(src)
     assert '"Box"' in str(exc_info.value)
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "Box = ")
+    harness.assert_span_at(span, src, "Box = ")
 
 
 def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(compiler):
@@ -304,8 +303,7 @@ def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(compiler):
 
     assert '"Box"' in str(exc_info.value)
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "Box::make")
+    harness.assert_span_at(span, src, "Box::make")
 
 
 def test_generic_struct_assoc_fn_scope_accepts_args_on_struct_seg(compiler):
@@ -407,8 +405,7 @@ def test_comptime_args_on_non_generic_assoc_fn_scope(compiler):
 
     assert '"Foo"' in str(exc_info.value)
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "Foo[i32]::make")
+    harness.assert_span_at(span, src, "Foo[i32]::make")
 
 
 def test_wrong_number_of_typ_args_on_generic_struct(compiler):

@@ -5,7 +5,7 @@
 import pytest
 
 from leech import asserts, ast, errors, ir_env, ir_module, ir_values, mono, typs
-from tests import harness, util
+from tests import harness
 
 
 def _get_fn(mod, name: str) -> ir_module.SrcFnSymbol:
@@ -312,8 +312,7 @@ def test_bare_reference_to_generic_fn_requires_typ_args(compiler):
 
     assert '"id"' in str(exc_info.value)
     span = exc_info.value.message.span
-    assert span is not None
-    assert (span.start_line, span.start_col) == util.find_pos(src, "id;")
+    harness.assert_span_at(span, src, "id;")
 
 
 def test_address_of_generic_fn_requires_typ_args(compiler):
