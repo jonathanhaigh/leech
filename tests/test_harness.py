@@ -178,6 +178,37 @@ def test_harness_instances_have_independent_workspaces(tmp_path_factory):
     assert first.workspace != second.workspace
 
 
+def test_harnesses_share_only_immutable_bundled_ir(tmp_path_factory):
+    first = harness.CompilerHarness(tmp_path_factory.mktemp("first-run"))
+    second = harness.CompilerHarness(tmp_path_factory.mktemp("second-run"))
+
+    bundled_ir = harness._bundled_mod_llvm_ir()
+    assert harness._bundled_mod_llvm_ir() is bundled_ir
+    mutable_view = cast(dict[str, str], bundled_ir)
+    with pytest.raises(TypeError):
+        mutable_view["std::extra"] = ""
+
+    assert first.run("pub fn main() i32 { 1 }").returncode == 1
+    assert second.run("pub fn main() i32 { 2 }").returncode == 2
+
+    expected_artifacts = {
+        pathlib.Path("main.leech"),
+        pathlib.Path("main.ll"),
+        pathlib.Path("program.bc"),
+        *(
+            pathlib.Path(".bundled").joinpath(*name.split("::")).with_suffix(".ll")
+            for name in bundled_ir
+        ),
+    }
+    for compiler in (first, second):
+        artifacts = {
+            path.relative_to(compiler.workspace)
+            for path in compiler.workspace.rglob("*")
+            if path.is_file()
+        }
+        assert artifacts == expected_artifacts
+
+
 def test_harness_coerces_src_string_to_main_program():
     program = harness.CompilerHarness._coerce_program("fn main() {}")
 

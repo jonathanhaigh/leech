@@ -12,7 +12,7 @@ Leech is a Python 3.14 compiler. Compiler code lives in `src/leech/`: parsing us
 `parse.py` and `leech.lark`, semantic and IR work uses `typcheck.py`, `ir_*.py`, and
 `comptime.py`, and LLVM output is produced by
 `codegen.py`. Standard-library sources are under `src/leech/std/`. Tests mirror language
-features in `tests/test_*.py`; shared test helpers live in `tests/util.py`.
+features in `tests/test_*.py`; shared test helpers live in `tests/harness.py`.
 
 ## Build, Test, and Development Commands
 
@@ -53,9 +53,10 @@ dispatching on a small closed set of cases.
 
 Pytest is configured with strict `xfail` handling. Name files `test_<feature>.py` and
 tests `test_<behavior>`. Add focused unit tests beside the closest feature coverage and
-use `tests/util.py` for compile/run assertions. Run the full suite, lint, and type checks
-before submitting. No numeric coverage threshold is configured; new behavior and
-regressions should be covered explicitly.
+use the `compiler` fixture from `conftest.py` for compile/run assertions; its implementation
+is in `tests/harness.py`. Run the full suite, lint, and type checks before submitting. No
+numeric coverage threshold is configured; new behavior and regressions should be covered
+explicitly.
 
 ## Review Guidelines
 

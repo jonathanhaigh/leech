@@ -183,16 +183,19 @@ class CompilerHarness:
         return paths
 
     def parse(self, src_or_mod: str | ModSrc) -> ast.Mod:
+        """Materialize and parse one module through the production parser boundary."""
         mod = self._coerce_mod(src_or_mod)
         path = self.write_mod(mod)
         return parse.parse_mod_ast(leech_src.SrcFile(path))
 
     def build(self, program: str | TestProgram) -> ir_module.Mod:
+        """Build semantic IR for the root after materializing every supplied module."""
         program = self._coerce_program(program)
         paths = self._materialize(program)
         return driver.compile_to_ir(leech_src.SrcFile(paths[program.root.name]), program.root.name)
 
     def compile(self, program: str | TestProgram) -> CompiledProgram:
+        """Compile every supplied module independently under its declared name."""
         program = self._coerce_program(program)
         src_paths = self._materialize(program)
         compiled = dict[str, CompiledMod]()
@@ -272,6 +275,7 @@ class CompilerHarness:
         return bitcode_path
 
     def run(self, program: str | TestProgram) -> subprocess.CompletedProcess[str]:
+        """Run a ``main``-rooted program with unshadowed bundled modules linked."""
         program = self._coerce_program(program)
         if program.root.name != "main":
             raise ValueError("runnable program root module must be named 'main'")
@@ -287,6 +291,7 @@ class CompilerHarness:
         stderr: str = "",
         exit_status: int = 0,
     ) -> None:
+        """Assert exact streams and status, defaulting to empty streams and success."""
         result = self.run(program)
         assert result.stdout == stdout, (
             f"unexpected stdout: expected {stdout!r}, got {result.stdout!r}; "
@@ -309,6 +314,7 @@ class CompilerHarness:
         stderr_prefix: str,
         stdout: str = "",
     ) -> None:
+        """Assert a signal exit, exact stdout, and the stable prefix of LLVM's stderr."""
         result = self.run(program)
         assert result.stdout == stdout, (
             f"unexpected stdout: expected {stdout!r}, got {result.stdout!r}; "
@@ -325,6 +331,7 @@ class CompilerHarness:
         )
 
     def write_mod(self, mod: ModSrc) -> pathlib.Path:
+        """Materialize one module without invoking a compiler phase."""
         path = self._mod_path(mod)
         self._write_src(path, mod.src)
         return path
