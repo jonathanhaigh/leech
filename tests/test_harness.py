@@ -18,7 +18,7 @@ def test_src_position_returns_first_occurrence():
     assert harness.src_position("x\n  x", "x") == (1, 1)
 
 
-def test_src_position_reports_multiline_location():
+def test_src_position_reports_multiline_loc():
     assert harness.src_position("first\n  target", "target") == (2, 3)
 
 
@@ -44,7 +44,7 @@ def test_assert_span_at_accepts_matching_start(compiler: harness.CompilerHarness
     assert harness.assert_span_at(span, src, "target") is span
 
 
-def test_assert_span_at_reports_path_substring_and_locations(
+def test_assert_span_at_reports_path_substring_and_locs(
     compiler: harness.CompilerHarness,
 ):
     src = "first\n  target"

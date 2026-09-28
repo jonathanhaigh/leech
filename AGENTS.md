@@ -30,9 +30,14 @@ Tests that execute generated programs require `llvm-link` and `lli` on `PATH`.
 
 Use four-space indentation and Ruff's 100-column limit. Follow standard Python naming:
 `snake_case` for functions and modules, `PascalCase` for classes, and `UPPER_CASE` for
-constants. Prefer `Optional[T]` for nullable annotations. Keep imports module-qualified
-(for example, `from leech import typs`, then `typs.Typ`) rather than importing individual
-symbols. Use Sphinx-style docstrings, but never Sphinx cross-reference roles (`:class:`,
+constants. Once an abbreviation is established by a file name, a module-level item, or a
+public class member, use it consistently in identifiers. A local variable alone does not
+establish an abbreviation. A private class member does not establish one outside its class,
+but private members must be consistent within their class. Established abbreviations include
+`src` for source, `doc` for document or documentation, and `loc` for location. Prefer
+`Optional[T]` for nullable annotations. Keep imports module-qualified (for example,
+`from leech import typs`, then `typs.Typ`) rather than importing individual symbols. Use
+Sphinx-style docstrings, but never Sphinx cross-reference roles (`:class:`,
 `:func:`, `:meth:`, `:attr:`, and the like); name the referenced item in plain text
 instead. Document an item's purpose, interface, surprising behavior, and non-obvious
 contracts; omit details apparent from its name, signature, annotations, or adjacent code.

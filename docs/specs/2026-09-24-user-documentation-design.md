@@ -70,9 +70,9 @@ should call out this narrower acceptance when evaluating #23.
 
 The CLI currently passes the source filename's stem as its module name. Imports use their
 qualified path as the module name, so compiling `src/leech/std/io.leech` through the CLI
-emits `io::...` definitions where an importer expects `std::io::...`. The test helper
-already passes `std::io` explicitly through `driver.compile_to_llvm_ir`. This makes a
-documented `std::io` build impossible with the existing CLI alone.
+emits `io::...` definitions where an importer expects `std::io::...`. The compiler test
+harness already compiles this module under `std::io` when linking runnable tests. This makes
+a documented `std::io` build impossible with the existing CLI alone.
 
 Add `--module-name NAME` to the CLI and pass it to `compile_to_llvm_ir` as
 `qualified_name`; preserve the stem default. `NAME` consists of one or more valid Leech
@@ -150,18 +150,17 @@ spaces or shell quoting. The contract is deliberately small:
   other relative files are modules. Reject absolute paths, `..`, duplicate files, and
   unsupported keys during collection. A non-root fence may set `module=QUALIFIED_NAME`
   when its standalone compiled name differs from its path-derived name, notably for
-  transitive imports relative to another module's directory. Forward those overrides
-  through `tests/util.compile_modules` and `check_prog_output` so every emitted symbol
-  matches the name assigned by import resolution. The collector strips `.leech` from
-  `file=` when building the helper's module keys. Validate `module=` with the same
-  qualified-name syntax as `--module-name`; reject it on the root fence, whose name
-  is always `main`.
+  transitive imports relative to another module's directory. Convert each fence directly
+  to `tests.harness.ModSrc`, passing both the explicit relative path and its path-derived or
+  overridden qualified name so every emitted symbol matches the name assigned by import
+  resolution. Validate `module=` through `ModSrc`, which uses the same Lark-backed
+  qualified-name parser as `--module-name`; reject it on the root fence, whose name is
+  always `main`.
 - The root fence has `mode=run`, `mode=compile`, or `mode=error`. Other module fences omit
-  `mode`. `run` and `compile` succeed through the existing test helpers; each module is
-  compiled independently as well as checked as an import. `run` links the prelude and the
-  comma-separated bundled modules in optional `std=...`, then executes under `lli`. Each
-  `std` name must identify an actual `std::` module, currently `io` or `mem`; reject
-  `prelude`, paths, and duplicates. The prelude is linked once, automatically.
+  `mode`. `run` and `compile` construct a `tests.harness.TestProgram`; each module is
+  compiled independently as well as checked as an import. `run` automatically links the
+  prelude and every unshadowed bundled `std::` module, then executes under `lli`. There is no
+  `std=` metadata because documentation authors do not maintain the link set manually.
 - `mode=run` may specify `exit=N` (default `0`, with `N` from `0` through `255`) or
   `exit=SIGABRT` for an aborting program. An optional `text` fence with `output=ID`
   contains the exact expected output for numeric exits; no output fence means empty
@@ -173,8 +172,9 @@ spaces or shell quoting. The contract is deliberately small:
   fence is required and `newline=no` is invalid. The source must demonstrate intentional
   abort. Explain `lli --disable-symbolication` beside aborting examples to avoid a
   crash-handler hang on affected hosts.
-  The current helper captures stdout and stderr together, so the guide calls this
-  **program output**, not stdout specifically. A second output fence is an error.
+  For a numeric exit, `output=` matches stdout exactly and stderr must be empty. For
+  `SIGABRT`, `output=` matches the stable prefix of stderr and stdout must be empty. A second
+  output fence is an error.
 - `mode=error` requires `error=UserErrorSubclass` on the root and exactly one `text`
   fence with `diagnostic=ID`. It is a single-file case: no helper module fences.
   Remove the fence's one structural final newline from the diagnostic excerpt, require
@@ -198,7 +198,7 @@ spaces or shell quoting. The contract is deliberately small:
   equal its source case's `test=ID`. Cases may contain prose between their file fences,
   and between source and result fences. Their fences cannot interleave with another
   case's fences, and all result fences must appear after their case's last source fence
-  and before any fence belonging to a later case. Reject `std=` or `exit=` outside
+  and before any fence belonging to a later case. Reject `std=` everywhere, `exit=` outside
   `mode=run`, `warning=` in `mode=error`, `newline=no` on a diagnostic fence, and
   `module=` on the root; recognized keys in invalid positions are errors. IDs are
   page-local, so a tour can reuse a short name on another page. An authoring note
@@ -208,7 +208,7 @@ spaces or shell quoting. The contract is deliberately small:
 For example, the guide can present a standalone program and its actual output:
 
 ````markdown
-```leech test=hello file=main.leech mode=run std=io
+```leech test=hello file=main.leech mode=run
 import std::io;
 pub fn main() i32 {
     io::println("hello");
@@ -233,8 +233,9 @@ Use [markdown-it-py](https://markdown-it-py.readthedocs.io/en/latest/using.html)
 Markdown fences; its fence tokens expose content, info strings, and source line maps. Use
 pytest's documented [non-Python collection hook](https://docs.pytest.org/en/stable/example/nonpython.html)
 to create one item per case. The collector is small Leech-specific glue over these stable
-interfaces and calls `tests/util.py` for compile/link/run behavior. Tests of the collector
-itself cover fence parsing, grouping, metadata validation, and error reporting.
+interfaces and constructs `tests.harness.ModSrc` and `TestProgram` objects for
+compile/link/run behavior. Tests of the collector itself cover fence parsing, grouping,
+metadata validation, and error reporting.
 
 [Sybil](https://sybil.readthedocs.io/en/latest/markdown.html) supports custom evaluators
 for non-Python code fences, but this contract requires grouping files, pairing output and
@@ -242,7 +243,7 @@ diagnostic fences, and validating all Leech fences together. That still needs a 
 parser/evaluator. [Sphinx doctest](https://www.sphinx-doc.org/en/master/usage/extensions/doctest.html)
 primarily models Python sessions and would introduce a site/markup stack for this guide;
 [mdBook test](https://rust-lang.github.io/mdBook/cli/test.html) is tailored to Rust code
-blocks. Neither directly runs Leech's existing link/test helper. The decisive criterion is
+blocks. Neither directly runs Leech's compiler test harness. The decisive criterion is
 one reliable source location and one pytest result per Leech case, not a new publishing tool.
 
 The fence format follows [CommonMark's info-string convention](https://spec.commonmark.org/spec#fenced-code-blocks):

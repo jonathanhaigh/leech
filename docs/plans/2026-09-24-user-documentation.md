@@ -42,42 +42,39 @@ expected by `import std::io`, while existing CLI tests remain green.
 
 ## Task 2: Build and test the Markdown case collector
 
-**Files:** `pyproject.toml`, `uv.lock`, `tests/util.py`, root `conftest.py` (or an equivalent
-pytest plugin loaded from the repository root), `tests/test_documentation.py` or a dedicated
-collector module, and focused collector tests.
+**Files:** `pyproject.toml`, `uv.lock`, root `conftest.py` (or an equivalent pytest plugin
+loaded from the repository root), `tests/doc.py`, and focused collector tests in
+`tests/test_doc.py`.
 
 - Declare `markdown-it-py` as a direct development dependency (it is currently transitive
   through `rich`). Parse `README.md` and `docs/guide/**/*.md` at collection time; do not
   collect `docs/specs/` or `docs/plans/`.
-  Create one pytest item per page-local `test` ID, with a name containing the Markdown
-  path and root fence line. Ensure ordinary `uv run pytest` discovers these items.
+  Create one pytest item per page-local `test` ID, with a name containing the root fence
+  line; pytest supplies the Markdown path through the item's parent node. Ensure ordinary
+  `uv run pytest` discovers these items.
 - Implement the precise fence contract from the design: metadata keys, one root file,
   group files, optional module-name overrides, modes, expected output/diagnostic blocks,
   bounded relative `.leech` paths, and collection failures for invalid or orphan metadata.
   Parse Markdown structurally so fences inside other fences and non-Leech code are not
   misclassified. Validate `error=` / `warning=` against concrete `errors.UserError`
-  subclasses at collection time. Validate `std=` against the actual `std::` modules,
-  excluding the prelude. Reject known keys on the wrong mode or fence, including
-  `module=` on the root, `warning=` with `mode=error`, `std=`/`exit=` outside `mode=run`,
-  and `newline=no` on a diagnostic fence.
-- Extend `tests/util.check_prog_output` to forward optional qualified-name overrides to
-  `compile_modules`; keep its existing callers unchanged. This allows a nested transitive
-  import's standalone name to match the name assigned when loaded as an import. Check a
-  nested transitive example using `module=sub::helper` on its file fence. Document that
-  the optional `qualified_names` keyword, like existing `std_modules`, is reserved and
-  cannot also name a `**modules` fixture.
-- For `run`, use `tests/util.check_prog_output` with the group's modules, output, exit code,
-  optional module-name overrides, and named bundled std modules. Map `exit=SIGABRT` to
-  the helper's negative signal status and document its prefix-output behavior. For
-  `compile`, use `tests/util.compile_modules`. For `error`, which is single-file, call the
-  compiler on `main.leech`, assert the exact raised `errors.UserError` subclass, its
-  `ERROR` severity, a nonempty excerpt in its primary message, and no unrelated
-  registered diagnostics.
-- Add a context manager in `tests/util.py` to reset and restore `errors._errors` and
-  `_error_level` around each case, even on failure. The collector uses that helper rather
-  than reaching into `errors` internals. Successful `run`/`compile`
-  cases must leave no registered diagnostics unless they declare `warning=...`; that mode
-  is single-file and requires exactly one matching warning and its diagnostic excerpt.
+  subclasses at collection time. Reject known keys on the wrong mode or fence, including
+  `module=` on the root, `warning=` with `mode=error`, `std=` everywhere, `exit=` outside
+  `mode=run`, and `newline=no` on a diagnostic fence.
+- Convert every validated source fence directly to `harness.ModSrc`, preserving its source,
+  qualified module name, and relative path in one object. Build a `harness.TestProgram` for
+  execution. Check a nested transitive example using `module=sub::helper` on its file fence
+  so the emitted name matches the name assigned during relative import resolution.
+- For `run`, use `CompilerHarness.check` or `check_signal`; bundled standard-library modules
+  and the prelude are linked automatically. For `compile`, use `CompilerHarness.compile`.
+  For `error`, which is single-file, compile the same `TestProgram` and assert the exact
+  raised `errors.UserError` subclass, its `ERROR` severity, a nonempty excerpt in its primary
+  message, and no unrelated registered diagnostics.
+- Add a narrowly local context manager in `tests/doc.py` to reset and restore
+  `errors._errors` and `_error_level` around each case, even on failure. Issue #93 will
+  replace this temporary process-global isolation with per-compilation state. Successful
+  `run`/`compile` cases must leave no registered diagnostics unless they declare
+  `warning=...`; that mode is single-file and requires exactly one matching warning and its
+  diagnostic excerpt.
   Normalize diagnostic fences by removing one structural final newline only. Normalize
   `output=` using the stated `newline=no` rule, preserving every other byte.
 - Wrap execution errors with the page, test ID, and original fence line; report the
@@ -90,7 +87,7 @@ collector module, and focused collector tests.
   warnings, expected errors, and nested transitive imports. Negative collector tests
   cover unknown/duplicate keys, duplicate files/IDs, unsafe paths, missing root or
   diagnostic, orphan or misordered result fences, nonconcrete/unknown diagnostic classes,
-  a duplicate/invalid `std` name, invalid key/mode combinations, root `module=`, broken
+  obsolete `std=` metadata, invalid key/mode combinations, root `module=`, broken
   Leech syntax, unexpected warnings, a wrong error class/message, and leaked diagnostic
   state.
 
@@ -100,7 +97,7 @@ source location, and every valid public fence belongs to a collected case.
 ## Task 3: Write the quickstart and navigation
 
 **Files:** `README.md`, `docs/guide/index.md`, `docs/guide/getting-started.md`,
-`tests/test_documentation_build.py`, and `AGENTS.md`.
+`tests/test_doc_build.py`, and `AGENTS.md`.
 
 - Give the README a concise project description, current status, first-run requirements,
   and links to the quickstart and tour. Keep detailed instructions in the guide. Add the

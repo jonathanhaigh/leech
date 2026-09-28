@@ -27,6 +27,7 @@ build-backend = "uv_build"
 dev = [
     "basedpyright>=1.39.9",
     "coverage>=7.14.0",
+    "markdown-it-py>=4.2.0",
     "pytest>=9.0.3",
     "reuse>=6.2.0",
     "ruff>=0.16.1",
