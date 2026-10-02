@@ -25,6 +25,11 @@ features in `tests/test_*.py`; shared test helpers live in `tests/harness.py`.
 - `uv run reuse lint` verifies license metadata.
 
 Tests that execute generated programs require `llvm-link` and `lli` on `PATH`.
+Quickstart smoke tests skip native executable generation when `llc` or `cc` is unavailable;
+set `LEECH_REQUIRE_NATIVE_DOCS=1` to make either missing tool a test failure on the supported
+x86-64 Linux validation target.
+Pytest also collects and executes Leech fences in `README.md` and `docs/guide/**/*.md`; the
+annotation contract is summarized in `docs/guide/index.md` and implemented in `tests/doc.py`.
 
 ## Coding Style & Naming Conventions
 
