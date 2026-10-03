@@ -21,7 +21,7 @@ features in `tests/test_*.py`; shared test helpers live in `tests/harness.py`.
 - `uv run pytest tests/test_traits.py::test_name` runs one test.
 - `uv run ruff check .` checks lint and import rules; `uv run ruff format .` formats code.
 - `uv run basedpyright` performs static type checking.
-- `uv run leech input.leech -o output.ll` compiles a source file to LLVM IR.
+- `uv run leechc input.leech -o output.ll` compiles a source file to LLVM IR.
 - `uv run reuse lint` verifies license metadata.
 
 Tests that execute generated programs require `llvm-link` and `lli` on `PATH`.

@@ -2,30 +2,31 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import importlib.metadata
 import pathlib
 import subprocess
 import sys
 
 import pytest
 
-from leech import driver, errors
+from leech import driver, errors, target
 
 
 def run_cli(*args) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["leech", *(str(a) for a in args)],
+        ["leechc", *(str(a) for a in args)],
         capture_output=True,
         text=True,
         check=False,
     )
 
 
-def run_leech_in_process(monkeypatch, *args) -> int:
+def run_leechc_in_process(monkeypatch, *args) -> int:
     monkeypatch.setattr(errors, "_errors", [])
     monkeypatch.setattr(errors, "_error_level", errors.NOTE)
-    monkeypatch.setattr(sys, "argv", ["leech", *(str(a) for a in args)])
+    monkeypatch.setattr(sys, "argv", ["leechc", *(str(a) for a in args)])
     with pytest.raises(SystemExit) as exc_info:
-        driver.run()
+        driver.main()
     code = exc_info.value.code
     assert isinstance(code, int)
     return code
@@ -92,12 +93,14 @@ def test_cli_rejects_invalid_module_name(tmp_path, module_name, monkeypatch, cap
     src_path.write_text("pub fn answer() i32 { return 42; }\n")
     out_path = tmp_path / "math.ll"
 
-    code = run_leech_in_process(monkeypatch, src_path, "--module-name", module_name, "-o", out_path)
+    code = run_leechc_in_process(
+        monkeypatch, src_path, "--module-name", module_name, "-o", out_path
+    )
 
     assert code == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("usage: leech ")
+    assert captured.err.startswith("usage: leechc ")
     assert "argument --module-name: invalid qualified module name" in captured.err
     assert not out_path.exists()
 
@@ -296,7 +299,7 @@ def test_run_in_process_infers_output_path(tmp_path, monkeypatch, capsys):
 }
 """)
 
-    code = run_leech_in_process(monkeypatch, src_path)
+    code = run_leechc_in_process(monkeypatch, src_path)
 
     assert code == errors.NOTE
     captured = capsys.readouterr()
@@ -314,7 +317,7 @@ def test_run_in_process_ll_suffix_requires_explicit_o(tmp_path, monkeypatch, cap
 }
 """)
 
-    code = run_leech_in_process(monkeypatch, src_path)
+    code = run_leechc_in_process(monkeypatch, src_path)
 
     assert code == 2
     captured = capsys.readouterr()
@@ -329,7 +332,7 @@ def test_run_in_process_error_renders_message_and_skips_output(tmp_path, monkeyp
 }
 """)
 
-    code = run_leech_in_process(monkeypatch, src_path)
+    code = run_leechc_in_process(monkeypatch, src_path)
 
     assert code == errors.ERROR
     captured = capsys.readouterr()
@@ -344,3 +347,12 @@ def test_run_in_process_error_renders_message_and_skips_output(tmp_path, monkeyp
         "-------------------^\n"
     )
     assert not src_path.with_suffix(".ll").exists()
+
+
+def test_cli_version_reports_package_metadata():
+    proc = run_cli("--version")
+
+    assert proc.returncode == 0
+    assert proc.stderr == ""
+    assert proc.stdout.startswith(f"leechc {importlib.metadata.version('leech')} (LLVM ")
+    assert proc.stdout.endswith(f"; target {target.TRIPLE})\n")

@@ -5,11 +5,15 @@
 """The compiler driver: CLI argument handling and the top-level compile pipeline."""
 
 import argparse
+import importlib.metadata
 import pathlib
 import sys
 from typing import Optional
 
-from leech import codegen, errors, ir_loader, ir_module, opt_util, parse, reserved, src
+import llvmlite
+from llvmlite import binding as llb
+
+from leech import codegen, errors, ir_loader, ir_module, opt_util, parse, reserved, src, target
 
 
 def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir_module.Mod:
@@ -41,9 +45,21 @@ def _parse_module_name(value: str) -> str:
     return value
 
 
+def version_text(prog: str) -> str:
+    """Describe the installed compiler version and its LLVM backend, prefixed by ``prog``."""
+    llvm_version = ".".join(str(part) for part in llb.llvm_version_info)
+    return (
+        f"{prog} {importlib.metadata.version('leech')} "
+        f"(LLVM {llvm_version} via llvmlite {llvmlite.__version__}; target {target.TRIPLE})"
+    )
+
+
 def _parse_args() -> argparse.Namespace:
     """Parse arguments, defaulting the output to the input path with an ``.ll`` suffix."""
-    parser = argparse.ArgumentParser(prog="leech", description="Leech compiler")
+    parser = argparse.ArgumentParser(
+        prog="leechc", description="Leech compiler: compile one module"
+    )
+    parser.add_argument("--version", action="version", version=version_text("leechc"))
     parser.add_argument("filename", help="source file", type=pathlib.Path)
     parser.add_argument("-o", help="output file", metavar="FILENAME", type=pathlib.Path)
     parser.add_argument(
@@ -66,7 +82,7 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
-def run() -> None:
+def main() -> None:
     """Compile CLI input, render diagnostics, and exit with their severity."""
     args = _parse_args()
     file = src.SrcFile(args.filename)
