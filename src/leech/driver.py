@@ -56,9 +56,7 @@ def version_text(prog: str) -> str:
 
 def _parse_args() -> argparse.Namespace:
     """Parse arguments, defaulting the output to the input path with an ``.ll`` suffix."""
-    parser = argparse.ArgumentParser(
-        prog="leechc", description="Leech compiler: compile one module"
-    )
+    parser = argparse.ArgumentParser(prog="leechc", description="Compile one Leech module.")
     parser.add_argument("--version", action="version", version=version_text("leechc"))
     parser.add_argument("filename", help="source file", type=pathlib.Path)
     parser.add_argument("-o", help="output file", metavar="FILENAME", type=pathlib.Path)

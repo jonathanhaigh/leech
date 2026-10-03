@@ -53,7 +53,7 @@ lands second wires `--search-path` into the other, and adds its build-level test
 - Replace `[project.scripts] leech = "leech:main"` with `leechc = "leech.driver:main"`.
   Rename `driver.run` to `driver.main`, and delete `leech.main` and its import from
   `__init__.py`. Set argparse `prog="leechc"`, with the description
-  "Leech compiler: compile one module".
+  "Compile one Leech module.".
 - Add `--version`. Format it in a helper shared by both commands (in `driver.py` for now),
   which reads `importlib.metadata.version("leech")`, `llvmlite.__version__`,
   `llvmlite.binding.llvm_version_info` and `target.TRIPLE`.

@@ -13,9 +13,9 @@ Implementation plan: [Build tooling plan](../plans/2026-10-02-build-tooling.md).
 
 ## Outcome
 
-A user with Python 3.14, uv and a C toolchain can install Leech from a source checkout with
-one `uv tool install` command. They can then build and run a multi-module program with one
-command each:
+A user with Python 3.14, uv and a C toolchain can install `leechc` and `leech` from a source
+checkout with one `uv tool install` command. They can then build and run a multi-module
+program with one command each:
 
 ```bash
 uv tool install --editable /path/to/leech   # or a non-editable path/wheel install
