@@ -5,12 +5,22 @@
 [project]
 name = "leech"
 version = "0.0.1"
-description = "Leech compiler"
+description = "leechc, the compiler for the Leech systems programming language"
 readme = "README.md"
 requires-python = ">=3.14"
+license = "MPL-2.0"
+license-files = ["LICENSE", "LICENSES/*.txt"]
+classifiers = [
+    # PyPI rejects every "Private ::" classifier, so this blocks accidental uploads.
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: POSIX :: Linux",
+]
 dependencies = [
     "lark[interegular]>=1.3.1",
-    "llvmlite>=0.47.0",
+    # target.DATALAYOUT and the llvmlite binding calls are verified against this series
+    # only; widening the bound means re-deriving and re-verifying them.
+    "llvmlite>=0.47.0,<0.48",
     "more-itertools>=11.1.0",
     "networkx[default]>=3.6.1",
     "rich>=15.0.0",
@@ -20,7 +30,7 @@ dependencies = [
 leechc = "leech.driver:main"
 
 [build-system]
-requires = ["uv_build>=0.11.13,<0.12.0"]
+requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
