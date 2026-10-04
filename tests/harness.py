@@ -2,16 +2,17 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import contextlib
 import dataclasses
 import functools
 import pathlib
 import signal
 import subprocess
 import types
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import ClassVar, Final, Optional
 
-from leech import ast, driver, ir_module, parse, reserved
+from leech import ast, driver, errors, ir_module, parse, reserved
 from leech import src as leech_src
 
 _TOOL_TIMEOUT_SECONDS = 30
@@ -25,6 +26,22 @@ def _bundled_mod_llvm_ir() -> Mapping[str, str]:
         name = "prelude" if path.stem == "prelude" else f"std::{path.stem}"
         compiled[name] = driver.compile_to_llvm_ir(leech_src.SrcFile(path), name)
     return types.MappingProxyType(compiled)
+
+
+@contextlib.contextmanager
+def isolated_diagnostics() -> Iterator[None]:
+    """Start with no registered diagnostics, and restore the previous ones afterwards."""
+    registered = errors.all_errors()
+    previous_errors = list(registered)
+    previous_level = errors.error_level()
+    registered.clear()
+    errors._error_level = errors.NOTE
+    try:
+        yield
+    finally:
+        registered.clear()
+        registered.extend(previous_errors)
+        errors._error_level = previous_level
 
 
 def src_position(src: str, substring: str) -> tuple[int, int]:

@@ -1544,6 +1544,13 @@ class ModDoesNotExistError(UserError):
         super().__init__(ERROR, f'Cannot find module "{name}"', span)
 
 
+class ImportPathNotFoundWarning(UserError):  # noqa: N818 - a warning, not an error
+    """Raised when an import path entry is not an existing directory."""
+
+    def __init__(self, path: pathlib.Path, origin: str) -> None:
+        super().__init__(WARNING, f'Import path "{path}" (from {origin}) is not a directory', None)
+
+
 class EntryMainMissingError(UserError):
     """Raised when the program entry module declares no ``main``."""
 

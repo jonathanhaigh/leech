@@ -9,7 +9,7 @@ import shutil
 import pytest
 
 from leech import errors
-from tests import doc
+from tests import doc, harness
 
 _PAGE = pathlib.Path("docs/guide/test.md")
 
@@ -524,7 +524,7 @@ pub fn main() i32 { return 0 }
     )
     sentinel = errors.UnreachableCodeWarning("sentinel", None)
 
-    with doc._isolated_diagnostics():
+    with harness.isolated_diagnostics():
         errors.register_error(sentinel)
         with pytest.raises(doc.DocExampleError):
             case.execute(tmp_path)

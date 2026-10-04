@@ -4,14 +4,13 @@
 
 """Collection and execution of tested Leech examples in public Markdown."""
 
-import contextlib
 import dataclasses
 import inspect
 import pathlib
 import shutil
 import signal
 import tempfile
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from typing import Final, Optional
 
 import markdown_it
@@ -130,7 +129,7 @@ class DocCase:
         """Compile or run this case in ``tmp_path``."""
         compiler = harness.CompilerHarness(tmp_path)
         try:
-            with _isolated_diagnostics():
+            with harness.isolated_diagnostics():
                 self._execute_with(compiler)
         except Exception as err:
             raise self._execution_error(err, tmp_path) from err
@@ -581,21 +580,6 @@ def _relative_mod_path_from_error(err: BaseException, tmp_path: pathlib.Path) ->
         return str(err.message.span.file.path.resolve().relative_to(tmp_path.resolve()))
     except ValueError:
         return None
-
-
-@contextlib.contextmanager
-def _isolated_diagnostics() -> Iterator[None]:
-    registered = errors.all_errors()
-    previous_errors = list(registered)
-    previous_level = errors.error_level()
-    registered.clear()
-    errors._error_level = errors.NOTE
-    try:
-        yield
-    finally:
-        registered.clear()
-        registered.extend(previous_errors)
-        errors._error_level = previous_level
 
 
 def is_public_doc_path(path: pathlib.Path, root: pathlib.Path) -> bool:

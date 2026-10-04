@@ -408,9 +408,8 @@ def test_match_aliased_discriminants(compiler):
     compiler.check(src)
 
 
-def test_match_aliased_discriminant_warns(compiler, monkeypatch):
-    monkeypatch.setattr(errors, "_errors", [])
-    monkeypatch.setattr(errors, "_error_level", errors.NOTE)
+@pytest.mark.usefixtures("isolated_diagnostics")
+def test_match_aliased_discriminant_warns(compiler):
     src = """
     enum Alias(u8) { A = 1, B = 1 }
     pub fn main() i32 {
@@ -468,9 +467,8 @@ def test_match_non_exhaustive_error(compiler):
         compiler.compile(src)
 
 
-def test_match_non_exhaustive_with_redundant_arm_warns(compiler, monkeypatch):
-    monkeypatch.setattr(errors, "_errors", [])
-    monkeypatch.setattr(errors, "_error_level", errors.NOTE)
+@pytest.mark.usefixtures("isolated_diagnostics")
+def test_match_non_exhaustive_with_redundant_arm_warns(compiler):
     src = """
     enum Color { Red, Green, Blue }
     pub fn main() i32 {

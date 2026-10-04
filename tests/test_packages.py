@@ -4,7 +4,8 @@
 
 import pytest
 
-from leech import errors
+from leech import driver, errors
+from leech import src as leech_src
 from tests import harness
 
 
@@ -191,3 +192,72 @@ def test_same_stem_modules_in_different_subdirectories(compiler):
         harness.ModSrc("b_pkg::mem", b_pkg_mem_src),
     )
     compiler.check(program, exit_status=7)
+
+
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def _compile_with_roots(main_path, *roots):
+    return driver.compile_to_llvm_ir(leech_src.SrcFile(main_path), "main", search_roots=roots)
+
+
+def test_import_path_makes_outside_module_importable(tmp_path):
+    main_path = _write(tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::g() }")
+    _write(tmp_path / "libs" / "lib.leech", "pub fn g() i32 { 1 }")
+
+    with pytest.raises(errors.ModDoesNotExistError):
+        _compile_with_roots(main_path)
+    assert 'call i32 @"lib::g"()' in _compile_with_roots(main_path, tmp_path / "libs")
+
+
+def test_nested_import_resolves_inside_import_path(tmp_path):
+    main_path = _write(
+        tmp_path / "app" / "main.leech", "import pkg::lib; pub fn f() i32 { lib::g() }"
+    )
+    _write(tmp_path / "libs" / "pkg" / "lib.leech", "pub fn g() i32 { 1 }")
+
+    assert 'call i32 @"pkg::lib::g"()' in _compile_with_roots(main_path, tmp_path / "libs")
+
+
+def test_first_matching_import_path_wins(tmp_path):
+    main_path = _write(tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::one() }")
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write(first / "lib.leech", "pub fn one() i32 { 1 }")
+    _write(second / "lib.leech", "pub fn two() i32 { 2 }")
+
+    assert 'call i32 @"lib::one"()' in _compile_with_roots(main_path, first, second)
+    with pytest.raises(errors.ItemNotFoundError):
+        _compile_with_roots(main_path, second, first)
+
+
+def test_importing_directory_precedes_import_paths(tmp_path):
+    main_path = _write(
+        tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::near() }"
+    )
+    _write(tmp_path / "app" / "lib.leech", "pub fn near() i32 { 1 }")
+    _write(tmp_path / "libs" / "lib.leech", "pub fn far() i32 { 2 }")
+
+    assert 'call i32 @"lib::near"()' in _compile_with_roots(main_path, tmp_path / "libs")
+
+
+def test_import_path_cannot_shadow_bundled_module(tmp_path):
+    main_path = _write(
+        tmp_path / "app" / "main.leech", 'import std::io; pub fn f() { io::println("hi"); }'
+    )
+    _write(tmp_path / "libs" / "std" / "io.leech", "pub fn other() {}")
+
+    assert 'call void @"std::io::println"' in _compile_with_roots(main_path, tmp_path / "libs")
+
+
+def test_directory_named_like_module_is_not_a_match(tmp_path):
+    main_path = _write(tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::g() }")
+    (tmp_path / "first" / "lib.leech").mkdir(parents=True)
+    _write(tmp_path / "second" / "lib.leech", "pub fn g() i32 { 1 }")
+
+    llvm_ir = _compile_with_roots(main_path, tmp_path / "first", tmp_path / "second")
+
+    assert 'call i32 @"lib::g"()' in llvm_ir

@@ -97,7 +97,7 @@ class ModLoader:
         roots = (importing_file.path.parent, _BUNDLED_ROOT, *self._extra_search_roots)
         for root in roots:
             candidate = root.joinpath(*idents[:-1], f"{idents[-1]}.leech")
-            if candidate.exists():
+            if candidate.is_file():
                 return candidate, "::".join(idents)
         raise errors.ModDoesNotExistError(path.str(), path.span)
 

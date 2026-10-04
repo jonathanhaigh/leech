@@ -105,7 +105,8 @@ Non-goals, recorded so they are not reopened by accident:
 | Optimization | `-O0` by default. `-O1`, `-O2`, and `-O3` are optional. |
 | Versioning | A static version in `pyproject.toml`, changed with `uv version --bump`. There are no tags yet. |
 | Upload guard | The `Private :: Do Not Upload` classifier. |
-| Extras | `leech check`, `leechc --emit`, `-O`, `--version`, `--search-path` and `LEECH_PATH` (#41), `$CC`, toolchain errors, and `leech doctor`. |
+| Extras | `leech check`, `leechc --emit`, `-O`, `--version`, `-I`/`--import-path` and `LEECH_PATH` (#41), `$CC`, toolchain errors, and `leech doctor`. |
+| Option names | gcc/clang names where one fits, rustc/cargo names otherwise (see [Option naming](#option-naming)). |
 | Test harness | A later, separately deferrable task moves `tests/harness.py` onto the same native pipeline. |
 | Docs | The #23 quickstart waits for `leech run` and `leech build`, then documents them instead of the manual pipeline. |
 
@@ -220,8 +221,8 @@ a new llvmlite series is a deliberate change. It re-derives the data layout (as
 
 ```text
 leechc FILE [-o OUT] [--module-name NAME] [--entry]
-            [--emit {llvm-ir,llvm-bc,asm,obj}] [-O {0,1,2,3}]
-            [--search-path DIR]... [--version]
+            [--emit {llvm-ir,llvm-bc,asm,obj}] [-O{0,1,2,3}]
+            [-I DIR | --import-path DIR]... [--version]
 ```
 
 - `--emit` defaults to `llvm-ir`, which is today's behavior. At `-O0`, `llvm-ir` output is
@@ -237,7 +238,7 @@ leechc FILE [-o OUT] [--module-name NAME] [--entry]
   output links into the default PIE executables of modern Linux toolchains.
 - `--module-name` is unchanged.
 - `--entry` is described in [Program entry](#program-entry).
-- `--search-path` is described in [Module search path](#module-search-path-41).
+- `-I`/`--import-path` is described in [Import paths](#import-paths-41).
 - Exit status is unchanged: the highest diagnostic severity, so 0 for none or notes, 1 for
   warnings and 2 for errors. Argument errors also exit 2. A consequence is that `leechc`
   exits 1 for the nonexistent-search-directory warning, while `leech build` exits 0 for it.
@@ -272,15 +273,16 @@ Rejected alternative: always compile the root under the qualified name `main`. T
 codegen change, but the root could then never be imported (its name would conflict), and a
 filename would keep a hidden meaning.
 
-## Module search path (#41)
+## Import paths (#41)
 
 This resolves #41 as part of this design:
 
-- `--search-path DIR` (repeatable) on `leechc` and on `leech build`, `run`, and `check`,
+- `-I DIR` / `--import-path DIR` (repeatable; `-IDIR` also works, as in gcc) on `leechc` and
+  on `leech build`, `run`, and `check`,
   plus the `LEECH_PATH` environment variable (`os.pathsep`-separated, like `PYTHONPATH`).
   Relative directories resolve against the current working directory.
 - The resolution order is: the importing file's directory, then the bundled root, then
-  `--search-path` entries in order, then `LEECH_PATH` entries in order. The first match
+  `-I` entries in order, then `LEECH_PATH` entries in order. The first match
   wins.
 - **Search paths cannot shadow bundled modules** (`prelude`, `std::*`), because the bundled
   root comes first. Shadowing std by accident would be confusing and hard to diagnose. To
@@ -290,12 +292,28 @@ This resolves #41 as part of this design:
 - A nonexistent search directory produces a warning (once per directory) and is skipped,
   rather than failing the build.
 
+## Option naming
+
+`leechc` and `leech` take gcc/clang option names where one fits, so C and C++ users can guess
+them, and rustc/cargo names where gcc/clang have no applicable precedent. Long options must be
+spelled in full: like gcc, clang and rustc, neither command accepts abbreviations.
+
+| Option | Precedent |
+| --- | --- |
+| `-o FILE`, `-O0`…`-O3`, `--version`, `-h`/`--help` | gcc/clang |
+| `-I DIR` / `--import-path DIR`, `LEECH_PATH` | gcc/clang `-I`, used the same way by Swift, OCaml, D and Go; the variable mirrors `CPATH`/`PYTHONPATH` |
+| `--emit {llvm-ir,llvm-bc,asm,obj}` | rustc `--emit`, with the same values. clang's `-S`/`-c`/`-emit-llvm` assume a default of linking, which `leechc` never does. |
+| `--module-name NAME` | rustc `--crate-name` |
+| `--entry` | none that fits: gcc and ld's `-e`/`--entry SYMBOL` names an entry *symbol*, and rustc's analogue is `--crate-type=bin`. |
+| `build`, `run`, `check`, `run ROOT -- ARGS` | cargo |
+| `$CC` | make and the Rust `cc` crate |
+
 ## `leech`: the program driver
 
 ```text
-leech build ROOT [-o EXE] [-O {0,1,2,3}] [--search-path DIR]...
-leech run   ROOT [-O {0,1,2,3}] [--search-path DIR]... [-- ARGS...]
-leech check ROOT [--search-path DIR]...
+leech build ROOT [-o EXE] [-O{0,1,2,3}] [-I DIR]...
+leech run   ROOT [-O{0,1,2,3}] [-I DIR]... [-- ARGS...]
+leech check ROOT [-I DIR]...
 leech doctor
 leech --version
 ```
@@ -311,12 +329,12 @@ problem, and exit 2.
 For `run`, `leech` splits its own argv at the first literal `--` before argparse sees it.
 Everything after the `--` goes to the program untouched, even tokens that look like
 `leech` options. The left side is parsed normally, so options may come before or after
-`ROOT`. `argparse.REMAINDER` is not used, because it swallows `-O` and `--search-path`
+`ROOT`. `argparse.REMAINDER` is not used, because it swallows `-O` and `-I`
 when they follow `ROOT`.
 
 ### Pipeline
 
-1. **Discover.** Compute the search roots once, and report any nonexistent-directory
+1. **Discover.** Compute the import paths once, and report any nonexistent-directory
    warnings once, before any compilation. Create a `ModLoader` with those roots, and load
    `ROOT` under its stem. `loader.mods` then holds every reached module, including the
    prelude and std modules, with its qualified name. For **every** `ModLoader.load` call,
@@ -448,7 +466,7 @@ is prebuilt or cached (see [Precedents](#standard-library-distribution) for the 
 
 - `leechc`: `--emit` for each format (an object starts with the ELF magic number and links
   with `cc`), the output-path derivation, and `-O` changing the output
-  IR. Also `--entry` positive and negative cases, `--search-path` and `LEECH_PATH`
+  IR. Also `--entry` positive and negative cases, `-I`/`--import-path` and `LEECH_PATH`
   precedence including the no-shadowing rule, and `--version`.
 - `leech`: build or run of a single-file program, a multi-module program with a nested
   package, a program importing `std::io` and `std::mem`, and a private `main`. Also the
@@ -557,7 +575,7 @@ New issues:
 
 #96 should land before #97, #98 and #41 because they all edit the same CLI, but this is a
 sequencing preference, not a hard dependency. #41 and #100 compose
-but neither blocks the other. Whichever lands second wires `--search-path` into the other.
+but neither blocks the other. Whichever lands second wires `-I` into the other.
 
 ### Future issues (not in this plan)
 

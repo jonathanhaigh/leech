@@ -43,7 +43,7 @@ the later implementation, after manual approval and a separate instruction to im
 Solid arrows are hard dependencies. Dotted arrows are sequencing preferences: #97, #98 and
 #41 all edit the `driver.py` argument parser, so landing the rename first avoids churn.
 #95 and #99 are independent. #41 and #100 compose, but neither blocks the other. Whichever
-lands second wires `--search-path` into the other, and adds its build-level tests.
+lands second wires `-I` into the other, and adds its build-level tests.
 
 ## Task 1 (#96): Rename the compiler command to `leechc`
 
@@ -162,7 +162,7 @@ remains in `src/leech` or `tests/`.
 
   Initialize the native target and asm printer once, lazily.
 - Model the emit kinds as an `enum.Enum` with each kind's file suffix. `leechc` adds
-  `--emit` (default `llvm-ir`) and `-O {0,1,2,3}` (default 0). It derives the default output
+  `--emit` (default `llvm-ir`) and `-O{0,1,2,3}` (default 0). It derives the default output
   suffix from the emit kind. Source files must end in `.leech`, which replaces the old rule
   that `.ll` input required `-o`.
   Write binary formats in binary mode. `--emit=llvm-ir` at `-O0` writes the codegen string
@@ -186,16 +186,17 @@ assembly.
 `tests/test_packages.py`.
 
 - Update #41's body with the decided rules before starting (see the design's
-  "Module search path" section).
-- Add a `driver.search_roots(cli_paths)` helper: CLI paths, then `LEECH_PATH` entries split
+  "Import paths" section).
+- Add a `driver.resolve_import_paths(cli_paths)` helper: CLI paths, then `LEECH_PATH` entries split
   on `os.pathsep`, with empty entries ignored. Each entry is resolved against the current
   working directory. A missing directory produces a warning, once, and is dropped. The
-  helper returns the roots and the warnings, and does not register them. `leechc`
-  registers the warnings, so its severity-based exit status becomes 1. `leech` prints them
-  once, before compiling any module (the design's pipeline step 1). Pass the result as `ModLoader(extra_search_roots=…)`, which already searches
-  after the importer's directory and the bundled root. Remove the `TODO` in
-  `compile_to_ir`, and accept `search_roots` there.
-- Add `--search-path DIR` (repeatable, `action="append"`) to `leechc`.
+  helper registers the warnings like any other diagnostic, so `leechc`'s severity-based exit
+  status becomes 1. `leech` takes them from the registry before its first compilation and
+  prints them once (the design's pipeline step 1). Pass the result as
+  `ModLoader(extra_search_roots=…)`, which already searches after the importer's directory
+  and the bundled root. Remove the `TODO` in `compile_to_ir`, and accept `search_roots` there.
+- Add `-I DIR` / `--import-path DIR` (repeatable, `action="append"`) to `leechc`, and disable
+  argparse's option abbreviations.
 - Tests:
   - a module outside the importer's directory becomes importable through the CLI and
     through `LEECH_PATH`;
@@ -249,7 +250,7 @@ assembly.
 - `build.py`:
   - validate `ROOT`: it exists, has a `.leech` suffix, and its stem is a single
     identifier (reserved words are allowed). Each failure is a usage error with exit 2;
-  - compute the search roots once and print their warnings;
+  - compute the import paths once and print their warnings;
   - discover the graph, call `loader.validate_names()` **before** `check_declarations`,
     then check declarations;
   - compile each module with `driver.compile_to_llvm_ir(..., entry=is_root, search_roots=…)`,
@@ -297,7 +298,7 @@ assembly.
   - a warning in a *user* module imported by two other user modules is printed once, and
     two distinct warnings at different positions are both printed;
   - `-O2` produces a working executable;
-  - `--search-path` and `LEECH_PATH`, including a missing directory warned about once, if
+  - `-I` and `LEECH_PATH`, including a missing directory warned about once, if
     #41 has landed (otherwise #41 adds these);
   - `CC=/nonexistent`, `CC=""`, `CC="   "` (both mean `cc`, so the build succeeds) and
     `CC='cc "'` each produce the expected result, with no traceback;
@@ -326,9 +327,9 @@ multi-module example from the #23 branch with `leech build`.
   - `panic` produces SIGABRT, so the subprocess return code is `-6`;
   - argument parsing, asserted in-process by monkeypatching `os.execv` (Leech cannot read
     argv yet):
-    - `run app.leech -O 2 -- a b` builds at `-O2` and passes `["a", "b"]`;
-    - `run -O 2 app.leech` also builds at `-O2`;
-    - `run app.leech -- -O 3 --search-path x` passes all four tokens to the program and
+    - `run app.leech -O2 -- a b` builds at `-O2` and passes `["a", "b"]`;
+    - `run -O2 app.leech` also builds at `-O2`;
+    - `run app.leech -- -O3 -I x` passes all three tokens to the program and
       builds at `-O0`;
   - `leech run sub/app.leech` from another directory executes the absolute
     `sub/leech-out/app`;

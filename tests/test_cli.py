@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import importlib.metadata
+import os
 import pathlib
 import shutil
 import subprocess
@@ -11,14 +12,16 @@ import sys
 import pytest
 
 from leech import driver, errors, target
+from tests import harness
 
 
-def run_cli(*args) -> subprocess.CompletedProcess:
+def run_cli(*args, env=None) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["leechc", *(str(a) for a in args)],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
 
@@ -34,10 +37,8 @@ def run_tool(*command) -> subprocess.CompletedProcess:
 
 
 def run_leechc_in_process(monkeypatch, *args) -> int:
-    monkeypatch.setattr(errors, "_errors", [])
-    monkeypatch.setattr(errors, "_error_level", errors.NOTE)
     monkeypatch.setattr(sys, "argv", ["leechc", *(str(a) for a in args)])
-    with pytest.raises(SystemExit) as exc_info:
+    with harness.isolated_diagnostics(), pytest.raises(SystemExit) as exc_info:
         driver.main()
     code = exc_info.value.code
     assert isinstance(code, int)
@@ -382,7 +383,7 @@ def test_cli_optimization_level_changes_llvm_ir(tmp_path):
     optimized_path = tmp_path / "o2.ll"
 
     assert run_cli(src_path, "-o", unoptimized_path).returncode == errors.NOTE
-    assert run_cli(src_path, "-O", "2", "-o", optimized_path).returncode == errors.NOTE
+    assert run_cli(src_path, "-O2", "-o", optimized_path).returncode == errors.NOTE
 
     assert "alloca" in unoptimized_path.read_text()
     optimized = optimized_path.read_text()
@@ -394,7 +395,7 @@ def test_cli_rejects_unsupported_optimization_level(tmp_path):
     src_path = tmp_path / "app.leech"
     src_path.write_text("pub fn answer() i32 { return 42; }\n")
 
-    proc = run_cli(src_path, "-O", "4")
+    proc = run_cli(src_path, "-O4")
 
     assert proc.returncode == 2
     assert "argument -O: invalid choice: '4'" in proc.stderr
@@ -413,7 +414,7 @@ def test_cli_object_files_link_into_position_independent_executable(tmp_path):
     obj_paths = []
     for src_path, extra_args in modules:
         obj_path = tmp_path / f"{src_path.stem}.o"
-        proc = run_cli(src_path, *extra_args, "--emit", "obj", "-O", "1", "-o", obj_path)
+        proc = run_cli(src_path, *extra_args, "--emit", "obj", "-O1", "-o", obj_path)
         assert proc.returncode == errors.NOTE, proc.stderr
         obj_paths.append(obj_path)
 
@@ -471,3 +472,96 @@ def test_cli_escapes_source_filename(tmp_path):
     llvm_ir_path = tmp_path / "app.ll"
     assert run_cli(src_path, "-o", llvm_ir_path).returncode == errors.NOTE
     assert f'source_filename = "{escaped}"\n' in llvm_ir_path.read_text()
+
+
+@pytest.mark.usefixtures("isolated_diagnostics")
+def test_resolve_import_paths_orders_cli_paths_before_environment(tmp_path, monkeypatch):
+    dirs = [tmp_path / name for name in ("cli", "env1", "env2")]
+    for path in dirs:
+        path.mkdir()
+    monkeypatch.chdir(tmp_path)
+    environ = {driver.IMPORT_PATH_ENV_VAR: f"{dirs[1]}{os.pathsep}{os.pathsep}env2"}
+
+    roots = driver.resolve_import_paths([pathlib.Path("cli")], environ)
+
+    assert roots == tuple(dirs)
+    assert errors.all_errors() == []
+
+
+@pytest.mark.usefixtures("isolated_diagnostics")
+def test_resolve_import_paths_warns_once_per_missing_path(tmp_path):
+    missing = tmp_path / "missing"
+    not_dir = tmp_path / "file.txt"
+    not_dir.write_text("")
+    (tmp_path / "existing").mkdir()
+    environ = {driver.IMPORT_PATH_ENV_VAR: str(tmp_path / "existing" / ".." / "missing")}
+
+    roots = driver.resolve_import_paths([missing, not_dir], environ)
+
+    assert roots == ()
+    assert [str(w) for w in errors.all_errors()] == [
+        f'Import path "{missing}" (from the command line) is not a directory',
+        f'Import path "{not_dir}" (from the command line) is not a directory',
+    ]
+    assert errors.error_level() == errors.WARNING
+
+
+def _write_lib_program(tmp_path) -> tuple[pathlib.Path, pathlib.Path]:
+    src_path = tmp_path / "app" / "main.leech"
+    src_path.parent.mkdir()
+    src_path.write_text("import lib; pub fn f() i32 { return lib::g(); }\n")
+    lib_dir = tmp_path / "libs"
+    lib_dir.mkdir()
+    (lib_dir / "lib.leech").write_text("pub fn g() i32 { return 1; }\n")
+    return src_path, lib_dir
+
+
+@pytest.mark.parametrize("option", ("-I", "--import-path"))
+def test_cli_import_path_option_resolves_imports(tmp_path, option):
+    src_path, lib_dir = _write_lib_program(tmp_path)
+
+    proc = run_cli(src_path, option, lib_dir)
+
+    assert proc.returncode == errors.NOTE, proc.stderr
+    assert 'call i32 @"lib::g"()' in src_path.with_suffix(".ll").read_text()
+
+
+def test_cli_attached_import_path_resolves_imports(tmp_path):
+    src_path, lib_dir = _write_lib_program(tmp_path)
+
+    proc = run_cli(src_path, f"-I{lib_dir}")
+
+    assert proc.returncode == errors.NOTE, proc.stderr
+
+
+def test_cli_rejects_abbreviated_long_options(tmp_path):
+    src_path, lib_dir = _write_lib_program(tmp_path)
+
+    proc = run_cli(src_path, "--import", lib_dir)
+
+    assert proc.returncode == 2
+    assert "unrecognized arguments: --import" in proc.stderr
+
+
+def test_cli_import_path_environment_variable_resolves_imports(tmp_path):
+    src_path, lib_dir = _write_lib_program(tmp_path)
+    env = {**os.environ, driver.IMPORT_PATH_ENV_VAR: str(lib_dir)}
+
+    proc = run_cli(src_path, env=env)
+
+    assert proc.returncode == errors.NOTE, proc.stderr
+    assert 'call i32 @"lib::g"()' in src_path.with_suffix(".ll").read_text()
+
+
+def test_cli_missing_import_path_warns_and_still_compiles(tmp_path):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn answer() i32 { return 42; }\n")
+    missing = tmp_path / "missing"
+
+    proc = run_cli(src_path, "-I", missing)
+
+    assert proc.returncode == errors.WARNING
+    assert proc.stderr == (
+        f'WARNING: Import path "{missing}" (from the command line) is not a directory\n'
+    )
+    assert src_path.with_suffix(".ll").exists()
