@@ -13,7 +13,18 @@ from typing import Optional
 import llvmlite
 from llvmlite import binding as llb
 
-from leech import codegen, errors, ir_loader, ir_module, opt_util, parse, reserved, src, target
+from leech import (
+    codegen,
+    errors,
+    ir_loader,
+    ir_module,
+    ll_emit,
+    opt_util,
+    parse,
+    reserved,
+    src,
+    target,
+)
 
 
 def compile_to_ir(
@@ -42,7 +53,7 @@ def compile_to_llvm_ir(
     mod = compile_to_ir(file, qualified_name, entry)
     compiler = codegen.Compiler(mod)
     compiler.compile()
-    return str(compiler.ll_mod) + "\n"
+    return compiler.llvm_ir()
 
 
 def _parse_module_name(value: str) -> str:
@@ -62,7 +73,8 @@ def version_text(prog: str) -> str:
 
 
 def _parse_args() -> argparse.Namespace:
-    """Parse arguments, defaulting the output to the input path with an ``.ll`` suffix."""
+    """Parse arguments, defaulting the output to the input path with the emitted format's
+    suffix in place of ``.leech``."""
     parser = argparse.ArgumentParser(prog="leechc", description="Compile one Leech module.")
     parser.add_argument("--version", action="version", version=version_text("leechc"))
     parser.add_argument("filename", help="source file", type=pathlib.Path)
@@ -78,16 +90,26 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="make this module's main function the program entry point",
     )
+    parser.add_argument(
+        "--emit",
+        choices=[kind.value for kind in ll_emit.EmitKind],
+        default=ll_emit.EmitKind.LLVM_IR.value,
+        help="output format (default: %(default)s)",
+    )
+    parser.add_argument(
+        "-O",
+        choices=ll_emit.OPT_LEVELS,
+        default=0,
+        type=int,
+        help="optimization level (default: %(default)s)",
+        dest="opt_level",
+    )
     args = parser.parse_args()
+    args.emit = ll_emit.EmitKind(args.emit)
+    if args.filename.suffix != ".leech":
+        parser.error(f"source file name must end in '.leech': {str(args.filename)!r}")
     if args.o is None:
-        if args.filename.suffix != ".ll":
-            args.o = str(args.filename.with_suffix(".ll"))
-        else:
-            print(
-                "-o option must be given if source file name ends in '.ll'",
-                file=sys.stderr,
-            )
-            sys.exit(2)
+        args.o = args.filename.with_suffix(args.emit.suffix)
 
     return args
 
@@ -97,9 +119,10 @@ def main() -> None:
     args = _parse_args()
     file = src.SrcFile(args.filename)
 
-    output = ""
+    output = b""
     try:
-        output = compile_to_llvm_ir(file, args.module_name, args.entry)
+        llvm_ir = compile_to_llvm_ir(file, args.module_name, args.entry)
+        output = ll_emit.emit_from_ir(llvm_ir, args.emit, args.opt_level)
     except errors.UserError as err:
         errors.register_error(err)
 
@@ -108,7 +131,6 @@ def main() -> None:
         renderer.display_errors(errors.all_errors())
 
     if errors.error_level() < errors.ERROR:
-        with pathlib.Path(args.o).open("w", encoding="utf-8") as f:
-            f.write(output)
+        pathlib.Path(args.o).write_bytes(output)
 
     sys.exit(errors.error_level())

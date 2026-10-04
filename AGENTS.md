@@ -24,9 +24,11 @@ Standard-library sources are under `src/leech/std/`. Tests mirror language featu
 - `uv run ruff check .` checks lint and import rules; `uv run ruff format .` formats code.
 - `uv run basedpyright` performs static type checking.
 - `uv run leechc input.leech -o output.ll` compiles a source file to LLVM IR.
+  `--emit {llvm-ir,llvm-bc,asm,obj}` picks the output format, `-O {0,1,2,3}` the optimization
+  level, and `--entry` makes the module's `main` the program entry point.
 - `uv run reuse lint` verifies license metadata.
 
-Tests that execute generated programs require `llvm-link` and `lli` on `PATH`.
+Tests that execute generated programs require `llvm-link`, `lli` and `cc` on `PATH`.
 
 ## Coding Style & Naming Conventions
 

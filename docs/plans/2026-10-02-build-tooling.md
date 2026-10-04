@@ -163,7 +163,8 @@ remains in `src/leech` or `tests/`.
   Initialize the native target and asm printer once, lazily.
 - Model the emit kinds as an `enum.Enum` with each kind's file suffix. `leechc` adds
   `--emit` (default `llvm-ir`) and `-O {0,1,2,3}` (default 0). It derives the default output
-  suffix from the emit kind, and requires `-o` when the derived path equals the input.
+  suffix from the emit kind. Source files must end in `.leech`, which replaces the old rule
+  that `.ll` input required `-o`.
   Write binary formats in binary mode. `--emit=llvm-ir` at `-O0` writes the codegen string
   directly, without an llvmlite round trip, so existing output is byte-identical (the
   existing CLI tests pin this).
@@ -174,7 +175,7 @@ remains in `src/leech` or `tests/`.
     executable that runs correctly, without `-no-pie`;
   - `-O2` IR differs from `-O0` IR for a function with an obvious optimization (for
     example, a constant-folded expression);
-  - the `-o` derivation rule holds for every kind.
+  - the default output suffix for every kind, and the rejection of non-`.leech` input.
 
 **Validation:** full suite. Manually check that `leechc x.leech --emit=asm` produces readable
 assembly.

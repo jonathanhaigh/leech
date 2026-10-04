@@ -4,6 +4,7 @@
 
 import importlib.metadata
 import pathlib
+import shutil
 import subprocess
 import sys
 
@@ -19,6 +20,17 @@ def run_cli(*args) -> subprocess.CompletedProcess:
         text=True,
         check=False,
     )
+
+
+def run_tool(*command) -> subprocess.CompletedProcess:
+    """Run an external tool, failing clearly if it is missing or exits unsuccessfully."""
+    tool = str(command[0])
+    assert shutil.which(tool) is not None, f"this test needs {tool!r} on PATH"
+    proc = subprocess.run(
+        [str(arg) for arg in command], capture_output=True, text=True, check=False
+    )
+    assert proc.returncode == 0, f"{tool} failed ({proc.returncode}):\n{proc.stderr}"
+    return proc
 
 
 def run_leechc_in_process(monkeypatch, *args) -> int:
@@ -168,10 +180,7 @@ pub fn main() i32 {
         assert proc.stderr == ""
 
     bitcode_path = tmp_path / "program.bc"
-    subprocess.run(
-        ["llvm-link", *(out_path for _, _, out_path in modules), "-o", bitcode_path],
-        check=True,
-    )
+    run_tool("llvm-link", *(out_path for _, _, out_path in modules), "-o", bitcode_path)
     proc = subprocess.run(
         ["lli", bitcode_path],
         capture_output=True,
@@ -182,20 +191,6 @@ pub fn main() i32 {
     assert proc.returncode == 0
     assert proc.stdout == "hello\n"
     assert proc.stderr == ""
-
-
-def test_cli_ll_suffix_requires_explicit_o(tmp_path):
-    src_path = tmp_path / "main.ll"
-    src_path.write_text("""pub fn main() i32 {
-    return 0;
-}
-""")
-
-    proc = run_cli(src_path)
-
-    assert proc.returncode == 2
-    assert proc.stdout == ""
-    assert proc.stderr == "-o option must be given if source file name ends in '.ll'\n"
 
 
 def test_cli_error_renders_message_and_does_not_write_output(tmp_path):
@@ -327,21 +322,6 @@ def test_run_in_process_infers_output_path(tmp_path, monkeypatch, capsys):
     assert "ret i32 42" in ll_path.read_text()
 
 
-def test_run_in_process_ll_suffix_requires_explicit_o(tmp_path, monkeypatch, capsys):
-    src_path = tmp_path / "main.ll"
-    src_path.write_text("""pub fn main() i32 {
-    return 0;
-}
-""")
-
-    code = run_leechc_in_process(monkeypatch, src_path)
-
-    assert code == 2
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == "-o option must be given if source file name ends in '.ll'\n"
-
-
 def test_run_in_process_error_renders_message_and_skips_output(tmp_path, monkeypatch, capsys):
     src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {
@@ -373,3 +353,121 @@ def test_cli_version_reports_package_metadata():
     assert proc.stderr == ""
     assert proc.stdout.startswith(f"leechc {importlib.metadata.version('leech')} (LLVM ")
     assert proc.stdout.endswith(f"; target {target.TRIPLE})\n")
+
+
+@pytest.mark.parametrize(
+    ("emit", "suffix", "magic"),
+    (
+        ("llvm-ir", ".ll", b"; ModuleID"),
+        ("llvm-bc", ".bc", b"BC\xc0\xde"),
+        ("asm", ".s", b"\t.file"),
+        ("obj", ".o", b"\x7fELF"),
+    ),
+)
+def test_cli_emit_derives_output_suffix(tmp_path, emit, suffix, magic):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn answer() i32 { return 42; }\n")
+
+    proc = run_cli(src_path, "--emit", emit)
+
+    assert proc.returncode == errors.NOTE
+    assert proc.stderr == ""
+    assert src_path.with_suffix(suffix).read_bytes().startswith(magic)
+
+
+def test_cli_optimization_level_changes_llvm_ir(tmp_path):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn answer() i32 { let x = 40; return x + 2; }\n")
+    unoptimized_path = tmp_path / "o0.ll"
+    optimized_path = tmp_path / "o2.ll"
+
+    assert run_cli(src_path, "-o", unoptimized_path).returncode == errors.NOTE
+    assert run_cli(src_path, "-O", "2", "-o", optimized_path).returncode == errors.NOTE
+
+    assert "alloca" in unoptimized_path.read_text()
+    optimized = optimized_path.read_text()
+    assert "alloca" not in optimized
+    assert "ret i32 42" in optimized
+
+
+def test_cli_rejects_unsupported_optimization_level(tmp_path):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn answer() i32 { return 42; }\n")
+
+    proc = run_cli(src_path, "-O", "4")
+
+    assert proc.returncode == 2
+    assert "argument -O: invalid choice: '4'" in proc.stderr
+    assert not src_path.with_suffix(".ll").exists()
+
+
+def test_cli_object_files_link_into_position_independent_executable(tmp_path):
+    app_path = tmp_path / "app.leech"
+    app_path.write_text('import std::io;\nfn main() i32 { io::println("linked"); return 3; }\n')
+    std_root = pathlib.Path(driver.__file__).parent / "std"
+    modules = (
+        (app_path, ("--entry",)),
+        (std_root / "io.leech", ("--module-name", "std::io")),
+        (std_root / "prelude.leech", ("--module-name", "prelude")),
+    )
+    obj_paths = []
+    for src_path, extra_args in modules:
+        obj_path = tmp_path / f"{src_path.stem}.o"
+        proc = run_cli(src_path, *extra_args, "--emit", "obj", "-O", "1", "-o", obj_path)
+        assert proc.returncode == errors.NOTE, proc.stderr
+        obj_paths.append(obj_path)
+
+    exe_path = tmp_path / "app"
+    run_tool("cc", *obj_paths, "-o", exe_path)
+    proc = subprocess.run([exe_path], capture_output=True, text=True, check=False)
+
+    assert proc.returncode == 3
+    assert proc.stdout == "linked\n"
+    assert proc.stderr == ""
+
+
+@pytest.mark.parametrize("filename", ("main.ll", "main", "main.leech.txt"))
+@pytest.mark.parametrize("explicit_o", (False, True))
+def test_cli_rejects_source_without_leech_suffix(tmp_path, filename, explicit_o):
+    src_path = tmp_path / filename
+    src = "pub fn answer() i32 { return 42; }\n"
+    src_path.write_text(src)
+    out_path = tmp_path / "out.ll"
+    args = [src_path, "-o", out_path] if explicit_o else [src_path]
+
+    proc = run_cli(*args)
+
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+    assert proc.stderr.startswith("usage: leechc ")
+    assert f"source file name must end in '.leech': {str(src_path)!r}\n" in proc.stderr
+    assert src_path.read_text() == src
+    assert not out_path.exists()
+
+
+def test_cli_names_source_file_in_llvm_ir_and_assembly(tmp_path):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn answer() i32 { return 42; }\n")
+
+    assert run_cli(src_path).returncode == errors.NOTE
+    assert run_cli(src_path, "--emit", "asm").returncode == errors.NOTE
+
+    llvm_ir = src_path.with_suffix(".ll").read_text()
+    assert llvm_ir.startswith(f'; ModuleID = "app"\nsource_filename = "{src_path}"\n')
+    # Like clang, LLVM names only the source file's base name in the assembly.
+    assert '\t.file\t"app.leech"\n' in src_path.with_suffix(".s").read_text()
+
+
+def test_cli_escapes_source_filename(tmp_path):
+    src_dir = tmp_path / 'we"ird\\dir'
+    src_dir.mkdir()
+    src_path = src_dir / "app.leech"
+    src_path.write_text("pub fn answer() i32 { return 42; }\n")
+
+    proc = run_cli(src_path, "--emit", "obj")
+
+    assert proc.returncode == errors.NOTE, proc.stderr
+    escaped = str(src_path).replace("\\", "\\5C").replace('"', "\\22")
+    llvm_ir_path = tmp_path / "app.ll"
+    assert run_cli(src_path, "-o", llvm_ir_path).returncode == errors.NOTE
+    assert f'source_filename = "{escaped}"\n' in llvm_ir_path.read_text()

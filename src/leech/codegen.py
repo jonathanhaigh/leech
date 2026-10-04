@@ -48,6 +48,15 @@ def _contains_union(typ: typs.Typ) -> bool:
             return False
 
 
+def _ll_string_literal(text: str) -> str:
+    """Quote ``text`` as an LLVM IR string, escaping bytes other than printable ASCII."""
+    chars = (
+        chr(byte) if 0x20 <= byte < 0x7F and byte not in b'"\\' else f"\\{byte:02X}"
+        for byte in text.encode()
+    )
+    return '"' + "".join(chars) + '"'
+
+
 def _set_linkage(ll_global: ll.GlobalVariable | ll.Function, access: visibility.Access) -> None:
     """Set an LLVM global's linkage from a Leech access level."""
     if access == visibility.PRIVATE:
@@ -133,7 +142,7 @@ class Compiler:
 
     def __init__(self, mod: ir_module.Mod) -> None:
         self._mod = mod
-        self.ll_mod = ll.Module(context=ll.Context())
+        self.ll_mod = ll.Module(name=mod.name, context=ll.Context())
         self._ll_mod_items = Compiler._LLItems(self)
         self._tmp_name = naming.VarNamer()
         self._overflow_intrinsics = {}
@@ -197,6 +206,17 @@ class Compiler:
 
         if self._mod.entry_fn is not None:
             self._define_entry_point(self._mod.entry_fn.instantiate(()))
+
+    def llvm_ir(self) -> str:
+        """Render the compiled module as textual LLVM IR naming its source file.
+
+        The source file name becomes the ``source_filename`` that LLVM reports in assembly and
+        object output.
+        """
+        header, _, body = str(self.ll_mod).partition("\n")
+        assert header.startswith("; ModuleID"), header
+        src_path = self._mod.ast.span.file.path
+        return f"{header}\nsource_filename = {_ll_string_literal(str(src_path))}\n{body}\n"
 
     def _program_items(self) -> Iterator[ir_module.ModItem]:
         """Yield local items and public imported items in module load order."""

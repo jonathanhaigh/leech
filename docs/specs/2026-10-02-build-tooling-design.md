@@ -226,10 +226,10 @@ leechc FILE [-o OUT] [--module-name NAME] [--entry]
 
 - `--emit` defaults to `llvm-ir`, which is today's behavior. At `-O0`, `llvm-ir` output is
   the codegen string written unchanged, not a parse-and-reprint round trip through
-  llvmlite. The default output path is
-  `FILE` with the suffix for the chosen format (`.ll`, `.bc`, `.s` or `.o`). Today's rule
-  that `.ll` input requires `-o` generalizes: if the derived output path equals `FILE`, `-o`
-  is required (exit 2).
+  llvmlite. The textual IR names its source with `source_filename`, so assembly and objects
+  carry the real file name. `FILE` must end in `.leech` (otherwise a usage error, exit 2),
+  and the default output path replaces that suffix with the chosen format's (`.ll`, `.bc`,
+  `.s` or `.o`), so it can never overwrite the input.
 - `-O` defaults to `0`. With a non-zero level, the module runs through LLVM's default
   per-module pipeline at that level before emission, including for `llvm-ir` (like
   `clang -O2 -emit-llvm`).
