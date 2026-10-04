@@ -107,7 +107,7 @@ def test_source_and_synthesized_panic_calls_share_reference(compiler):
         }
         """,
     )
-    main = next(fn for fn in mod.src_fn_symbols if fn.is_main)
+    main = next(fn for fn in mod.src_fn_symbols if fn.name == "main")
     panic_calls = []
     for bb in main.instantiate(()).cfg.nodes:
         for instr in bb.instrs:

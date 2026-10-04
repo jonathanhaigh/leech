@@ -57,8 +57,10 @@ def _discover_fn_instances(
     in discovery order.
     """
     for fn in mod.src_fn_symbols:
-        if not fn.is_generic and (fn.is_main or fn.access == visibility.PUBLIC):
+        if not fn.is_generic and fn.access == visibility.PUBLIC:
             fn.instantiate(())
+    if mod.entry_fn is not None:
+        mod.entry_fn.instantiate(())
 
     # Module variables are still emitted as ordinary module items. Lower
     # every local initializer before discovering function instances it requests.

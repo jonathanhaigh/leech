@@ -6,6 +6,7 @@
 
 import dataclasses
 import enum
+import pathlib
 import sys
 from collections.abc import Collection, Sequence
 from typing import Final, Optional
@@ -1541,6 +1542,60 @@ class ModDoesNotExistError(UserError):
 
     def __init__(self, name: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot find module "{name}"', span)
+
+
+class EntryMainMissingError(UserError):
+    """Raised when the program entry module declares no ``main``."""
+
+    def __init__(self, mod_name: str, path: pathlib.Path) -> None:
+        super().__init__(
+            ERROR,
+            f'Entry module "{mod_name}" ({path}) has no "main" function',
+            None,
+        )
+
+
+class EntryMainNotDefinedFnError(UserError):
+    """Raised when the entry module's ``main`` is a module variable or an ``extern``
+    declaration rather than a function with a body."""
+
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            'The program entry point "main" must be a function defined with a body',
+            span,
+        )
+
+
+class EntryMainGenericError(UserError):
+    """Raised when the entry module's ``main`` has comptime parameters."""
+
+    def __init__(self, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(ERROR, 'The program entry point "main" cannot be generic', span)
+
+
+class EntryMainSignatureError(UserError):
+    """Raised when the entry module's ``main`` is not ``fn main() i32``."""
+
+    def __init__(self, fn_typ_name: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'The program entry point "main" must have type "fn() i32", not "{fn_typ_name}"',
+            span,
+        )
+
+
+class EntryMainExternConflictError(UserError):
+    """Raised when an ``extern fn main`` declares the C ``main`` symbol with a type other
+    than the program entry point's."""
+
+    def __init__(self, fn_typ_name: str, span: Optional[src.SrcSpan]) -> None:
+        super().__init__(
+            ERROR,
+            f'"extern fn main" has type "{fn_typ_name}", but the program entry point defines '
+            'the C "main" symbol with type "fn() i32"',
+            span,
+        )
 
 
 class TextErrorRenderer:

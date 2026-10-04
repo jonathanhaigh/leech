@@ -313,7 +313,8 @@ def test_compile_returns_structured_main_artifact(compiler: harness.CompilerHarn
     assert main.src_path == compiler.workspace / "main.leech"
     assert main.llvm_path == compiler.workspace / "main.ll"
     assert main.llvm_path.read_text(encoding="utf-8") == main.llvm_ir
-    assert 'define i32 @"main"' in main.llvm_ir
+    assert 'define i32 @"main::main"' in main.llvm_ir
+    assert 'define i32 @"main"()' not in main.llvm_ir
     assert "llvm_ir" not in repr(main)
     assert repr(compiled) == "CompiledProgram(mods=('main',))"
 
@@ -412,11 +413,22 @@ def test_program_std_mod_shadows_bundled_mod(compiler: harness.CompilerHarness):
     compiler.check(program, stdout="", exit_status=9)
 
 
-def test_run_requires_main_root(compiler: harness.CompilerHarness):
-    program = harness.TestProgram(harness.ModSrc("app", "pub fn main() i32 { 0 }"))
+def test_run_accepts_root_with_any_name(compiler: harness.CompilerHarness):
+    program = harness.TestProgram(harness.ModSrc("app", "pub fn main() i32 { 6 }"))
 
-    with pytest.raises(ValueError, match="root module must be named 'main'"):
-        compiler.run(program)
+    compiler.check(program, exit_status=6)
+
+
+def test_compile_with_entry_defines_c_main_for_root_only(compiler: harness.CompilerHarness):
+    program = harness.TestProgram.from_main(
+        "import helper; pub fn main() i32 { helper::main() }",
+        harness.ModSrc("helper", "pub fn main() i32 { 0 }"),
+    )
+
+    compiled = compiler.compile(program, entry=True)
+
+    assert 'define i32 @"main"()' in compiled.mods["main"].llvm_ir
+    assert 'define i32 @"main"()' not in compiled.mods["helper"].llvm_ir
 
 
 def test_check_failure_reports_expected_and_actual(compiler: harness.CompilerHarness):

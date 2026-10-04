@@ -148,10 +148,10 @@ def test_function_instance_symbols_and_linkage(compiler):
             + public_fn() + id[i32](6) - 21;
     }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src, entry=True).mods["main"].llvm_ir
 
-    assert 'define i32 @"main"' in ir_text
-    assert '@"main::main"' not in ir_text
+    assert 'define i32 @"main::main"' in ir_text
+    assert 'define i32 @"main"()' in ir_text
     assert 'define private i32 @"<main::Foo as main::Show>::show"' in ir_text
     assert 'define private i32 @"main::Foo::get"' in ir_text
     assert 'define private i32 @"main::private_fn"' in ir_text

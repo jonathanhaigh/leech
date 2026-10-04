@@ -16,10 +16,13 @@ from llvmlite import binding as llb
 from leech import codegen, errors, ir_loader, ir_module, opt_util, parse, reserved, src, target
 
 
-def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir_module.Mod:
+def compile_to_ir(
+    file: src.SrcFile, qualified_name: Optional[str] = None, entry: bool = False
+) -> ir_module.Mod:
     """Parse and lower a source file and its imports into IR.
 
-    ``qualified_name`` defaults to the file's stem and qualifies its items' symbols.
+    ``qualified_name`` defaults to the file's stem and qualifies its items' symbols. With
+    ``entry``, the module's ``main`` function becomes the program entry point.
     """
     qualified_name = opt_util.opt_or_default(qualified_name, file.path.stem)
     # TODO: thread a --search-path/env-var CLI option through to
@@ -27,12 +30,16 @@ def compile_to_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> ir
     loader = ir_loader.ModLoader()
     mod = loader.load(file.path, qualified_name)
     loader.check_declarations()
+    if entry:
+        mod.designate_entry()
     return mod
 
 
-def compile_to_llvm_ir(file: src.SrcFile, qualified_name: Optional[str] = None) -> str:
+def compile_to_llvm_ir(
+    file: src.SrcFile, qualified_name: Optional[str] = None, entry: bool = False
+) -> str:
     """Compile a source file and its imports to textual LLVM IR."""
-    mod = compile_to_ir(file, qualified_name)
+    mod = compile_to_ir(file, qualified_name, entry)
     compiler = codegen.Compiler(mod)
     compiler.compile()
     return str(compiler.ll_mod) + "\n"
@@ -66,6 +73,11 @@ def _parse_args() -> argparse.Namespace:
         metavar="NAME",
         type=_parse_module_name,
     )
+    parser.add_argument(
+        "--entry",
+        action="store_true",
+        help="make this module's main function the program entry point",
+    )
     args = parser.parse_args()
     if args.o is None:
         if args.filename.suffix != ".ll":
@@ -87,7 +99,7 @@ def main() -> None:
 
     output = ""
     try:
-        output = compile_to_llvm_ir(file, args.module_name)
+        output = compile_to_llvm_ir(file, args.module_name, args.entry)
     except errors.UserError as err:
         errors.register_error(err)
 

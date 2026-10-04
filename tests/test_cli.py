@@ -106,29 +106,46 @@ def test_cli_rejects_invalid_module_name(tmp_path, module_name, monkeypatch, cap
 
 
 @pytest.mark.parametrize(
-    ("filename", "module_name", "expected_symbol"),
+    ("filename", "module_name", "entry", "expected_main_symbol"),
     (
-        ("main.leech", None, 'define i32 @"main"'),
-        ("app.leech", None, 'define i32 @"app::main"'),
-        ("app.leech", "main", 'define i32 @"main"'),
+        ("main.leech", None, False, "main::main"),
+        ("app.leech", None, True, "app::main"),
+        ("app.leech", "main", True, "main::main"),
     ),
 )
-def test_cli_module_name_controls_entry_symbol(tmp_path, filename, module_name, expected_symbol):
+def test_cli_entry_flag_controls_c_main(
+    tmp_path, filename, module_name, entry, expected_main_symbol
+):
     src_path = tmp_path / filename
     src_path.write_text("pub fn main() i32 { return 0; }\n")
     out_path = tmp_path / f"{src_path.stem}.ll"
     args = [src_path, "-o", out_path]
     if module_name is not None:
         args.extend(("--module-name", module_name))
+    if entry:
+        args.append("--entry")
 
     proc = run_cli(*args)
 
     assert proc.returncode == errors.NOTE
-    assert expected_symbol in out_path.read_text()
+    llvm_ir = out_path.read_text()
+    assert f'define i32 @"{expected_main_symbol}"()' in llvm_ir
+    assert ('define i32 @"main"()' in llvm_ir) == entry
+
+
+def test_cli_entry_without_main_reports_error(tmp_path):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn other() i32 { return 0; }\n")
+
+    proc = run_cli(src_path, "--entry")
+
+    assert proc.returncode == errors.ERROR
+    assert proc.stderr == f'ERROR: Entry module "app" ({src_path}) has no "main" function\n'
+    assert not src_path.with_suffix(".ll").exists()
 
 
 def test_cli_compiles_linkable_std_io_program(tmp_path):
-    main_path = tmp_path / "main.leech"
+    main_path = tmp_path / "app.leech"
     main_path.write_text(
         """import std::io;
 pub fn main() i32 {
@@ -139,13 +156,13 @@ pub fn main() i32 {
     )
     std_root = pathlib.Path(driver.__file__).parent / "std"
     modules = (
-        (main_path, "main", tmp_path / "main.ll"),
-        (std_root / "io.leech", "std::io", tmp_path / "io.ll"),
-        (std_root / "prelude.leech", "prelude", tmp_path / "prelude.ll"),
+        (main_path, ("--entry",), tmp_path / "app.ll"),
+        (std_root / "io.leech", ("--module-name", "std::io"), tmp_path / "io.ll"),
+        (std_root / "prelude.leech", ("--module-name", "prelude"), tmp_path / "prelude.ll"),
     )
 
-    for src_path, module_name, out_path in modules:
-        proc = run_cli(src_path, "--module-name", module_name, "-o", out_path)
+    for src_path, extra_args, out_path in modules:
+        proc = run_cli(src_path, *extra_args, "-o", out_path)
         assert proc.returncode == errors.NOTE
         assert proc.stdout == ""
         assert proc.stderr == ""

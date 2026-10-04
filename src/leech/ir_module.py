@@ -370,11 +370,6 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
         )
 
     @property
-    def is_main(self) -> bool:
-        """Whether this declaration is the executable module's ``main`` function."""
-        return self.mod_name == "main" and self.name == "main"
-
-    @property
     def mod_name(self) -> str:
         """The qualified name of the module that declares this function."""
         return self._mod_name
@@ -484,10 +479,6 @@ class FnInstance:
             if trait is not None:
                 prefix = f"<{prefix} as {trait.mod_name}::{trait.name}>"
             return f"{prefix}::{name}"
-        # A root module can contain a function named main without itself
-        # being the executable module. Only main::main is the linker entry.
-        if isinstance(self._fn, SrcFnSymbol) and not self._fn.is_generic and self._fn.is_main:
-            return name
         prefix = self._fn._qualified_name_prefix
         return f"{prefix}::{name}" if prefix else name
 
@@ -734,6 +725,7 @@ class Mod:
     env: Final[ir_env.Env]
     loader: Final[ir_loader.ModLoader]
     _src_fn_symbols: tuple[SrcFnSymbol, ...]
+    _entry_fn: Optional[SrcFnSymbol]
 
     def __init__(self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader) -> None:
         # Deferred because intrinsic classes subclass IntrinsicFnSymbol.
@@ -746,6 +738,7 @@ class Mod:
         self.env = builtin_env.new_child()
         self.loader = loader
         self._src_fn_symbols = ()
+        self._entry_fn = None
 
         ir_builtins.register(builtin_env, loader)
 
@@ -781,6 +774,43 @@ class Mod:
         """Type-check every body after the complete import graph has been built."""
         for fn in self._src_fn_symbols:
             _ = fn.typ_check_results
+
+    def designate_entry(self) -> None:
+        """Make this module's ``main`` the program entry point, after validating it.
+
+        ``main`` must be a non-generic function with a body and type ``fn() i32``. Either
+        access is allowed, because the entry point calls it from inside this module. The entry
+        point is the C ``main`` symbol, so any ``extern fn main`` in the loaded program must
+        have the same type.
+        """
+        item = self.get_item(ir_env.Env.Namespace.VARS, "main")
+        if item is None:
+            raise errors.EntryMainMissingError(self.name, self.ast.span.file.path)
+        if not isinstance(item.value, SrcFnSymbol):
+            raise errors.EntryMainNotDefinedFnError(ast.opt_span(item.value))
+        fn = item.value
+        span = opt_util.opt_unwrap(fn.ast).name.span
+        if fn.is_generic:
+            raise errors.EntryMainGenericError(span)
+        entry_typ = typs.FnTyp.get_or_create(typs.I32, ())
+        if fn.fn_typ is not entry_typ:
+            raise errors.EntryMainSignatureError(fn.fn_typ.name, span)
+        for mod in self.loader.mods:
+            extern_item = mod.get_item(ir_env.Env.Namespace.VARS, "main")
+            if (
+                extern_item is not None
+                and isinstance(extern_item.value, ExternFnSymbol)
+                and extern_item.value.fn_typ is not entry_typ
+            ):
+                raise errors.EntryMainExternConflictError(
+                    extern_item.value.fn_typ.name, ast.opt_span(extern_item.value)
+                )
+        self._entry_fn = fn
+
+    @property
+    def entry_fn(self) -> Optional[SrcFnSymbol]:
+        """The function designated as the program entry point, if any."""
+        return self._entry_fn
 
     @property
     def name(self) -> str:
@@ -821,15 +851,13 @@ class Mod:
             case ast.FnDefn():
                 if defn_ast.receiver is not None:
                     raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
-                qualify_name = self.name != "main" or defn_ast.name.name != "main"
                 fn = SrcFnSymbol(defn_ast, self.env, self.name)
                 src_fn_symbols.append(fn)
                 self._add_item(
                     defn_ast.name.name,
                     visibility.Access.from_ast(defn_ast.access),
                     fn,
-                    qualify_name,
-                    defn_ast.span,
+                    span=defn_ast.span,
                 )
             case ast.StructDefn():
                 template = typs.StructTypTemplate(defn_ast, self.env, self.name)

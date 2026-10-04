@@ -75,14 +75,16 @@ def test_declaration_checking_is_an_explicit_post_load_phase(compiler):
         loader.check_declarations()
 
 
-def test_main_name_outside_main_module_is_not_entry_point(compiler):
-    path = compiler.write_mod(harness.ModSrc("library", "fn main() i32 { return 0; }"))
+@pytest.mark.parametrize("mod_name", ("library", "main"))
+def test_main_fn_is_not_entry_point_without_designation(compiler, mod_name):
+    path = compiler.write_mod(harness.ModSrc(mod_name, "fn main() i32 { return 0; }"))
     loader = ir_loader.ModLoader()
 
-    mod = loader.load(path, "library")
+    mod = loader.load(path, mod_name)
 
     fn = next(fn for fn in mod.src_fn_symbols if fn.name == "main")
-    assert not fn.is_main
+    assert mod.entry_fn is None
+    assert fn.instantiate(()).qualified_name == f"{mod_name}::main"
 
 
 def test_diamond_loads_each_module_once(compiler):

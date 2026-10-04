@@ -194,14 +194,19 @@ class CompilerHarness:
         paths = self._materialize(program)
         return driver.compile_to_ir(leech_src.SrcFile(paths[program.root.name]), program.root.name)
 
-    def compile(self, program: str | TestProgram) -> CompiledProgram:
-        """Compile every supplied module independently under its declared name."""
+    def compile(self, program: str | TestProgram, *, entry: bool = False) -> CompiledProgram:
+        """Compile every supplied module independently under its declared name.
+
+        With ``entry``, the root module's ``main`` becomes the program entry point.
+        """
         program = self._coerce_program(program)
         src_paths = self._materialize(program)
         compiled = dict[str, CompiledMod]()
         for mod in (program.root, *program.mods):
             src_path = src_paths[mod.name]
-            llvm_ir = driver.compile_to_llvm_ir(leech_src.SrcFile(src_path), mod.name)
+            llvm_ir = driver.compile_to_llvm_ir(
+                leech_src.SrcFile(src_path), mod.name, entry=entry and mod is program.root
+            )
             llvm_path = src_path.with_suffix(".ll")
             self._write_src(llvm_path, llvm_ir)
             compiled[mod.name] = CompiledMod(mod, src_path, llvm_path, llvm_ir)
@@ -275,11 +280,9 @@ class CompilerHarness:
         return bitcode_path
 
     def run(self, program: str | TestProgram) -> subprocess.CompletedProcess[str]:
-        """Run a ``main``-rooted program with unshadowed bundled modules linked."""
+        """Run a program entered through its root's ``main``, linking unshadowed bundled modules."""
         program = self._coerce_program(program)
-        if program.root.name != "main":
-            raise ValueError("runnable program root module must be named 'main'")
-        compiled = self.compile(program)
+        compiled = self.compile(program, entry=True)
         bitcode_path = self._link(compiled)
         return self._invoke_tool(["lli", "--disable-symbolication", str(bitcode_path)])
 

@@ -195,6 +195,9 @@ class Compiler:
         for inst in result.fn_instances:
             self._compile_fn_instance(inst)
 
+        if self._mod.entry_fn is not None:
+            self._define_entry_point(self._mod.entry_fn.instantiate(()))
+
     def _program_items(self) -> Iterator[ir_module.ModItem]:
         """Yield local items and public imported items in module load order."""
         for mod in self._mod.loader.mods:
@@ -325,6 +328,23 @@ class Compiler:
             assert src_fn is not None
             _set_linkage(ll_fn, src_fn.access)
         return ll_fn
+
+    def _define_entry_point(self, entry: ir_module.FnInstance) -> None:
+        """Define the C ``main`` symbol as a call to ``entry`` that returns its result.
+
+        An imported ``extern fn main`` has already declared the symbol, with the same type, so
+        its declaration receives the definition.
+        """
+        ll_entry = asserts.checked_cast(self._ll_mod_items.get(entry.ref), ll.Function)
+        ll_main_typ = ll.FunctionType(ll.IntType(32), ())
+        existing = self.ll_mod.globals.get("main")
+        if existing is None:
+            ll_main = ll.Function(self.ll_mod, ll_main_typ, "main")
+        else:
+            ll_main = asserts.checked_cast(existing, ll.Function)
+            asserts.assert_eq(str(ll_main.function_type), str(ll_main_typ))
+        ll_builder = ll.IRBuilder(ll_main.append_basic_block("entry"))
+        ll_builder.ret(_checked_builder_value(ll_builder.call(ll_entry, ())))
 
     def _compile_fn_instance(self, inst: ir_module.FnInstance) -> None:
         """Compile an instance's lowered body into its declared LLVM function."""
