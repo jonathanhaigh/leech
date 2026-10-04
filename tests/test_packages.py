@@ -67,10 +67,9 @@ def test_nested_import_allows_reserved_directory_name(compiler):
     compiler.check(program, exit_status=7)
 
 
-def test_transitive_nested_import_resolves_relative_to_its_own_file(compiler):
-    # a's own `import sub::helper;` must resolve relative to a's directory
-    # (pkg), not the root - if it resolved relative to the root instead,
-    # sub/helper.leech wouldn't exist.
+def test_nested_import_is_absolute_from_the_root_package(compiler):
+    # pkg/a.leech names its neighbour pkg/sub/helper.leech by its full path from the root
+    # package, the same as any other module would.
     main_src = """
     import pkg::a;
     pub fn main() i32 {
@@ -78,7 +77,7 @@ def test_transitive_nested_import_resolves_relative_to_its_own_file(compiler):
     }
     """
     a_src = """
-    import sub::helper;
+    import pkg::sub::helper;
     pub fn viaa() i32 {
         return helper::f() + 1;
     }
@@ -91,13 +90,23 @@ def test_transitive_nested_import_resolves_relative_to_its_own_file(compiler):
     program = harness.TestProgram.from_main(
         main_src,
         harness.ModSrc("pkg::a", a_src),
-        harness.ModSrc(
-            "sub::helper",
-            helper_src,
-            path="pkg/sub/helper.leech",
-        ),
+        harness.ModSrc("pkg::sub::helper", helper_src),
     )
     compiler.check(program, exit_status=11)
+
+
+def test_import_is_not_relative_to_the_importing_file(compiler):
+    a_src = "import sub::helper;\npub fn viaa() i32 { return helper::f(); }"
+    program = harness.TestProgram.from_main(
+        "import pkg::a;\npub fn main() i32 { return a::viaa(); }",
+        harness.ModSrc("pkg::a", a_src),
+        harness.ModSrc("pkg::sub::helper", "pub fn f() i32 { return 10; }"),
+    )
+
+    with pytest.raises(errors.ModDoesNotExistError) as exc_info:
+        compiler.build(program)
+
+    harness.assert_span_at(exc_info.value.message.span, a_src, "sub::helper")
 
 
 def test_nested_import_does_not_exist(compiler):
@@ -200,64 +209,47 @@ def _write(path, text):
     return path
 
 
-def _compile_with_roots(main_path, *roots):
-    return driver.compile_to_llvm_ir(leech_src.SrcFile(main_path), "main", search_roots=roots)
+def _compile(main_path):
+    return driver.compile_to_llvm_ir(leech_src.SrcFile(main_path), "main")
 
 
-def test_import_path_makes_outside_module_importable(tmp_path):
+def test_directory_named_like_module_is_not_a_module(tmp_path):
     main_path = _write(tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::g() }")
-    _write(tmp_path / "libs" / "lib.leech", "pub fn g() i32 { 1 }")
+    (tmp_path / "app" / "lib.leech").mkdir()
 
     with pytest.raises(errors.ModDoesNotExistError):
-        _compile_with_roots(main_path)
-    assert 'call i32 @"lib::g"()' in _compile_with_roots(main_path, tmp_path / "libs")
+        _compile(main_path)
 
 
-def test_nested_import_resolves_inside_import_path(tmp_path):
-    main_path = _write(
-        tmp_path / "app" / "main.leech", "import pkg::lib; pub fn f() i32 { lib::g() }"
+def test_non_root_module_compiles_against_the_root_package(compiler):
+    # Each module is compiled on its own, named after its location, so every module agrees
+    # on the names of the modules they share and their symbols link.
+    program = harness.TestProgram.from_main(
+        "import x::a;\nimport x::b;\npub fn main() i32 { return a::g() + b::h(); }",
+        harness.ModSrc("x::a", "pub fn g() i32 { return 2; }"),
+        harness.ModSrc("x::b", "import x::a;\npub fn h() i32 { return a::g() * 10; }"),
     )
-    _write(tmp_path / "libs" / "pkg" / "lib.leech", "pub fn g() i32 { 1 }")
 
-    assert 'call i32 @"pkg::lib::g"()' in _compile_with_roots(main_path, tmp_path / "libs")
-
-
-def test_first_matching_import_path_wins(tmp_path):
-    main_path = _write(tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::one() }")
-    first = tmp_path / "first"
-    second = tmp_path / "second"
-    _write(first / "lib.leech", "pub fn one() i32 { 1 }")
-    _write(second / "lib.leech", "pub fn two() i32 { 2 }")
-
-    assert 'call i32 @"lib::one"()' in _compile_with_roots(main_path, first, second)
-    with pytest.raises(errors.ItemNotFoundError):
-        _compile_with_roots(main_path, second, first)
+    compiler.check(program, exit_status=22)
 
 
-def test_importing_directory_precedes_import_paths(tmp_path):
-    main_path = _write(
-        tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::near() }"
+def test_reimport_shares_one_module(compiler):
+    program = harness.TestProgram.from_main(
+        "import a;\nimport b;\npub fn main() i32 { return a::f() + b::g(); }",
+        harness.ModSrc("a", "import b; pub fn f() i32 { b::g() }"),
+        harness.ModSrc("b", "pub fn g() i32 { 2 }"),
     )
-    _write(tmp_path / "app" / "lib.leech", "pub fn near() i32 { 1 }")
-    _write(tmp_path / "libs" / "lib.leech", "pub fn far() i32 { 2 }")
 
-    assert 'call i32 @"lib::near"()' in _compile_with_roots(main_path, tmp_path / "libs")
+    compiler.check(program, exit_status=4)
 
 
-def test_import_path_cannot_shadow_bundled_module(tmp_path):
-    main_path = _write(
-        tmp_path / "app" / "main.leech", 'import std::io; pub fn f() { io::println("hi"); }'
-    )
-    _write(tmp_path / "libs" / "std" / "io.leech", "pub fn other() {}")
+def test_import_linking_outside_every_package_is_reported(tmp_path):
+    outside = _write(tmp_path / "outside" / "real.leech", "pub fn g() i32 { 3 }")
+    main_src = "import alias;\npub fn f() i32 { alias::g() }"
+    main_path = _write(tmp_path / "app" / "main.leech", main_src)
+    (tmp_path / "app" / "alias.leech").symlink_to(outside)
 
-    assert 'call void @"std::io::println"' in _compile_with_roots(main_path, tmp_path / "libs")
+    with pytest.raises(errors.ModOutsidePackagesError) as exc_info:
+        _compile(main_path)
 
-
-def test_directory_named_like_module_is_not_a_match(tmp_path):
-    main_path = _write(tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::g() }")
-    (tmp_path / "first" / "lib.leech").mkdir(parents=True)
-    _write(tmp_path / "second" / "lib.leech", "pub fn g() i32 { 1 }")
-
-    llvm_ir = _compile_with_roots(main_path, tmp_path / "first", tmp_path / "second")
-
-    assert 'call i32 @"lib::g"()' in llvm_ir
+    harness.assert_span_at(exc_info.value.message.span, main_src, "alias;")

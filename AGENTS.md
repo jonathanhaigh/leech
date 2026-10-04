@@ -25,9 +25,8 @@ Standard-library sources are under `src/leech/std/`. Tests mirror language featu
 - `uv run basedpyright` performs static type checking.
 - `uv run leechc input.leech -o output.ll` compiles a source file to LLVM IR.
   `--emit {llvm-ir,llvm-bc,asm,obj}` picks the output format, `-O0`…`-O3` the optimization
-  level, `--entry` makes the module's `main` the program entry point, and `-I DIR`
-  (`--import-path`, or `LEECH_PATH`) adds import directories. Options follow gcc/clang names
-  where one fits, and rustc/cargo names otherwise.
+  level, and `--entry` makes the module's `main` the program entry point. Options follow
+  gcc/clang names where one fits, and rustc/cargo names otherwise.
 - `uv run reuse lint` verifies license metadata.
 
 Tests that execute generated programs require `llvm-link`, `lli` and `cc` on `PATH`.

@@ -2,17 +2,75 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Loading the set of modules that make up one compilation."""
+"""Loading the set of modules that make up one compilation.
 
+A module is identified by the package it belongs to and its path within that package: the
+file ``<package root>/x/a.leech`` is the module ``x::a``. The bundled standard library is the
+package ``std``, so its modules are named ``std::...``. The root package is anonymous: the
+directory implied by the root module's qualified name.
+"""
+
+import dataclasses
 import functools
 import pathlib
-from collections.abc import Collection, Sequence
+from collections.abc import Collection
 from typing import Final, Optional
 
 from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, parse, src
 
 #: Resolved package directory containing the bundled standard library.
 _BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
+
+STD_PACKAGE_NAME: Final[str] = "std"
+"""The bundled standard library's package name, the first segment of its module names."""
+
+
+@dataclasses.dataclass(frozen=True)
+class Package:
+    """A directory whose ``.leech`` files are modules named by their paths within it."""
+
+    #: The resolved package directory.
+    root: pathlib.Path
+    #: The prefix of its modules' qualified names, or ``None`` for an anonymous package.
+    name: Optional[str]
+
+
+_STD_PACKAGE: Final[Package] = Package(_BUNDLED_ROOT / STD_PACKAGE_NAME, STD_PACKAGE_NAME)
+
+
+@dataclasses.dataclass(frozen=True)
+class ModId:
+    """A module's identity: its package and its path segments within that package."""
+
+    package: Package
+    path: tuple[str, ...]
+
+    @property
+    def qualified_name(self) -> str:
+        """The name that qualifies the module's symbols, such as ``x::a`` or ``std::io``."""
+        prefix = () if self.package.name is None else (self.package.name,)
+        return "::".join((*prefix, *self.path))
+
+    @property
+    def file(self) -> pathlib.Path:
+        """The module's source file."""
+        return self.package.root.joinpath(*self.path[:-1], f"{self.path[-1]}.leech")
+
+
+def root_package_dir(path: pathlib.Path, qualified_name: str) -> Optional[pathlib.Path]:
+    """Return the package directory implied by naming the file ``path`` ``qualified_name``.
+
+    The name's segments must match the file's last path components, as ``x::b`` matches
+    ``<dir>/x/b.leech``. Returns ``None`` when they don't.
+    """
+    segments = qualified_name.split("::")
+    path = path.resolve()
+    if path.suffix != ".leech" or len(path.parts) <= len(segments):
+        return None
+    parts = (*path.parent.parts[len(path.parent.parts) - len(segments) + 1 :], path.stem)
+    if parts != tuple(segments):
+        return None
+    return path.parents[len(segments) - 1]
 
 
 @functools.cache
@@ -22,30 +80,34 @@ def _parse_bundled_mod_ast(path: pathlib.Path) -> ast.Mod:
 
 
 class ModLoader:
-    """Load and path-deduplicate the modules in one compilation.
+    """Load and deduplicate the modules in one compilation.
 
-    The loader owns program-wide builtins and trait implementations. Imports search the
-    importing file's directory, the bundled library, then ``extra_search_roots``.
+    The loader owns program-wide builtins and trait implementations. ``import std::...``
+    resolves in the bundled standard library, and any other import in the root package.
     """
 
     _mods: Final[dict[pathlib.Path, ir_module.Mod]]
+    #: Each loaded module's file, by qualified name.
+    _files: Final[dict[str, pathlib.Path]]
     ctx: Final[compilation.Ctx]
     impl_registry: Final[ir_traits.ImplRegistry]
-    _extra_search_roots: Final[Sequence[pathlib.Path]]
+    #: The package that non-``std`` imports resolve in, once ``load_root`` sets it.
+    _root_package: Optional[Package]
     _prelude: Optional[ir_module.Mod]
     size_of_intrinsic: Final[ir_module.IntrinsicFnSymbol]
     ptr_cast_mut_intrinsic: Final[ir_module.IntrinsicFnSymbol]
     is_null_intrinsic: Final[ir_module.IntrinsicFnSymbol]
     enum_to_int_intrinsic: Final[ir_module.IntrinsicFnSymbol]
 
-    def __init__(self, extra_search_roots: Sequence[pathlib.Path] = ()) -> None:
+    def __init__(self) -> None:
         # Deferred because intrinsic classes subclass ir_module.IntrinsicFnSymbol.
         from leech import ir_builtins  # noqa: PLC0415
 
         self._mods = {}
+        self._files = {}
         self.ctx = compilation.Ctx()
         self.impl_registry = ir_traits.ImplRegistry(self.ctx)
-        self._extra_search_roots = extra_search_roots
+        self._root_package = None
 
         # Built before the prelude (below): Mod.__init__ binds these into
         # every module's builtin_env, the prelude module's own included,
@@ -62,7 +124,7 @@ class ModLoader:
         # to load the prelude, forever. Nothing else is special-cased by
         # name or path; this is the only thing that breaks the cycle.
         self._prelude = None
-        self._prelude = self.load(_BUNDLED_ROOT / "std" / "prelude.leech", "prelude")
+        self._prelude = self.load(ModId(_STD_PACKAGE, ("prelude",)))
 
     @property
     def prelude(self) -> Optional[ir_module.Mod]:
@@ -83,36 +145,65 @@ class ModLoader:
         panic_symbol = asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
         return panic_symbol.instantiate(()).ref
 
-    def resolve_import(
-        self, importing_file: src.SrcFile, path: ast.Path
-    ) -> tuple[pathlib.Path, str]:
-        """Resolve an import to its first matching file and qualified name."""
+    def load_root(self, path: pathlib.Path, qualified_name: str) -> ir_module.Mod:
+        """Load the module being compiled, whose name must match its location.
+
+        A file in the bundled library belongs to package ``std``. Any other file's package is
+        the directory its name implies, and its name cannot start with ``std``.
+        """
+        assert len(self._mods) == 1, "the root must be loaded straight after the prelude"
+        mod_id = self._mod_id_for_file(path)
+        if mod_id is None:
+            package_dir = root_package_dir(path, qualified_name)
+            if package_dir is None:
+                raise errors.ModNameLocationMismatchError(qualified_name, path)
+            if qualified_name.split("::", maxsplit=1)[0] == STD_PACKAGE_NAME:
+                raise errors.StdModNameReservedError(qualified_name, path)
+            self._root_package = Package(package_dir, None)
+            mod_id = asserts.checked_cast(self._mod_id_for_file(path), ModId)
+        if mod_id.qualified_name != qualified_name:
+            raise errors.ModNameLocationMismatchError(qualified_name, path)
+        return self.load(mod_id)
+
+    def resolve_import(self, path: ast.Path) -> ModId:
+        """Resolve an import path to the module it names."""
         seg_with_args = next((seg for seg in path.segs if seg.comptime_args), None)
         if seg_with_args is not None:
             raise errors.ComptimeArgsOnNonGenericItemError(
                 seg_with_args.ident.name, seg_with_args.span
             )
 
-        idents = [seg.ident.name for seg in path.segs]
-        roots = (importing_file.path.parent, _BUNDLED_ROOT, *self._extra_search_roots)
-        for root in roots:
-            candidate = root.joinpath(*idents[:-1], f"{idents[-1]}.leech")
-            if candidate.is_file():
-                return candidate, "::".join(idents)
+        idents = tuple(seg.ident.name for seg in path.segs)
+        if idents[0] == STD_PACKAGE_NAME:
+            candidates = [ModId(_STD_PACKAGE, idents[1:])] if len(idents) > 1 else []
+        elif self._root_package is not None:
+            candidates = [ModId(self._root_package, idents)]
+        else:
+            candidates = []
+        for candidate in candidates:
+            if candidate.file.is_file():
+                # A link is named after the file it resolves to.
+                mod_id = self._mod_id_for_file(candidate.file)
+                if mod_id is None:
+                    raise errors.ModOutsidePackagesError(path.str(), candidate.file, path.span)
+                return mod_id
         raise errors.ModDoesNotExistError(path.str(), path.span)
 
-    def load(self, path: pathlib.Path, qualified_name: str) -> ir_module.Mod:
-        """Load a path-deduplicated module, using the first qualified name seen."""
-        key = path.resolve()
+    def load(self, mod_id: ModId) -> ir_module.Mod:
+        """Load the module ``mod_id`` once, returning the same module on later requests."""
+        key = mod_id.file.resolve()
         cached = self._mods.get(key)
         if cached is not None:
             return cached
 
-        if key.is_relative_to(_BUNDLED_ROOT):
+        name = mod_id.qualified_name
+        other_file = self._files.setdefault(name, key)
+        assert other_file == key, f"modules {other_file} and {key} are both named {name}"
+        if mod_id.package == _STD_PACKAGE:
             mod_ast = _parse_bundled_mod_ast(key)
         else:
-            mod_ast = parse.parse_mod_ast(src.SrcFile(path))
-        mod = ir_module.Mod(qualified_name, mod_ast, self)
+            mod_ast = parse.parse_mod_ast(src.SrcFile(mod_id.file))
+        mod = ir_module.Mod(name, mod_ast, self)
         # Registered *before* building, so a module reached again while
         # it's still being built - i.e. an import cycle - gets this same
         # object back instead of recursing forever. Its `items` are
@@ -123,6 +214,18 @@ class ModLoader:
         self._mods[key] = mod
         mod.build()
         return mod
+
+    def _mod_id_for_file(self, path: pathlib.Path) -> Optional[ModId]:
+        """Name a file after the package containing it, preferring the bundled one."""
+        path = path.resolve()
+        packages = [_STD_PACKAGE]
+        if self._root_package is not None:
+            packages.append(self._root_package)
+        for package in packages:
+            if path.is_relative_to(package.root) and path.suffix == ".leech":
+                relative = path.relative_to(package.root)
+                return ModId(package, (*relative.parent.parts, relative.stem))
+        return None
 
     def check_declarations(self) -> None:
         """Type-check every declaration after the complete module graph is loaded.

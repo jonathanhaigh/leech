@@ -242,13 +242,13 @@ fn f() {}
         ),
         (
             "```leech test=x file=main.leech mode=run module=main\nfn main() {}\n```\n",
-            "module= is not allowed",
+            "unsupported Leech fence metadata: module",
         ),
         (
             """```leech test=x file=main.leech mode=compile
 fn main() {}
 ```
-```leech test=x file=helper.leech module=bad-name
+```leech test=x file=bad-name.leech
 fn answer() {}
 ```
 """,
@@ -258,24 +258,11 @@ fn answer() {}
             """```leech test=x file=main.leech mode=compile
 fn main() {}
 ```
-```leech test=x file=helper.leech module=if
+```leech test=x file=if.leech
 fn answer() {}
 ```
 """,
             "reserved final module name segment",
-        ),
-        (
-            """```leech test=x file=main.leech mode=compile
-fn main() {}
-```
-```leech test=x file=first.leech module=helper
-fn first() {}
-```
-```leech test=x file=second.leech module=helper
-fn second() {}
-```
-""",
-            "duplicate module names",
         ),
         (
             """```leech test=x file=main.leech mode=compile warning=UnreachableCodeWarning
@@ -379,10 +366,10 @@ import pkg::a;
 pub fn main() i32 { return a::answer(); }
 ```
 ```leech test=nested file=pkg/a.leech
-import sub::helper;
+import pkg::sub::helper;
 pub fn answer() i32 { return helper::answer() + 1; }
 ```
-```leech test=nested file=pkg/sub/helper.leech module=sub::helper
+```leech test=nested file=pkg/sub/helper.leech
 pub fn answer() i32 { return 10; }
 ```
 """,
@@ -398,10 +385,10 @@ import pkg::a;
 pub fn main() i32 { return a::answer(); }
 ```
 ```leech test=nested-compile file=pkg/a.leech
-import sub::helper;
+import pkg::sub::helper;
 pub fn answer() i32 { return helper::answer(); }
 ```
-```leech test=nested-compile file=pkg/sub/helper.leech module=sub::helper
+```leech test=nested-compile file=pkg/sub/helper.leech
 pub fn answer() i32 { return 10; }
 ```
 """,

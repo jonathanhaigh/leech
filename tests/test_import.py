@@ -59,7 +59,7 @@ def test_imported_non_generic_fn_is_a_monomorphization_leaf(compiler):
     result = mono.discover(mod)
 
     assert {inst.qualified_name for inst in result.imported_fn_instances} == {
-        "prelude::panic",
+        "std::prelude::panic",
         "a::f",
     }
     assert all(inst.qualified_name != "a::f" for inst in result.fn_instances)

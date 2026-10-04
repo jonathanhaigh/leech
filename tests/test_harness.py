@@ -101,14 +101,7 @@ def test_mod_src_derives_path_from_name():
     assert mod.path == pathlib.Path("pkg/helper.leech")
 
 
-def test_mod_src_accepts_string_path():
-    mod = harness.ModSrc("helper", "", path="nested/source.leech")
-
-    assert isinstance(mod.path, pathlib.Path)
-    assert mod.path == pathlib.Path("nested/source.leech")
-
-
-@pytest.mark.parametrize("name", ["", "::helper", "helper::", "pkg::i32", "prelude"])
+@pytest.mark.parametrize("name", ["", "::helper", "helper::", "pkg::i32", "std::helper", "std"])
 def test_mod_src_rejects_invalid_name(name):
     with pytest.raises(ValueError):
         harness.ModSrc(name, "")
@@ -118,20 +111,6 @@ def test_mod_src_allows_reserved_intermediate_name_segment():
     mod = harness.ModSrc("array::helper", "")
 
     assert mod.path == pathlib.Path("array/helper.leech")
-
-
-@pytest.mark.parametrize(
-    "path",
-    ["/tmp/helper.leech", "../helper.leech", "pkg/../helper.leech", "helper.txt"],
-)
-def test_mod_src_rejects_invalid_path(path):
-    with pytest.raises(ValueError):
-        harness.ModSrc("helper", "", path=path)
-
-
-def test_mod_src_rejects_empty_path():
-    with pytest.raises(ValueError, match="path must not be empty"):
-        harness.ModSrc("helper", "", path="")
 
 
 def test_program_from_main_adds_supporting_mods():
@@ -146,18 +125,10 @@ def test_program_from_main_adds_supporting_mods():
 
 
 def test_program_rejects_duplicate_mod_names():
-    first = harness.ModSrc("helper", "", path="first.leech")
-    second = harness.ModSrc("helper", "", path="second.leech")
+    first = harness.ModSrc("helper", "")
+    second = harness.ModSrc("helper", "x")
 
     with pytest.raises(ValueError, match="duplicate module names"):
-        harness.TestProgram.from_main("", first, second)
-
-
-def test_program_rejects_duplicate_mod_paths():
-    first = harness.ModSrc("first", "", path="shared.leech")
-    second = harness.ModSrc("second", "", path="shared.leech")
-
-    with pytest.raises(ValueError, match="duplicate module paths"):
         harness.TestProgram.from_main("", first, second)
 
 
@@ -219,7 +190,7 @@ def test_harness_coerces_src_string_to_main_program():
 
 
 def test_parse_records_explicit_mod_path(compiler: harness.CompilerHarness):
-    mod = harness.ModSrc("pkg::helper", "fn f() {}", path="pkg/helper.leech")
+    mod = harness.ModSrc("pkg::helper", "fn f() {}")
 
     parsed = compiler.parse(mod)
 
@@ -240,27 +211,6 @@ def test_build_materializes_imports(compiler: harness.CompilerHarness):
     mod = compiler.build(program)
 
     assert mod.name == "main"
-
-
-def test_build_supports_exceptional_mod_path(compiler: harness.CompilerHarness):
-    program = harness.TestProgram(
-        harness.ModSrc(
-            "pkg::a",
-            "import sub::helper; pub fn answer() i32 { helper::answer() }",
-            path="pkg/a.leech",
-        ),
-        (
-            harness.ModSrc(
-                "sub::helper",
-                "pub fn answer() i32 { 42 }",
-                path="pkg/sub/helper.leech",
-            ),
-        ),
-    )
-
-    mod = compiler.build(program)
-
-    assert mod.name == "pkg::a"
 
 
 def test_build_propagates_user_error(compiler: harness.CompilerHarness):
@@ -286,7 +236,7 @@ def test_materialization_rejects_symlink_escape(
     (compiler.workspace / "escape").symlink_to(outside, target_is_directory=True)
     program = harness.TestProgram.from_main(
         "pub fn main() i32 { 0 }",
-        harness.ModSrc("helper", "", path="escape/helper.leech"),
+        harness.ModSrc("escape::helper", ""),
     )
 
     with pytest.raises(ValueError, match="escapes the compiler workspace"):
@@ -331,24 +281,20 @@ def test_compile_returns_artifacts_in_declaration_order(compiler: harness.Compil
     assert compiled.mods["a"].llvm_path == compiler.workspace / "a.ll"
 
 
-def test_compile_supports_transitive_relative_import(compiler: harness.CompilerHarness):
+def test_compile_names_nested_mods_after_their_paths(compiler: harness.CompilerHarness):
     program = harness.TestProgram.from_main(
         "import pkg::a; pub fn main() i32 { a::answer() }",
         harness.ModSrc(
             "pkg::a",
-            "import sub::helper; pub fn answer() i32 { helper::answer() }",
+            "import pkg::sub::helper; pub fn answer() i32 { helper::answer() }",
         ),
-        harness.ModSrc(
-            "sub::helper",
-            "pub fn answer() i32 { 42 }",
-            path="pkg/sub/helper.leech",
-        ),
+        harness.ModSrc("pkg::sub::helper", "pub fn answer() i32 { 42 }"),
     )
 
     compiled = compiler.compile(program)
 
-    assert tuple(compiled.mods) == ("main", "pkg::a", "sub::helper")
-    assert 'define i32 @"sub::helper::answer"' in compiled.mods["sub::helper"].llvm_ir
+    assert tuple(compiled.mods) == ("main", "pkg::a", "pkg::sub::helper")
+    assert 'define i32 @"pkg::sub::helper::answer"' in compiled.mods["pkg::sub::helper"].llvm_ir
 
 
 def test_compile_keeps_same_stem_mods_distinct(compiler: harness.CompilerHarness):
@@ -404,15 +350,6 @@ def test_run_automatically_links_standard_library(compiler: harness.CompilerHarn
     )
 
 
-def test_program_std_mod_shadows_bundled_mod(compiler: harness.CompilerHarness):
-    program = harness.TestProgram.from_main(
-        'import std::io; pub fn main() i32 { io::print("unused"); 9 }',
-        harness.ModSrc("std::io", "pub fn print(msg: *u8) {}"),
-    )
-
-    compiler.check(program, stdout="", exit_status=9)
-
-
 def test_run_accepts_root_with_any_name(compiler: harness.CompilerHarness):
     program = harness.TestProgram(harness.ModSrc("app", "pub fn main() i32 { 6 }"))
 
@@ -443,9 +380,13 @@ def test_check_failure_reports_expected_and_actual(compiler: harness.CompilerHar
 
 
 def test_materialization_rejects_reserved_runtime_path(compiler: harness.CompilerHarness):
+    (compiler.workspace / ".bundled").mkdir()
+    (compiler.workspace / "runtime").symlink_to(
+        compiler.workspace / ".bundled", target_is_directory=True
+    )
     program = harness.TestProgram.from_main(
         "pub fn main() i32 { 0 }",
-        harness.ModSrc("helper", "", path=".bundled/helper.leech"),
+        harness.ModSrc("runtime::helper", ""),
     )
 
     with pytest.raises(ValueError, match="reserved harness directory"):

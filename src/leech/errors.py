@@ -1544,11 +1544,40 @@ class ModDoesNotExistError(UserError):
         super().__init__(ERROR, f'Cannot find module "{name}"', span)
 
 
-class ImportPathNotFoundWarning(UserError):  # noqa: N818 - a warning, not an error
-    """Raised when an import path entry is not an existing directory."""
+class ModNameLocationMismatchError(UserError):
+    """Raised when a module's qualified name doesn't match its file's location."""
 
-    def __init__(self, path: pathlib.Path, origin: str) -> None:
-        super().__init__(WARNING, f'Import path "{path}" (from {origin}) is not a directory', None)
+    def __init__(self, name: str, path: pathlib.Path) -> None:
+        super().__init__(
+            ERROR,
+            f'Module name "{name}" does not match the location of "{path}": a module named '
+            '"x::a" must be the file x/a.leech in its package directory',
+            None,
+        )
+
+
+class ModOutsidePackagesError(UserError):
+    """Raised when an imported module file is a link to a file outside every package."""
+
+    def __init__(self, name: str, path: pathlib.Path, span: src.SrcSpan) -> None:
+        super().__init__(
+            ERROR,
+            f'Module "{name}" is "{path}", which links to a file outside the root package and '
+            "the standard library",
+            span,
+        )
+
+
+class StdModNameReservedError(UserError):
+    """Raised when a module outside the bundled standard library is given a ``std`` name."""
+
+    def __init__(self, name: str, path: pathlib.Path) -> None:
+        super().__init__(
+            ERROR,
+            f'Module name "{name}" for "{path}" is reserved: names starting with "std" belong '
+            "to the bundled standard library",
+            None,
+        )
 
 
 class EntryMainMissingError(UserError):

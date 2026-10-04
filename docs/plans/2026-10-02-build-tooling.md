@@ -6,7 +6,7 @@ SPDX-License-Identifier: MPL-2.0
 
 # Build Tooling: `leechc`, `leech`, and Local Installation — Implementation Plan
 
-For: #95–#104 and #41: Wire up a module search path.
+For: #95–#104.
 
 Design: [Build tooling design](../specs/2026-10-02-build-tooling-design.md). Design
 rationale lives there and is not repeated here.
@@ -34,16 +34,15 @@ the later implementation, after manual approval and a separate instruction to im
 
 ```text
 #96 ┄┄► #97 ──┐
-  ├┄┄► #98 ───┼──► #100 ──► #101
-  └┄┄► #41    │      ├──► #102
-#99 ──────────┘      ├──► #103
+  └┄┄► #98 ───┼──► #100 ──► #101
+#99 ──────────┘      ├──► #102
+                     ├──► #103
 #95 (any time)       └──► #104 (also needs #97, #98)
 ```
 
-Solid arrows are hard dependencies. Dotted arrows are sequencing preferences: #97, #98 and
-#41 all edit the `driver.py` argument parser, so landing the rename first avoids churn.
-#95 and #99 are independent. #41 and #100 compose, but neither blocks the other. Whichever
-lands second wires `-I` into the other, and adds its build-level tests.
+Solid arrows are hard dependencies. Dotted arrows are sequencing preferences: #97 and #98
+both edit the `driver.py` argument parser, so landing the rename first avoids churn. #95 and
+#99 are independent.
 
 ## Task 1 (#96): Rename the compiler command to `leechc`
 
@@ -180,61 +179,41 @@ remains in `src/leech` or `tests/`.
 **Validation:** full suite. Manually check that `leechc x.leech --emit=asm` produces readable
 assembly.
 
-## Task 5 (#41): Wire up a module search path
+## Task 5 (#41): Wire up a module search path (superseded)
 
-**Files:** `src/leech/ir_loader.py`, `src/leech/driver.py`, `tests/test_cli.py`,
-`tests/test_packages.py`.
+Implemented as `-I DIR` / `--import-path DIR` plus `LEECH_PATH`, then removed again during #99,
+and #41 closed as superseded. The design's "Import paths (#41, superseded)" section gives the
+reasons. The gcc/clang option naming and the shared `isolated_diagnostics` test fixture
+introduced alongside it remain.
 
-- Update #41's body with the decided rules before starting (see the design's
-  "Import paths" section).
-- Add a `driver.resolve_import_paths(cli_paths)` helper: CLI paths, then `LEECH_PATH` entries split
-  on `os.pathsep`, with empty entries ignored. Each entry is resolved against the current
-  working directory. A missing directory produces a warning, once, and is dropped. The
-  helper registers the warnings like any other diagnostic, so `leechc`'s severity-based exit
-  status becomes 1. `leech` takes them from the registry before its first compilation and
-  prints them once (the design's pipeline step 1). Pass the result as
-  `ModLoader(extra_search_roots=…)`, which already searches after the importer's directory
-  and the bundled root. Remove the `TODO` in `compile_to_ir`, and accept `search_roots` there.
-- Add `-I DIR` / `--import-path DIR` (repeatable, `action="append"`) to `leechc`, and disable
-  argparse's option abbreviations.
+## Task 6 (#99): Name modules by location, with absolute imports and a `std` package
+
+**Files:** `src/leech/ir_loader.py`, `src/leech/ir_module.py`, `src/leech/driver.py`,
+`src/leech/errors.py`, `src/leech/std/io.leech`, `tests/harness.py`, `tests/doc.py`, and the
+loader, package, import, CLI, harness and doc tests.
+
+- Model a module's identity as `ir_loader.ModId(package, path)`, where a `Package` is a root
+  directory plus an optional name prefix. The bundled library is the package `std`; the
+  prelude is `std::prelude`. `ModId.qualified_name` and `ModId.file` follow from it.
+- `ModLoader.load_root(path, qualified_name)` derives the root package from the name and
+  rejects a name that doesn't match the file's location, or a non-bundled name starting with
+  `std`. `ModLoader.resolve_import(path)` resolves absolutely: `std::...` in the bundled
+  library, and anything else in the root package. A link is named after the file it resolves
+  to, and `load` asserts that no two files share a name.
+- Remove `-I`/`--import-path`/`LEECH_PATH` and the import-root machinery (#41 is superseded;
+  see the design).
+- `std/io.leech` imports `std::prelude`.
+- Test support follows the same rule: `harness.ModSrc` derives its path from its name and no
+  longer takes a `path`, doc fences derive the module name from `file=` and drop `module=`,
+  and tests cannot supply `std::...` modules.
 - Tests:
-  - a module outside the importer's directory becomes importable through the CLI and
-    through `LEECH_PATH`;
-  - CLI paths take precedence over `LEECH_PATH`, and the first matching root wins;
-  - a `std/io.leech` in a search root does **not** shadow the bundled `std::io`;
-  - a missing directory produces a warning;
-  - a nested `pkg::mod` resolves inside a search root.
-
-**Validation:** full suite. Update the #55 soft-relationship note for #41.
-
-## Task 6 (#99): Detect modules reached under conflicting qualified names
-
-**Files:** `src/leech/ir_loader.py`, `src/leech/errors.py`, `tests/test_loader.py`,
-`tests/test_packages.py`.
-
-- Add a frozen `LoadRequest` dataclass to `ir_loader`. It holds the resolved path, the
-  qualified name, and an origin: `ROOT`, `PRELUDE`, or `IMPORT` with the importing
-  `ast.Path` span. `resolve_import` keeps the span available to its caller, so the import
-  origin can be recorded. `ModLoader.load` takes the origin, and appends a request on
-  **every** call, including path-deduplicated hits, before the cache check.
-- Expose the requests as a read-only, ordered sequence. Add `ModLoader.validate_names()`,
-  which raises one of two new `UserError`s for the design's conflicts:
-  - one file, two names: the primary span is the later import, with a note at the first
-    request;
-  - one name, two files: the primary span is the later request, naming both files, with a
-    note at the other request.
-
-  A request without a span (root or prelude) gets a spanless message or note that names
-  its origin. This is a loader-level check, so `leechc` can also call it after loading. If
-  it does, `leechc` reports these conflicts too, which is harmless and catches the same
-  link failures earlier.
-- Tests:
-  - one file imported as `c` from `a/b.leech` and as `a::c` from the root;
-  - a root named `prelude.leech` (spanless root against the bundled prelude);
-  - two different files that both claim `x`, if constructible through search paths once
-    #41 lands;
-  - a path-deduplicated re-import under the *same* name is not an error;
-  - each case asserts the primary span and the note spans with the harness span helpers.
+  - a nested module imports its neighbour by the full path from the root package, and a
+    relative spelling no longer resolves;
+  - modules compiled separately agree on shared modules' names and link;
+  - a root name that doesn't match its location, a reserved `std` name, a bundled module
+    compiled as the root, and a root that shares a name with a bundled module;
+  - an import that links outside the root package and the bundled library is an error;
+  - a directory named like a module is not a module.
 
 **Validation:** full suite.
 
@@ -250,10 +229,9 @@ assembly.
 - `build.py`:
   - validate `ROOT`: it exists, has a `.leech` suffix, and its stem is a single
     identifier (reserved words are allowed). Each failure is a usage error with exit 2;
-  - compute the import paths once and print their warnings;
-  - discover the graph, call `loader.validate_names()` **before** `check_declarations`,
-    then check declarations;
-  - compile each module with `driver.compile_to_llvm_ir(..., entry=is_root, search_roots=…)`,
+  - discover the graph and check declarations;
+  - compile each module with
+    `driver.compile_to_llvm_ir(..., entry=is_root)`,
     reusing the discovery loader's result for the root where practical;
   - collect diagnostics, and deduplicate them by a structural key. The key is the class,
     plus each message's (level, text, resolved path, start and end line and column, or
@@ -293,13 +271,11 @@ assembly.
   - a compile error produces exit 1 and no executable;
   - a stem containing `::`, a nonexistent root, and a non-`.leech` root each exit 2. A
     reserved stem such as `array.leech` builds;
-  - a graph conflict (from #99) exits 1, before any type error elsewhere in the program is
-    reported;
+  - the root's package is its own directory: `leech build app/main.leech` resolves
+    `import x::a` to `app/x/a.leech` from every module;
   - a warning in a *user* module imported by two other user modules is printed once, and
     two distinct warnings at different positions are both printed;
   - `-O2` produces a working executable;
-  - `-I` and `LEECH_PATH`, including a missing directory warned about once, if
-    #41 has landed (otherwise #41 adds these);
   - `CC=/nonexistent`, `CC=""`, `CC="   "` (both mean `cc`, so the build succeeds) and
     `CC='cc "'` each produce the expected result, with no traceback;
   - `CC="cc -Wl,--no-such-flag"` produces a link-failure report.
@@ -329,7 +305,7 @@ multi-module example from the #23 branch with `leech build`.
     argv yet):
     - `run app.leech -O2 -- a b` builds at `-O2` and passes `["a", "b"]`;
     - `run -O2 app.leech` also builds at `-O2`;
-    - `run app.leech -- -O3 -I x` passes all three tokens to the program and
+    - `run app.leech -- -O3 x` passes both tokens to the program and
       builds at `-O0`;
   - `leech run sub/app.leech` from another directory executes the absolute
     `sub/leech-out/app`;
@@ -399,14 +375,16 @@ multi-module example from the #23 branch with `leech build`.
 This is not part of this plan's tasks. Once #100 and #101 land, #23's quickstart resumes. It
 documents `uv tool install`, `leech run`, and `leech build`, with `leechc --emit=obj` plus
 `cc` as the "under the hood" section. #23 updates its own design and plan, which still
-describe the manual `llvm-link`/`lli` pipeline.
+describe the manual `llvm-link`/`lli` pipeline. They also describe imports as relative to the
+importing file and a `module=` fence key, both removed by #99: imports are absolute from the
+root package, and a fence's module name follows from its `file=` path.
 
 ## Issue creation checklist (after approval)
 
 1. Create the issues (done: #95–#104) with the titles from the design's issue breakdown. Each body gives its
    motivation, links to the design and plan sections, and lists its acceptance criteria
    from the task above.
-2. Edit #41's body with the decided rules.
+2. Edit #41's body with the decided rules. (#41 was later closed as superseded.)
 3. Update #55: add the edges `#97 --> #100`, `#98 --> #100`, `#99 --> #100`, `#100 --> #101`,
    `#100 --> #102`, `#100 --> #103`, `#97 --> #104`, `#98 --> #104`, `#100 --> #104`, `#100 --> 23` and
    `#101 --> 23`. Replace the #41

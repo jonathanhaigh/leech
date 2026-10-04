@@ -73,7 +73,8 @@ Goals:
    build and run it, or only check it.
 4. Provide the prelude and standard library to every build automatically.
 5. Remove system LLVM tools from the build path.
-6. Make the module search path (#41) available to both commands.
+6. Name modules by location with absolute imports (#99), so that separately compiled modules
+   agree and a package system stays possible.
 7. Report missing or broken toolchains clearly.
 
 Non-goals, recorded so they are not reopened by accident:
@@ -105,7 +106,7 @@ Non-goals, recorded so they are not reopened by accident:
 | Optimization | `-O0` by default. `-O1`, `-O2`, and `-O3` are optional. |
 | Versioning | A static version in `pyproject.toml`, changed with `uv version --bump`. There are no tags yet. |
 | Upload guard | The `Private :: Do Not Upload` classifier. |
-| Extras | `leech check`, `leechc --emit`, `-O`, `--version`, `-I`/`--import-path` and `LEECH_PATH` (#41), `$CC`, toolchain errors, and `leech doctor`. |
+| Extras | `leech check`, `leechc --emit`, `-O`, `--version`, `$CC`, toolchain errors, and `leech doctor`. `-I` and `LEECH_PATH` (#41) were added and then removed (see [Import paths](#import-paths-41-superseded)). |
 | Option names | gcc/clang names where one fits, rustc/cargo names otherwise (see [Option naming](#option-naming)). |
 | Test harness | A later, separately deferrable task moves `tests/harness.py` onto the same native pipeline. |
 | Docs | The #23 quickstart waits for `leech run` and `leech build`, then documents them instead of the manual pipeline. |
@@ -222,7 +223,7 @@ a new llvmlite series is a deliberate change. It re-derives the data layout (as
 ```text
 leechc FILE [-o OUT] [--module-name NAME] [--entry]
             [--emit {llvm-ir,llvm-bc,asm,obj}] [-O{0,1,2,3}]
-            [-I DIR | --import-path DIR]... [--version]
+            [--version]
 ```
 
 - `--emit` defaults to `llvm-ir`, which is today's behavior. At `-O0`, `llvm-ir` output is
@@ -238,7 +239,6 @@ leechc FILE [-o OUT] [--module-name NAME] [--entry]
   output links into the default PIE executables of modern Linux toolchains.
 - `--module-name` is unchanged.
 - `--entry` is described in [Program entry](#program-entry).
-- `-I`/`--import-path` is described in [Import paths](#import-paths-41).
 - Exit status is unchanged: the highest diagnostic severity, so 0 for none or notes, 1 for
   warnings and 2 for errors. Argument errors also exit 2. A consequence is that `leechc`
   exits 1 for the nonexistent-search-directory warning, while `leech build` exits 0 for it.
@@ -273,24 +273,58 @@ Rejected alternative: always compile the root under the qualified name `main`. T
 codegen change, but the root could then never be imported (its name would conflict), and a
 filename would keep a hidden meaning.
 
-## Import paths (#41)
+## Module names and import resolution (#99)
 
-This resolves #41 as part of this design:
+Each module is compiled separately under its qualified name, which prefixes its symbols, so
+every compilation must agree on every module's name. A module's name therefore comes from
+**where its file is**, never from how an import spells it:
 
-- `-I DIR` / `--import-path DIR` (repeatable; `-IDIR` also works, as in gcc) on `leechc` and
-  on `leech build`, `run`, and `check`,
-  plus the `LEECH_PATH` environment variable (`os.pathsep`-separated, like `PYTHONPATH`).
-  Relative directories resolve against the current working directory.
-- The resolution order is: the importing file's directory, then the bundled root, then
-  `-I` entries in order, then `LEECH_PATH` entries in order. The first match
-  wins.
-- **Search paths cannot shadow bundled modules** (`prelude`, `std::*`), because the bundled
-  root comes first. Shadowing std by accident would be confusing and hard to diagnose. To
-  test a std change, edit the checkout and use `uv run`, or an editable tool install. The
-  existing ability of an importer's own directory to shadow a bundled module is unchanged
-  and is recorded as an [open question](#risks-and-open-questions).
-- A nonexistent search directory produces a warning (once per directory) and is skipped,
-  rather than failing the build.
+- A module's identity is a *package* plus its path within the package. The file
+  `<package>/x/a.leech` is the module `x::a`.
+- **The root package** is the directory implied by the compiled module's name:
+  `src/x/b.leech` named `x::b` makes `src/` the root package. A name that doesn't match the
+  file's location is an error (`ModNameLocationMismatchError`). `leechc` defaults the name to
+  the file stem. Every module of one program shares the root module's package, so
+  separately compiled modules resolve and name every module alike.
+- An import that is a link to a file outside the root package and the bundled library is an
+  error (`ModOutsidePackagesError`).
+- **The bundled library is the package `std`**, so its modules are named `std::io` and so
+  on. The prelude is `std::prelude`, loaded into every compilation and imported implicitly.
+  Names starting with `std` are reserved: a file outside the bundled library cannot be named
+  `std::...` (`StdModNameReservedError`).
+- **Imports are absolute.** `import x::a` names `<root package>/x/a.leech` from every file,
+  including from `x/b.leech` itself. `import std::...` resolves in the bundled library.
+  Any other import resolves in the root package. Imports are no longer relative to the
+  importing file.
+
+Because a name is a function of a file's location, and resolution is a function of the
+name, one file can't have two names and two files can't share one. The loader asserts both
+as internal invariants.
+
+This doesn't design a package system, but it keeps one open. Go, Gleam, Rust and Python also
+name modules by location. Absolute imports keep the first segment of a path free to name a
+dependency later (`some-package::x::a`), as `std` does now, without the ambiguity that
+Python 2's implicit relative imports had. Keeping the package separate from the path inside
+it leaves room for named packages, and for multiple versions of a package with a richer
+symbol prefix, without renaming modules.
+
+## Import paths (#41, superseded)
+
+`-I DIR` / `--import-path DIR` and a `LEECH_PATH` variable were implemented for #41 as
+anonymous search roots sharing the root package's namespace. They were then removed, before
+any build tool used them, and #41 was closed as superseded:
+
+- With a package system planned, every use for them is better served by something else.
+  Sharing code between projects needs manifest dependencies (#106). A build system driving
+  `leechc` directly would need an explicit named mapping such as rustc's `--extern name=PATH`
+  or Zig's `-M name=path`, which fits `package-name::x::a` imports. Monorepos and vendored
+  code need path dependencies.
+- They carried most of the resolution machinery's complexity: ordered precedence between
+  anonymous roots, naming a file after the first root containing it, and requiring every
+  separate compilation to receive the same ordered roots.
+- `LEECH_PATH` made builds depend on the environment.
+
+When packages are designed, a named mapping can be added to `leechc` as their low-level hook.
 
 ## Option naming
 
@@ -301,7 +335,6 @@ spelled in full: like gcc, clang and rustc, neither command accepts abbreviation
 | Option | Precedent |
 | --- | --- |
 | `-o FILE`, `-O0`…`-O3`, `--version`, `-h`/`--help` | gcc/clang |
-| `-I DIR` / `--import-path DIR`, `LEECH_PATH` | gcc/clang `-I`, used the same way by Swift, OCaml, D and Go; the variable mirrors `CPATH`/`PYTHONPATH` |
 | `--emit {llvm-ir,llvm-bc,asm,obj}` | rustc `--emit`, with the same values. clang's `-S`/`-c`/`-emit-llvm` assume a default of linking, which `leechc` never does. |
 | `--module-name NAME` | rustc `--crate-name` |
 | `--entry` | none that fits: gcc and ld's `-e`/`--entry SYMBOL` names an entry *symbol*, and rustc's analogue is `--crate-type=bin`. |
@@ -311,9 +344,9 @@ spelled in full: like gcc, clang and rustc, neither command accepts abbreviation
 ## `leech`: the program driver
 
 ```text
-leech build ROOT [-o EXE] [-O{0,1,2,3}] [-I DIR]...
-leech run   ROOT [-O{0,1,2,3}] [-I DIR]... [-- ARGS...]
-leech check ROOT [-I DIR]...
+leech build ROOT [-o EXE] [-O{0,1,2,3}]
+leech run   ROOT [-O{0,1,2,3}] [-- ARGS...]
+leech check ROOT
 leech doctor
 leech --version
 ```
@@ -329,44 +362,26 @@ problem, and exit 2.
 For `run`, `leech` splits its own argv at the first literal `--` before argparse sees it.
 Everything after the `--` goes to the program untouched, even tokens that look like
 `leech` options. The left side is parsed normally, so options may come before or after
-`ROOT`. `argparse.REMAINDER` is not used, because it swallows `-O` and `-I`
+`ROOT`. `argparse.REMAINDER` is not used, because it swallows `-O`
 when they follow `ROOT`.
 
 ### Pipeline
 
-1. **Discover.** Compute the import paths once, and report any nonexistent-directory
-   warnings once, before any compilation. Create a `ModLoader` with those roots, and load
-   `ROOT` under its stem. `loader.mods` then holds every reached module, including the
-   prelude and std modules, with its qualified name. For **every** `ModLoader.load` call,
-   including path-deduplicated ones, the loader appends a *load request* to an ordered
-   record. A request holds the resolved path, the requested qualified name, and its
-   origin. The origin is one of: the root, the implicit prelude, or an import with the
-   importing `ast.Path`'s span.
-2. **Validate the graph** from the request record, before `check_declarations`. A naming
-   conflict is more fundamental than any type error it might otherwise be masked by.
-   Separate compilation needs a one-to-one mapping between files and qualified names. Two
-   errors are reported:
-   - *One file, two names.* For example, `a/b.leech` imports `c`, which resolves to
-     `a/c.leech` as `c`, while the root imports the same file as `a::c`. The two compilations
-     would disagree on symbol names, so linking would fail. The primary span is the later
-     import, with a note at the first request (or a spanless note "root module" or
-     "implicit prelude" when that request has no span).
-   - *One name, two files.* For example, a user root named `prelude.leech` conflicts with
-     the bundled prelude. The primary span is the later request (spanless when it is the
-     root or the prelude), naming both files, with a note at the other request.
-
-   Then call `check_declarations`.
-3. **Compile each module.** Compile every module in discovery order under its qualified
+1. **Discover.** Create a `ModLoader`, load `ROOT` under its stem, and check
+   declarations. `loader.mods` then holds every reached
+   module, including the prelude and std modules, with its location-based qualified name
+   (see [Module names and import resolution](#module-names-and-import-resolution-99)).
+2. **Compile each module.** Compile every module in discovery order under its qualified
    name. `--entry` is set for the root only. Each compilation uses a fresh `ModLoader`,
    which is how `leechc` works and how the harness works today. Bundled ASTs are already
    process-cached, and the root's discovery result is reused as its own compilation. The
    IR is written to `leech-out/<stem>.obj/<qualified/name/as/path>.ll`.
-4. **Link** the IR in-process (`ll_emit`), and verify the linked module. A verification
+3. **Link** the IR in-process (`ll_emit`), and verify the linked module. A verification
    failure is an internal compiler error that points at the saved `.ll` files.
-5. **Optimize** at the requested `-O` level. Optimizing after linking lets LLVM inline across
+4. **Optimize** at the requested `-O` level. Optimizing after linking lets LLVM inline across
    modules.
-6. **Emit** a PIC object to `leech-out/<stem>.obj/<stem>.o`.
-7. **Link the executable** with `$CC` (default `cc`):
+5. **Emit** a PIC object to `leech-out/<stem>.obj/<stem>.o`.
+6. **Link the executable** with `$CC` (default `cc`):
    `<cc> <obj> -o <exe>`. `<exe>` is `-o` if given, otherwise `leech-out/<stem>`, and it
    is always resolved to an absolute path. One resolver turns `$CC` into an argv, and
    `doctor` shares it. An unset, empty or whitespace-only `CC` means `cc`. A `shlex.split`
@@ -409,7 +424,7 @@ would collide with that.
   write an executable.
 - Exit status:
   - 0 on success, including when there are warnings.
-  - 1 on any build failure: a compile error, an invalid graph, a missing or misconfigured
+  - 1 on any build failure: a compile error, a missing or misconfigured
     toolchain, or a failed link.
   - 2 on a usage error, including an invalid `ROOT`.
 
@@ -429,7 +444,7 @@ exec.
 
 ### `leech check`
 
-`check` runs steps 1–3 in memory and writes nothing. `leech-out` is not created. Many Leech
+`check` runs steps 1–2 in memory and writes nothing. `leech-out` is not created. Many Leech
 errors only appear during lowering and monomorphization, which happen in codegen, so `check`
 runs all of codegen except object emission. Its exit status matches `build`'s. Like
 `cargo check`, it is the quick editor or CI loop.
@@ -466,15 +481,13 @@ is prebuilt or cached (see [Precedents](#standard-library-distribution) for the 
 
 - `leechc`: `--emit` for each format (an object starts with the ELF magic number and links
   with `cc`), the output-path derivation, and `-O` changing the output
-  IR. Also `--entry` positive and negative cases, `-I`/`--import-path` and `LEECH_PATH`
-  precedence including the no-shadowing rule, and `--version`.
+  IR. Also `--entry` positive and negative cases, location-based names and absolute imports
+  including the reserved `std` names, and `--version`.
 - `leech`: build or run of a single-file program, a multi-module program with a nested
   package, a program importing `std::io` and `std::mem`, and a private `main`. Also the
   exit status forwarding of `run`, argument forwarding, and signal termination (a `panic`
-  aborts). Cover `-o`, the `leech-out` layout plus `.gitignore` and `CACHEDIR.TAG`, both
-  graph-validation errors with their spans and notes (including the spanless
-  root/prelude case), and duplicate-warning suppression for a warning in a *user* module
-  across fresh loaders. Cover `check` writing nothing, a missing, empty or malformed `CC`,
+  aborts). Cover `-o`, the `leech-out` layout plus `.gitignore` and `CACHEDIR.TAG`, and
+  duplicate-warning suppression for a warning in a *user* module across fresh loaders. Cover `check` writing nothing, a missing, empty or malformed `CC`,
   a failing link, options after `ROOT` versus program arguments after `--`, and running a
   root given by a path outside the current directory.
 - Packaging: a test runs `uv build --wheel` into `tmp_path` and checks the wheel's contents
@@ -537,10 +550,6 @@ Pre-1.0, single developer, nothing published. The breaking changes are accepted:
   `cc` that runs LTO on these objects is not supported. Plain linking is
   version-independent.
 - **Global diagnostics state** (#93) needs a temporary reset API, which #93 later removes.
-- **Open question:** should an importing file's own directory also stop shadowing bundled
-  modules (`std/io.leech` beside a source file)? This is unchanged here, but the
-  graph-validation "one name, two files" error makes the conflict visible instead of
-  silent.
 - **Open question:** when the harness moves to native linking, how much does a `cc` link
   per test cost compared with `lli`? Measure it in that task. The task can be deferred
   without affecting the user-facing work.
@@ -549,9 +558,9 @@ Pre-1.0, single developer, nothing published. The breaking changes are accepted:
 
 Existing issues touched:
 
-- **#41** Wire up a module search path: resolved by this design. Update its body with the
-  decided precedence, `LEECH_PATH`, and the no-shadowing rule. Its "premature" soft note in
-  #55 is superseded by this decision.
+- **#41** Wire up a module search path: implemented as `-I`/`LEECH_PATH`, then removed in
+  favour of absolute, location-based module names (#99) and a future package system. Closed as
+  superseded.
 - **#23** Write user documentation: its quickstart becomes blocked by the `leech build` and
   `leech run` issues. Add the edges to #55.
 - **#93** Per-compilation diagnostics: not blocking. The driver's temporary reset API is
@@ -565,17 +574,15 @@ New issues:
 | #96 | Rename the compiler command to `leechc` | none |
 | #97 | Replace the `main`-module entry rule with `leechc --entry` | none |
 | #98 | Emit bitcode, assembly, and objects from `leechc`, with optimization levels | none |
-| #41 | Wire up a module search path | none |
-| #99 | Detect modules reached under conflicting qualified names | none |
+| #99 | Name modules by location, with absolute imports and a `std` package | none |
 | #100 | Add `leech build` to build a program and its imports into an executable | #97, #98, #99 |
 | #101 | Add `leech run` to build and execute a program | #100 |
 | #102 | Add `leech check` for diagnostics without output | #100 |
 | #103 | Report toolchain problems clearly and add `leech doctor` | #100 |
 | #104 | Run compiler tests through the native build pipeline | #97, #98, #100 |
 
-#96 should land before #97, #98 and #41 because they all edit the same CLI, but this is a
-sequencing preference, not a hard dependency. #41 and #100 compose
-but neither blocks the other. Whichever lands second wires `-I` into the other.
+#96 should land before #97 and #98 because they all edit the same CLI, but this is a
+sequencing preference, not a hard dependency.
 
 ### Future issues (not in this plan)
 

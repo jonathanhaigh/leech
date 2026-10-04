@@ -20,7 +20,7 @@ import pytest
 from leech import errors
 from tests import harness
 
-_SRC_KEYS: Final = frozenset({"test", "file", "mode", "module", "exit", "error", "warning"})
+_SRC_KEYS: Final = frozenset({"test", "file", "mode", "exit", "error", "warning"})
 _RESULT_KEYS: Final = frozenset({"output", "diagnostic", "newline"})
 _KNOWN_KEYS: Final = _SRC_KEYS | _RESULT_KEYS
 
@@ -93,18 +93,11 @@ class SrcFence:
         return path
 
     @classmethod
-    def _from_src(
-        cls,
-        loc: FenceLoc,
-        file: str,
-        mod_name: Optional[str],
-        src: str,
-    ) -> SrcFence:
+    def _from_src(cls, loc: FenceLoc, file: str, src: str) -> SrcFence:
+        """Make the module that ``file`` names: ``pkg/helper.leech`` is ``pkg::helper``."""
         path = cls._validate_file(loc, file)
-        if mod_name is None:
-            mod_name = "::".join(path.with_suffix("").parts)
         try:
-            mod = harness.ModSrc(mod_name, src, file)
+            mod = harness.ModSrc("::".join(path.with_suffix("").parts), src)
         except ValueError as err:
             raise DocCollectionError(loc, str(err)) from err
         return cls(mod, loc)
@@ -316,7 +309,7 @@ class _CaseBuilder:
         self._validate_src_metadata(loc, metadata)
         file = metadata["file"]
         root_options = self._options_for_src(loc, file, metadata)
-        self.srcs[file] = SrcFence._from_src(loc, file, metadata.get("module"), token.content)
+        self.srcs[file] = SrcFence._from_src(loc, file, token.content)
         if root_options is not None:
             assert self.root_options is None
             self.root_options = root_options
@@ -344,7 +337,7 @@ class _CaseBuilder:
     ) -> Optional[_RootOptions]:
         if file == "main.leech":
             return self._root_options_from_metadata(loc, metadata)
-        invalid = metadata.keys() - {"test", "file", "module"}
+        invalid = metadata.keys() - {"test", "file"}
         if invalid:
             raise DocCollectionError(
                 loc,
@@ -354,8 +347,6 @@ class _CaseBuilder:
 
     @staticmethod
     def _root_options_from_metadata(loc: FenceLoc, metadata: _FenceMetadata) -> _RootOptions:
-        if metadata.get("module") is not None:
-            raise DocCollectionError(loc, "module= is not allowed on the main.leech root fence")
         mode = metadata.get("mode")
         if mode not in {"run", "compile", "error"}:
             raise DocCollectionError(

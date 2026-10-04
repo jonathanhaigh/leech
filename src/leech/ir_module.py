@@ -889,10 +889,7 @@ class Mod:
                 )
             case ast.Import():
                 last_ident = defn_ast.path.segs[-1].ident
-                mod_path, qualified_name = self.loader.resolve_import(
-                    defn_ast.span.file, defn_ast.path
-                )
-                mod = self.loader.load(mod_path, qualified_name)
+                mod = self.loader.load(self.loader.resolve_import(defn_ast.path))
                 self._add_item(last_ident.name, visibility.PRIVATE, mod, span=last_ident.span)
             case ast.ImplDefn():
                 # Impl blocks are handled separately.

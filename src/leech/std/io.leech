@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MPL-2.0
 
-import prelude;
+import std::prelude;
 
 pub fn print(s: *u8) {
     prelude::write(1, s, prelude::strlen(s));

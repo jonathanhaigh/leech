@@ -23,7 +23,7 @@ def _bundled_mod_llvm_ir() -> Mapping[str, str]:
     std_root = pathlib.Path(driver.__file__).parent / "std"
     compiled = dict[str, str]()
     for path in sorted(std_root.glob("*.leech")):
-        name = "prelude" if path.stem == "prelude" else f"std::{path.stem}"
+        name = f"std::{path.stem}"
         compiled[name] = driver.compile_to_llvm_ir(leech_src.SrcFile(path), name)
     return types.MappingProxyType(compiled)
 
@@ -73,41 +73,28 @@ def assert_span_at(
 class ModSrc:
     """A Leech module description with statically final fields.
 
-    With no explicit path, a name such as ``pkg::helper`` becomes
-    ``pkg/helper.leech``. Only the final name segment must be non-reserved because
-    intermediate segments represent package directories. Tests cannot replace the
-    compiler-owned ambient prelude.
+    A module's path follows from its name, as the compiler requires: ``pkg::helper`` is
+    ``pkg/helper.leech`` in the workspace. Only the final name segment must be non-reserved because
+    intermediate segments represent package directories. Tests cannot supply modules named
+    ``std::...``, which belong to the bundled standard library.
     """
 
     name: Final[str]
     src: Final[str]
     path: Final[pathlib.Path]
 
-    def __init__(self, name: str, src: str, path: Optional[str] = None) -> None:
+    def __init__(self, name: str, src: str) -> None:
         segments = parse.parse_qualified_name(name)
         if segments is None:
             raise ValueError(f"invalid qualified module name: {name!r}")
-        if name == "prelude":
-            raise ValueError("tests cannot supply the ambient prelude module")
+        if segments[0] == "std":
+            raise ValueError("tests cannot supply bundled standard library modules")
         if reserved.is_reserved(segments[-1]):
             raise ValueError(f"reserved final module name segment: {segments[-1]!r}")
 
-        if path is None:
-            mod_path = pathlib.Path(*segments).with_suffix(".leech")
-        else:
-            if not path:
-                raise ValueError("module path must not be empty")
-            mod_path = pathlib.Path(path)
-        if mod_path.is_absolute():
-            raise ValueError(f"module path must be relative: {str(mod_path)!r}")
-        if ".." in mod_path.parts:
-            raise ValueError(f"module path must not contain '..': {str(mod_path)!r}")
-        if mod_path.suffix != ".leech":
-            raise ValueError(f"module path must have a .leech suffix: {str(mod_path)!r}")
-
         self.name = name
         self.src = src
-        self.path = mod_path
+        self.path = pathlib.Path(*segments).with_suffix(".leech")
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(name={self.name!r}, path={self.path!r})"
@@ -128,9 +115,6 @@ class TestProgram:
         names = [mod.name for mod in mods]
         if len(names) != len(set(names)):
             raise ValueError("test program contains duplicate module names")
-        paths = [mod.path for mod in mods]
-        if len(paths) != len(set(paths)):
-            raise ValueError("test program contains duplicate module paths")
 
     @classmethod
     def from_main(cls, src: str, *mods: ModSrc) -> TestProgram:
@@ -280,8 +264,6 @@ class CompilerHarness:
         llvm_paths = [mod.llvm_path for mod in compiled.mods.values()]
         bundled_root = self.workspace / ".bundled"
         for name, llvm_ir in _bundled_mod_llvm_ir().items():
-            if name != "prelude" and name in compiled.mods:
-                continue
             llvm_path = bundled_root.joinpath(*name.split("::")).with_suffix(".ll")
             self._write_src(llvm_path, llvm_ir)
             llvm_paths.append(llvm_path)
