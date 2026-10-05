@@ -11,7 +11,7 @@ import signal
 import sys
 from collections.abc import Mapping, Sequence
 
-from leech import build, driver, errors, ll_emit, parse
+from leech import build, doctor, driver, errors, ll_emit, parse
 
 
 def _make_parser() -> tuple[argparse.ArgumentParser, Mapping[str, argparse.ArgumentParser]]:
@@ -52,6 +52,16 @@ def _make_parser() -> tuple[argparse.ArgumentParser, Mapping[str, argparse.Argum
         allow_abbrev=False,
     )
 
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="check that the toolchain can build and run programs",
+        description=(
+            "Print the versions of leech and its toolchain, then build and run a test "
+            "program, reporting any problem and how to fix it."
+        ),
+        allow_abbrev=False,
+    )
+
     for subparser in (build_parser, run_parser, check_parser):
         subparser.add_argument(
             "root",
@@ -74,7 +84,13 @@ def _make_parser() -> tuple[argparse.ArgumentParser, Mapping[str, argparse.Argum
         metavar="EXE",
         type=pathlib.Path,
     )
-    return parser, {"build": build_parser, "run": run_parser, "check": check_parser}
+    subparsers_by_name = {
+        "build": build_parser,
+        "run": run_parser,
+        "check": check_parser,
+        "doctor": doctor_parser,
+    }
+    return parser, subparsers_by_name
 
 
 def _parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
@@ -93,7 +109,8 @@ def _parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
     subparser = subparsers[args.command]
     if has_separator and args.command != "run":
         subparser.error("arguments after '--' are only accepted by 'leech run'")
-    _check_root(subparser, args.root)
+    if args.command != "doctor":
+        _check_root(subparser, args.root)
     return args, program_args
 
 
@@ -111,13 +128,15 @@ def _check_root(parser: argparse.ArgumentParser, root: pathlib.Path) -> None:
 
 
 def main() -> None:
-    """Check, build, or build and run the requested program.
+    """Check, build, or build and run the requested program, or diagnose the toolchain.
 
     ``leech check`` and ``leech build`` exit 0 only on success. ``leech run`` replaces this
     process with the program.
     """
     args, program_args = _parse_args(sys.argv[1:])
     renderer = errors.TextErrorRenderer()
+    if args.command == "doctor":
+        sys.exit(0 if doctor.diagnose(sys.stdout) else 1)
     if args.command == "check":
         diags = build.check(args.root)
         renderer.display_errors(list(diags))

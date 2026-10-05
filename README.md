@@ -30,6 +30,9 @@ uv tool uninstall leech          # remove it again (by package name)
 
 If uv reports that its tool directory is not on `PATH`, run `uv tool update-shell`.
 
+Run `leech doctor` to check that the toolchain can build and run programs. It prints the
+versions in use, then builds and runs a test program, explaining how to fix any problem.
+
 `uv build` writes a wheel and a source distribution to `dist/`. A wheel installs the same
 way, with `uv tool install dist/leech-<version>-py3-none-any.whl`. The package declares the
 `Private :: Do Not Upload` classifier, so package indexes such as PyPI reject it. The

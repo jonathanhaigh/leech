@@ -1675,6 +1675,21 @@ class RunFailedError(UserError):
         super().__init__(ERROR, f"Cannot run {exe}: {reason}", None)
 
 
+class DoctorCheckError(UserError):
+    """Raised when a ``leech doctor`` toolchain check fails; a note suggests a fix."""
+
+    def __init__(self, problem: str, fix: str) -> None:
+        super().__init__(ERROR, problem, None)
+        self._add_extra(NOTE, fix, None)
+
+
+class DoctorFixNote(UserError):  # noqa: N818 - a note, not an error
+    """A note from ``leech doctor`` suggesting how to fix the problems reported before it."""
+
+    def __init__(self, fix: str) -> None:
+        super().__init__(NOTE, fix, None)
+
+
 class LlvmVerificationError(UserError):
     """Raised when generated LLVM IR fails to link or verify, which is a compiler bug."""
 
