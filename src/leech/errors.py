@@ -1668,6 +1668,13 @@ class BuildOutputError(UserError):
         super().__init__(ERROR, f"Cannot write build output: {reason}", None)
 
 
+class RunFailedError(UserError):
+    """Raised when a built program can't be started."""
+
+    def __init__(self, exe: pathlib.Path, reason: str) -> None:
+        super().__init__(ERROR, f"Cannot run {exe}: {reason}", None)
+
+
 class LlvmVerificationError(UserError):
     """Raised when generated LLVM IR fails to link or verify, which is a compiler bug."""
 

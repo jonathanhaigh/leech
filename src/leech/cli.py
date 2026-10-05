@@ -2,18 +2,22 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""The ``leech`` command: build Leech programs from their root modules."""
+"""The ``leech`` command: build and run Leech programs from their root modules."""
 
 import argparse
+import os
 import pathlib
+import signal
 import sys
+from collections.abc import Mapping, Sequence
 
 from leech import build, driver, errors, ll_emit, parse
 
 
-def _parse_args() -> argparse.Namespace:
+def _make_parser() -> tuple[argparse.ArgumentParser, Mapping[str, argparse.ArgumentParser]]:
+    """Return the ``leech`` parser and its subcommands' parsers, by command name."""
     parser = argparse.ArgumentParser(
-        prog="leech", description="Build Leech programs.", allow_abbrev=False
+        prog="leech", description="Build and run Leech programs.", allow_abbrev=False
     )
     parser.add_argument("--version", action="version", version=driver.version_text("leech"))
     subparsers = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
@@ -27,30 +31,59 @@ def _parse_args() -> argparse.Namespace:
         ),
         allow_abbrev=False,
     )
-    build_parser.add_argument(
-        "root",
-        help="the program's root module, whose directory is the program's package",
-        metavar="ROOT",
-        type=pathlib.Path,
+    run_parser = subparsers.add_parser(
+        "run",
+        help="build a program, then run it",
+        description=(
+            f"Build a program as 'leech build' does, into {build.OUT_DIR_NAME}/ beside ROOT, "
+            "then run it with any arguments given after '--'. The program's output and exit "
+            "status are its own."
+        ),
+        allow_abbrev=False,
     )
+
+    for subparser in (build_parser, run_parser):
+        subparser.add_argument(
+            "root",
+            help="the program's root module, whose directory is the program's package",
+            metavar="ROOT",
+            type=pathlib.Path,
+        )
+        subparser.add_argument(
+            "-O",
+            choices=ll_emit.OPT_LEVELS,
+            default=0,
+            type=int,
+            help="optimization level (default: %(default)s)",
+            dest="opt_level",
+        )
     build_parser.add_argument(
         "-o",
         help=f"executable to write (default: {build.OUT_DIR_NAME}/<ROOT stem> beside ROOT)",
         metavar="EXE",
         type=pathlib.Path,
     )
-    build_parser.add_argument(
-        "-O",
-        choices=ll_emit.OPT_LEVELS,
-        default=0,
-        type=int,
-        help="optimization level (default: %(default)s)",
-        dest="opt_level",
-    )
+    return parser, {"build": build_parser, "run": run_parser}
 
-    args = parser.parse_args()
-    _check_root(build_parser, args.root)
-    return args
+
+def _parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
+    """Parse ``leech`` arguments, returning them and the arguments for the program to run.
+
+    The arguments are split at the first ``--`` before argparse sees them, so everything after
+    it reaches the program untouched while options may still follow ``ROOT``.
+    """
+    program_args: list[str] = []
+    has_separator = "--" in argv
+    if has_separator:
+        index = argv.index("--")
+        argv, program_args = argv[:index], list(argv[index + 1 :])
+    parser, subparsers = _make_parser()
+    args = parser.parse_args(argv)
+    subparser = subparsers[args.command]
+    if has_separator and args.command != "run":
+        subparser.error("arguments after '--' are only accepted by 'leech run'")
+    _check_root(subparser, args.root)
+    return args, program_args
 
 
 def _check_root(parser: argparse.ArgumentParser, root: pathlib.Path) -> None:
@@ -67,10 +100,40 @@ def _check_root(parser: argparse.ArgumentParser, root: pathlib.Path) -> None:
 
 
 def main() -> None:
-    """Build the requested program, render diagnostics, and exit 0 only on success."""
-    args = _parse_args()
-    result = build.build(args.root, output=args.o, opt_level=args.opt_level)
-    errors.TextErrorRenderer().display_errors(list(result.diags))
+    """Build the requested program, and for ``leech run`` replace this process with it.
+
+    ``leech build`` exits 0 only on success.
+    """
+    args, program_args = _parse_args(sys.argv[1:])
+    renderer = errors.TextErrorRenderer()
+    result = build.build(args.root, output=getattr(args, "o", None), opt_level=args.opt_level)
+    renderer.display_errors(list(result.diags))
     if result.exe is None:
         sys.exit(1)
+    if args.command == "run":
+        sys.stdout.flush()
+        sys.stderr.flush()
+        try:
+            _exec_natively(result.exe, program_args)
+        except OSError as err:
+            renderer.display_errors([errors.RunFailedError(result.exe, str(err))])
+            sys.exit(1)
     sys.exit(0)
+
+
+_PYTHON_IGNORED_SIGNALS = (signal.SIGPIPE, signal.SIGXFSZ)
+"""Signals the Python runtime ignores at start-up, which an executed program would inherit."""
+
+
+def _exec_natively(exe: pathlib.Path, args: Sequence[str]) -> None:
+    """Replace this process with ``exe``, with the signal handling it gets when run directly.
+
+    Raises ``OSError`` without changing anything if ``exe`` can't be executed.
+    """
+    previous = {sig: signal.signal(sig, signal.SIG_DFL) for sig in _PYTHON_IGNORED_SIGNALS}
+    try:
+        os.execv(str(exe), [str(exe), *args])
+    finally:
+        for sig, handler in previous.items():
+            if handler is not None:
+                signal.signal(sig, handler)

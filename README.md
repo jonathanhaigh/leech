@@ -37,11 +37,12 @@ package is deliberately not published to any registry yet.
 
 Inside the checkout, `uv run leech` and `uv run leechc` work without installing anything.
 
-## Build a program
+## Build and run a program
 
 ```bash
 leech build hello.leech          # writes the executable leech-out/hello beside hello.leech
 ./leech-out/hello
+leech run hello.leech            # builds the same way, then runs it
 ```
 
 The root module's directory is the program's package: `import x::a;` names `x/a.leech` in it,
