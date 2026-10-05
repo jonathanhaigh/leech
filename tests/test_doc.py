@@ -596,7 +596,7 @@ pub fn main() i32 { return 1; }
         assert {path.name for path in workspace.iterdir()} >= {
             "main.leech",
             "main.ll",
-            "program.bc",
+            ".link",
         }
     finally:
         if workspace.exists():

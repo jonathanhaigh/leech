@@ -12,10 +12,12 @@ import types
 from collections.abc import Iterator, Mapping
 from typing import ClassVar, Final, Optional
 
-from leech import ast, driver, errors, ir_module, parse, reserved
+from leech import ast, build, driver, errors, ir_module, ll_emit, parse, reserved
 from leech import src as leech_src
 
 _TOOL_TIMEOUT_SECONDS = 30
+# Holds the linked program; no module path can reach it, since names are identifiers.
+_LINK_DIR = ".link"
 
 
 @functools.cache
@@ -178,7 +180,7 @@ class CompilerHarness:
         path = (self.workspace / mod.path).resolve()
         if not path.is_relative_to(self.workspace):
             raise ValueError(f"module path escapes the compiler workspace: {str(mod.path)!r}")
-        if path.is_relative_to(self.workspace / ".bundled"):
+        if path.is_relative_to(self.workspace / _LINK_DIR):
             raise ValueError(f"module path uses reserved harness directory: {str(mod.path)!r}")
         return path
 
@@ -272,29 +274,30 @@ class CompilerHarness:
             ) from exc
 
     def _link(self, compiled: CompiledProgram) -> pathlib.Path:
-        llvm_paths = [mod.llvm_path for mod in compiled.mods.values()]
-        bundled_root = self.workspace / ".bundled"
-        for name, llvm_ir in _bundled_mod_llvm_ir().items():
-            llvm_path = bundled_root.joinpath(*name.split("::")).with_suffix(".ll")
-            self._write_src(llvm_path, llvm_ir)
-            llvm_paths.append(llvm_path)
-
-        bitcode_path = self.workspace / "program.bc"
-        command = ["llvm-link", "-o", str(bitcode_path), *(str(path) for path in llvm_paths)]
-        result = self._invoke_tool(command)
+        """Link the program and the bundled modules into a native executable, as leech does."""
+        llvm_irs = [mod.llvm_ir for mod in compiled.mods.values()]
+        llvm_irs.extend(_bundled_mod_llvm_ir().values())
+        linked = ll_emit.link([ll_emit.parse(llvm_ir) for llvm_ir in llvm_irs])
+        link_dir = self.workspace / _LINK_DIR
+        link_dir.mkdir(exist_ok=True)
+        obj_path = link_dir / "program.o"
+        obj_path.write_bytes(ll_emit.emit(linked, ll_emit.EmitKind.OBJ, 0))
+        exe_path = link_dir / "program"
+        try:
+            cc = build.resolve_cc()
+        except errors.UserError as err:
+            raise AssertionError(f"{err}; workspace: {self.workspace}") from err
+        result = self._invoke_tool([*cc, str(obj_path), "-o", str(exe_path)])
         if result.returncode != 0:
-            raise self._tool_failure(
-                "llvm-link failed",
-                result,
-            )
-        return bitcode_path
+            raise self._tool_failure("linking failed", result)
+        return exe_path
 
     def run(self, program: str | TestProgram) -> subprocess.CompletedProcess[str]:
         """Run a program entered through its root's ``main``, linking unshadowed bundled modules."""
         program = self._coerce_program(program)
         compiled = self.compile(program, entry=True)
-        bitcode_path = self._link(compiled)
-        return self._invoke_tool(["lli", "--disable-symbolication", str(bitcode_path)])
+        exe_path = self._link(compiled)
+        return self._invoke_tool([str(exe_path)])
 
     def check(
         self,

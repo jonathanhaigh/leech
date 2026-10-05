@@ -165,11 +165,8 @@ def test_harnesses_share_only_immutable_bundled_ir(tmp_path_factory):
     expected_artifacts = {
         pathlib.Path("main.leech"),
         pathlib.Path("main.ll"),
-        pathlib.Path("program.bc"),
-        *(
-            pathlib.Path(".bundled").joinpath(*name.split("::")).with_suffix(".ll")
-            for name in bundled_ir
-        ),
+        pathlib.Path(".link/program.o"),
+        pathlib.Path(".link/program"),
     }
     for compiler in (first, second):
         artifacts = {
@@ -380,9 +377,9 @@ def test_check_failure_reports_expected_and_actual(compiler: harness.CompilerHar
 
 
 def test_materialization_rejects_reserved_runtime_path(compiler: harness.CompilerHarness):
-    (compiler.workspace / ".bundled").mkdir()
+    (compiler.workspace / ".link").mkdir()
     (compiler.workspace / "runtime").symlink_to(
-        compiler.workspace / ".bundled", target_is_directory=True
+        compiler.workspace / ".link", target_is_directory=True
     )
     program = harness.TestProgram.from_main(
         "pub fn main() i32 { 0 }",
@@ -403,7 +400,8 @@ def test_link_failure_reports_process_details(compiler: harness.CompilerHarness,
         compiler.run("pub fn main() i32 { 0 }")
 
     message = str(exc_info.value)
-    assert "llvm-link failed" in message
+    assert "linking failed" in message
+    assert "return code: 1" in message
     assert "link stdout" in message
     assert "link stderr" in message
     assert str(compiler.workspace) in message
@@ -416,6 +414,29 @@ def test_link_timeout_reports_process_details(compiler: harness.CompilerHarness,
         )
 
     monkeypatch.setattr(subprocess, "run", time_out)
+
+    with pytest.raises(AssertionError) as exc_info:
+        compiler.run("pub fn main() i32 { 0 }")
+
+    message = str(exc_info.value)
+    assert "timed out after 30 seconds" in message
+    assert "/.link/program.o" in message
+    assert "partial stdout" in message
+    assert "partial stderr" in message
+    assert str(compiler.workspace) in message
+
+
+def test_run_timeout_reports_process_details(compiler: harness.CompilerHarness, monkeypatch):
+    real_run = subprocess.run
+
+    def time_out_running_program(command, **kwargs):
+        if command[0].endswith("/.link/program"):
+            raise subprocess.TimeoutExpired(
+                command, 30, output="partial stdout", stderr="partial stderr"
+            )
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", time_out_running_program)
 
     with pytest.raises(AssertionError) as exc_info:
         compiler.run("pub fn main() i32 { 0 }")

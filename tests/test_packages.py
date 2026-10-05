@@ -162,7 +162,7 @@ def test_same_stem_modules_in_different_subdirectories(compiler):
     # last import-path segment is bound at all). Both must be importable
     # and linkable in one program - this only works if the dotted
     # qualified name (not the bare file stem) drives the LLVM symbol,
-    # since llvm-link would otherwise see two clashing (or, worse,
+    # since the linker would otherwise see two clashing (or, worse,
     # mismatched-across-compilation-units) `mem.f` symbols.
     main_src = """
     import a;

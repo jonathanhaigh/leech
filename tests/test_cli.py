@@ -169,43 +169,6 @@ def test_cli_entry_without_main_reports_error(tmp_path):
     assert not src_path.with_suffix(".ll").exists()
 
 
-def test_cli_compiles_linkable_std_io_program(tmp_path):
-    main_path = tmp_path / "app.leech"
-    main_path.write_text(
-        """import std::io;
-pub fn main() i32 {
-    io::println("hello");
-    return 0;
-}
-"""
-    )
-    std_root = pathlib.Path(driver.__file__).parent / "std"
-    modules = (
-        (main_path, ("--entry",), tmp_path / "app.ll"),
-        (std_root / "io.leech", ("--module-name", "std::io"), tmp_path / "io.ll"),
-        (std_root / "prelude.leech", ("--module-name", "std::prelude"), tmp_path / "prelude.ll"),
-    )
-
-    for src_path, extra_args, out_path in modules:
-        proc = run_cli(src_path, *extra_args, "-o", out_path)
-        assert proc.returncode == errors.NOTE
-        assert proc.stdout == ""
-        assert proc.stderr == ""
-
-    bitcode_path = tmp_path / "program.bc"
-    run_tool("llvm-link", *(out_path for _, _, out_path in modules), "-o", bitcode_path)
-    proc = subprocess.run(
-        ["lli", bitcode_path],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert proc.returncode == 0
-    assert proc.stdout == "hello\n"
-    assert proc.stderr == ""
-
-
 def test_cli_error_renders_message_and_does_not_write_output(tmp_path):
     src_path = tmp_path / "main.leech"
     src_path.write_text("""pub fn main() i32 {

@@ -34,7 +34,7 @@ Standard-library sources are under `src/leech/std/`. Tests mirror language featu
 - `uv run leech doctor` checks that the toolchain can build and run programs.
 - `uv run reuse lint` verifies license metadata.
 
-Tests that execute generated programs require `llvm-link`, `lli` and `cc` on `PATH`.
+Tests that execute generated programs link them natively, so they require `cc` on `PATH`.
 
 ## Coding Style & Naming Conventions
 
