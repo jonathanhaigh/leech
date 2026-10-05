@@ -27,6 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
+leech = "leech.cli:main"
 leechc = "leech.driver:main"
 
 [build-system]

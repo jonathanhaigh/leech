@@ -27,6 +27,8 @@ Standard-library sources are under `src/leech/std/`. Tests mirror language featu
   `--emit {llvm-ir,llvm-bc,asm,obj}` picks the output format, `-O0`…`-O3` the optimization
   level, and `--entry` makes the module's `main` the program entry point. Options follow
   gcc/clang names where one fits, and rustc/cargo names otherwise.
+- `uv run leech build input.leech` builds a program and its imports into
+  `leech-out/input` beside it.
 - `uv run reuse lint` verifies license metadata.
 
 Tests that execute generated programs require `llvm-link`, `lli` and `cc` on `PATH`.

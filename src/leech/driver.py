@@ -5,6 +5,7 @@
 """The compiler driver: CLI argument handling and the top-level compile pipeline."""
 
 import argparse
+import dataclasses
 import importlib.metadata
 import pathlib
 import sys
@@ -48,13 +49,60 @@ def compile_to_ir(
     return mod
 
 
+@dataclasses.dataclass(frozen=True)
+class Compilation:
+    """The outcome of compiling one module, and every diagnostic it produced in order."""
+
+    #: The compiled module, unless an error stopped compilation before it was loaded.
+    mod: Optional[ir_module.Mod]
+    #: The module's textual LLVM IR, or ``None`` if any diagnostic is an error.
+    llvm_ir: Optional[str]
+    diags: tuple[errors.UserError, ...]
+
+    @property
+    def level(self) -> errors.Level:
+        """The highest severity among the diagnostics."""
+        return max((d.level for d in self.diags), default=errors.NOTE)
+
+
+def compile_module(
+    file: src.SrcFile, qualified_name: Optional[str] = None, entry: bool = False
+) -> Compilation:
+    """Compile a module to LLVM IR as ``compile_to_llvm_ir`` does, returning its diagnostics.
+
+    Diagnostics are returned rather than raised or left registered, whether compilation
+    raised them or registered them, so the module fails if any of them is an error.
+    Diagnostics registered before the call are set aside while it runs and restored after.
+    """
+    earlier = errors.take_errors()
+    mod = None
+    llvm_ir = None
+    try:
+        mod = compile_to_ir(file, qualified_name, entry)
+        llvm_ir = lower_to_llvm_ir(mod)
+    except errors.UserError as err:
+        errors.register_error(err)
+    finally:
+        diags = tuple(errors.take_errors())
+        for err in earlier:
+            errors.register_error(err)
+    compilation = Compilation(mod, llvm_ir, diags)
+    if compilation.level >= errors.ERROR:
+        return dataclasses.replace(compilation, llvm_ir=None)
+    return compilation
+
+
 def compile_to_llvm_ir(
     file: src.SrcFile,
     qualified_name: Optional[str] = None,
     entry: bool = False,
 ) -> str:
     """Compile a source file and its imports to textual LLVM IR."""
-    mod = compile_to_ir(file, qualified_name, entry)
+    return lower_to_llvm_ir(compile_to_ir(file, qualified_name, entry))
+
+
+def lower_to_llvm_ir(mod: ir_module.Mod) -> str:
+    """Generate textual LLVM IR for a module built by ``compile_to_ir``."""
     compiler = codegen.Compiler(mod)
     compiler.compile()
     return compiler.llvm_ir()
@@ -126,20 +174,9 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     """Compile CLI input, render diagnostics, and exit with their severity."""
     args = _parse_args()
-    file = src.SrcFile(args.filename)
-
-    output = b""
-    try:
-        llvm_ir = compile_to_llvm_ir(file, args.module_name, args.entry)
-        output = ll_emit.emit_from_ir(llvm_ir, args.emit, args.opt_level)
-    except errors.UserError as err:
-        errors.register_error(err)
-
-    if errors.all_errors():
-        renderer = errors.TextErrorRenderer()
-        renderer.display_errors(errors.all_errors())
-
-    if errors.error_level() < errors.ERROR:
+    compilation = compile_module(src.SrcFile(args.filename), args.module_name, args.entry)
+    errors.TextErrorRenderer().display_errors(list(compilation.diags))
+    if compilation.llvm_ir is not None:
+        output = ll_emit.emit_from_ir(compilation.llvm_ir, args.emit, args.opt_level)
         pathlib.Path(args.o).write_bytes(output)
-
-    sys.exit(errors.error_level())
+    sys.exit(compilation.level)

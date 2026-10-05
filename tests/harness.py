@@ -29,7 +29,7 @@ def _bundled_mod_llvm_ir() -> Mapping[str, str]:
 
 
 @contextlib.contextmanager
-def isolated_diagnostics() -> Iterator[None]:
+def isolated_diags() -> Iterator[None]:
     """Start with no registered diagnostics, and restore the previous ones afterwards."""
     registered = errors.all_errors()
     previous_errors = list(registered)
@@ -42,6 +42,17 @@ def isolated_diagnostics() -> Iterator[None]:
         registered.clear()
         registered.extend(previous_errors)
         errors._error_level = previous_level
+
+
+def register_error_after_lowering(monkeypatch) -> None:
+    """Make lowering register an error without raising it, as multi-error reporting will."""
+    lower = driver.lower_to_llvm_ir
+
+    def lower_and_register(mod: ir_module.Mod) -> str:
+        errors.register_error(errors.CcNotFoundError("registered"))
+        return lower(mod)
+
+    monkeypatch.setattr(driver, "lower_to_llvm_ir", lower_and_register)
 
 
 def src_position(src: str, substring: str) -> tuple[int, int]:

@@ -669,7 +669,7 @@ def test_binding_under_an_or_pattern_outranks_an_enum_payload(compiler):
         compiler.build(f"enum E {{ A, B }}\npub fn f(e: E) i32 {{ {body} }}")
 
 
-@pytest.mark.usefixtures("isolated_diagnostics")
+@pytest.mark.usefixtures("isolated_diags")
 def test_unreachable_payload_arm_warns(compiler):
     arms = "Option::Some(_) => 1i32, Option::Some(1i32) => 2i32, Option::None => 0i32,"
     _check_match(compiler, f"return match (o) {{ {arms} }};")

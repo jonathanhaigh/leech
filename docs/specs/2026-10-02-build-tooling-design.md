@@ -417,9 +417,14 @@ would collide with that.
     spanless).
 
   Two reports with the same primary but different notes are therefore both printed.
-  Nothing useful is discarded. Until per-compilation diagnostics (#93)
-  land, the driver resets the process-global registry between compilations through a small
-  public `errors` API. #93 then replaces that API.
+  Nothing useful is discarded.
+- Each compilation goes through one boundary, `driver.compile_module`, which returns the
+  module's IR and its diagnostics, and both `leechc` and `leech` use it. A module fails when
+  any of its diagnostics is an error, whether compilation raised it or only registered it,
+  so reporting several errors per compilation (#20) needs no change to the build. The
+  boundary is also the only code that reads the process-global diagnostics registry
+  (through `errors.take_errors`), so moving diagnostics into per-compilation state (#93)
+  changes only that function.
 - Compilation stops at the first module with an error. It does not link, and it does not
   write an executable.
 - Exit status:

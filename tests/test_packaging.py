@@ -71,7 +71,10 @@ def test_wheel_contains_license_files(wheel):
 def test_wheel_declares_console_scripts(wheel):
     entry_points = configparser.ConfigParser()
     entry_points.read_string(_dist_info_file(wheel, "entry_points.txt"))
-    assert dict(entry_points["console_scripts"]) == {"leechc": "leech.driver:main"}
+    assert dict(entry_points["console_scripts"]) == {
+        "leech": "leech.cli:main",
+        "leechc": "leech.driver:main",
+    }
 
 
 def test_wheel_metadata_blocks_upload_and_bounds_llvmlite(wheel):

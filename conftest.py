@@ -19,8 +19,8 @@ def compiler(tmp_path: pathlib.Path) -> harness.CompilerHarness:
 
 
 @pytest.fixture
-def isolated_diagnostics() -> Iterator[None]:
-    with harness.isolated_diagnostics():
+def isolated_diags() -> Iterator[None]:
+    with harness.isolated_diags():
         yield
 
 

@@ -1634,6 +1634,52 @@ class EntryMainExternConflictError(UserError):
         )
 
 
+class CcInvalidError(UserError):
+    """Raised when the ``CC`` environment variable can't be split into a command."""
+
+    def __init__(self, value: str, reason: str) -> None:
+        super().__init__(ERROR, f"The C compiler command CC={value!r} is invalid: {reason}", None)
+
+
+class CcNotFoundError(UserError):
+    """Raised when the C compiler used for linking isn't on ``PATH``."""
+
+    def __init__(self, program: str) -> None:
+        super().__init__(
+            ERROR,
+            f'C compiler "{program}" not found; install gcc or clang, or set CC to a C compiler',
+            None,
+        )
+
+
+class LinkFailedError(UserError):
+    """Raised when the C compiler fails to link an executable; notes carry its output."""
+
+    def __init__(self, command: str, problem: str, output: str) -> None:
+        super().__init__(ERROR, f"Linking failed: `{command}` {problem}", None)
+        if output.strip():
+            self._add_extra(NOTE, output.rstrip("\n"), None)
+
+
+class BuildOutputError(UserError):
+    """Raised when a build's output files can't be written."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(ERROR, f"Cannot write build output: {reason}", None)
+
+
+class LlvmVerificationError(UserError):
+    """Raised when generated LLVM IR fails to link or verify, which is a compiler bug."""
+
+    def __init__(self, reason: str, ir_dir: pathlib.Path) -> None:
+        super().__init__(
+            ERROR,
+            f"Internal compiler error: the generated LLVM IR in {ir_dir} failed to link or "
+            f"verify: {reason}",
+            None,
+        )
+
+
 class TextErrorRenderer:
     """Renders diagnostics as plain text, with a source excerpt, to stderr."""
 
@@ -1684,3 +1730,16 @@ def all_errors() -> list[UserError]:
 def error_level() -> Level:
     """Return the highest severity level among all recorded diagnostics."""
     return _error_level
+
+
+def take_errors() -> list[UserError]:
+    """Remove and return every recorded diagnostic, resetting the overall error level.
+
+    Diagnostics are recorded process-wide, so a caller running several compilations in one
+    process uses this to collect each compilation's diagnostics separately.
+    """
+    global _error_level  # noqa: PLW0603 - single module-level counter, not worth a class
+    taken = list(_errors)
+    _errors.clear()
+    _error_level = NOTE
+    return taken

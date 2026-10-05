@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from leech import driver, errors, target
+from leech import src as leech_src
 from tests import harness
 
 
@@ -36,7 +37,7 @@ def run_tool(*command) -> subprocess.CompletedProcess:
 
 def run_leechc_in_process(monkeypatch, *args) -> int:
     monkeypatch.setattr(sys, "argv", ["leechc", *(str(a) for a in args)])
-    with harness.isolated_diagnostics(), pytest.raises(SystemExit) as exc_info:
+    with harness.isolated_diags(), pytest.raises(SystemExit) as exc_info:
         driver.main()
     code = exc_info.value.code
     assert isinstance(code, int)
@@ -493,3 +494,43 @@ def test_cli_rejects_abbreviated_long_options(tmp_path):
 
     assert proc.returncode == 2
     assert "unrecognized arguments: --module app" in proc.stderr
+
+
+@pytest.mark.usefixtures("isolated_diags")
+def test_compile_module_returns_warnings_and_restores_earlier_diags(tmp_path):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn f() i32 { return 1; return 2; }\n")
+    sentinel = errors.UnreachableCodeWarning("sentinel", None)
+    errors.register_error(sentinel)
+
+    compilation = driver.compile_module(leech_src.SrcFile(src_path))
+
+    assert compilation.llvm_ir is not None
+    assert compilation.level == errors.WARNING
+    assert [type(d) for d in compilation.diags] == [errors.UnreachableCodeWarning]
+    assert errors.all_errors() == [sentinel]
+
+
+@pytest.mark.usefixtures("isolated_diags")
+def test_compile_module_returns_raised_error(tmp_path):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn f() i32 { return true; }\n")
+
+    compilation = driver.compile_module(leech_src.SrcFile(src_path))
+
+    assert compilation.llvm_ir is None
+    assert compilation.level == errors.ERROR
+    assert errors.all_errors() == []
+
+
+@pytest.mark.usefixtures("isolated_diags")
+def test_compile_module_fails_on_registered_error(tmp_path, monkeypatch):
+    src_path = tmp_path / "app.leech"
+    src_path.write_text("pub fn f() i32 { return 0; }\n")
+    harness.register_error_after_lowering(monkeypatch)
+
+    compilation = driver.compile_module(leech_src.SrcFile(src_path))
+
+    assert compilation.mod is not None
+    assert compilation.llvm_ir is None
+    assert [type(d) for d in compilation.diags] == [errors.CcNotFoundError]

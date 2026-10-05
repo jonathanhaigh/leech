@@ -421,13 +421,13 @@ def test_mod_var_cycle_can_be_retried_after_failure(compiler):
     assert item is not None
     var = asserts.checked_cast(item.value, ir_module.ModVar)
 
-    diagnostics = []
+    diags = []
     for _ in range(2):
         with pytest.raises(errors.CircularVarInitializerError) as exc_info:
             _ = var.initializer
-        diagnostics.append(str(exc_info.value))
+        diags.append(str(exc_info.value))
 
-    assert diagnostics[0] == diagnostics[1]
+    assert diags[0] == diags[1]
 
 
 def test_mod_var_diamond_dependency_is_not_a_cycle(compiler):

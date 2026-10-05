@@ -114,15 +114,15 @@ class DocCase:
     program: harness.TestProgram
     expected_output: str
     expected_exit: int
-    diagnostic_type: Optional[type[errors.UserError]]
-    diagnostic_excerpt: Optional[str]
+    diag_type: Optional[type[errors.UserError]]
+    diag_excerpt: Optional[str]
     expects_warning: bool
 
     def execute(self, tmp_path: pathlib.Path) -> None:
         """Compile or run this case in ``tmp_path``."""
         compiler = harness.CompilerHarness(tmp_path)
         try:
-            with harness.isolated_diagnostics():
+            with harness.isolated_diags():
                 self._execute_with(compiler)
         except Exception as err:
             raise self._execution_error(err, tmp_path) from err
@@ -130,10 +130,10 @@ class DocCase:
     def _execute_with(self, compiler: harness.CompilerHarness) -> None:
         if self.mode == "run":
             self._execute_run(compiler)
-            self._check_registered_diagnostics()
+            self._check_registered_diags()
         elif self.mode == "compile":
             compiler.compile(self.program)
-            self._check_registered_diagnostics()
+            self._check_registered_diags()
         else:
             self._execute_expected_error(compiler)
 
@@ -159,7 +159,7 @@ class DocCase:
             f"{type(err).__name__}: {err}"
         )
 
-    def _check_registered_diagnostics(self) -> None:
+    def _check_registered_diags(self) -> None:
         registered = errors.all_errors()
         if self.expects_warning:
             self._check_registered_warning(registered)
@@ -167,48 +167,47 @@ class DocCase:
             raise AssertionError(f"unexpected registered diagnostics: {registered!r}")
 
     def _check_registered_warning(self, registered: list[errors.UserError]) -> None:
-        assert self.diagnostic_type is not None
-        assert self.diagnostic_excerpt is not None
+        assert self.diag_type is not None
+        assert self.diag_excerpt is not None
         if len(registered) != 1:
             raise AssertionError(f"expected one warning, got {len(registered)} diagnostics")
         warning = registered[0]
-        if type(warning) is not self.diagnostic_type:
+        if type(warning) is not self.diag_type:
             raise AssertionError(
-                f"expected warning {self.diagnostic_type.__name__}, got {type(warning).__name__}"
+                f"expected warning {self.diag_type.__name__}, got {type(warning).__name__}"
             )
         if warning.level != errors.WARNING:
             raise AssertionError(f"expected WARNING severity, got {warning.level.name}")
-        if self.diagnostic_excerpt not in warning.message.message:
+        if self.diag_excerpt not in warning.message.message:
             raise AssertionError(
-                f"warning message does not contain {self.diagnostic_excerpt!r}: "
+                f"warning message does not contain {self.diag_excerpt!r}: "
                 f"{warning.message.message!r}"
             )
         if errors.error_level() != errors.WARNING:
             raise AssertionError("registered warning did not set the warning error level")
 
     def _execute_expected_error(self, compiler: harness.CompilerHarness) -> None:
-        assert self.diagnostic_type is not None
-        assert self.diagnostic_excerpt is not None
+        assert self.diag_type is not None
+        assert self.diag_excerpt is not None
         try:
             compiler.compile(self.program)
         except errors.UserError as err:
             self._check_expected_error(err)
             return
-        raise AssertionError(f"expected {self.diagnostic_type.__name__}, but compilation succeeded")
+        raise AssertionError(f"expected {self.diag_type.__name__}, but compilation succeeded")
 
     def _check_expected_error(self, err: errors.UserError) -> None:
-        assert self.diagnostic_type is not None
-        assert self.diagnostic_excerpt is not None
-        if type(err) is not self.diagnostic_type:
+        assert self.diag_type is not None
+        assert self.diag_excerpt is not None
+        if type(err) is not self.diag_type:
             raise AssertionError(
-                f"expected {self.diagnostic_type.__name__}, got {type(err).__name__}"
+                f"expected {self.diag_type.__name__}, got {type(err).__name__}"
             ) from err
         if err.level != errors.ERROR:
             raise AssertionError(f"expected ERROR severity, got {err.level.name}") from err
-        if self.diagnostic_excerpt not in err.message.message:
+        if self.diag_excerpt not in err.message.message:
             raise AssertionError(
-                f"error message does not contain {self.diagnostic_excerpt!r}: "
-                f"{err.message.message!r}"
+                f"error message does not contain {self.diag_excerpt!r}: {err.message.message!r}"
             ) from err
         if errors.all_errors():
             raise AssertionError(
@@ -246,7 +245,7 @@ class _ResultFence:
             raise DocCollectionError(loc, "newline=no is not allowed on a diagnostic fence")
         return cls(kind, token.content, loc, newline_no)
 
-    def diagnostic_excerpt(self) -> str:
+    def diag_excerpt(self) -> str:
         excerpt = self.content.removesuffix("\n")
         if not excerpt or "\n" in excerpt or "\r" in excerpt:
             raise DocCollectionError(self.loc, "diagnostic excerpt must contain one nonempty line")
@@ -260,7 +259,7 @@ class _RootOptions:
     error_name: Optional[str]
     warning_name: Optional[str]
 
-    def diagnostic_type(self, loc: FenceLoc) -> Optional[type[errors.UserError]]:
+    def diag_type(self, loc: FenceLoc) -> Optional[type[errors.UserError]]:
         name = self.error_name
         if self.mode == "error" and name is None:
             raise DocCollectionError(loc, "mode=error requires error=UserErrorSubclass")
@@ -301,7 +300,7 @@ class _CaseBuilder:
     srcs: _SrcFencesByFile = dataclasses.field(default_factory=dict)
     root_options: Optional[_RootOptions] = None
     output: Optional[_ResultFence] = None
-    diagnostic: Optional[_ResultFence] = None
+    diag: Optional[_ResultFence] = None
     results_started: bool = False
 
     def add_src_fence(self, token: markdown_it.token.Token, metadata: _FenceMetadata) -> None:
@@ -377,11 +376,11 @@ class _CaseBuilder:
                 raise DocCollectionError(loc, f"duplicate output fence for test {self.test_id!r}")
             self.output = result
         else:
-            if self.diagnostic is not None:
+            if self.diag is not None:
                 raise DocCollectionError(
                     loc, f"duplicate diagnostic fence for test {self.test_id!r}"
                 )
-            self.diagnostic = result
+            self.diag = result
         self.results_started = True
 
     def build_doc_case(self) -> DocCase:
@@ -389,7 +388,7 @@ class _CaseBuilder:
         options = self.root_options
         assert options is not None
         self._validate_case_shape(root, options)
-        diagnostic_type = options.diagnostic_type(root.loc)
+        diag_type = options.diag_type(root.loc)
         expects_warning = options.warning_name is not None
         self._validate_result_fences(root, options.mode, expects_warning)
         expected_exit = options.exit_status(root.loc)
@@ -401,8 +400,8 @@ class _CaseBuilder:
             program=self._program(root),
             expected_output=expected_output,
             expected_exit=expected_exit,
-            diagnostic_type=diagnostic_type,
-            diagnostic_excerpt=self._diagnostic_excerpt(),
+            diag_type=diag_type,
+            diag_excerpt=self._diag_excerpt(),
             expects_warning=expects_warning,
         )
 
@@ -427,10 +426,10 @@ class _CaseBuilder:
     def _validate_result_fences(self, root: SrcFence, mode: str, expects_warning: bool) -> None:
         if self.output is not None and mode != "run":
             raise DocCollectionError(self.output.loc, "output= is only allowed with mode=run")
-        needs_diagnostic = mode == "error" or expects_warning
-        if self.diagnostic is not None and not needs_diagnostic:
-            raise DocCollectionError(self.diagnostic.loc, "diagnostic= requires error= or warning=")
-        if self.diagnostic is None and needs_diagnostic:
+        needs_diag = mode == "error" or expects_warning
+        if self.diag is not None and not needs_diag:
+            raise DocCollectionError(self.diag.loc, "diagnostic= requires error= or warning=")
+        if self.diag is None and needs_diag:
             raise DocCollectionError(root.loc, "error= and warning= require a diagnostic= fence")
 
     def _expected_output(self, root: SrcFence, expected_exit: int) -> str:
@@ -455,10 +454,10 @@ class _CaseBuilder:
                 )
         return expected_output
 
-    def _diagnostic_excerpt(self) -> Optional[str]:
-        if self.diagnostic is None:
+    def _diag_excerpt(self) -> Optional[str]:
+        if self.diag is None:
             return None
-        return self.diagnostic.diagnostic_excerpt()
+        return self.diag.diag_excerpt()
 
     def _program(self, root: SrcFence) -> harness.TestProgram:
         srcs = tuple(self.srcs.values())

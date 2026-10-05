@@ -408,7 +408,7 @@ def test_match_aliased_discriminants(compiler):
     compiler.check(src)
 
 
-@pytest.mark.usefixtures("isolated_diagnostics")
+@pytest.mark.usefixtures("isolated_diags")
 def test_match_aliased_discriminant_warns(compiler):
     src = """
     enum Alias(u8) { A = 1, B = 1 }
@@ -467,7 +467,7 @@ def test_match_non_exhaustive_error(compiler):
         compiler.compile(src)
 
 
-@pytest.mark.usefixtures("isolated_diagnostics")
+@pytest.mark.usefixtures("isolated_diags")
 def test_match_non_exhaustive_with_redundant_arm_warns(compiler):
     src = """
     enum Color { Red, Green, Blue }

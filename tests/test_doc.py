@@ -90,9 +90,9 @@ return statement is unreachable
 """
     )
 
-    assert cases[0].diagnostic_type is errors.InvalidRetTypError
+    assert cases[0].diag_type is errors.InvalidRetTypError
     assert not cases[0].expects_warning
-    assert cases[1].diagnostic_type is errors.UnreachableCodeWarning
+    assert cases[1].diag_type is errors.UnreachableCodeWarning
     assert cases[1].expects_warning
 
 
@@ -502,7 +502,7 @@ pub fn answer() i32 { return true; }
         case.execute(tmp_path)
 
 
-def test_execute_restores_existing_diagnostics_after_failure(tmp_path):
+def test_execute_restores_existing_diags_after_failure(tmp_path):
     (case,) = parse_doc_page(
         """```leech test=broken file=main.leech mode=compile
 pub fn main() i32 { return 0 }
@@ -511,7 +511,7 @@ pub fn main() i32 { return 0 }
     )
     sentinel = errors.UnreachableCodeWarning("sentinel", None)
 
-    with harness.isolated_diagnostics():
+    with harness.isolated_diags():
         errors.register_error(sentinel)
         with pytest.raises(doc.DocExampleError):
             case.execute(tmp_path)
