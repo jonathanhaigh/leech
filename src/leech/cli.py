@@ -42,13 +42,24 @@ def _make_parser() -> tuple[argparse.ArgumentParser, Mapping[str, argparse.Argum
         allow_abbrev=False,
     )
 
-    for subparser in (build_parser, run_parser):
+    check_parser = subparsers.add_parser(
+        "check",
+        help="report a program's diagnostics without building it",
+        description=(
+            "Compile a program as 'leech build' does and report its diagnostics, without "
+            "writing any files."
+        ),
+        allow_abbrev=False,
+    )
+
+    for subparser in (build_parser, run_parser, check_parser):
         subparser.add_argument(
             "root",
             help="the program's root module, whose directory is the program's package",
             metavar="ROOT",
             type=pathlib.Path,
         )
+    for subparser in (build_parser, run_parser):
         subparser.add_argument(
             "-O",
             choices=ll_emit.OPT_LEVELS,
@@ -63,7 +74,7 @@ def _make_parser() -> tuple[argparse.ArgumentParser, Mapping[str, argparse.Argum
         metavar="EXE",
         type=pathlib.Path,
     )
-    return parser, {"build": build_parser, "run": run_parser}
+    return parser, {"build": build_parser, "run": run_parser, "check": check_parser}
 
 
 def _parse_args(argv: Sequence[str]) -> tuple[argparse.Namespace, list[str]]:
@@ -100,12 +111,19 @@ def _check_root(parser: argparse.ArgumentParser, root: pathlib.Path) -> None:
 
 
 def main() -> None:
-    """Build the requested program, and for ``leech run`` replace this process with it.
+    """Check, build, or build and run the requested program.
 
-    ``leech build`` exits 0 only on success.
+    ``leech check`` and ``leech build`` exit 0 only on success. ``leech run`` replaces this
+    process with the program.
     """
     args, program_args = _parse_args(sys.argv[1:])
     renderer = errors.TextErrorRenderer()
+    if args.command == "check":
+        diags = build.check(args.root)
+        renderer.display_errors(list(diags))
+        if any(diag.level >= errors.ERROR for diag in diags):
+            sys.exit(1)
+        sys.exit(0)
     result = build.build(args.root, output=getattr(args, "o", None), opt_level=args.opt_level)
     renderer.display_errors(list(result.diags))
     if result.exe is None:

@@ -43,6 +43,7 @@ Inside the checkout, `uv run leech` and `uv run leechc` work without installing 
 leech build hello.leech          # writes the executable leech-out/hello beside hello.leech
 ./leech-out/hello
 leech run hello.leech            # builds the same way, then runs it
+leech check hello.leech          # reports diagnostics only, writing nothing
 ```
 
 The root module's directory is the program's package: `import x::a;` names `x/a.leech` in it,

@@ -30,6 +30,7 @@ Standard-library sources are under `src/leech/std/`. Tests mirror language featu
 - `uv run leech build input.leech` builds a program and its imports into
   `leech-out/input` beside it.
 - `uv run leech run input.leech -- ARGS` builds it the same way, then runs it.
+- `uv run leech check input.leech` reports a program's diagnostics without writing files.
 - `uv run reuse lint` verifies license metadata.
 
 Tests that execute generated programs require `llvm-link`, `lli` and `cc` on `PATH`.

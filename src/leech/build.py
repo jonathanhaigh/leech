@@ -84,6 +84,18 @@ def build(
     return BuildResult(exe, diags.distinct)
 
 
+def check(root: pathlib.Path) -> tuple[errors.UserError, ...]:
+    """Compile the program whose root module is ``root`` as ``build`` does, writing nothing.
+
+    Every module is compiled to LLVM IR, since some errors are only found while generating
+    it, but nothing is optimized, emitted or linked. Returns every distinct diagnostic in
+    order; the program is valid unless one of them is an error.
+    """
+    diags = _Diags()
+    _compile_program(root, diags)
+    return diags.distinct
+
+
 class _Diags:
     """Collects the diagnostics of a build's compilations, keeping one of each.
 
