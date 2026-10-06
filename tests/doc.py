@@ -17,7 +17,7 @@ import markdown_it
 import markdown_it.token
 import pytest
 
-from leech import errors
+from leech import diag, errors
 from tests import harness
 
 _SRC_KEYS: Final = frozenset({"test", "file", "mode", "exit", "error", "warning"})
@@ -122,33 +122,35 @@ class DocCase:
         """Compile or run this case in ``tmp_path``."""
         compiler = harness.CompilerHarness(tmp_path)
         try:
-            with harness.isolated_diags():
-                self._execute_with(compiler)
+            self._execute_with(compiler)
         except Exception as err:
             raise self._execution_error(err, tmp_path) from err
 
     def _execute_with(self, compiler: harness.CompilerHarness) -> None:
+        diags = diag.Diags()
         if self.mode == "run":
-            self._execute_run(compiler)
-            self._check_registered_diags()
+            self._execute_run(compiler, diags)
+            self._check_emitted_diags(diags.all())
         elif self.mode == "compile":
-            compiler.compile(self.program)
-            self._check_registered_diags()
+            compiler.compile(self.program, diags=diags)
+            self._check_emitted_diags(diags.all())
         else:
-            self._execute_expected_error(compiler)
+            self._execute_expected_error(compiler, diags)
 
-    def _execute_run(self, compiler: harness.CompilerHarness) -> None:
+    def _execute_run(self, compiler: harness.CompilerHarness, diags: diag.Diags) -> None:
         if self.expected_exit < 0:
             compiler.check_signal(
                 self.program,
                 expected_signal=signal.Signals(-self.expected_exit),
                 stderr_prefix=self.expected_output,
+                diags=diags,
             )
         else:
             compiler.check(
                 self.program,
                 stdout=self.expected_output,
                 exit_status=self.expected_exit,
+                diags=diags,
             )
 
     def _execution_error(self, err: Exception, tmp_path: pathlib.Path) -> DocExampleError:
@@ -159,19 +161,18 @@ class DocCase:
             f"{type(err).__name__}: {err}"
         )
 
-    def _check_registered_diags(self) -> None:
-        registered = errors.all_errors()
+    def _check_emitted_diags(self, emitted: tuple[errors.UserError, ...]) -> None:
         if self.expects_warning:
-            self._check_registered_warning(registered)
-        elif registered or errors.error_level() != errors.NOTE:
-            raise AssertionError(f"unexpected registered diagnostics: {registered!r}")
+            self._check_emitted_warning(emitted)
+        elif emitted:
+            raise AssertionError(f"unexpected emitted diagnostics: {emitted!r}")
 
-    def _check_registered_warning(self, registered: list[errors.UserError]) -> None:
+    def _check_emitted_warning(self, emitted: tuple[errors.UserError, ...]) -> None:
         assert self.diag_type is not None
         assert self.diag_excerpt is not None
-        if len(registered) != 1:
-            raise AssertionError(f"expected one warning, got {len(registered)} diagnostics")
-        warning = registered[0]
+        if len(emitted) != 1:
+            raise AssertionError(f"expected one warning, got {len(emitted)} diagnostics")
+        warning = emitted[0]
         if type(warning) is not self.diag_type:
             raise AssertionError(
                 f"expected warning {self.diag_type.__name__}, got {type(warning).__name__}"
@@ -183,20 +184,20 @@ class DocCase:
                 f"warning message does not contain {self.diag_excerpt!r}: "
                 f"{warning.message.message!r}"
             )
-        if errors.error_level() != errors.WARNING:
-            raise AssertionError("registered warning did not set the warning error level")
 
-    def _execute_expected_error(self, compiler: harness.CompilerHarness) -> None:
+    def _execute_expected_error(self, compiler: harness.CompilerHarness, diags: diag.Diags) -> None:
         assert self.diag_type is not None
         assert self.diag_excerpt is not None
         try:
-            compiler.compile(self.program)
+            compiler.compile(self.program, diags=diags)
         except errors.UserError as err:
-            self._check_expected_error(err)
+            self._check_expected_error(err, diags.all())
             return
         raise AssertionError(f"expected {self.diag_type.__name__}, but compilation succeeded")
 
-    def _check_expected_error(self, err: errors.UserError) -> None:
+    def _check_expected_error(
+        self, err: errors.UserError, emitted: tuple[errors.UserError, ...]
+    ) -> None:
         assert self.diag_type is not None
         assert self.diag_excerpt is not None
         if type(err) is not self.diag_type:
@@ -209,10 +210,8 @@ class DocCase:
             raise AssertionError(
                 f"error message does not contain {self.diag_excerpt!r}: {err.message.message!r}"
             ) from err
-        if errors.all_errors():
-            raise AssertionError(
-                f"unexpected registered diagnostics: {errors.all_errors()!r}"
-            ) from err
+        if emitted:
+            raise AssertionError(f"unexpected emitted diagnostics: {emitted!r}") from err
 
 
 @dataclasses.dataclass(frozen=True)

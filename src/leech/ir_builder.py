@@ -17,6 +17,8 @@ from leech import (
     asserts,
     ast,
     check_results,
+    compilation,
+    errors,
     ir_module,
     ir_traits,
     ir_values,
@@ -77,6 +79,7 @@ class CfgBuilder:
         end_bb: ir_values.BasicBlock
 
     _fn: Final[Optional[ir_module.FnInstance]]
+    _ctx: Final[compilation.Ctx]
     _typ_check_results: Final[check_results.TypCheckResults]
     _impl_registry: Final[ir_traits.ImplRegistry]
     _panic_ref: Final[Optional[ir_module.FnRef]]
@@ -93,6 +96,7 @@ class CfgBuilder:
 
     def __init__(
         self,
+        ctx: compilation.Ctx,
         typ_check_results: check_results.TypCheckResults,
         impl_registry: ir_traits.ImplRegistry,
         panic_ref: Optional[ir_module.FnRef],
@@ -100,6 +104,7 @@ class CfgBuilder:
         comptime_arg_mapping: Optional[Mapping[typs.ComptimeParamTyp, typs.Typ]] = None,
     ) -> None:
         self._fn = fn
+        self._ctx = ctx
         self._typ_check_results = typ_check_results
         self._impl_registry = impl_registry
         self._panic_ref = panic_ref
@@ -132,9 +137,24 @@ class CfgBuilder:
         let_ast = defn_ast.let_stmt
         initializer = self._build_let_initializer(let_ast, _ExprContext.VALUE)
         self._ret(initializer, let_ast.expr)
+        self._warn_unreachable()
 
     def build_fn(self, fn_ast: ast.FnDefn) -> None:
         """Lower a function body into ``cfg``."""
+        self._build_fn_body(fn_ast)
+        self._warn_unreachable()
+
+    def _warn_unreachable(self) -> None:
+        """Warn about the first instruction each block dropped after its terminator."""
+        for bb in self.cfg.nodes:
+            if bb.first_unreachable is not None:
+                self._ctx.diags.warn(
+                    errors.UnreachableCodeWarning(
+                        bb.first_unreachable.diag_str(), bb.first_unreachable.span
+                    )
+                )
+
+    def _build_fn_body(self, fn_ast: ast.FnDefn) -> None:
         assert self._fn is not None
 
         for param in self._fn.params:

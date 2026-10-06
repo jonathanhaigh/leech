@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Final, Optional, Self, override
 import more_itertools
 import networkx as nx
 
-from leech import asserts, ast, errors, opt_util, src, typs
+from leech import asserts, ast, opt_util, src, typs
 
 if TYPE_CHECKING:
     # Importing ir_module at runtime would cycle through its ComptimePtr base.
@@ -1163,9 +1163,8 @@ class BasicBlock:
     ``load``, ``branch``, etc.), each of which constructs the
     instruction, appends it to ``instrs``, and returns it. Once a
     terminator instruction (a branch, return, or unreachable) has been
-    added, further additions are silently dropped (after a one-time
-    unreachable-code warning) rather than appended, since LLVM does not
-    allow instructions after a block's terminator.
+    added, further additions are dropped rather than appended, since LLVM
+    does not allow instructions after a block's terminator.
 
     ``name`` is used as this block's label in the generated LLVM IR.
     """
@@ -1173,13 +1172,14 @@ class BasicBlock:
     name: Final[str]
     instrs: Final[list[InstrKind]]
     terminated: bool
-    _warned_unreachable: bool
+    #: The source of the first instruction dropped after the terminator, if any.
+    first_unreachable: Optional[ast.Ast]
 
     def __init__(self, name: str) -> None:
         self.name = name
         self.instrs = []
         self.terminated = False
-        self._warned_unreachable = False
+        self.first_unreachable = None
 
     def __str__(self) -> str:
         """A textual dump of this block's label and instructions, one per line."""
@@ -1188,13 +1188,9 @@ class BasicBlock:
 
     def _add_instr[T: InstrKind](self, instr: T, terminate: bool = False) -> T:
         if self.terminated:
-            if not self._warned_unreachable:
+            if self.first_unreachable is None:
                 assert instr.ast is not None, "Shouldn't get unreachable code in builtins"
-                errors.register_error(
-                    errors.UnreachableCodeWarning(instr.ast.diag_str(), instr.ast.span)
-                )
-                self._warned_unreachable = True
-
+                self.first_unreachable = instr.ast
             return instr
         self.instrs.append(instr)
         if terminate:

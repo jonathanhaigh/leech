@@ -10,10 +10,9 @@ import pathlib
 import shlex
 import shutil
 import subprocess
-from collections.abc import Hashable, Iterable
 from typing import Final, Optional
 
-from leech import driver, errors, ll_emit, src
+from leech import diag, driver, errors, ll_emit, src
 
 OUT_DIR_NAME: Final[str] = "leech-out"
 """The build output directory, created beside the root module."""
@@ -61,12 +60,12 @@ def build(
     to ``output`` or ``leech-out/<stem>``, replaced only once linking succeeds. Compilation
     stops at the first module with an error, without writing an executable.
     """
-    diags = _Diags()
+    diags = diag.Diags()
     try:
         cc = resolve_cc()
         llvm_irs = _compile_program(root, diags)
         if llvm_irs is None:
-            return BuildResult(None, diags.distinct)
+            return BuildResult(None, diags.all())
         out_dir = root.parent / OUT_DIR_NAME
         obj_dir = out_dir / f"{root.stem}.obj"
         if output is None:
@@ -79,9 +78,9 @@ def build(
         except OSError as err:
             raise errors.BuildOutputError(str(err)) from err
     except errors.UserError as err:
-        diags.add([err])
-        return BuildResult(None, diags.distinct)
-    return BuildResult(exe, diags.distinct)
+        diags.error(err)
+        return BuildResult(None, diags.all())
+    return BuildResult(exe, diags.all())
 
 
 def check(root: pathlib.Path) -> tuple[errors.UserError, ...]:
@@ -91,58 +90,20 @@ def check(root: pathlib.Path) -> tuple[errors.UserError, ...]:
     it, but nothing is optimized, emitted or linked. Returns every distinct diagnostic in
     order; the program is valid unless one of them is an error.
     """
-    diags = _Diags()
+    diags = diag.Diags()
     _compile_program(root, diags)
-    return diags.distinct
+    return diags.all()
 
 
-class _Diags:
-    """Collects the diagnostics of a build's compilations, keeping one of each.
-
-    Every compilation reloads the whole program, so one problem is often reported by several
-    compilations, with fresh source objects each time.
-    """
-
-    _seen: Final[set[Hashable]]
-    _distinct: Final[list[errors.UserError]]
-
-    def __init__(self) -> None:
-        self._seen = set()
-        self._distinct = []
-
-    @property
-    def distinct(self) -> tuple[errors.UserError, ...]:
-        return tuple(self._distinct)
-
-    def add(self, errs: Iterable[errors.UserError]) -> None:
-        for err in errs:
-            key = (type(err), *(self._message_key(m) for m in (err.message, *err.extra)))
-            if key not in self._seen:
-                self._seen.add(key)
-                self._distinct.append(err)
-
-    @staticmethod
-    def _message_key(message: errors.Message) -> Hashable:
-        span = message.span
-        location = None
-        if span is not None:
-            location = (
-                span.file.path.resolve(),
-                span.start_line,
-                span.start_col,
-                span.end_line,
-                span.end_col,
-            )
-        return (message.level, message.message, location)
-
-
-def _compile_program(root: pathlib.Path, diags: _Diags) -> Optional[dict[str, str]]:
+def _compile_program(root: pathlib.Path, diags: diag.Diags) -> Optional[dict[str, str]]:
     """Compile every module of the program separately, returning LLVM IR by module name.
 
-    Returns ``None`` once a module fails, without compiling the rest.
+    Each compilation reloads the whole program, so one problem is often reported by several
+    compilations; ``diags`` keeps one of each. Returns ``None`` once a module fails, without
+    compiling the rest.
     """
     root_compilation = driver.compile_module(src.SrcFile(root), root.stem, entry=True)
-    diags.add(root_compilation.diags)
+    diags.merge(root_compilation.diags)
     root_mod = root_compilation.mod
     if root_mod is None or root_compilation.llvm_ir is None:
         return None
@@ -151,7 +112,7 @@ def _compile_program(root: pathlib.Path, diags: _Diags) -> Optional[dict[str, st
         if mod is root_mod:
             continue
         compilation = driver.compile_module(mod.ast.span.file, mod.name)
-        diags.add(compilation.diags)
+        diags.merge(compilation.diags)
         if compilation.llvm_ir is None:
             return None
         llvm_irs[mod.name] = compilation.llvm_ir

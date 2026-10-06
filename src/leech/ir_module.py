@@ -529,6 +529,7 @@ class FnInstance:
         lazily, on first access."""
         assert isinstance(self._fn, LowerableFn), "extern instances have no body"
         builder = ir_builder.CfgBuilder(
+            self._fn.env.ctx,
             self._fn.typ_check_results,
             self._fn.env.impl_registry,
             self._fn.env.panic_ref,
@@ -700,6 +701,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
         Built lazily, on first access.
         """
         builder = ir_builder.CfgBuilder(
+            self.env.ctx,
             self.typ_check_results,
             self.env.impl_registry,
             self.env.panic_ref,

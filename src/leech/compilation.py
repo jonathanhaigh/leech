@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Compilation-wide state for lazy requests and active semantic computations."""
+"""Compilation-wide state for lazy requests, active semantic computations and diagnostics."""
 
 import contextlib
 import dataclasses
@@ -11,7 +11,7 @@ import operator
 from collections.abc import Callable, Collection, Iterator, Sequence
 from typing import TYPE_CHECKING, Final, Optional, cast
 
-from leech import patterns
+from leech import diag, opt_util, patterns
 
 if TYPE_CHECKING:
     from leech import ir_module, typs
@@ -52,7 +52,9 @@ type _InstanceCache[OwnerT, InstanceT] = dict[OwnerT, dict[tuple[typs.Typ, ...],
 
 
 class Ctx:
-    """Own compilation-wide lazy requests and active semantic computations."""
+    """Own compilation-wide lazy requests, active semantic computations and diagnostics."""
+
+    diags: Final[diag.Diags]
 
     _fn_instances: Final[_InstanceCache[ir_module.FnSymbol, ir_module.FnInstance]]
     _requested_fn_instances: Final[list[ir_module.FnInstance]]
@@ -66,7 +68,8 @@ class Ctx:
     #: insertion-ordered set because one declaration may be interned twice.
     _declared_comptime_params: Final[dict[typs.ComptimeParamTyp, None]]
 
-    def __init__(self) -> None:
+    def __init__(self, diags: Optional[diag.Diags] = None) -> None:
+        self.diags = opt_util.opt_or_default(diags, diag.Diags())
         self._fn_instances = {}
         self._requested_fn_instances = []
         self._struct_instances = {}

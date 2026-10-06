@@ -16,7 +16,7 @@ import pathlib
 from collections.abc import Collection
 from typing import Final, Optional
 
-from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, parse, src
+from leech import asserts, ast, compilation, diag, errors, ir_env, ir_module, ir_traits, parse, src
 
 #: Resolved package directory containing the bundled standard library.
 _BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
@@ -99,13 +99,13 @@ class ModLoader:
     is_null_intrinsic: Final[ir_module.IntrinsicFnSymbol]
     enum_to_int_intrinsic: Final[ir_module.IntrinsicFnSymbol]
 
-    def __init__(self) -> None:
+    def __init__(self, diags: Optional[diag.Diags] = None) -> None:
         # Deferred because intrinsic classes subclass ir_module.IntrinsicFnSymbol.
         from leech import ir_builtins  # noqa: PLC0415
 
         self._mods = {}
         self._files = {}
-        self.ctx = compilation.Ctx()
+        self.ctx = compilation.Ctx(diags)
         self.impl_registry = ir_traits.ImplRegistry(self.ctx)
         self._root_package = None
 

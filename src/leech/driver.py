@@ -16,6 +16,7 @@ from llvmlite import binding as llb
 
 from leech import (
     codegen,
+    diag,
     errors,
     ir_loader,
     ir_module,
@@ -32,6 +33,7 @@ def compile_to_ir(
     file: src.SrcFile,
     qualified_name: Optional[str] = None,
     entry: bool = False,
+    diags: Optional[diag.Diags] = None,
 ) -> ir_module.Mod:
     """Parse and lower a source file and its imports into IR.
 
@@ -39,9 +41,13 @@ def compile_to_ir(
     package, where it qualifies the module's symbols. With ``entry``, the module's ``main``
     function becomes the program entry point. ``import std::...`` resolves in the bundled
     library, and any other import in the file's package.
+
+    Diagnostics that don't stop compilation are emitted to ``diags``, which defaults to a
+    new collection, reachable through the returned module's ``loader.ctx.diags``. The first
+    error is raised.
     """
     qualified_name = opt_util.opt_or_default(qualified_name, file.path.stem)
-    loader = ir_loader.ModLoader()
+    loader = ir_loader.ModLoader(diags)
     mod = loader.load_root(file.path, qualified_name)
     loader.check_declarations()
     if entry:
@@ -51,18 +57,13 @@ def compile_to_ir(
 
 @dataclasses.dataclass(frozen=True)
 class Compilation:
-    """The outcome of compiling one module, and every diagnostic it produced in order."""
+    """The outcome of compiling one module, and every diagnostic it produced."""
 
     #: The compiled module, unless an error stopped compilation before it was loaded.
     mod: Optional[ir_module.Mod]
     #: The module's textual LLVM IR, or ``None`` if any diagnostic is an error.
     llvm_ir: Optional[str]
-    diags: tuple[errors.UserError, ...]
-
-    @property
-    def level(self) -> errors.Level:
-        """The highest severity among the diagnostics."""
-        return max((d.level for d in self.diags), default=errors.NOTE)
+    diags: diag.Diags
 
 
 def compile_module(
@@ -70,35 +71,33 @@ def compile_module(
 ) -> Compilation:
     """Compile a module to LLVM IR as ``compile_to_llvm_ir`` does, returning its diagnostics.
 
-    Diagnostics are returned rather than raised or left registered, whether compilation
-    raised them or registered them, so the module fails if any of them is an error.
-    Diagnostics registered before the call are set aside while it runs and restored after.
+    Diagnostics are returned rather than raised, whether compilation raised or emitted them,
+    so the module fails if any of them is an error.
     """
-    earlier = errors.take_errors()
+    diags = diag.Diags()
     mod = None
     llvm_ir = None
     try:
-        mod = compile_to_ir(file, qualified_name, entry)
+        mod = compile_to_ir(file, qualified_name, entry, diags)
         llvm_ir = lower_to_llvm_ir(mod)
     except errors.UserError as err:
-        errors.register_error(err)
-    finally:
-        diags = tuple(errors.take_errors())
-        for err in earlier:
-            errors.register_error(err)
-    compilation = Compilation(mod, llvm_ir, diags)
-    if compilation.level >= errors.ERROR:
-        return dataclasses.replace(compilation, llvm_ir=None)
-    return compilation
+        diags.error(err)
+    if diags.has_errors:
+        llvm_ir = None
+    return Compilation(mod, llvm_ir, diags)
 
 
 def compile_to_llvm_ir(
     file: src.SrcFile,
     qualified_name: Optional[str] = None,
     entry: bool = False,
+    diags: Optional[diag.Diags] = None,
 ) -> str:
-    """Compile a source file and its imports to textual LLVM IR."""
-    return lower_to_llvm_ir(compile_to_ir(file, qualified_name, entry))
+    """Compile a source file and its imports to textual LLVM IR.
+
+    Arguments, diagnostics and errors are as for ``compile_to_ir``.
+    """
+    return lower_to_llvm_ir(compile_to_ir(file, qualified_name, entry, diags))
 
 
 def lower_to_llvm_ir(mod: ir_module.Mod) -> str:
@@ -175,8 +174,8 @@ def main() -> None:
     """Compile CLI input, render diagnostics, and exit with their severity."""
     args = _parse_args()
     compilation = compile_module(src.SrcFile(args.filename), args.module_name, args.entry)
-    errors.TextErrorRenderer().display_errors(list(compilation.diags))
+    errors.TextErrorRenderer().display_errors(list(compilation.diags.all()))
     if compilation.llvm_ir is not None:
         output = ll_emit.emit_from_ir(compilation.llvm_ir, args.emit, args.opt_level)
         pathlib.Path(args.o).write_bytes(output)
-    sys.exit(compilation.level)
+    sys.exit(compilation.diags.level)

@@ -327,7 +327,7 @@ class TypCheck:
         reachable_arms = set(plan.reachable_arms)
         for i, arm_ast in enumerate(match_ast.arms):
             if i not in reachable_arms:
-                errors.register_error(errors.UnreachableMatchArmWarning(arm_ast.span))
+                e.ctx.diags.warn(errors.UnreachableMatchArmWarning(arm_ast.span))
         if plan.missing:
             raise errors.NonExhaustiveMatchError(match_ast.span, plan.missing)
         self.results._set_match_plan(match_ast, plan)

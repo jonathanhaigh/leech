@@ -8,6 +8,7 @@ from leech import (
     asserts,
     ast,
     comptime,
+    diag,
     errors,
     ir_env,
     ir_module,
@@ -73,9 +74,9 @@ def _check_body(compiler, body: str, unions: str = _UNIONS):
     return asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
 
 
-def _check_match(compiler, body: str, unions: str = _UNIONS):
+def _check_match(compiler, body: str, unions: str = _UNIONS, diags=None):
     """Type-check a function matching on an ``Option[i32]``, without lowering."""
-    mod = compiler.build(f"{unions}pub fn f(o: Option[i32]) i32 {{\n{body}\n}}")
+    mod = compiler.build(f"{unions}pub fn f(o: Option[i32]) i32 {{\n{body}\n}}", diags=diags)
     item = mod.get_item(ir_env.Env.Namespace.VARS, "f")
     assert item is not None
     return asserts.checked_cast(item.value, ir_module.SrcFnSymbol).typ_check_results
@@ -669,12 +670,12 @@ def test_binding_under_an_or_pattern_outranks_an_enum_payload(compiler):
         compiler.build(f"enum E {{ A, B }}\npub fn f(e: E) i32 {{ {body} }}")
 
 
-@pytest.mark.usefixtures("isolated_diags")
 def test_unreachable_payload_arm_warns(compiler):
     arms = "Option::Some(_) => 1i32, Option::Some(1i32) => 2i32, Option::None => 0i32,"
-    _check_match(compiler, f"return match (o) {{ {arms} }};")
+    diags = diag.Diags()
+    _check_match(compiler, f"return match (o) {{ {arms} }};", diags=diags)
 
-    assert [type(err) for err in errors.all_errors()] == [errors.UnreachableMatchArmWarning]
+    assert [type(err) for err in diags.all()] == [errors.UnreachableMatchArmWarning]
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 
-from leech import errors
+from leech import diag, errors
 from leech import src as leech_src
 from tests import harness
 
@@ -264,6 +264,23 @@ def test_compile_returns_structured_main_artifact(compiler: harness.CompilerHarn
     assert 'define i32 @"main"()' not in main.llvm_ir
     assert "llvm_ir" not in repr(main)
     assert repr(compiled) == "CompiledProgram(mods=('main',))"
+
+
+def test_each_compile_has_its_own_diags(compiler: harness.CompilerHarness):
+    warned = compiler.compile("pub fn main() i32 { return 0; return 1; }")
+    clean = compiler.compile("pub fn main() i32 { return 0; }")
+
+    assert [type(d) for d in warned.diags.all()] == [errors.UnreachableCodeWarning]
+    assert clean.diags.all() == ()
+
+
+def test_compile_emits_to_the_given_diags(compiler: harness.CompilerHarness):
+    diags = diag.Diags()
+
+    compiled = compiler.compile("pub fn main() i32 { return 0; return 1; }", diags=diags)
+
+    assert compiled.diags is diags
+    assert [type(d) for d in diags.all()] == [errors.UnreachableCodeWarning]
 
 
 def test_compile_returns_artifacts_in_declaration_order(compiler: harness.CompilerHarness):

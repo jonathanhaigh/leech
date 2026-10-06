@@ -9,7 +9,7 @@ import shutil
 import pytest
 
 from leech import errors
-from tests import doc, harness
+from tests import doc
 
 _PAGE = pathlib.Path("docs/guide/test.md")
 
@@ -415,7 +415,7 @@ pub fn main() i32 { return 0 }
 pub fn main() i32 { return 1; return 2; }
 ```
 """,
-            "unexpected registered diagnostics",
+            "unexpected emitted diagnostics",
         ),
         (
             """```leech test=wrong file=main.leech mode=error error=InvalidRetTypError
@@ -500,23 +500,6 @@ pub fn answer() i32 { return true; }
 
     with pytest.raises(doc.DocExampleError, match=r"module helper\.leech"):
         case.execute(tmp_path)
-
-
-def test_execute_restores_existing_diags_after_failure(tmp_path):
-    (case,) = parse_doc_page(
-        """```leech test=broken file=main.leech mode=compile
-pub fn main() i32 { return 0 }
-```
-"""
-    )
-    sentinel = errors.UnreachableCodeWarning("sentinel", None)
-
-    with harness.isolated_diags():
-        errors.register_error(sentinel)
-        with pytest.raises(doc.DocExampleError):
-            case.execute(tmp_path)
-        assert errors.all_errors() == [sentinel]
-        assert errors.error_level() == errors.WARNING
 
 
 @pytest.mark.parametrize(

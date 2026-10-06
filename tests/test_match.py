@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, errors
 
 
 def test_match_exhaustive_enum(compiler):
@@ -408,7 +408,6 @@ def test_match_aliased_discriminants(compiler):
     compiler.check(src)
 
 
-@pytest.mark.usefixtures("isolated_diags")
 def test_match_aliased_discriminant_warns(compiler):
     src = """
     enum Alias(u8) { A = 1, B = 1 }
@@ -420,10 +419,9 @@ def test_match_aliased_discriminant_warns(compiler):
         };
     }
     """
-    compiler.compile(src)
+    compiled = compiler.compile(src)
 
-    assert [type(err) for err in errors.all_errors()] == [errors.UnreachableMatchArmWarning]
-    assert errors.error_level() == errors.WARNING
+    assert [type(err) for err in compiled.diags.all()] == [errors.UnreachableMatchArmWarning]
 
 
 def test_match_arm_typs_peer_across_multiple_arms(compiler):
@@ -467,7 +465,6 @@ def test_match_non_exhaustive_error(compiler):
         compiler.compile(src)
 
 
-@pytest.mark.usefixtures("isolated_diags")
 def test_match_non_exhaustive_with_redundant_arm_warns(compiler):
     src = """
     enum Color { Red, Green, Blue }
@@ -479,9 +476,10 @@ def test_match_non_exhaustive_with_redundant_arm_warns(compiler):
         };
     }
     """
+    diags = diag.Diags()
     with pytest.raises(errors.NonExhaustiveMatchError):
-        compiler.compile(src)
-    assert [type(err) for err in errors.all_errors()] == [errors.UnreachableMatchArmWarning]
+        compiler.compile(src, diags=diags)
+    assert [type(err) for err in diags.all()] == [errors.UnreachableMatchArmWarning]
 
 
 def test_match_arm_typ_mismatch_error(compiler):

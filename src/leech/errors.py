@@ -5,26 +5,17 @@
 """User-facing diagnostics: error/warning types, and their rendering."""
 
 import dataclasses
-import enum
 import pathlib
 import sys
 from collections.abc import Collection, Sequence
 from typing import Final, Optional
 
-from leech import asserts, patterns, src
+from leech import asserts, diag, patterns, src
 
-
-class Level(enum.IntEnum):
-    """The severity of a diagnostic message."""
-
-    NOTE = 0
-    WARNING = 1
-    ERROR = 2
-
-
-NOTE = Level.NOTE
-WARNING = Level.WARNING
-ERROR = Level.ERROR
+Level = diag.Level
+NOTE = diag.NOTE
+WARNING = diag.WARNING
+ERROR = diag.ERROR
 
 
 def _sentence_case(text: str) -> str:
@@ -1730,38 +1721,3 @@ class TextErrorRenderer:
     def _display_col_pos(self, span: src.SrcSpan, line_num_width) -> None:
         prefix = "-" * (span.start_col + line_num_width + 1)
         print(f"{prefix}^", file=sys.stderr)
-
-
-_errors: Final[list[UserError]] = []
-_error_level: Level = NOTE
-
-
-def register_error(err: UserError) -> None:
-    """Record a diagnostic and update the overall error level."""
-    global _error_level  # noqa: PLW0603 - single module-level counter, not worth a class
-    if err.level > _error_level:
-        _error_level = err.level
-    _errors.append(err)
-
-
-def all_errors() -> list[UserError]:
-    """Return all diagnostics recorded so far, in registration order."""
-    return _errors
-
-
-def error_level() -> Level:
-    """Return the highest severity level among all recorded diagnostics."""
-    return _error_level
-
-
-def take_errors() -> list[UserError]:
-    """Remove and return every recorded diagnostic, resetting the overall error level.
-
-    Diagnostics are recorded process-wide, so a caller running several compilations in one
-    process uses this to collect each compilation's diagnostics separately.
-    """
-    global _error_level  # noqa: PLW0603 - single module-level counter, not worth a class
-    taken = list(_errors)
-    _errors.clear()
-    _error_level = NOTE
-    return taken

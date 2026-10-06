@@ -5,6 +5,7 @@
 import pytest
 
 from leech import errors
+from tests import harness
 
 
 def test_tail_expr_return(compiler):
@@ -63,3 +64,24 @@ def test_comptime_return(compiler):
     """
     with pytest.raises(errors.RetNotInFnError):
         compiler.compile(src)
+
+
+def test_unreachable_code_warns_once_per_block_at_its_first_statement(compiler):
+    src = """fn g() i32 { return 0; }
+pub fn f(b: bool) i32 {
+    if (b) {
+        return 1;
+        g();
+        g();
+    } else {
+        return 2;
+        g();
+    }
+}
+"""
+    compiled = compiler.compile(src)
+
+    warnings = compiled.diags.all()
+    assert [type(w) for w in warnings] == [errors.UnreachableCodeWarning] * 2
+    harness.assert_span_at(warnings[0].message.span, src, "g();\n        g();")
+    harness.assert_span_at(warnings[1].message.span, src, "g();\n    }\n}")

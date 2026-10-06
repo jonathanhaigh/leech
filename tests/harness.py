@@ -2,17 +2,16 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-import contextlib
 import dataclasses
 import functools
 import pathlib
 import signal
 import subprocess
 import types
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from typing import ClassVar, Final, Optional
 
-from leech import ast, build, driver, errors, ir_module, ll_emit, parse, reserved
+from leech import ast, build, diag, driver, errors, ir_module, ll_emit, opt_util, parse, reserved
 from leech import src as leech_src
 
 _TOOL_TIMEOUT_SECONDS = 30
@@ -30,31 +29,15 @@ def _bundled_mod_llvm_ir() -> Mapping[str, str]:
     return types.MappingProxyType(compiled)
 
 
-@contextlib.contextmanager
-def isolated_diags() -> Iterator[None]:
-    """Start with no registered diagnostics, and restore the previous ones afterwards."""
-    registered = errors.all_errors()
-    previous_errors = list(registered)
-    previous_level = errors.error_level()
-    registered.clear()
-    errors._error_level = errors.NOTE
-    try:
-        yield
-    finally:
-        registered.clear()
-        registered.extend(previous_errors)
-        errors._error_level = previous_level
-
-
-def register_error_after_lowering(monkeypatch) -> None:
-    """Make lowering register an error without raising it, as multi-error reporting will."""
+def emit_error_after_lowering(monkeypatch) -> None:
+    """Make lowering emit an error without raising it, as multi-error reporting will."""
     lower = driver.lower_to_llvm_ir
 
-    def lower_and_register(mod: ir_module.Mod) -> str:
-        errors.register_error(errors.CcNotFoundError("registered"))
+    def lower_and_emit(mod: ir_module.Mod) -> str:
+        mod.loader.ctx.diags.error(errors.CcNotFoundError("emitted"))
         return lower(mod)
 
-    monkeypatch.setattr(driver, "lower_to_llvm_ir", lower_and_register)
+    monkeypatch.setattr(driver, "lower_to_llvm_ir", lower_and_emit)
 
 
 def src_position(src: str, substring: str) -> tuple[int, int]:
@@ -145,19 +128,26 @@ class CompiledMod:
 
 
 class CompiledProgram:
-    """Compiled modules keyed by qualified name in declaration order."""
+    """Compiled modules keyed by qualified name in declaration order, and their diagnostics."""
 
     mods: Final[Mapping[str, CompiledMod]]
+    diags: Final[diag.Diags]
 
-    def __init__(self, mods: Mapping[str, CompiledMod]) -> None:
+    def __init__(self, mods: Mapping[str, CompiledMod], diags: diag.Diags) -> None:
         self.mods = types.MappingProxyType(dict(mods))
+        self.diags = diags
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(mods={tuple(self.mods)!r})"
 
 
 class CompilerHarness:
-    """Compiler test operations scoped to one temporary workspace."""
+    """Compiler test operations scoped to one temporary workspace.
+
+    Each operation that compiles emits its diagnostics, apart from an error it raises, to the
+    ``diags`` it is given, or to a new collection of its own. Pass ``diags`` to inspect them
+    after the operation raises.
+    """
 
     workspace: Final[pathlib.Path]
 
@@ -202,29 +192,47 @@ class CompilerHarness:
         path = self.write_mod(mod)
         return parse.parse_mod_ast(leech_src.SrcFile(path))
 
-    def build(self, program: str | TestProgram) -> ir_module.Mod:
-        """Build semantic IR for the root after materializing every supplied module."""
+    def build(
+        self, program: str | TestProgram, *, diags: Optional[diag.Diags] = None
+    ) -> ir_module.Mod:
+        """Build semantic IR for the root after materializing every supplied module.
+
+        The diagnostics are the returned module's ``loader.ctx.diags``.
+        """
         program = self._coerce_program(program)
         paths = self._materialize(program)
-        return driver.compile_to_ir(leech_src.SrcFile(paths[program.root.name]), program.root.name)
+        return driver.compile_to_ir(
+            leech_src.SrcFile(paths[program.root.name]), program.root.name, diags=diags
+        )
 
-    def compile(self, program: str | TestProgram, *, entry: bool = False) -> CompiledProgram:
+    def compile(
+        self,
+        program: str | TestProgram,
+        *,
+        entry: bool = False,
+        diags: Optional[diag.Diags] = None,
+    ) -> CompiledProgram:
         """Compile every supplied module independently under its declared name.
 
-        With ``entry``, the root module's ``main`` becomes the program entry point.
+        With ``entry``, the root module's ``main`` becomes the program entry point. Every
+        module's compilation emits to the same diagnostics.
         """
+        diags = opt_util.opt_or_default(diags, diag.Diags())
         program = self._coerce_program(program)
         src_paths = self._materialize(program)
         compiled = dict[str, CompiledMod]()
         for mod in (program.root, *program.mods):
             src_path = src_paths[mod.name]
             llvm_ir = driver.compile_to_llvm_ir(
-                leech_src.SrcFile(src_path), mod.name, entry=entry and mod is program.root
+                leech_src.SrcFile(src_path),
+                mod.name,
+                entry=entry and mod is program.root,
+                diags=diags,
             )
             llvm_path = src_path.with_suffix(".ll")
             self._write_src(llvm_path, llvm_ir)
             compiled[mod.name] = CompiledMod(mod, src_path, llvm_path, llvm_ir)
-        return CompiledProgram(compiled)
+        return CompiledProgram(compiled, diags)
 
     def _tool_failure(
         self,
@@ -292,10 +300,12 @@ class CompilerHarness:
             raise self._tool_failure("linking failed", result)
         return exe_path
 
-    def run(self, program: str | TestProgram) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, program: str | TestProgram, *, diags: Optional[diag.Diags] = None
+    ) -> subprocess.CompletedProcess[str]:
         """Run a program entered through its root's ``main``, linking unshadowed bundled modules."""
         program = self._coerce_program(program)
-        compiled = self.compile(program, entry=True)
+        compiled = self.compile(program, entry=True, diags=diags)
         exe_path = self._link(compiled)
         return self._invoke_tool([str(exe_path)])
 
@@ -306,9 +316,10 @@ class CompilerHarness:
         stdout: str = "",
         stderr: str = "",
         exit_status: int = 0,
+        diags: Optional[diag.Diags] = None,
     ) -> None:
         """Assert exact streams and status, defaulting to empty streams and success."""
-        result = self.run(program)
+        result = self.run(program, diags=diags)
         assert result.stdout == stdout, (
             f"unexpected stdout: expected {stdout!r}, got {result.stdout!r}; "
             f"result: {result!r}; workspace: {self.workspace}"
@@ -329,9 +340,10 @@ class CompilerHarness:
         expected_signal: signal.Signals,
         stderr_prefix: str,
         stdout: str = "",
+        diags: Optional[diag.Diags] = None,
     ) -> None:
         """Assert a signal exit, exact stdout, and the stable prefix of LLVM's stderr."""
-        result = self.run(program)
+        result = self.run(program, diags=diags)
         assert result.stdout == stdout, (
             f"unexpected stdout: expected {stdout!r}, got {result.stdout!r}; "
             f"result: {result!r}; workspace: {self.workspace}"

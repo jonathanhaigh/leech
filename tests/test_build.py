@@ -321,24 +321,35 @@ def test_linker_that_writes_nothing_fails_and_keeps_old_executable(tmp_path):
     assert [p.name for p in old_exe.parent.iterdir() if "tmp" in p.name] == []
 
 
-@pytest.mark.usefixtures("isolated_diags")
-def test_build_sets_aside_earlier_diags(tmp_path):
+def test_builds_have_independent_diags(tmp_path):
+    warned_root = write(tmp_path / "warned.leech", "pub fn main() i32 { return 0; return 1; }\n")
     root = write(tmp_path / "hello.leech", _HELLO)
-    sentinel = errors.UnreachableCodeWarning("sentinel", None)
-    errors.register_error(sentinel)
+
+    warned = build.build(warned_root)
+    result = build.build(root)
+
+    assert warned.exe is not None
+    assert [type(d) for d in warned.diags] == [errors.UnreachableCodeWarning]
+    assert result.exe is not None
+    assert result.diags == ()
+
+
+def test_build_reports_a_warning_seen_by_several_compilations_once(tmp_path):
+    root = write(tmp_path / "app.leech", "import helper;\npub fn main() i32 { helper::f() }\n")
+    write(
+        tmp_path / "helper.leech",
+        "enum E { A }\npub fn f() i32 { return match (E::A) { E::A => 0i32, _ => 1i32, }; }\n",
+    )
 
     result = build.build(root)
 
     assert result.exe is not None
-    assert result.diags == ()
-    assert errors.all_errors() == [sentinel]
-    assert errors.error_level() == errors.WARNING
+    assert [type(d) for d in result.diags] == [errors.UnreachableMatchArmWarning]
 
 
-@pytest.mark.usefixtures("isolated_diags")
-def test_build_fails_on_registered_error(tmp_path, monkeypatch):
+def test_build_fails_on_emitted_error(tmp_path, monkeypatch):
     root = write(tmp_path / "hello.leech", _HELLO)
-    harness.register_error_after_lowering(monkeypatch)
+    harness.emit_error_after_lowering(monkeypatch)
 
     result = build.build(root)
 
