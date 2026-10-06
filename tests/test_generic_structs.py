@@ -1003,7 +1003,7 @@ def test_generic_struct_instance_caches_by_typ_args(compiler):
 
     assert i32_inst is box.instantiate((typs.I32,))
     assert i32_inst is not box.instantiate((typs.BOOL,))
-    assert tuple(mod.loader.ctx.requested_struct_instances()).count(i32_inst) == 1
+    assert tuple(mod.ctx.requested_struct_instances()).count(i32_inst) == 1
 
 
 def test_mono_discovers_struct_requested_while_resolving_fields(compiler):

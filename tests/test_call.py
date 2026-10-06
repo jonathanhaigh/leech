@@ -144,7 +144,7 @@ def test_extern_fn_has_cached_bodyless_instance(compiler):
 
     assert inst is decl.instantiate(())
     assert tuple(decl.env.ctx.requested_fn_instances()) == (*instances_before, inst)
-    assert tuple(mod.loader.ctx.requested_fn_instances()).count(inst) == 1
+    assert tuple(mod.ctx.requested_fn_instances()).count(inst) == 1
     assert not inst.has_body
     assert inst.qualified_name == "puts"
 

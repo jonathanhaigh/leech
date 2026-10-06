@@ -92,7 +92,7 @@ def test_inherent_impl_is_registered(compiler):
     )
     foo = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Foo")
     assert isinstance(foo, typs.Typ)
-    inherent_impls = mod.env.impl_registry.find_inherent_impls(foo)
+    inherent_impls = mod.ctx.impl_registry.find_inherent_impls(foo)
     assert len(inherent_impls) == 1
     assert inherent_impls[0].trait is None
     assert inherent_impls[0].self_typ is foo
@@ -111,7 +111,7 @@ def test_fn_points_at_its_impl_block(compiler):
     )
     foo = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Foo")
     assert isinstance(foo, typs.Typ)
-    selection = mod.env.impl_registry.lookup_member(foo, "show", None)
+    selection = mod.ctx.impl_registry.lookup_member(foo, "show", None)
     assert selection is not None
     method = selection.fn
     assert method.impl is not None
@@ -134,13 +134,13 @@ def test_generic_trait_impl_lookup_does_not_instantiate_method(compiler):
     concrete_box = box.instantiate((typs.I32,))
     trait = mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Show")
     trait = asserts.checked_cast(trait, ir_traits.Trait)
-    trait_impl = mod.loader.impl_registry.find_trait_impl(trait, concrete_box)
+    trait_impl = mod.ctx.impl_registry.find_trait_impl(trait, concrete_box)
     assert trait_impl is not None
     fn = trait_impl.get_fn_symbol("show")
     assert fn is not None
     instances_before = tuple(fn.env.ctx.requested_fn_instances())
 
-    selection = mod.loader.impl_registry.lookup_member(concrete_box, "show", None)
+    selection = mod.ctx.impl_registry.lookup_member(concrete_box, "show", None)
 
     assert tuple(fn.env.ctx.requested_fn_instances()) == instances_before
     selection = asserts.checked_cast(selection, ir_traits.ImplFnSelection)
@@ -852,7 +852,7 @@ def test_trait_impl_duplicate_extra_method_is_rejected_atomically(compiler):
     assert isinstance(trait_ast, ast.TraitDefn)
     assert isinstance(impl_ast, ast.ImplDefn)
     ctx = compilation.Ctx()
-    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    env = ir_env.Env(ctx)
     trait = ir_traits.Trait(trait_ast, env, "main")
     trait_impl = ir_traits.Impl(impl_ast, trait, typs.I32, (), env, "main")
 

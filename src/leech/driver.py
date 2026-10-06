@@ -16,9 +16,9 @@ from llvmlite import binding as llb
 
 from leech import (
     codegen,
+    compilation,
     diag,
     errors,
-    ir_loader,
     ir_module,
     ll_emit,
     opt_util,
@@ -43,13 +43,13 @@ def compile_to_ir(
     library, and any other import in the file's package.
 
     Diagnostics that don't stop compilation are emitted to ``diags``, which defaults to a
-    new collection, reachable through the returned module's ``loader.ctx.diags``. The first
-    error is raised.
+    new collection, reachable through the returned module's ``ctx.diags``. The first error
+    is raised.
     """
     qualified_name = opt_util.opt_or_default(qualified_name, file.path.stem)
-    loader = ir_loader.ModLoader(diags)
-    mod = loader.load_root(file.path, qualified_name)
-    loader.check_declarations()
+    ctx = compilation.Ctx(diags)
+    mod = ctx.loader.load_root(file.path, qualified_name)
+    ctx.loader.check_declarations()
     if entry:
         mod.designate_entry()
     return mod

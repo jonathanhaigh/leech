@@ -7,6 +7,7 @@
 import contextlib
 import dataclasses
 import enum
+import functools
 import operator
 from collections.abc import Callable, Collection, Iterator, Sequence
 from typing import TYPE_CHECKING, Final, Optional, cast
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING, Final, Optional, cast
 from leech import diag, opt_util, patterns
 
 if TYPE_CHECKING:
-    from leech import ir_module, typs
+    from leech import ir_builtins, ir_loader, ir_module, ir_traits, typs
 
 
 class CycleDomain(enum.Enum):
@@ -52,9 +53,15 @@ type _InstanceCache[OwnerT, InstanceT] = dict[OwnerT, dict[tuple[typs.Typ, ...],
 
 
 class Ctx:
-    """Own compilation-wide lazy requests, active semantic computations and diagnostics."""
+    """The root of one compilation's state.
+
+    Owns the diagnostics, the module loader, the trait implementations and the builtins, as
+    well as lazy requests and active semantic computations. Constructing one loads nothing.
+    """
 
     diags: Final[diag.Diags]
+    impl_registry: Final[ir_traits.ImplRegistry]
+    loader: Final[ir_loader.ModLoader]
 
     _fn_instances: Final[_InstanceCache[ir_module.FnSymbol, ir_module.FnInstance]]
     _requested_fn_instances: Final[list[ir_module.FnInstance]]
@@ -69,7 +76,12 @@ class Ctx:
     _declared_comptime_params: Final[dict[typs.ComptimeParamTyp, None]]
 
     def __init__(self, diags: Optional[diag.Diags] = None) -> None:
+        # Local because these modules import this one while their classes are initializing.
+        from leech import ir_loader, ir_traits  # noqa: PLC0415
+
         self.diags = opt_util.opt_or_default(diags, diag.Diags())
+        self.impl_registry = ir_traits.ImplRegistry(self)
+        self.loader = ir_loader.ModLoader(self)
         self._fn_instances = {}
         self._requested_fn_instances = []
         self._struct_instances = {}
@@ -79,6 +91,14 @@ class Ctx:
         self._union_variant_constructors = {}
         self._cycle_stacks = {}
         self._declared_comptime_params = {}
+
+    @functools.cached_property
+    def builtins(self) -> ir_builtins.Builtins:
+        """The intrinsic functions and the prelude's ``panic``, created on first use."""
+        # Local because intrinsic classes subclass ir_module.IntrinsicFnSymbol.
+        from leech import ir_builtins  # noqa: PLC0415
+
+        return ir_builtins.Builtins(self)
 
     def record_comptime_param(self, param: typs.ComptimeParamTyp) -> None:
         """Record a source-declared comptime parameter for later validation.

@@ -6,13 +6,13 @@ from typing import cast
 
 import pytest
 
-from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, ir_values, typs
+from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_values, typs
 from tests import harness
 
 
 def test_env_rejects_bound_value_without_pointer_typ(compiler):
     ctx = compilation.Ctx()
-    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    env = ir_env.Env(ctx)
     value = cast(
         ir_values.Value[typs.PtrTyp],
         ir_values.ComptimeInt(typs.I32, 1, None),

@@ -209,7 +209,7 @@ def unsatisfied_bound(
                 raise NotImplementedError(
                     "checking bounds with generic arguments isn't supported yet"
                 )
-            if not e.impl_registry.implements(application.trait, typ_arg):
+            if not e.ctx.impl_registry.implements(application.trait, typ_arg):
                 return typ_param, typ_arg, application.trait
     return None
 

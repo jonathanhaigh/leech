@@ -34,7 +34,7 @@ def emit_error_after_lowering(monkeypatch) -> None:
     lower = driver.lower_to_llvm_ir
 
     def lower_and_emit(mod: ir_module.Mod) -> str:
-        mod.loader.ctx.diags.error(errors.CcNotFoundError("emitted"))
+        mod.ctx.diags.error(errors.CcNotFoundError("emitted"))
         return lower(mod)
 
     monkeypatch.setattr(driver, "lower_to_llvm_ir", lower_and_emit)
@@ -197,7 +197,7 @@ class CompilerHarness:
     ) -> ir_module.Mod:
         """Build semantic IR for the root after materializing every supplied module.
 
-        The diagnostics are the returned module's ``loader.ctx.diags``.
+        The diagnostics are the returned module's ``ctx.diags``.
         """
         program = self._coerce_program(program)
         paths = self._materialize(program)

@@ -8,7 +8,7 @@ import typing
 
 import pytest
 
-from leech import ast, compilation, errors, ir_env, ir_traits, parse, typs
+from leech import ast, compilation, errors, ir_env, parse, typs
 from leech import src as leech_src
 from tests import harness
 
@@ -274,7 +274,7 @@ def test_ptr_typ_name_matches_source_syntax(src, expected):
     file = leech_src.SrcFile(pathlib.Path("test.leech"))
     tree = parse.build_parser("typ").parse(src)
     ctx = compilation.Ctx()
-    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    env = ir_env.Env(ctx)
     env.add_container("array", typs.ARRAY_TEMPLATE)
     typ = typs.Typ.from_ast(ast.Typ.from_tree(file, tree), env)
     assert typ.name == expected
@@ -318,8 +318,8 @@ def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(compiler
     assert isinstance(struct_ast, ast.StructDefn)
     first_ctx = compilation.Ctx()
     second_ctx = compilation.Ctx()
-    first_env = ir_env.Env(first_ctx, ir_traits.ImplRegistry(first_ctx), None)
-    second_env = ir_env.Env(second_ctx, ir_traits.ImplRegistry(second_ctx), None)
+    first_env = ir_env.Env(first_ctx)
+    second_env = ir_env.Env(second_ctx)
 
     first = typs.StructTypTemplate(struct_ast, first_env, "main")
     second = typs.StructTypTemplate(struct_ast, second_env, "main")
@@ -340,7 +340,7 @@ def test_struct_validation_instance_is_cached_without_request(compiler):
     (struct_ast,) = parsed_mod.defns
     assert isinstance(struct_ast, ast.StructDefn)
     ctx = compilation.Ctx()
-    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    env = ir_env.Env(ctx)
     template = typs.StructTypTemplate(struct_ast, env, "main")
 
     validation = template._validation_instance
@@ -356,7 +356,7 @@ def test_struct_typ_rejects_global_typ_cache_construction(compiler):
     (struct_ast,) = parsed_mod.defns
     assert isinstance(struct_ast, ast.StructDefn)
     ctx = compilation.Ctx()
-    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    env = ir_env.Env(ctx)
     template = typs.StructTypTemplate(struct_ast, env, "main")
 
     with pytest.raises(AssertionError, match="owned by the compilation context"):

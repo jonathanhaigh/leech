@@ -7,9 +7,12 @@
 Import this module lazily because its intrinsic classes require ``ir_module`` to be loaded.
 """
 
-from typing import cast, override
+from typing import TYPE_CHECKING, Final, Optional, cast, override
 
-from leech import ir_builder, ir_env, ir_loader, ir_module, typs
+from leech import asserts, ir_builder, ir_env, ir_module, typs
+
+if TYPE_CHECKING:
+    from leech import compilation
 
 
 class SizeOfIntrinsicFn(ir_module.IntrinsicFnSymbol):
@@ -99,14 +102,46 @@ class EnumToIntIntrinsicFn(ir_module.IntrinsicFnSymbol):
         builder._curr_bb.ret(result, None)
 
 
-def register(builtin_env: ir_env.Env, loader: ir_loader.ModLoader) -> None:
+class Builtins:
+    """One compilation's intrinsic functions, shared by all its modules, and its prelude's
+    ``panic``."""
+
+    _ctx: Final[compilation.Ctx]
+    size_of: Final[ir_module.IntrinsicFnSymbol]
+    ptr_cast_mut: Final[ir_module.IntrinsicFnSymbol]
+    is_null: Final[ir_module.IntrinsicFnSymbol]
+    enum_to_int: Final[ir_module.IntrinsicFnSymbol]
+
+    def __init__(self, ctx: compilation.Ctx) -> None:
+        self._ctx = ctx
+        e = ir_env.Env(ctx)
+        self.size_of = SizeOfIntrinsicFn(e)
+        self.ptr_cast_mut = PtrCastMutIntrinsicFn(e)
+        self.is_null = IsNullIntrinsicFn(e)
+        self.enum_to_int = EnumToIntIntrinsicFn(e)
+
+    @property
+    def panic_ref(self) -> Optional[ir_module.FnRef]:
+        """The prelude's unshadowable ``panic`` function, or ``None`` while the prelude is
+        being built."""
+        prelude = self._ctx.loader.prelude
+        if prelude is None:
+            return None
+        item = prelude.get_item(ir_env.Env.Namespace.VARS, "panic")
+        if item is None:
+            return None
+        panic_symbol = asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
+        return panic_symbol.instantiate(()).ref
+
+
+def register(builtin_env: ir_env.Env, builtins: Builtins) -> None:
     """Bind built-in types and this program's shared intrinsic functions."""
     builtin_env.add_container("usize", typs.USIZE)
     builtin_env.add_container("isize", typs.ISIZE)
     builtin_env.add_container("bool", typs.BOOL)
     builtin_env.add_container("array", typs.ARRAY_TEMPLATE)
 
-    builtin_env.add_var("__size_of", loader.size_of_intrinsic)
-    builtin_env.add_var("__ptr_cast_mut", loader.ptr_cast_mut_intrinsic)
-    builtin_env.add_var("__is_null", loader.is_null_intrinsic)
-    builtin_env.add_var("__enum_to_int", loader.enum_to_int_intrinsic)
+    builtin_env.add_var("__size_of", builtins.size_of)
+    builtin_env.add_var("__ptr_cast_mut", builtins.ptr_cast_mut)
+    builtin_env.add_var("__is_null", builtins.is_null)
+    builtin_env.add_var("__enum_to_int", builtins.enum_to_int)

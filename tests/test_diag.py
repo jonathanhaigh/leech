@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 
-from leech import diag, driver, errors, ir_loader
+from leech import compilation, diag, driver, errors
 from leech import src as leech_src
 
 
@@ -165,11 +165,11 @@ def test_reported_error_carries_its_proof():
     assert diag.ReportedError(reported).reported is reported
 
 
-def test_loader_emits_to_the_given_diags():
+def test_ctx_reports_to_the_given_diags():
     diags = diag.Diags()
 
-    assert ir_loader.ModLoader(diags).ctx.diags is diags
-    assert ir_loader.ModLoader().ctx.diags is not ir_loader.ModLoader().ctx.diags
+    assert compilation.Ctx(diags).diags is diags
+    assert compilation.Ctx().diags is not compilation.Ctx().diags
 
 
 def test_interleaved_compilations_have_independent_diags(tmp_path):

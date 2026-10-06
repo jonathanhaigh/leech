@@ -220,7 +220,7 @@ class Compiler:
 
     def _program_items(self) -> Iterator[ir_module.ModItem]:
         """Yield local items and public imported items in module load order."""
-        for mod in self._mod.loader.mods:
+        for mod in self._mod.ctx.loader.mods:
             for item in mod.items:
                 if isinstance(item.value, ir_module.Mod):
                     continue

@@ -119,11 +119,11 @@ def test_explicit_fn_application_is_recorded_before_instantiation(compiler):
     candidate = main.typ_check_results.resolutions.var(callee_ast)
     assert candidate == ir_module.FnCandidate(fn, (), (typs.I32,))
     assert main.typ_check_results.applied_fn(callee_ast) == ir_module.AppliedFn(fn, (typs.I32,))
-    assert all(inst.src_fn is not fn for inst in mod.loader.ctx.requested_fn_instances())
+    assert all(inst.src_fn is not fn for inst in mod.ctx.requested_fn_instances())
 
     _ = main.instantiate(()).cfg
 
-    instances = [inst for inst in mod.loader.ctx.requested_fn_instances() if inst.src_fn is fn]
+    instances = [inst for inst in mod.ctx.requested_fn_instances() if inst.src_fn is fn]
     assert [inst.args for inst in instances] == [(typs.I32,)]
 
 
@@ -698,7 +698,7 @@ def test_fn_instance_caches_by_typ_args(compiler):
 
     assert i32_inst is fn.instantiate((typs.I32,))
     assert i32_inst is not fn.instantiate((typs.BOOL,))
-    assert tuple(mod.loader.ctx.requested_fn_instances()).count(i32_inst) == 1
+    assert tuple(mod.ctx.requested_fn_instances()).count(i32_inst) == 1
 
 
 def test_fn_instance_caches_one_reference(compiler):

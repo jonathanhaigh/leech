@@ -16,7 +16,7 @@ import pathlib
 from collections.abc import Collection
 from typing import Final, Optional
 
-from leech import asserts, ast, compilation, diag, errors, ir_env, ir_module, ir_traits, parse, src
+from leech import asserts, ast, compilation, errors, ir_module, parse, src
 
 #: Resolved package directory containing the bundled standard library.
 _BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
@@ -57,6 +57,9 @@ class ModId:
         return self.package.root.joinpath(*self.path[:-1], f"{self.path[-1]}.leech")
 
 
+_PRELUDE_ID: Final[ModId] = ModId(_STD_PACKAGE, ("prelude",))
+
+
 def root_package_dir(path: pathlib.Path, qualified_name: str) -> Optional[pathlib.Path]:
     """Return the package directory implied by naming the file ``path`` ``qualified_name``.
 
@@ -82,68 +85,42 @@ def _parse_bundled_mod_ast(path: pathlib.Path) -> ast.Mod:
 class ModLoader:
     """Load and deduplicate the modules in one compilation.
 
-    The loader owns program-wide builtins and trait implementations. ``import std::...``
-    resolves in the bundled standard library, and any other import in the root package.
+    ``import std::...`` resolves in the bundled standard library, and any other import in the
+    root package. The bundled prelude is loaded before any other module.
     """
 
+    ctx: Final[compilation.Ctx]
     _mods: Final[dict[pathlib.Path, ir_module.Mod]]
     #: Each loaded module's file, by qualified name.
     _files: Final[dict[str, pathlib.Path]]
-    ctx: Final[compilation.Ctx]
-    impl_registry: Final[ir_traits.ImplRegistry]
     #: The package that non-``std`` imports resolve in, once ``load_root`` sets it.
     _root_package: Optional[Package]
     _prelude: Optional[ir_module.Mod]
-    size_of_intrinsic: Final[ir_module.IntrinsicFnSymbol]
-    ptr_cast_mut_intrinsic: Final[ir_module.IntrinsicFnSymbol]
-    is_null_intrinsic: Final[ir_module.IntrinsicFnSymbol]
-    enum_to_int_intrinsic: Final[ir_module.IntrinsicFnSymbol]
+    _building_prelude: bool
 
-    def __init__(self, diags: Optional[diag.Diags] = None) -> None:
-        # Deferred because intrinsic classes subclass ir_module.IntrinsicFnSymbol.
-        from leech import ir_builtins  # noqa: PLC0415
-
+    def __init__(self, ctx: compilation.Ctx) -> None:
+        self.ctx = ctx
         self._mods = {}
         self._files = {}
-        self.ctx = compilation.Ctx(diags)
-        self.impl_registry = ir_traits.ImplRegistry(self.ctx)
         self._root_package = None
-
-        # Built before the prelude (below): Mod.__init__ binds these into
-        # every module's builtin_env, the prelude module's own included,
-        # so they must already exist by the time it's loaded.
-        builtin_env = ir_env.Env(self.ctx, self.impl_registry, None)
-        self.size_of_intrinsic = ir_builtins.SizeOfIntrinsicFn(builtin_env)
-        self.ptr_cast_mut_intrinsic = ir_builtins.PtrCastMutIntrinsicFn(builtin_env)
-        self.is_null_intrinsic = ir_builtins.IsNullIntrinsicFn(builtin_env)
-        self.enum_to_int_intrinsic = ir_builtins.EnumToIntIntrinsicFn(builtin_env)
-
-        # Set to None first, so building the prelude module itself (below)
-        # sees `self.prelude is None` and skips injecting the prelude into
-        # its own builtin_env - otherwise loading the prelude would need
-        # to load the prelude, forever. Nothing else is special-cased by
-        # name or path; this is the only thing that breaks the cycle.
         self._prelude = None
-        self._prelude = self.load(ModId(_STD_PACKAGE, ("prelude",)))
+        self._building_prelude = False
 
     @property
     def prelude(self) -> Optional[ir_module.Mod]:
-        """The bundled prelude, or ``None`` while it is being built."""
-        return self._prelude
+        """The bundled prelude, loaded on first use, or ``None`` while it is being built.
 
-    @property
-    def prelude_panic_ref(self) -> Optional[ir_module.FnRef]:
-        """Return the prelude's unshadowable ``panic`` function when available.
-
-        This property must not cache the temporary ``None`` observed during prelude loading.
+        Building the prelude sees ``None``, so it doesn't inject the prelude into its own
+        scope. Nothing else is special-cased by name or path; this is the only thing that
+        breaks the cycle.
         """
-        if self._prelude is None:
-            return None
-        item = self._prelude.get_item(ir_env.Env.Namespace.VARS, "panic")
-        if item is None:
-            return None
-        panic_symbol = asserts.checked_cast(item.value, ir_module.SrcFnSymbol)
-        return panic_symbol.instantiate(()).ref
+        if self._prelude is None and not self._building_prelude:
+            self._building_prelude = True
+            try:
+                self._prelude = self._load(_PRELUDE_ID)
+            finally:
+                self._building_prelude = False
+        return self._prelude
 
     def load_root(self, path: pathlib.Path, qualified_name: str) -> ir_module.Mod:
         """Load the module being compiled, whose name must match its location.
@@ -151,6 +128,7 @@ class ModLoader:
         A file in the bundled library belongs to package ``std``. Any other file's package is
         the directory its name implies, and its name cannot start with ``std``.
         """
+        _ = self.prelude
         assert len(self._mods) == 1, "the root must be loaded straight after the prelude"
         mod_id = self._mod_id_for_file(path)
         if mod_id is None:
@@ -191,6 +169,10 @@ class ModLoader:
 
     def load(self, mod_id: ModId) -> ir_module.Mod:
         """Load the module ``mod_id`` once, returning the same module on later requests."""
+        _ = self.prelude
+        return self._load(mod_id)
+
+    def _load(self, mod_id: ModId) -> ir_module.Mod:
         key = mod_id.file.resolve()
         cached = self._mods.get(key)
         if cached is not None:
@@ -203,7 +185,7 @@ class ModLoader:
             mod_ast = _parse_bundled_mod_ast(key)
         else:
             mod_ast = parse.parse_mod_ast(src.SrcFile(mod_id.file))
-        mod = ir_module.Mod(name, mod_ast, self)
+        mod = ir_module.Mod(name, mod_ast, self.ctx)
         # Registered *before* building, so a module reached again while
         # it's still being built - i.e. an import cycle - gets this same
         # object back instead of recursing forever. Its `items` are

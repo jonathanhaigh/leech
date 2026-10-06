@@ -69,7 +69,7 @@ def _discover_fn_instances(
             _ = item.value.cfg
 
     discovered = []
-    requests = mod.loader.ctx.requested_fn_instances()
+    requests = mod.ctx.requested_fn_instances()
     cursor = 0
     while cursor < len(requests):
         inst = requests[cursor]
@@ -108,7 +108,7 @@ def _discover_typ_instances(
     generic definitions are ignored. Returns every instantiation discovered, in discovery
     order.
     """
-    ctx = mod.loader.ctx
+    ctx = mod.ctx
     struct_requests = ctx.requested_struct_instances()
     union_requests = ctx.requested_union_instances()
     structs: list[typs.StructTyp] = []

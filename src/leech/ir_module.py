@@ -19,7 +19,6 @@ from leech import (
     errors,
     ir_builder,
     ir_env,
-    ir_loader,
     ir_traits,
     ir_values,
     opt_util,
@@ -531,8 +530,6 @@ class FnInstance:
         builder = ir_builder.CfgBuilder(
             self._fn.env.ctx,
             self._fn.typ_check_results,
-            self._fn.env.impl_registry,
-            self._fn.env.panic_ref,
             self,
             self._mapping,
         )
@@ -683,7 +680,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
                     # The final detail repeats the first to close the cycle.
                     [(var.name, var.span) for var in cycle.details[:-1]],
                 )
-            return comptime.Interpreter(self.cfg, (), (), self.env.panic_ref).eval()
+            return comptime.Interpreter(self.cfg, (), (), self.env.ctx.builtins.panic_ref).eval()
 
     @functools.cached_property
     def typ_check_results(self) -> check_results.TypCheckResults:
@@ -703,8 +700,6 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
         builder = ir_builder.CfgBuilder(
             self.env.ctx,
             self.typ_check_results,
-            self.env.impl_registry,
-            self.env.panic_ref,
         )
         builder.build_var_initializer(opt_util.opt_unwrap(self.ast))
         return builder.cfg
@@ -725,37 +720,41 @@ class Mod:
     #: Items in declaration order, keyed by namespace and name.
     _items: Final[dict[tuple[ir_env.Env.Namespace, str], ModItem]]
     env: Final[ir_env.Env]
-    loader: Final[ir_loader.ModLoader]
     _src_fn_symbols: tuple[SrcFnSymbol, ...]
     _entry_fn: Optional[SrcFnSymbol]
 
-    def __init__(self, name: str, mod_ast: ast.Mod, loader: ir_loader.ModLoader) -> None:
+    def __init__(self, name: str, mod_ast: ast.Mod, ctx: compilation.Ctx) -> None:
         # Deferred because intrinsic classes subclass IntrinsicFnSymbol.
         from leech import ir_builtins  # noqa: PLC0415
 
-        builtin_env = ir_env.Env(loader.ctx, loader.impl_registry, loader.prelude_panic_ref)
+        builtin_env = ir_env.Env(ctx)
         self._name = name
         self.ast = mod_ast
         self._items = {}
         self.env = builtin_env.new_child()
-        self.loader = loader
         self._src_fn_symbols = ()
         self._entry_fn = None
 
-        ir_builtins.register(builtin_env, loader)
+        ir_builtins.register(builtin_env, ctx.builtins)
 
-        # The prelude module's own construction (see
-        # ir_loader.ModLoader.__init__) is what makes `loader.prelude` be
-        # None here - for every other module, it's already built by the
-        # time this runs, so every one of its PUBLIC items becomes
-        # ambiently available, the same way `usize`/`isize`/`bool` are.
-        # An ordinary definition of the same name in this module still
-        # wins: it's bound in `self.env` (a child of `builtin_env`) later,
-        # by `build()`, shadowing whatever's bound here.
-        if loader.prelude is not None:
-            for item in loader.prelude.items:
+        # The prelude is None only while it is itself being built (see
+        # ir_loader.ModLoader.prelude) - for every other module, it's
+        # already built by the time this runs, so every one of its PUBLIC
+        # items becomes ambiently available, the same way
+        # `usize`/`isize`/`bool` are. An ordinary definition of the same
+        # name in this module still wins: it's bound in `self.env` (a
+        # child of `builtin_env`) later, by `build()`, shadowing whatever's
+        # bound here.
+        prelude = ctx.loader.prelude
+        if prelude is not None:
+            for item in prelude.items:
                 if item.access == visibility.PUBLIC:
                     builtin_env.add(item._ns, item.name, item.value)
+
+    @property
+    def ctx(self) -> compilation.Ctx:
+        """The compilation this module belongs to."""
+        return self.env.ctx
 
     def build(self) -> None:
         """Build definitions and impls, then eagerly check every declared body."""
@@ -797,7 +796,7 @@ class Mod:
         entry_typ = typs.FnTyp.get_or_create(typs.I32, ())
         if fn.fn_typ is not entry_typ:
             raise errors.EntryMainSignatureError(fn.fn_typ.name, span)
-        for mod in self.loader.mods:
+        for mod in self.ctx.loader.mods:
             extern_item = mod.get_item(ir_env.Env.Namespace.VARS, "main")
             if (
                 extern_item is not None
@@ -891,7 +890,7 @@ class Mod:
                 )
             case ast.Import():
                 last_ident = defn_ast.path.segs[-1].ident
-                mod = self.loader.load(self.loader.resolve_import(defn_ast.path))
+                mod = self.ctx.loader.load(self.ctx.loader.resolve_import(defn_ast.path))
                 self._add_item(last_ident.name, visibility.PRIVATE, mod, span=last_ident.span)
             case ast.ImplDefn():
                 # Impl blocks are handled separately.
@@ -945,7 +944,7 @@ class Mod:
 
         impl = ir_traits.Impl(impl_ast, None, typ, impl_comptime_params, impl_env, self.name)
         impl.check_comptime_params_constrained()
-        self.loader.impl_registry.add_impl(impl)
+        self.ctx.impl_registry.add_impl(impl)
         self._build_impl_fn_symbols(impl_ast, impl, src_fn_symbols)
 
     @staticmethod
@@ -1013,7 +1012,7 @@ class Mod:
         # specific diagnostic than the coherence violation it actually is.
         # This is also what checks the orphan rule (see
         # `ir_traits.Impl.check_orphan_rule`).
-        self.loader.impl_registry.add_impl(impl)
+        self.ctx.impl_registry.add_impl(impl)
 
         self._build_impl_fn_symbols(impl_ast, impl, src_fn_symbols)
         impl.check_complete()

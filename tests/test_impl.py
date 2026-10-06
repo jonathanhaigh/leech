@@ -49,11 +49,11 @@ def test_generic_impl_lookup_does_not_instantiate_method(compiler):
     assert box_item is not None
     box = asserts.checked_cast(box_item.value, typs.StructTypTemplate)
     concrete_box = box.instantiate((typs.I32,))
-    (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_box)
+    (impl,) = mod.ctx.impl_registry.find_inherent_impls(concrete_box)
     fn = opt_util.opt_unwrap(impl.get_fn_symbol("get"))
     instances_before = tuple(fn.env.ctx.requested_fn_instances())
 
-    selection = mod.loader.impl_registry.lookup_member(concrete_box, "get", None)
+    selection = mod.ctx.impl_registry.lookup_member(concrete_box, "get", None)
 
     assert tuple(fn.env.ctx.requested_fn_instances()) == instances_before
     selection = asserts.checked_cast(selection, ir_traits.ImplFnSelection)
@@ -282,7 +282,7 @@ def test_generic_impl_instance_args_follow_declaration_order(compiler):
     assert pair_item is not None
     pair = asserts.checked_cast(pair_item.value, typs.StructTypTemplate)
     concrete_pair = pair.instantiate((typs.I32, typs.BOOL))
-    (impl,) = mod.loader.impl_registry.find_inherent_impls(concrete_pair)
+    (impl,) = mod.ctx.impl_registry.find_inherent_impls(concrete_pair)
     fn = opt_util.opt_unwrap(impl.get_fn_symbol("first"))
 
     inst = fn.instantiate((typs.I32, typs.BOOL))
@@ -371,7 +371,7 @@ def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(compiler):
     _, impl_ast = mod_ast.defns
     assert isinstance(impl_ast, ast.ImplDefn)
     ctx = compilation.Ctx()
-    env = ir_env.Env(ctx, ir_traits.ImplRegistry(ctx), None)
+    env = ir_env.Env(ctx)
     impl = ir_traits.Impl(impl_ast, None, typs.I32, (), env, "main")
 
     first, second = (

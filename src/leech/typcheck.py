@@ -648,7 +648,7 @@ class TypCheck:
                 self.results.resolutions.set_trait_bound_callee(call_ast, trait_method)
                 return trait_method.fn_typ_for_self(pointee_typ), callee_ast.value, recv_typ
         else:
-            method = e.impl_registry.lookup_member(
+            method = e.ctx.impl_registry.lookup_member(
                 pointee_typ, callee_ast.field.name, callee_ast.field.span
             )
             self.results.resolutions.set_callee(call_ast, method)

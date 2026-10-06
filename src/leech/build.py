@@ -108,7 +108,7 @@ def _compile_program(root: pathlib.Path, diags: diag.Diags) -> Optional[dict[str
     if root_mod is None or root_compilation.llvm_ir is None:
         return None
     llvm_irs = {root_mod.name: root_compilation.llvm_ir}
-    for mod in root_mod.loader.mods:
+    for mod in root_mod.ctx.loader.mods:
         if mod is root_mod:
             continue
         compilation = driver.compile_module(mod.ast.span.file, mod.name)

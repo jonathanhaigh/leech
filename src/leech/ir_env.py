@@ -91,30 +91,17 @@ class Env:
     items: Final[collections.ChainMap[tuple[Env.Namespace, str], Container | Var]]
     #: Explicit binding spans in this scope, parallel to ``items.maps[0]``.
     _spans: Final[dict[tuple[Env.Namespace, str], src.SrcSpan]]
-    #: Program-wide trait implementations shared by every scope.
-    impl_registry: Final[ir_traits.ImplRegistry]
-    #: Compilation-wide lazy requests and active semantic computations.
+    #: The compilation this scope belongs to.
     ctx: Final[compilation.Ctx]
-    #: The prelude's unshadowable panic function; absent only while building the prelude.
-    panic_ref: Final[Optional[ir_module.FnRef]]
 
-    def __init__(
-        self,
-        ctx: compilation.Ctx,
-        impl_registry: ir_traits.ImplRegistry,
-        panic_ref: Optional[ir_module.FnRef],
-        parent: Optional[Env] = None,
-    ) -> None:
-        assert impl_registry.ctx is ctx
+    def __init__(self, ctx: compilation.Ctx, parent: Optional[Env] = None) -> None:
         self.items = collections.ChainMap() if parent is None else parent.items.new_child()
         self.ctx = ctx
-        self.impl_registry = impl_registry
-        self.panic_ref = panic_ref
         self._spans = {}
 
     def new_child(self) -> Env:
         """Create a child scope inheriting this scope's bindings."""
-        return Env(self.ctx, self.impl_registry, self.panic_ref, self)
+        return Env(self.ctx, self)
 
     def get(self, ns: Env.Namespace, name: str) -> Optional[Container | Var]:
         """Look up ``name`` outward through ``ns``, creating integer types on demand."""
@@ -248,7 +235,7 @@ class Env:
     ) -> Optional[ir_traits.ImplFnSelection]:
         if ns != Env.Namespace.VARS:
             return None
-        res = self.impl_registry.lookup_assoc_fn(scope, ident.name)
+        res = self.ctx.impl_registry.lookup_assoc_fn(scope, ident.name)
         selected_fn = opt_util.opt_map(res, lambda selection: selection.fn)
         # Private associated functions are invisible outside the type's own
         # module, same as private Mod items above.

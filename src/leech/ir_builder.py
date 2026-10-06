@@ -81,8 +81,6 @@ class CfgBuilder:
     _fn: Final[Optional[ir_module.FnInstance]]
     _ctx: Final[compilation.Ctx]
     _typ_check_results: Final[check_results.TypCheckResults]
-    _impl_registry: Final[ir_traits.ImplRegistry]
-    _panic_ref: Final[Optional[ir_module.FnRef]]
     _comptime_arg_mapping: Final[Mapping[typs.ComptimeParamTyp, typs.Typ]]
     cfg: Final[ir_values.Cfg]
     _curr_bb: ir_values.BasicBlock
@@ -98,16 +96,12 @@ class CfgBuilder:
         self,
         ctx: compilation.Ctx,
         typ_check_results: check_results.TypCheckResults,
-        impl_registry: ir_traits.ImplRegistry,
-        panic_ref: Optional[ir_module.FnRef],
         fn: Optional[ir_module.FnInstance] = None,
         comptime_arg_mapping: Optional[Mapping[typs.ComptimeParamTyp, typs.Typ]] = None,
     ) -> None:
         self._fn = fn
         self._ctx = ctx
         self._typ_check_results = typ_check_results
-        self._impl_registry = impl_registry
-        self._panic_ref = panic_ref
         self._comptime_arg_mapping = opt_util.opt_or_default(comptime_arg_mapping, {})
         self.cfg = ir_values.Cfg()
         self._generate_bb_name = naming.VarNamer()
@@ -614,7 +608,7 @@ class CfgBuilder:
                 method = None
             elif isinstance(cached, ir_traits.TraitMethod):
                 recv_typ = recv_place.typ.pointee_typ
-                trait_impl = self._impl_registry.find_trait_impl(cached.trait, recv_typ)
+                trait_impl = self._ctx.impl_registry.find_trait_impl(cached.trait, recv_typ)
                 assert trait_impl is not None
                 found = trait_impl.get_trait_method(cached)
                 assert found is not None
@@ -1256,7 +1250,7 @@ class CfgBuilder:
         array bounds, integer overflow, division by zero - built directly
         out of basic blocks rather than ``_build_if_expr``, since there's
         no ``ast.IfExpr`` to lower. Always calls the real prelude ``panic``
-        (``_panic_ref``), never whatever a module's own same-named
+        (``Builtins.panic_ref``), never whatever a module's own same-named
         definition might shadow it with locally - these checks exist to
         enforce the language's own safety guarantees, which user code
         shouldn't be able to opt out of by happening to define a function
@@ -1285,7 +1279,7 @@ class CfgBuilder:
             ok_bb = self._add_bb("ok")
         self._cbranch(cond, fail_bb, ok_bb, ast_node)
         self._set_position(fail_bb)
-        panic_ref = opt_util.opt_unwrap(self._panic_ref)
+        panic_ref = opt_util.opt_unwrap(self._ctx.builtins.panic_ref)
         self._curr_bb.call(panic_ref, (ir_values.ComptimeCStr(message, None),), None)
         self._curr_bb.unreachable(ast_node)
         self._set_position(ok_bb)
