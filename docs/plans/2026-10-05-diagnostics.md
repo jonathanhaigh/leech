@@ -6,7 +6,7 @@ SPDX-License-Identifier: MPL-2.0
 
 # Diagnostics: Collection, Recovery, and Reporting — Implementation Plan
 
-For: #20, #93, #113, #72, #73, and the new issues #114–#121.
+For: #20, #93, #113, #72, #73, and the new issues #114–#122.
 
 Design: [Diagnostics design](../specs/2026-10-05-diagnostics-design.md). Design rationale lives
 there and is not repeated here.
@@ -34,6 +34,7 @@ the later implementation, after manual approval and a separate instruction to im
 ## Suggested order and parallelism
 
 ```text
+#93 ┄┄► #122 ┄┄► #114
 #93 ──► #114 ──► #116 ──► #20 closes (with #114)
 #93 ──► #115 ──► #116
 #114 ──► #72/#73      #114 ──► #117      #93 ──► #113      #114 ┄┄► #113
@@ -45,7 +46,9 @@ graph (hard prerequisites only) deliberately omits (#119 and #121 reuse
 #118's label layout decisions and its summary line). #113 needs only #93 (for `diag.ReportedError` in discovery's per-request recovery); it does not strictly need #114, but forcing
 every declaration during checking is far more useful once a failing declaration no longer stops
 the others, so it is ordered after #114. #114 and #115 both touch most raise sites; landing #114 first
-keeps #115's codemod purely mechanical.
+keeps #115's codemod purely mechanical. #122 (Task 1b) is a pure refactor with no hard
+dependencies, but it rewires the same `Ctx` access paths that #114 builds on, so it goes
+between #93 and #114.
 
 ## Task 1 (#93): Move accumulated diagnostics into per-compilation state
 
@@ -56,10 +59,12 @@ keeps #115's codemod purely mechanical.
 new `tests/test_diag.py`.
 
 - Create `diag.py` with `Level` (moved from `errors.py`, re-exported there for now),
-  `ErrorReported` (constructor guarded by a private module key), `ReportedError(Exception)`
+  `ReportProof` (constructor guarded by a private module key), `ReportedError(Exception)`
   carrying one, and `Diags`. In this task `Diags` stores `errors.UserError` values:
-  `emit(err) -> Optional[ErrorReported]`, `has_errors`, `any_error()`, `level`, and
-  `all()` in emission order. Move `build._Diags`' structural key into `Diags` so `emit`
+  `error(err) -> ReportProof` and `warn(err) -> None` (each asserting the diagnostic's
+  level; there is no public severity-agnostic `emit`), `merge`, `has_errors`, `any_error()`,
+  `level`, and
+  `all()` in emission order. Move `build._Diags`' structural key into `Diags` so recording
   deduplicates.
 - `ModLoader.__init__` takes a `Diags` and stores it on `compilation.Ctx` (`ctx.diags`).
   `driver.compile_to_ir` and `driver.compile_to_llvm_ir` take an optional caller-owned
@@ -71,6 +76,9 @@ new `tests/test_diag.py`.
 - `driver.compile_module` creates the sink, catches the escaping `UserError`, emits it into
   the same sink, and returns `Compilation(diags=sink.all())`. Behaviour and ordering are
   unchanged (emission order; sorting comes in #114).
+- `ReportProof.diag` is the error it proves. The sink keeps each error's proof, and
+  `Diags.merge` records the other sink's diagnostics with their proofs (an earlier
+  duplicate's proof wins).
 - `build.py` keeps one `Diags` per compilation and merges each into a build-level `Diags`
   with `Diags.merge` (deduplicating), replacing `_Diags`. The root compilation is merged
   first.
@@ -82,10 +90,46 @@ new `tests/test_diag.py`.
 - Tests (`tests/test_diag.py`): two sequential compilations and two interleaved ones (one
   warning-producing, one clean) have independent diagnostics; a fatal error caught by
   `compile_module` follows warnings emitted before it; deduplication by structural key;
-  `ErrorReported` cannot be constructed outside `diag` (constructor asserts on the key).
+  `ReportProof` cannot be constructed outside `diag` (constructor asserts on the key).
 
 **Acceptance:** #93's criteria; no code reads or writes private `errors` globals; existing
 diagnostic ordering, rendering and exit statuses unchanged.
+
+## Task 1b (#122): Make `compilation.Ctx` the root of a compilation's state
+
+Numbered 1b so the task numbers cited in issues stay valid. Design: the spec's
+[Compilation state ownership](../specs/2026-10-05-diagnostics-design.md#compilation-state-ownership).
+No behaviour change.
+
+**Files:** `compilation.py`, `ir_loader.py`, `ir_env.py`, `ir_module.py`, `ir_builtins.py`,
+`typcheck.py`, `typs.py`, `mono.py`, `codegen.py`, `build.py`, `driver.py`; tests that
+construct a `ModLoader`, `Ctx` or `Env` directly (`tests/harness.py`, `test_loader.py`,
+`test_builtins.py`, `test_call.py`, `test_diag.py`, `test_generic_fns.py`,
+`test_generic_structs.py`, `test_impl.py`, `test_traits.py`, `test_typs.py`, `test_vars.py`).
+
+- `Ctx` creates and owns `diags`, `impl_registry` (`ir_traits.ImplRegistry(self)`), `loader`
+  (`ir_loader.ModLoader(self)`) and `builtins`, a small `compilation.Builtins` (or
+  `ir_builtins.Builtins`) holding the four intrinsics and the prelude's `panic_ref`.
+  Imports that would cycle stay local, as `Ctx.instantiate_fn` does today.
+- Two-phase construction: `Ctx.__init__` creates its parts without loading anything. The
+  prelude, and the builtin environment that the intrinsics need, are created by an explicit
+  `ctx.loader.load_prelude()` (called by `driver.compile_to_ir` before `load_root`) or on
+  first access; choose whichever keeps `Mod.__init__`'s prelude injection simplest, and keep
+  the existing rule that building the prelude itself sees no prelude.
+- `ModLoader` keeps packages, parsing, import resolution and the module table, and takes
+  its `Ctx` as a constructor argument; it loses its intrinsic attributes, `impl_registry`
+  and `prelude_panic_ref` (which moves to `Builtins`).
+- `Env(ctx, parent=None)`: drop the `impl_registry` and `panic_ref` fields and the
+  consistency assert; callers use `e.ctx.impl_registry` and `e.ctx.builtins.panic_ref`.
+- Drop `Mod.loader`; `Mod` uses `self.env.ctx.loader`. `mono.py`, `codegen.py` and
+  `build.py` reach modules through `mod.env.ctx.loader.mods` (or a `Ctx.mods` convenience).
+- `driver.compile_to_ir` builds a `Ctx(diags)` and loads through `ctx.loader`.
+- Tests: update construction sites; add a test that one compilation's loader, registry,
+  builtins and every module's environment share a single `Ctx`, and that `compilation.Ctx()`
+  alone does not load the prelude.
+
+**Acceptance:** #122's criteria; the full suite passes with only construction-site test
+changes.
 
 ## Task 2 (#114): Recover from errors at analysis-unit boundaries
 
@@ -98,7 +142,7 @@ diagnostic ordering, rendering and exit statuses unchanged.
    that stores `_Ok(value)` or `_Failed(reported)` under the private instance key `_unit_<name>`,
    so every access goes through it. On computing it pushes a frame on `ctx.unit_stack`,
    catches `diag.ReportedError` (memoizing without emitting) and legacy `errors.UserError`
-   (emitting into `ctx.diags`, then memoizing), and raises `ReportedError(reported)`. A memoized
+   (reporting it with `ctx.diags.error`, then memoizing), and raises `ReportedError(reported)`. A memoized
    failure re-raises `ReportedError(reported)` without emitting. Other exceptions propagate
    untouched. Add `ctx` properties to the owners that lack one: `FnInstance` (via `_fn`),
    `StructField` (via `_env`), `ComptimeParamTyp` and `GenericTypTemplate` (via
@@ -113,7 +157,7 @@ diagnostic ordering, rendering and exit statuses unchanged.
 3. **Cycles.** Each `detect_cycle` frame records `len(ctx.unit_stack)` when pushed. A
    caller that receives a cycle reports it once (`diags.fail`); before `ReportedError` unwinds,
    `Ctx` marks every unit frame above the depth recorded by the cycle's first participant to
-   memoize `Failed(reported)` with that token (design rule). Tests: mutually recursive
+   memoize `Failed(reported)` with that proof (design rule). Tests: mutually recursive
    initializers; mutually infinite structs `A { b: B }`/`B { a: A }` used from three
    functions and forced first through different units (a field access, a `size_of`, a
    literal); a cycle reached through a function signature. One diagnostic each, and an
@@ -127,8 +171,8 @@ diagnostic ordering, rendering and exit statuses unchanged.
    runs at registration, so a conflicting impl is rejected before insertion) and append its
    methods. Record comptime parameters against their owning item (`Ctx.record_comptime_param`
    gains an owner) and add `Ctx.discard_comptime_params(owner)` for rejected items. Wrap
-   each item in `try/except (diag.ReportedError, errors.UserError)`: emit a legacy error (never
-   re-emit a `ReportedError`); a duplicate is dropped; an item rejected for another reason
+   each item in `try/except (diag.ReportedError, errors.UserError)`: report a legacy error with
+   `diags.error` (never re-report a `ReportedError`); a duplicate is dropped; an item rejected for another reason
    with a valid-but-reserved or otherwise bindable name is committed as
    `ir_module.PoisonedItem(reported, kind, span)`, which `ir_env` resolution turns into
    `ReportedError(reported)`. Tests: a duplicate function whose body has an independent error (the
@@ -214,7 +258,7 @@ protocol, and `CompilationFailed(diags)` with `.diags` and `.kinds`. Add one `Di
 user-diagnostic class and one `MsgKind` per distinct note, with names and **normalized**
 templates. Give every legacy class a `kind` class attribute pointing at its entry.
 `typs.Typ` and `ast.Ast` implement `diag_str()` (`Typ.name`; AST `diag_str` as today) and
-`error_reported()` (always `None` until #116). Catalogue test: unique kebab-case names and
+`report_proof()` (always `None` until #116). Catalogue test: unique kebab-case names and
 aliases, template fields parse, templates start with a literal lowercase word or `"`, no
 trailing `.`.
 
@@ -231,17 +275,17 @@ are rewritten. Message-text assertions are updated to the normalized wording.
 
 **Commit C… — migrate raise sites, one module per commit** (`parse`, `ir_env`, `typs`,
 `ir_traits`, `ir_module`, `ir_loader`, `comptime`, `typcheck`, `build`/`doctor`/`driver`):
-`raise errors.X(...)` becomes `e.ctx.diags.fail(kinds.X, span, ...)` (or `diags.error`/
+`raise errors.X(...)` becomes `e.ctx.diags.fail(diag.Diag.new(kinds.X, span, ...))` (or `error`/
 `warn` where control continues), constructing labels and notes explicitly. Decide per
 diagnostic whether a spanned note becomes a `Label` or stays a `Note` (design rule), and
 give every diagnostic that has any source location a primary span (for example
 `if-else-typ-mismatch` and `match-arm-typ-mismatch` take the whole `if`/`match`
-expression, with the branches as labels). Delete each class once unused. `Diags.emit`
+expression, with the branches as labels). Delete each class once unused. `Diags.error`/`warn`
 accepts only `Diag` when the last class is gone.
 
 **Final commit.** Delete `errors.py` and `TextErrorRenderer`'s dependence on it (the
 existing renderer moves to `diag_text.py` unchanged in layout, using catalogue messages);
-add the emitted-kinds hook in `conftest.py`: `Diags.emit` records kinds in a test-only
+add the emitted-kinds hook in `conftest.py`: the sink records kinds in a test-only
 registry, and at session end the hook fails if a catalogue kind was never emitted. It is
 active only for an unfiltered run (no node IDs, `-k` or `-m` given), so running one test file
 does not fail.
@@ -256,10 +300,12 @@ tests assert full ordered kind lists; documentation fences use names.
 
 - `Diags.transaction()` buffers diagnostics emitted while the *current unit frame* is on top
   of `ctx.unit_stack`; diagnostics from frames pushed later (other units forced by the
-  probe) bypass the buffer. Each token records the transaction it was issued in; once
-  that transaction closes uncommitted the token is void, and `analysis_unit` failure
+  probe) bypass the buffer. Each proof records the transaction it was issued in; once
+  that transaction closes uncommitted the proof is void, and `analysis_unit` failure
   memoization, a `ReportedError` caught outside the transaction, and (after #116) recorded facts
-  and `Diags.emit`'s poison suppression assert they never see a void token.
+  and the sink's poison suppression assert they never see a void proof. `txn.commit()`
+  records the buffered diagnostics with their existing proofs (as `Diags.merge` does), so
+  proofs already held inside the transaction stay valid.
 - Add `TypCheck._probe_arg_typs` (design contract): inside `self._speculative()` and one
   transaction, check each non-literal argument in its own `try/except diag.ReportedError`;
   failures contribute no bindings and set `probe_failed`. Use it from both
@@ -283,14 +329,14 @@ correctly; a probe never loses or duplicates another unit's diagnostics.
 `ir_builder.py`, `comptime.py`, `codegen.py`, `diag.py`; tests in new
 `tests/test_poison.py` plus updates across feature tests.
 
-- `typs.ErrorTyp`, interned per token, and `typs.error_typ(reported)`.
-  `error_reported()` on `Typ` and its compound subclasses (first poisoned component's
-  token). `coerces_to`, `unify`, `infer_typ_args` treat poison as compatible with
+- `typs.ErrorTyp`, interned per proof, and `typs.error_typ(reported)`.
+  `report_proof()` on `Typ` and its compound subclasses (first poisoned component's
+  proof). `coerces_to`, `unify`, `infer_typ_args` treat poison as compatible with
   everything and binding nothing. `check_comptime_arg_bounds` and comptime-argument kind and
   value-type checks skip poisoned arguments; instances with poisoned arguments are never
   recorded as monomorphization requests.
-- `Diags.emit` drops any diagnostic with an argument whose `error_reported()` is not
-  `None` and returns that token (asserting it is not void).
+- `Diags.error`/`warn` drop any diagnostic with an argument whose `report_proof()` is not
+  `None`; `error` returns that proof (asserting it is not void).
 - `TypCheck._error(kind, span, **args) -> typs.Typ` emits and returns poison. Convert raise
   sites in `typcheck.py` to it following the design's rules, by construct: names and `let`;
   operators; coercions and returns; calls and comptime-argument inference; literals; field
@@ -298,7 +344,7 @@ correctly; a probe never loses or duplicates another unit's diagnostics.
   skipped on a poisoned scrutinee). `_check_block_expr` catches `ReportedError` per statement.
 - Declarations: unresolvable field, payload, parameter and return types become poison with
   one diagnostic (`Typ.from_ast` gains a reporting variant used by declaration units).
-  Layout queries on a poisoned component fail their unit with the component's token.
+  Layout queries on a poisoned component fail their unit with the component's proof.
 - Assert no `ErrorTyp` reaches `ir_builder`, `comptime` or `codegen` (`asserts` helper
   `assert_not_poisoned`).
 - Tests: #20's acceptance example (two undefined variables: two errors, nothing else);
@@ -308,7 +354,7 @@ correctly; a probe never loses or duplicates another unit's diagnostics.
   parameter type reports once and its callers report nothing about that parameter; an
   explicit undefined comptime argument and an inferred poisoned one report nothing about
   bounds; poison produced inside a discarded probe never reaches a recorded fact; a layout
-  query over a poisoned field fails with that field's token when other unrelated errors
+  query over a poisoned field fails with that field's proof when other unrelated errors
   exist.
   **Poison-injection test:** for each expression position in a fixed corpus of valid
   programs, replace one expression with an undefined name and assert exactly one
@@ -377,7 +423,7 @@ codegen path observes poison.
   order into a `WarningPolicy`; argparse handles them as an `action="append"` group that keeps
   relative order. Unknown or non-warning names emit `unknown-warning-option` into the sink
   before compilation.
-- `Diags.emit` applies the policy and records the promoting option in `Diag.promoted_by`;
+- `Diags.warn` applies the policy and records the promoting option in `Diag.promoted_by`;
   promoted warnings render with the `(-Werror)` / `(-Werror=<name>)` suffix, count as
   errors, block codegen and set the exit status. `Diags.merge` preserves `promoted_by`.
   `-W` names resolve through `diag_kinds.lookup`, so aliases work.
@@ -416,11 +462,12 @@ codegen path observes poison.
 
 Done on 2026-10-05, when the plan was approved:
 
-- Filed #114–#121 with the titles, scopes and acceptance criteria above, each with a
-  `Sequencing` section stating its hard prerequisites.
-- Extended #93's scope with `ErrorReported`, `ReportedError`, structural deduplication and
+- Filed #114–#121 (and, on 2026-10-06, #122) with the titles, scopes and acceptance
+  criteria above, each with a `Sequencing` section stating its prerequisites.
+- Extended #93's scope with `ReportProof`, `ReportedError`, structural deduplication and
   `Diags.merge`; the first error still escapes `compile_to_ir` in #93.
 - Made #20 the umbrella for multi-error reporting, closing when #114 and #116 land, and
   answered its design questions.
 - Commented on #72, #73 and #113 with their planned fixes and dependencies.
-- Replaced #55's `93 --> 20` edge with the edges in the design's issue breakdown.
+- Replaced #55's `93 --> 20` edge with the edges in the design's issue breakdown. #122 has
+  no hard prerequisites, so #55 records it only as a soft note (after #93, before #114).

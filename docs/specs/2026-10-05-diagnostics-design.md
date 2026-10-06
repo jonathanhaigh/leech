@@ -12,7 +12,7 @@ diagnostics into per-compilation state, and
 [#113](https://github.com/jonathanhaigh/leech/issues/113): Report every user error before code
 generation, plus [#72](https://github.com/jonathanhaigh/leech/issues/72) and
 [#73](https://github.com/jonathanhaigh/leech/issues/73) (speculative-probe diagnostics) and
-the new issues #114–#121 in the [Issue breakdown](#issue-breakdown).
+the new issues #114–#122 in the [Issue breakdown](#issue-breakdown).
 
 Implementation plan: [Diagnostics plan](../plans/2026-10-05-diagnostics.md).
 
@@ -140,7 +140,7 @@ Non-goals:
 | Recovery granularity | Expression-level poison (`typs.ErrorTyp`), plus memoized failure of each analysis unit |
 | Diagnostic representation | Immutable `Diag` values built from a catalogue of `DiagKind` entries. Not exceptions |
 | Catalogue form | A Python module of constant `DiagKind` entries with `str.format` templates |
-| Proof of reporting | Reporting an error returns an `ErrorReported` token. Poison and unit failure require one |
+| Proof of reporting | Reporting an error returns a `ReportProof`. Poison and unit failure require one |
 | Unwinding | One internal exception, `diag.ReportedError(reported)`, raised only after reporting |
 | Ownership | One `diag.Diags` sink per compilation, created by the driver and reachable through `compilation.Ctx` |
 | Speculative checks | Sink transactions that discard the probe's diagnostics |
@@ -233,7 +233,7 @@ diagnostic's arguments are no longer typed fields that the type checker sees.
 Leech combines families 2 and 3, and takes the core of family 4's bookkeeping:
 
 - **Poison at expression level** (family 2), because the owner wants the most errors per
-  check. rustc's `ErrorGuaranteed` is adopted with it, as `diag.ErrorReported`, to stop poison
+  check. rustc's `ErrorGuaranteed` is adopted with it, as `diag.ReportProof`, to stop poison
   from appearing without an error.
 - **Memoized unit failure** (family 3) at every lazy declaration property. This is the
   minimum needed for correctness in a demand-driven checker, even with poison, because not
@@ -241,7 +241,7 @@ Leech combines families 2 and 3, and takes the core of family 4's bookkeeping:
   time, or a struct with infinite size, has no partial value worth continuing with.
 - **A single sink per compilation**, rather than family 4's per-result diagnostics. With
   every unit memoized, each unit reports at most once anyway. Moving to per-result
-  collection later, if incremental compilation needs it, only changes where `emit` puts a
+  collection later, if incremental compilation needs it, only changes where the sink puts a
   diagnostic.
 - **An ID catalogue** for messages, as Clang and Swift do, with kebab-case names instead of
   numbers (see [Codes and names](#codes-and-names)).
@@ -252,7 +252,7 @@ Leech combines families 2 and 3, and takes the core of family 4's bookkeeping:
 
 | Module | Contents |
 | --- | --- |
-| `diag.py` | `Level`, `DiagKind`, `MsgKind`, `Msg`, `Label`, `Note`, `Diag`, `ErrorReported`, `ReportedError`, `CompilationFailed`, `Diags` (the sink), `WarningPolicy` |
+| `diag.py` | `Level`, `DiagKind`, `MsgKind`, `Msg`, `Label`, `Note`, `Diag`, `ReportProof`, `ReportedError`, `CompilationFailed`, `Diags` (the sink), `WarningPolicy` |
 | `diag_kinds.py` | The catalogue: every `DiagKind` and `MsgKind` constant |
 | `diag_text.py` | The rustc-style text renderer and its colour handling |
 | `diag_sarif.py` | The SARIF 2.1.0 renderer |
@@ -297,7 +297,7 @@ UNREACHABLE_CODE: Final = diag.DiagKind("unreachable-code", diag.WARNING, "unrea
   `leech explain` use it. SARIF `ruleId` and the rendered header always use the current
   name. Documentation fences accept only current names, so stale docs fail their tests.
 - Argument values are `str`, `int`, or a `diag.DiagArg`: any object with
-  `diag_str() -> str` and `error_reported() -> Optional[ErrorReported]`. `typs.Typ` and
+  `diag_str() -> str` and `report_proof() -> Optional[ReportProof]`. `typs.Typ` and
   AST nodes implement `DiagArg`, so a diagnostic keeps the *type object*, and the sink can
   tell when the diagnostic is about poison. `Typ.diag_str()` is the type's unqualified
   `name`, as messages use today. A call site that needs `qualified_name` passes the string.
@@ -358,56 +358,103 @@ optional caller-owned `diags` argument, and create a sink when none is given.
 `driver.compile_module` always creates one. The sink exists before parsing begins and is
 passed to `ir_loader.ModLoader`, which stores it on `compilation.Ctx`. Every phase reaches it the way it reaches the context: through
 `ir_env.Env.ctx`, the `ModLoader`, or an explicit constructor argument. That last route
-covers `ir_builder.CfgBuilder`, `ir_values` blocks (unreachable-code warnings) and
-`comptime.Interpreter`.
+covers `ir_builder.CfgBuilder`, which takes the `Ctx` and reports the unreachable code that
+`ir_values` blocks record (blocks themselves report nothing), and `comptime.Interpreter`.
 
 ```python
 class Diags:
-    def emit(self, d: Diag) -> Optional[ErrorReported]: ...
-    def error(self, kind, span, **args) -> ErrorReported: ...  # emit an ERROR-level kind
-    def fail(self, kind, span, **args) -> NoReturn: ...  # error(), then raise ReportedError
-    def warn(self, kind, span, **args) -> None: ...
+    def error(self, d: Diag) -> ReportProof: ...  # d's kind must be an error kind
+    def warn(self, d: Diag) -> None: ...  # d's kind must be a warning kind
+    def fail(self, d: Diag) -> NoReturn: ...  # error(d), then raise ReportedError
+    def merge(self, other: Diags) -> None: ...
     @contextlib.contextmanager
     def transaction(self) -> Iterator[Transaction]: ...
     @property
     def has_errors(self) -> bool: ...
-    def any_error(self) -> Optional[ErrorReported]: ...
+    def any_error(self) -> Optional[ReportProof]: ...
     def sorted(self) -> tuple[Diag, ...]: ...  # in render order
 ```
 
-`emit`:
+There is no severity-agnostic public `emit`: callers know whether they are reporting an
+error or a warning, and each method has the signature that suits it. `error` and `warn`
+assert that the diagnostic's kind has the matching default level, so a mismatch is caught
+where it is made. A call site builds the diagnostic with `diag.Diag.new(kinds.X, span, ...)`;
+`TypCheck._error` wraps that for the type checker. `error`, `warn` and `merge` (for another
+sink's diagnostics) all record a diagnostic as follows. The sink:
 
 1. Applies the `WarningPolicy` (`-w`, `-Werror`, `-Wno-<name>`, ...) to get the effective
    level, and drops a diagnostic that the policy disables.
-2. **Suppresses cascades.** If any argument's `error_reported()` is not `None`, the
-   diagnostic is dropped, and that argument's token is returned. This is the safety net behind the
-   explicit poison rules below.
+2. **Suppresses cascades.** If any argument's `report_proof()` is not `None`, the
+   diagnostic is dropped, and `error` returns that argument's proof. This is the safety net
+   behind the explicit poison rules below.
 3. **Deduplicates structurally.** The key is the kind, the rendered arguments, and every
    span as (resolved path, start, end), as `build._Diags` keys today. A duplicate is not
-   stored again, but `emit` still returns a token for an error.
-4. Records the diagnostic with a sequence number, and returns an `ErrorReported` if its
-   effective level is `ERROR`.
+   stored again, and `error` returns the earlier diagnostic's proof.
+4. Records the diagnostic with a sequence number, and creates a `ReportProof` if its
+   effective level is `ERROR`. `error` returns that proof. `warn` returns nothing, even when
+   `-Werror` promotes the warning: the caller carries on either way, and the sink still holds
+   the proof, so `has_errors` and the exit status reflect the promotion. Errors are never
+   demoted or suppressed, so `error` always has a proof to return.
 
-`ErrorReported` is a frozen value whose constructor takes a private module key, so only
+`ReportProof` is a frozen value whose constructor takes a private module key, so only
 `diag.Diags` can create one, by the same convention rustc enforces with module privacy.
-Code that has a token can poison a type, fail a unit, or raise `ReportedError`.
+Code that has a proof can poison a type, fail a unit, or raise `ReportedError`.
 
-`ReportedError(Exception)` carries a token. It is the only exception that unwinds for a user
+A proof points at the diagnostic it proves: `proof.diag` is the error as the sink stored it,
+with its effective level. Holders of a proof (poison types, failed units, `ReportedError`)
+can therefore always name the root cause, for example in an internal-compiler-error report,
+without a lookup from proofs to diagnostics. The link deliberately runs from proof to
+diagnostic rather than the other way: `Diag` stays frozen, and code that fails silently must
+hold a `ReportProof`, which only the sink's `error` produces, so forgetting to report is a type error
+rather than a runtime assert on an untested path.
+
+The sink keeps each error's proof, so there is exactly one proof per reported error.
+`Diags.merge(other)` records `other`'s diagnostics *with their proofs* instead of creating
+new ones; a diagnostic that duplicates one already recorded keeps the earlier proof. Proofs
+held by code in the other compilation therefore still prove errors in the merged sink.
+
+`ReportedError(Exception)` carries a proof. It is the only exception that unwinds for a user
 error, and it is caught only at recovery boundaries ([analysis units](#analysis-units-and-memoized-failure),
 the [phase boundary](#phase-boundary-no-code-generation-with-errors), and the driver).
 `CompilationFailed(Exception)` is what library entry points raise when a compilation has
 errors. It carries every diagnostic of the compilation in render order, warnings included.
 
+### Compilation state ownership
+
+The sink lives on `compilation.Ctx`, but `Ctx` is not yet the root of a compilation. Today
+`ir_loader.ModLoader` creates and owns the `Ctx`, along with the `ImplRegistry`, the
+prelude, the intrinsics and the loaded modules. Every `ir_env.Env` scope copies three
+compilation-wide references (`ctx`, `impl_registry`, `panic_ref`), and code reaches
+compilation state by several routes (`env.ctx`, `mod.loader.ctx`, `loader.size_of_intrinsic`).
+
+[#122](https://github.com/jonathanhaigh/leech/issues/122) makes `Ctx` the root, following
+rustc's `TyCtxt` model but grouped so it doesn't become one flat bag of everything:
+
+- `Ctx` owns `diags`, the `ModLoader`, the `ImplRegistry`, and a `Builtins` group holding
+  the intrinsics and the prelude's `panic_ref`, as well as its existing caches and cycle
+  stacks. The unit stack (#114) and transactions (#72/#73) are added to it later.
+- `ModLoader` narrows to loading and resolving modules.
+- `Env` holds only `ctx`, `items` and `parent`; `Mod` reaches the loader through `ctx`.
+- The prelude is loaded by an explicit call or lazily, so a bare `compilation.Ctx()` stays
+  cheap for unit tests.
+
+This matters to the diagnostics work because every analysis unit (#114) needs its `Ctx`, so
+that it can push unit frames, open transactions and report diagnostics. With one root reached through
+`env.ctx`, the `HasCtx` protocol is a single property on each owner. Landing #122 between #93
+and #114 avoids rewiring those paths twice.
+
 ### Speculative checking: transactions
 
 `with diags.transaction() as txn:` buffers every diagnostic emitted by the current analysis
 unit while the block runs. Leaving the block discards them, unless the code called
-`txn.commit()`. A token issued inside a transaction records that transaction. Once the
-transaction has closed uncommitted, the token is *void*. Asserts reject a void
-token if it is used to fail a unit, or carried by a `ReportedError` that escapes the
+`txn.commit()`. A proof issued inside a transaction records that transaction. Once the
+transaction has closed uncommitted, the proof is *void*. Asserts reject a void
+proof if it is used to fail a unit, or carried by a `ReportedError` that escapes the
 transaction. They also reject one carried by a poison type that reaches a recorded fact or
-the sink. Poison types carry their token (see [Poison](#poison-and-expression-level-recovery)),
-so this check is always possible.
+the sink. Poison types carry their proof (see [Poison](#poison-and-expression-level-recovery)),
+so this check is always possible. Committing a transaction records its buffered
+diagnostics in the sink with their existing proofs, as `merge` does, so the proofs that code
+inside the transaction already holds stay valid.
 
 A transaction captures only diagnostics of the unit that opened it. If the probe forces
 *another* analysis unit (a struct's field types, a callee's signature), that unit is
@@ -502,7 +549,7 @@ Parse errors stay fatal.
 Cycle detection (`Ctx.detect_cycle`) reports a cycle once, at the recurrence. When a cycle
 frame is pushed, it records the depth of `Ctx.unit_stack`. When a recurrence is found, every
 unit frame pushed since the depth recorded by the cycle's first participant is memoized as
-failed, with the cycle's token. Those frames are exactly the computations that
+failed, with the cycle's proof. Those frames are exactly the computations that
 transitively need the cyclic value, so none of them can complete. Units below that depth
 did not start the cycle, so they get `ReportedError` like any dependent of a failed unit. They
 memoize their own failure only if they cannot continue, and with poison they often can.
@@ -511,15 +558,15 @@ nothing.
 
 ### Poison and expression-level recovery
 
-`typs.ErrorTyp` is the poison type. It is interned per token
+`typs.ErrorTyp` is the poison type. It is interned per proof
 (`typs.ErrorTyp.get_or_create(reported)`), with `name` `"{error}"`, which is never rendered
 because the sink drops diagnostics that reference it. It can only be obtained through
-`typs.error_typ(reported: ErrorReported)`, so poison always follows a reported error and
-records *which* error. `Typ.error_reported()` returns the token of the first poison
+`typs.error_typ(reported: ReportProof)`, so poison always follows a reported error and
+records *which* error. `Typ.report_proof()` returns the proof of the first poison
 component found, for `ErrorTyp` and for any type built from it (pointers, arrays,
 instances with a poisoned argument), and `None` otherwise. Code tests for poison with
-`error_reported() is not None`, never by comparing with a particular `ErrorTyp`. This
-lets a layout query fail its unit with the *component's* token, and lets transactions
+`report_proof() is not None`, never by comparing with a particular `ErrorTyp`. This
+lets a layout query fail its unit with the *component's* proof, and lets transactions
 detect poison from a discarded probe.
 
 `TypCheck` reports most errors with `self._error(kind, span, **args) -> typs.Typ`, which
@@ -609,8 +656,8 @@ output independent of which function first forced a broken declaration. Within o
 compilation the order is deterministic, and the test suite pins it.
 
 A build merges several compilations, because each module is compiled separately and reloads
-the program. `Diags.merge(other)` copies `other`'s diagnostics with deduplication, and
-appends any file it has not seen, in `other`'s file order. The build merges the root
+the program. `Diags.merge(other)` copies `other`'s diagnostics and their proofs with
+deduplication, and appends any file it has not seen, in `other`'s file order. The build merges the root
 compilation first. Since the root compilation loads the whole program, its file order is
 authoritative, and later compilations only add files it never reached. The emission
 sequence of merged diagnostics continues the target's own sequence, in `other`'s emission
@@ -847,11 +894,12 @@ the exact diagnostic identity.
 
 ## Issue breakdown
 
-Existing issues were rescoped, and #114–#121 filed, as follows.
+Existing issues were rescoped, and #114–#122 filed, as follows.
 
 | Issue | Title | Scope | Hard prerequisites |
 | --- | --- | --- | --- |
-| #93 (rescoped) | Move accumulated diagnostics into per-compilation state | `diag.Diags` sink holding legacy `UserError`s, `ErrorReported`, `ReportedError`, ownership through `Ctx`, structural deduplication (absorbing `build._Diags`). Remove globals and `isolated_diags`. The first error still escapes `compile_to_ir` as today | — |
+| #93 (rescoped) | Move accumulated diagnostics into per-compilation state | `diag.Diags` sink holding legacy `UserError`s, `ReportProof`, `ReportedError`, ownership through `Ctx`, structural deduplication (absorbing `build._Diags`). Remove globals and `isolated_diags`. The first error still escapes `compile_to_ir` as today | — |
+| #122 | Make `compilation.Ctx` the root of a compilation's state | `Ctx` owns `diags`, the `ModLoader`, the `ImplRegistry` and a `Builtins` group (intrinsics, `panic_ref`). `Env` keeps only `ctx`. Prelude loaded explicitly or lazily. No behaviour change | — (best after #93, before #114) |
 | #114 | Recover from errors at analysis-unit boundaries | `HasCtx` and `@compilation.analysis_unit`, memoized `Failed`, staged `Mod.build` with poisoned items, cycle memoization, entry point in the recovery loop, sorted output with `note_file` and `Diags.merge`, ICE rendering. Until #115, `compile_to_ir` re-raises the first sorted error | #93 |
 | #113 | Report every user error before code generation | Force every declaration unit in checking. Discovery is part of checking, with per-request recovery. Phase boundary. `leech check` without codegen. `LlvmVerificationError` becomes `diag.InternalError` | #93 (best after #114) |
 | #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationFailed`, message-style normalization, `DiagArg` on types and AST, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
@@ -864,14 +912,17 @@ Existing issues were rescoped, and #114–#121 filed, as follows.
 | #121 | Emit diagnostics as SARIF | `diag_sarif.py`, `-fdiagnostics-format=text\|sarif` | #115 |
 
 #20 becomes the umbrella issue for multi-error reporting: it closes when #114 and #116 have
-landed (the owner decides). #93 must land before #114 and #115. #114 and #115 can proceed in
-parallel, but they both touch most raise sites, so landing #114 first keeps #115's mechanical
-rewrite simple.
+landed (the owner decides). #93 must land before #114 and #115. #122 is best landed between
+#93 and #114, since #114 rewires the same paths. #114 and #115 can proceed in parallel, but
+they both touch most raise sites, so landing #114 first keeps #115's mechanical rewrite
+simple. In the graph, dotted arrows are preferred orderings rather than hard prerequisites.
 
 ```mermaid
 flowchart LR
   93["93 Per-compilation diagnostics"] --> 114["114 Unit recovery"]
   93 --> 115["115 Diagnostic catalogue"]
+  93 -.-> 122["122 Ctx as compilation root"]
+  122 -.-> 114
   114 --> P["72/73 Probe transactions"]
   93 --> P
   93 --> 113["113 Check before codegen"]
