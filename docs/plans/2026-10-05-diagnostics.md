@@ -99,7 +99,10 @@ diagnostic ordering, rendering and exit statuses unchanged.
 
 Numbered 1b so the task numbers cited in issues stay valid. Design: the spec's
 [Compilation state ownership](../specs/2026-10-05-diagnostics-design.md#compilation-state-ownership).
-No behaviour change.
+No behaviour change, with one deliberate exception: the prelude's `panic` is now requested
+only when something needs it (a synthesized runtime check, or compile-time evaluation),
+rather than as a side effect of constructing every module, so a module that never panics no
+longer declares `std::prelude::panic` in its IR.
 
 **Files:** `compilation.py`, `ir_loader.py`, `ir_env.py`, `ir_module.py`, `ir_builtins.py`,
 `typcheck.py`, `typs.py`, `mono.py`, `codegen.py`, `build.py`, `driver.py`; tests that
@@ -129,7 +132,7 @@ construct a `ModLoader`, `Ctx` or `Env` directly (`tests/harness.py`, `test_load
   alone does not load the prelude.
 
 **Acceptance:** #122's criteria; the full suite passes with only construction-site test
-changes.
+changes, apart from no longer expecting the unused `panic` declaration.
 
 ## Task 2 (#114): Recover from errors at analysis-unit boundaries
 
