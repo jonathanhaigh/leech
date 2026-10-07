@@ -5,11 +5,13 @@
 """The compiler driver: CLI argument handling and the top-level compile pipeline."""
 
 import argparse
+import contextlib
 import dataclasses
 import importlib.metadata
 import pathlib
 import sys
-from typing import Optional
+from collections.abc import Iterator
+from typing import NoReturn, Optional
 
 import llvmlite
 from llvmlite import binding as llb
@@ -42,17 +44,32 @@ def compile_to_ir(
     function becomes the program entry point. ``import std::...`` resolves in the bundled
     library, and any other import in the file's package.
 
-    Diagnostics that don't stop compilation are emitted to ``diags``, which defaults to a
-    new collection, reachable through the returned module's ``ctx.diags``. The first error
-    is raised.
+    Every diagnostic is reported to ``diags``, which defaults to a new collection, reachable
+    through the returned module's ``ctx.diags``. Checking continues past an error in one
+    declaration to find errors in others. If there are any errors, the first one in source
+    order is raised.
     """
     qualified_name = opt_util.opt_or_default(qualified_name, file.path.stem)
     ctx = compilation.Ctx(diags)
-    mod = ctx.loader.load_root(file.path, qualified_name)
+    try:
+        mod = ctx.loader.load_root(file.path, qualified_name)
+    except errors.UserError as err:
+        ctx.diags.error(err)
+        _raise_first_error(ctx.diags)
+    except diag.ReportedError:
+        _raise_first_error(ctx.diags)
     ctx.loader.check_declarations()
     if entry:
-        mod.designate_entry()
+        with ctx.recovering():
+            mod.designate_entry()
+    if ctx.diags.has_errors:
+        _raise_first_error(ctx.diags)
     return mod
+
+
+def _raise_first_error(diags: diag.Diags) -> NoReturn:
+    """Raise the first reported error, in source order."""
+    raise next(err for err in diags.sorted() if err.level == errors.ERROR)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -67,14 +84,19 @@ class Compilation:
 
 
 def compile_module(
-    file: src.SrcFile, qualified_name: Optional[str] = None, entry: bool = False
+    file: src.SrcFile,
+    qualified_name: Optional[str] = None,
+    entry: bool = False,
+    diags: Optional[diag.Diags] = None,
 ) -> Compilation:
     """Compile a module to LLVM IR as ``compile_to_llvm_ir`` does, returning its diagnostics.
 
     Diagnostics are returned rather than raised, whether compilation raised or emitted them,
-    so the module fails if any of them is an error.
+    so the module fails if any of them is an error. They are reported to ``diags``, which
+    defaults to a new collection. A caller that wants to render them if compilation crashes
+    passes its own ``diags``, since an internal error propagates without them.
     """
-    diags = diag.Diags()
+    diags = opt_util.opt_or_default(diags, diag.Diags())
     mod = None
     llvm_ir = None
     try:
@@ -82,6 +104,8 @@ def compile_module(
         llvm_ir = lower_to_llvm_ir(mod)
     except errors.UserError as err:
         diags.error(err)
+    except diag.ReportedError:
+        pass
     if diags.has_errors:
         llvm_ir = None
     return Compilation(mod, llvm_ir, diags)
@@ -95,9 +119,17 @@ def compile_to_llvm_ir(
 ) -> str:
     """Compile a source file and its imports to textual LLVM IR.
 
-    Arguments, diagnostics and errors are as for ``compile_to_ir``.
+    Arguments, diagnostics and errors are as for ``compile_to_ir``, including errors only
+    found while generating IR.
     """
-    return lower_to_llvm_ir(compile_to_ir(file, qualified_name, entry, diags))
+    mod = compile_to_ir(file, qualified_name, entry, diags)
+    try:
+        return lower_to_llvm_ir(mod)
+    except errors.UserError as err:
+        mod.ctx.diags.error(err)
+        _raise_first_error(mod.ctx.diags)
+    except diag.ReportedError:
+        _raise_first_error(mod.ctx.diags)
 
 
 def lower_to_llvm_ir(mod: ir_module.Mod) -> str:
@@ -170,11 +202,29 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
+@contextlib.contextmanager
+def reporting_crashes(tool: str) -> Iterator[diag.Diags]:
+    """Yield a new diagnostics sink for compiling with ``tool``.
+
+    If the block crashes with an internal error, the diagnostics found so far are rendered,
+    then the crash as a bug in ``tool``, and the error propagates.
+    """
+    sink = diag.Diags()
+    try:
+        yield sink
+    except Exception as err:
+        errors.TextErrorRenderer().display_internal_error(sink.sorted(), err, tool)
+        raise
+
+
 def main() -> None:
     """Compile CLI input, render diagnostics, and exit with their severity."""
     args = _parse_args()
-    compilation = compile_module(src.SrcFile(args.filename), args.module_name, args.entry)
-    errors.TextErrorRenderer().display_errors(list(compilation.diags.all()))
+    with reporting_crashes("leechc") as diags:
+        compilation = compile_module(
+            src.SrcFile(args.filename), args.module_name, args.entry, diags
+        )
+    errors.TextErrorRenderer().display_errors(list(compilation.diags.sorted()))
     if compilation.llvm_ir is not None:
         output = ll_emit.emit_from_ir(compilation.llvm_ir, args.emit, args.opt_level)
         pathlib.Path(args.o).write_bytes(output)

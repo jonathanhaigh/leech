@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 
-from leech import asserts, compilation, errors, ir_env, ir_loader, ir_module, typs
+from leech import asserts, compilation, errors, ir_env, ir_loader, ir_module, src, typs
 from tests import harness
 
 
@@ -81,12 +81,13 @@ def test_declaration_checking_is_an_explicit_post_load_phase(compiler):
             "fn invalid() i32 { return true; }\npub fn main() i32 { return 0; }",
         )
     )
-    loader = compilation.Ctx().loader
+    ctx = compilation.Ctx()
 
-    loader.load_root(path, "main")
+    ctx.loader.load_root(path, "main")
+    assert ctx.diags.all() == ()
+    ctx.loader.check_declarations()
 
-    with pytest.raises(errors.InvalidRetTypError):
-        loader.check_declarations()
+    assert [type(d) for d in ctx.diags.all()] == [errors.InvalidRetTypError]
 
 
 @pytest.mark.parametrize("mod_name", ("library", "main"))
@@ -207,3 +208,44 @@ def test_root_may_share_a_name_with_a_bundled_module(tmp_path):
     loader.load_root(path, "prelude")
 
     assert sorted(mod.name for mod in loader.mods) == ["prelude", "std::prelude"]
+
+
+def _span(compiler) -> src.SrcSpan:
+    path = compiler.write_mod(harness.ModSrc("main", "pub fn main() i32 { return 0; }"))
+    return src.SrcSpan(src.SrcFile(path), 0, 1, 1, 1, 1, 2)
+
+
+def test_env_binding_binds_the_value_after_the_block(compiler):
+    env = ir_env.Env(compilation.Ctx())
+
+    with env.binding(ir_env.Env.Namespace.CONTAINERS, "t", _span(compiler)) as binding:
+        assert env.get(ir_env.Env.Namespace.CONTAINERS, "t") is None
+        binding.bind(typs.BOOL)
+
+    assert env.get(ir_env.Env.Namespace.CONTAINERS, "t") is typs.BOOL
+
+
+def test_env_binding_binds_nothing_if_the_block_raises(compiler):
+    env = ir_env.Env(compilation.Ctx())
+
+    with (
+        pytest.raises(RuntimeError),
+        env.binding(ir_env.Env.Namespace.CONTAINERS, "t", _span(compiler)),
+    ):
+        raise RuntimeError("build failed")
+
+    assert env.get(ir_env.Env.Namespace.CONTAINERS, "t") is None
+
+
+def test_env_binding_checks_the_name_before_the_block(compiler):
+    env = ir_env.Env(compilation.Ctx())
+    env.add_container("t", typs.BOOL)
+    ran = False
+
+    with (
+        pytest.raises(errors.DuplicateItemDefnError),
+        env.binding(ir_env.Env.Namespace.CONTAINERS, "t", _span(compiler)),
+    ):
+        ran = True
+
+    assert not ran

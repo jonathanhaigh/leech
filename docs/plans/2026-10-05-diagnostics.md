@@ -6,7 +6,7 @@ SPDX-License-Identifier: MPL-2.0
 
 # Diagnostics: Collection, Recovery, and Reporting — Implementation Plan
 
-For: #20, #93, #113, #72, #73, and the new issues #114–#122.
+For: #20, #93, #113, #72, #73, #56, and the new issues #114–#122.
 
 Design: [Diagnostics design](../specs/2026-10-05-diagnostics-design.md). Design rationale lives
 there and is not repeated here.
@@ -34,7 +34,7 @@ the later implementation, after manual approval and a separate instruction to im
 ## Suggested order and parallelism
 
 ```text
-#93 ┄┄► #122 ┄┄► #114
+#93 ┄┄► #122 ┄┄► #114 ┄┄► #56 ┄┄► #113
 #93 ──► #114 ──► #116 ──► #20 closes (with #114)
 #93 ──► #115 ──► #116
 #114 ──► #72/#73      #114 ──► #117      #93 ──► #113      #114 ┄┄► #113
@@ -48,7 +48,8 @@ every declaration during checking is far more useful once a failing declaration 
 the others, so it is ordered after #114. #114 and #115 both touch most raise sites; landing #114 first
 keeps #115's codemod purely mechanical. #122 (Task 1b) is a pure refactor with no hard
 dependencies, but it rewires the same `Ctx` access paths that #114 builds on, so it goes
-between #93 and #114.
+between #93 and #114. #56 (Task 2b) uses #114's analysis units and should land before #113,
+which forces every declaration, the bundled library's generics included, during checking.
 
 ## Task 1 (#93): Move accumulated diagnostics into per-compilation state
 
@@ -140,38 +141,48 @@ changes, apart from no longer expecting the unused `panic` declaration.
 `ir_env.py`, `ir_loader.py`, `driver.py`, `build.py`, `cli.py`, `errors.py`; tests in
 `tests/test_errors.py`, new `tests/test_recovery.py`.
 
-1. **Unit decorator.** Add the `compilation.HasCtx` protocol (a `ctx` property) and
-   `compilation.analysis_unit`, a *data* descriptor (it defines `__set__`, which raises)
-   that stores `_Ok(value)` or `_Failed(reported)` under the private instance key `_unit_<name>`,
-   so every access goes through it. On computing it pushes a frame on `ctx.unit_stack`,
-   catches `diag.ReportedError` (memoizing without emitting) and legacy `errors.UserError`
-   (reporting it with `ctx.diags.error`, then memoizing), and raises `ReportedError(reported)`. A memoized
-   failure re-raises `ReportedError(reported)` without emitting. Other exceptions propagate
-   untouched. Add `ctx` properties to the owners that lack one: `FnInstance` (via `_fn`),
-   `StructField` (via `_env`), `ComptimeParamTyp` and `GenericTypTemplate` (via
-   `_decl_env`), `StructTyp`/`UnionTyp`/`EnumTyp` (via their template or declaration
-   environment), `ModVar`, `Trait` and `Impl`. Test the descriptor on one owner per context
-   path, and test that a failed unit re-raises rather than returning its wrapper.
+1. **Units.** Add `Ctx.unit(owner, name, compute)`, which memoizes a `UnitResult` (the value,
+   or the proof of the error) on the `Ctx`, keyed by a `UnitId` (the owner, compared by
+   identity and kept alive, and the unit's name). `UnitResult.capture`, `get` and `failure`
+   own the conversion between exceptions and results, with `capture` built on
+   `Ctx.recovering`. On computing it pushes a frame on `ctx.unit_stack`, catches
+   `diag.ReportedError` (memoizing without emitting) and legacy `errors.UserError`
+   (reporting it with `ctx.diags.error`, then memoizing), and raises
+   `ReportedError(reported)`. A memoized failure re-raises without emitting. Other
+   exceptions propagate uncached. Each unit is a `@property` over a method decorated with
+   `@compilation.unit`, a plain `functools.wraps` wrapper calling
+   `owner.ctx.unit(owner, method.__name__, ...)` for owners satisfying the
+   `compilation.HasCtx` protocol. Add `ctx` properties to the owners
+   that lack one: `FnSymbol` (abstract, via `env` in its subclasses), `FnInstance` (via
+   `_fn`), `ModVar`, `StructField`, `StructTyp`, `UnionVariantTemplate`, `UnionVariant`,
+   `UnionTyp` and `EnumTyp`. Test `Ctx.unit` directly, that results belong to one
+   compilation, and that every kind of owner reaches its compilation's `Ctx`.
+   The context manager `Ctx.recovering()` is the one place user errors are caught: it
+   reports a legacy `UserError` or passes on a `ReportedError`, suppresses it, and yields a
+   `Recovery` whose `failure` holds the proof afterwards.
 2. **Convert the units** listed in the design's unit table, replacing
-   `functools.cached_property` (and `StructTypTemplate.validate_declaration` / union
-   equivalent, `ComptimeParamTyp.check_declaration`, `Mod.designate_entry`, and `ir_traits`
-   impl validation, which become units or call one). `src.SrcFile.src`/`lines` and
-   `ir_values` `typ` stay `cached_property` (they report nothing).
-3. **Cycles.** Each `detect_cycle` frame records `len(ctx.unit_stack)` when pushed. A
-   caller that receives a cycle reports it once (`diags.fail`); before `ReportedError` unwinds,
-   `Ctx` marks every unit frame above the depth recorded by the cycle's first participant to
-   memoize `Failed(reported)` with that proof (design rule). Tests: mutually recursive
-   initializers; mutually infinite structs `A { b: B }`/`B { a: A }` used from three
-   functions and forced first through different units (a field access, a `size_of`, a
-   literal); a cycle reached through a function signature. One diagnostic each, and an
-   unrelated error elsewhere in a unit below the cycle is still reported.
+   `functools.cached_property`. What the design lists as deliberately not a unit stays as
+   it is: state computed while building an item, comptime parameter objects (interned
+   process-wide for the bundled library, so a memoized failure would leak between
+   compilations), `Mod.designate_entry`, and layout validation.
+3. **Cycles.** `detect_cycle` gives each `Cycle` a key of its domain and participant set,
+   and every cycle error goes through `Ctx.fail_cycle(cycle, err)`, which reports only the
+   first error per key and raises `ReportedError` with its proof every time. (This replaces
+   an earlier idea of marking unit frames above the cycle: with every unit unwinding on
+   `ReportedError`, the frames on a cycle memoize their failure by propagation, and the
+   problem that remains is the same cycle found from another participant.) Tests: mutually
+   recursive initializers alongside an unrelated error; mutually infinite structs;
+   mutually recursive trait bounds. One diagnostic per cycle.
 4. **Module building: stage, then commit.** Restructure `_build_defn` and
    `_build_impl_defn` so each item is validated fully before anything shared is mutated:
-   construct the symbol, check its name (reserved, duplicate via a non-mutating
-   `Env.can_add`), and only then append to `src_fn_symbols` and call `_add_item`. For impls,
-   build the `Impl` and its method symbols locally, run signature matching and
-   `check_complete`, and only then register it with `ImplRegistry` (whose conflict check
-   runs at registration, so a conflicting impl is rejected before insertion) and append its
+   each check-then-commit pair is a context manager that checks on entry and commits only on
+   a clean exit. `Env.binding(ns, name, span)` checks that a name can be bound in a scope
+   and binds the value the block passes to `bind`. `Mod._binding_item(ns, name, span)`
+   builds on it, adding the reserved-name check and the module's item record, so a name is
+   checked before the value is even built; `src_fn_symbols` is appended to only after.
+   `ImplRegistry.registering(impl)` checks coherence and conflicts, the block builds the
+   method symbols and runs `check_complete`, and the impl is registered on exit, re-checked
+   first if another impl was registered meanwhile (the registry counts its impls). Then append its
    methods. Record comptime parameters against their owning item (`Ctx.record_comptime_param`
    gains an owner) and add `Ctx.discard_comptime_params(owner)` for rejected items. Wrap
    each item in `try/except (diag.ReportedError, errors.UserError)`: report a legacy error with
@@ -183,10 +194,10 @@ changes, apart from no longer expecting the unused `panic` declaration.
    (one error); an impl missing a method followed by a call to one of its other methods and
    by a second, overlapping impl (the first impl's error only, then the second impl is
    accepted); a rejected generic item leaves no comptime parameter to validate.
-5. **Recovery loop.** `ModLoader.check_declarations` and `Mod.check_declarations` force each
-   unit inside `try/except diag.ReportedError: continue`; `driver.compile_to_ir` calls
-   `designate_entry` (now a unit) inside the same loop. Parse errors still propagate, and
-   `compile_to_ir` catches them as the design describes.
+5. **Recovery loop.** `ModLoader.check_declarations` and `Mod.check_declarations` run each
+   check in a `with ctx.recovering():` block, and `driver.compile_to_ir` runs `designate_entry` the same
+   way. A parse error in the root module propagates, and `compile_to_ir` reports and raises
+   it; one in an imported module rejects the `import` item.
 6. **Sorted output.** Add `Diags.sorted()` with the design's key and `Diags.merge`; the
    loader calls `diags.note_file(path)` in `ModLoader.load` *before* parsing.
    `Compilation.diags` and `BuildResult.diags` are sorted. Test a multi-module build where a
@@ -197,8 +208,9 @@ changes, apart from no longer expecting the unused `panic` declaration.
    any test whose program now has a different first error.
 8. **ICE rendering.** `driver.main` and `cli.main` wrap the compilation: on a non-`ReportedError`
    exception, render the collected diagnostics, print the `internal compiler error` banner
-   and note, then re-raise. `compile_module` attaches the partial sink to the exception
-   (`err.add_note`/an attribute) so the CLI can reach it.
+   and note, then re-raise. The CLIs own the sink: `compile_module`, `build.check` and
+   `build.build` accept a caller-owned `diags`, and `build` merges each module's sink even
+   when its compilation crashes, so the CLI can render what was found.
 9. **Tests** (`tests/test_recovery.py`): independent errors in two functions are both
    reported in source order; a broken struct used by three functions reports once; a broken
    function signature used by several callers reports once; a variable initializer error and
@@ -210,6 +222,41 @@ changes, apart from no longer expecting the unused `panic` declaration.
 **Acceptance:** independent errors in separate function bodies and declarations are all
 reported once each, in sorted order; no unit's error is reported twice; #20's two-variable
 example still reports one error (that is #116).
+
+## Task 2b (#56): Intern declaration-derived types per compilation
+
+Numbered 2b so the task numbers cited in issues stay valid. #56's body holds the full scope;
+in brief, `Typ`s split by whether their identity depends on a source declaration:
+
+- **Structural** types (`IntTyp`, `BoolTyp`, `VoidTyp`, `NeverTyp`, `PtrTyp`, `ArrayTyp`,
+  `FnTyp`, `ComptimeValueTyp`, `EnumBackingTyp`, `ARRAY_TEMPLATE` and its own parameters)
+  stay interned process-wide. Compound ones can't alias across compilations, because their
+  keys hold their components' identities.
+- **Declaration-derived** types are interned per compilation: `StructTyp` and `UnionTyp`
+  already are; source-declared `TypParamTyp`/`ValueParamTyp` move to a `Ctx` cache keyed by
+  `(owner, index)`; `EnumTyp` is constructed directly when its module is built.
+
+**Files:** `typs.py`, `compilation.py`, `ir_module.py` (enum construction), `ir_builtins.py`
+or `ir_module.IntrinsicFnSymbol` (intrinsic parameters); tests in `test_typs.py`,
+`test_compilation.py`, `test_enums.py`.
+
+- Add `Ctx.intern_comptime_param(cls, owner, index, ...)` and use it from
+  `typs.comptime_params_from_ast` and for intrinsics' parameters. `ARRAY_TEMPLATE`'s
+  parameters keep `get_or_create`.
+- Build `EnumTyp` with its constructor in `Mod._build_defn`; drop `EnumTyp.create`'s
+  `Typ._cache` registration and `cache_key`.
+- Convert `ValueParamTyp.value_typ` and `ComptimeParamTyp.check_declaration` (as a unit
+  property such as `checked_declaration`) to units through `Ctx.unit`; give
+  `ComptimeParamTyp` a `ctx`. `ModLoader.check_declarations` forces the unit through
+  `Ctx.recovering`. Remove the spec's temporary exception for comptime parameter objects.
+- Document the interning rule in `Typ`'s docstring.
+- Tests: two live `Ctx`s loading the same bundled generic declaration get distinct
+  parameters whose environments belong to their own compilation; two `Ctx`s sharing one
+  `EnumDefn` both build without asserting (#56's reproducer); a failing comptime
+  parameter check is reported once and memoized; structural types and the module-level
+  constants are unchanged.
+
+**Acceptance:** #56's criteria.
 
 ## Task 3 (#113): Report every user error before code generation
 
@@ -304,7 +351,7 @@ tests assert full ordered kind lists; documentation fences use names.
 - `Diags.transaction()` buffers diagnostics emitted while the *current unit frame* is on top
   of `ctx.unit_stack`; diagnostics from frames pushed later (other units forced by the
   probe) bypass the buffer. Each proof records the transaction it was issued in; once
-  that transaction closes uncommitted the proof is void, and `analysis_unit` failure
+  that transaction closes uncommitted the proof is void, and `Ctx.unit` failure
   memoization, a `ReportedError` caught outside the transaction, and (after #116) recorded facts
   and the sink's poison suppression assert they never see a void proof. `txn.commit()`
   records the buffered diagnostics with their existing proofs (as `Diags.merge` does), so

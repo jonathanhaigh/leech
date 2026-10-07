@@ -5,10 +5,11 @@
 """Module/program structure: functions, module-level variables, and modules."""
 
 import abc
+import contextlib
 import dataclasses
 import functools
-from collections.abc import Collection, Mapping
-from typing import Final, Optional, override
+from collections.abc import Collection, Iterator, Mapping
+from typing import Final, Optional, cast, override
 
 from leech import (
     asserts,
@@ -16,6 +17,7 @@ from leech import (
     check_results,
     compilation,
     comptime,
+    diag,
     errors,
     ir_builder,
     ir_env,
@@ -70,7 +72,13 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
         """The source location of this declaration, if it has one."""
         return opt_util.opt_map(self.ast, lambda node: node.span)
 
-    @functools.cached_property
+    @property
+    @abc.abstractmethod
+    def ctx(self) -> compilation.Ctx:
+        """The compilation this declaration belongs to."""
+
+    @property
+    @compilation.unit
     def params(self) -> tuple[ir_values.Param, ...]:
         """This function's formal parameters, in declaration order."""
         return self.calculate_params()
@@ -89,7 +97,8 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
     def fn_typ(self) -> typs.FnTyp:
         """This declaration's function signature."""
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def ptr_typ(self) -> typs.PtrTyp:
         """A const function-pointer type for this declaration's signature."""
         return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
@@ -194,11 +203,13 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
 
     @property
     @override
-    def fn_typ(self) -> typs.FnTyp:
-        return self._fn_typ
+    def ctx(self) -> compilation.Ctx:
+        return self.env.ctx
 
-    @functools.cached_property
-    def _fn_typ(self) -> typs.FnTyp:
+    @property
+    @override
+    @compilation.unit
+    def fn_typ(self) -> typs.FnTyp:
         assert self.ast is not None
         if self.ast.ret_typ is None:
             ret_typ = typs.VOID
@@ -310,22 +321,16 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
         return self.env.ctx.instantiate_fn(self, args)
 
     @property
+    @compilation.unit
     def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
         """This function's interned comptime parameters in declaration order."""
-        return self._comptime_params
-
-    @functools.cached_property
-    def _comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
         fn_ast = opt_util.opt_unwrap(self.ast)
         return typs.comptime_params_from_ast(fn_ast, fn_ast.comptime_params, self.env)
 
     @property
+    @compilation.unit
     def typ_check_results(self) -> check_results.TypCheckResults:
         """The unsubstituted lowering facts shared by all instances."""
-        return self._typ_check_results
-
-    @functools.cached_property
-    def _typ_check_results(self) -> check_results.TypCheckResults:
         return typcheck.TypCheck().check_fn(
             opt_util.opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
         )
@@ -420,19 +425,26 @@ class FnInstance:
             return None
         return self._fn.impl.self_typ.substitute_typ_params(self._mapping)
 
-    @functools.cached_property
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._fn.ctx
+
+    @property
+    @compilation.unit
     def fn_typ(self) -> typs.FnTyp:
         """This instance's concrete function signature."""
         return asserts.checked_cast(
             self._fn.fn_typ.substitute_typ_params(self._mapping), typs.FnTyp
         )
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def ptr_typ(self) -> typs.PtrTyp:
         """This instance's concrete function-pointer type."""
         return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def params(self) -> tuple[ir_values.Param, ...]:
         """This instance's concrete formal parameters."""
         return tuple(ir_values.Param(self, param.pos, param.ast) for param in self._fn.params)
@@ -522,7 +534,8 @@ class FnInstance:
         """The unique function-address value for this instance."""
         return FnRef(self)
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def cfg(self) -> ir_values.Cfg:
         """This instance's body, lowered to a control-flow graph. Built
         lazily, on first access."""
@@ -564,6 +577,11 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
         self._fn_name = name
         self._typ_param_names = typ_param_names
         self.env = e.new_child()
+
+    @property
+    @override
+    def ctx(self) -> compilation.Ctx:
+        return self.env.ctx
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         assert len(args) == len(self.comptime_params)
@@ -641,6 +659,10 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
         self._mut = typs.Mutability.from_ast(var_ast.let_stmt.mut)
 
     @property
+    def ctx(self) -> compilation.Ctx:
+        return self.env.ctx
+
+    @property
     def name(self) -> str:
         """This variable's name."""
         assert self.ast is not None
@@ -658,7 +680,8 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     def is_temporary(self) -> bool:
         return False
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def initializer(self) -> ir_values.ComptimeValue:
         """This variable's initial value, evaluated at compile time.
 
@@ -674,15 +697,19 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
             self,
         ) as cycle:
             if cycle is not None:
-                raise errors.CircularVarInitializerError(
-                    self.name,
-                    self.span,
-                    # The final detail repeats the first to close the cycle.
-                    [(var.name, var.span) for var in cycle.details[:-1]],
+                self.ctx.fail_cycle(
+                    cycle,
+                    errors.CircularVarInitializerError(
+                        self.name,
+                        self.span,
+                        # The final detail repeats the first to close the cycle.
+                        [(var.name, var.span) for var in cycle.details[:-1]],
+                    ),
                 )
             return comptime.Interpreter(self.cfg, (), (), self.env.ctx.builtins.panic_ref).eval()
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def typ_check_results(self) -> check_results.TypCheckResults:
         """This variable's initializer, type-checked into a side table.
 
@@ -691,7 +718,8 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
         """
         return typcheck.TypCheck().check_var_initializer(opt_util.opt_unwrap(self.ast), self.env)
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def cfg(self) -> ir_values.Cfg:
         """The initializer expression, lowered to a control-flow graph.
 
@@ -720,6 +748,8 @@ class Mod:
     #: Items in declaration order, keyed by namespace and name.
     _items: Final[dict[tuple[ir_env.Env.Namespace, str], ModItem]]
     env: Final[ir_env.Env]
+    #: The proof of the error that rejected each poisoned item, by namespace and name.
+    _poisoned: Final[dict[tuple[ir_env.Env.Namespace, str], diag.ReportProof]]
     _src_fn_symbols: tuple[SrcFnSymbol, ...]
     _entry_fn: Optional[SrcFnSymbol]
 
@@ -731,6 +761,7 @@ class Mod:
         self._name = name
         self.ast = mod_ast
         self._items = {}
+        self._poisoned = {}
         self.env = builtin_env.new_child()
         self._src_fn_symbols = ()
         self._entry_fn = None
@@ -757,24 +788,57 @@ class Mod:
         return self.env.ctx
 
     def build(self) -> None:
-        """Build definitions and impls, then eagerly check every declared body."""
+        """Build definitions, then impls.
+
+        An item rejected with an error is reported, and building continues with the next.
+        A rejected item adds nothing to the module, except that its name, unless already
+        taken, is poisoned, so uses of it report nothing more.
+        """
         impl_defns = []
         src_fn_symbols: list[SrcFnSymbol] = []
         for defn_ast in self.ast.defns:
             if isinstance(defn_ast, ast.ImplDefn):
                 impl_defns.append(defn_ast)
             else:
-                self._build_defn(defn_ast, src_fn_symbols)
+                with self._rejecting_on_error(defn_ast):
+                    self._build_defn(defn_ast, src_fn_symbols)
 
         for impl_ast in impl_defns:
-            self._build_impl_defn(impl_ast, src_fn_symbols)
+            with self._rejecting_on_error(impl_ast):
+                self._build_impl_defn(impl_ast, src_fn_symbols)
 
         self._src_fn_symbols = tuple(src_fn_symbols)
 
+    @contextlib.contextmanager
+    def _rejecting_on_error(self, defn_ast: ast.DefnKind) -> Iterator[None]:
+        """Build ``defn_ast``'s item in the block, rejecting it if the block fails.
+
+        The block must commit nothing unless it succeeds. A user error raised in it is
+        recovered from, as ``Ctx.recovering`` does, and the item is rejected: its comptime
+        parameters are discarded, and its name, unless already taken, is poisoned.
+        """
+        with self.ctx.recovering() as recovery:
+            yield
+        reported = recovery.failure
+        if reported is None:
+            return
+        self.ctx.discard_comptime_params(_comptime_param_owners(defn_ast))
+        binding = _defn_binding(defn_ast)
+        if binding is None:
+            return
+        ns, ident = binding
+        if not self.env.is_bound_here(ns, ident.name):
+            self.env.poison(ns, ident.name, reported, ident.span)
+            self._poisoned[(ns, ident.name)] = reported
+
     def check_declarations(self) -> None:
-        """Type-check every body after the complete import graph has been built."""
+        """Type-check every body after the complete import graph has been built.
+
+        An error in one body is reported, and checking continues with the next.
+        """
         for fn in self._src_fn_symbols:
-            _ = fn.typ_check_results
+            with self.ctx.recovering():
+                _ = fn.typ_check_results
 
     def designate_entry(self) -> None:
         """Make this module's ``main`` the program entry point, after validating it.
@@ -829,72 +893,67 @@ class Mod:
         return self._src_fn_symbols
 
     def get_item(self, ns: ir_env.Env.Namespace, name: str) -> Optional[ModItem]:
-        """Return the item named ``name`` in ``ns``, if declared."""
+        """Return the item named ``name`` in ``ns``, if declared.
+
+        Raises ``diag.ReportedError`` if the item's definition was rejected with an error.
+        """
+        reported = self._poisoned.get((ns, name))
+        if reported is not None:
+            raise diag.ReportedError(reported)
         return self._items.get((ns, name))
 
     def _build_defn(self, defn_ast: ast.DefnKind, src_fn_symbols: list[SrcFnSymbol]) -> None:
-        match defn_ast:
-            case ast.VarDefn():
-                self._add_item(
-                    defn_ast.let_stmt.ident.name,
-                    visibility.Access.from_ast(defn_ast.access),
-                    ModVar(defn_ast, self.env),
-                )
-            case ast.ExternFnDecl():
-                if defn_ast.receiver is not None:
-                    raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
-                self._add_item(
-                    defn_ast.name.name,
-                    visibility.PUBLIC,
-                    ExternFnSymbol(defn_ast, self.env, self.name),
-                    False,
-                )
-            case ast.FnDefn():
-                if defn_ast.receiver is not None:
-                    raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
-                fn = SrcFnSymbol(defn_ast, self.env, self.name)
-                src_fn_symbols.append(fn)
-                self._add_item(
-                    defn_ast.name.name,
-                    visibility.Access.from_ast(defn_ast.access),
-                    fn,
-                    span=defn_ast.span,
-                )
-            case ast.StructDefn():
-                template = typs.StructTypTemplate(defn_ast, self.env, self.name)
-                value = template if template.comptime_params else template.module_instance
-                self._add_item(
-                    defn_ast.ident.name,
-                    visibility.Access.from_ast(defn_ast.access),
-                    value,
-                )
-            case ast.EnumDefn():
-                self._add_item(
-                    defn_ast.ident.name,
-                    visibility.Access.from_ast(defn_ast.access),
-                    typs.EnumTyp.create(defn_ast, self.env, self.name),
-                )
-            case ast.UnionDefn():
-                template = typs.UnionTypTemplate(defn_ast, self.env, self.name)
-                value = template if template.comptime_params else template.module_instance
-                self._add_item(
-                    defn_ast.ident.name,
-                    visibility.Access.from_ast(defn_ast.access),
-                    value,
-                )
-            case ast.TraitDefn():
-                self._add_item(
-                    defn_ast.ident.name,
-                    visibility.Access.from_ast(defn_ast.access),
-                    ir_traits.Trait(defn_ast, self.env, self.name),
-                )
-            case ast.Import():
-                last_ident = defn_ast.path.segs[-1].ident
-                mod = self.ctx.loader.load(self.ctx.loader.resolve_import(defn_ast.path))
-                self._add_item(last_ident.name, visibility.PRIVATE, mod, span=last_ident.span)
-            case ast.ImplDefn():
-                # Impl blocks are handled separately.
-                raise AssertionError("impl block reached ordinary definition building")
+        ns, ident = opt_util.opt_unwrap(_defn_binding(defn_ast))
+        # An import's name is checked before its module is loaded, so a rejected import
+        # loads nothing.
+        span = ident.span if isinstance(defn_ast, ast.Import) else defn_ast.span
+        with self._binding_item(ns, ident.name, span) as item:
+            match defn_ast:
+                case ast.VarDefn():
+                    item.bind(
+                        ModVar(defn_ast, self.env), visibility.Access.from_ast(defn_ast.access)
+                    )
+                case ast.ExternFnDecl():
+                    if defn_ast.receiver is not None:
+                        raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
+                    item.bind(
+                        ExternFnSymbol(defn_ast, self.env, self.name),
+                        visibility.PUBLIC,
+                        qualify_name=False,
+                    )
+                case ast.FnDefn():
+                    if defn_ast.receiver is not None:
+                        raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
+                    item.bind(
+                        SrcFnSymbol(defn_ast, self.env, self.name),
+                        visibility.Access.from_ast(defn_ast.access),
+                    )
+                case ast.StructDefn():
+                    template = typs.StructTypTemplate(defn_ast, self.env, self.name)
+                    value = template if template.comptime_params else template.module_instance
+                    item.bind(value, visibility.Access.from_ast(defn_ast.access))
+                case ast.EnumDefn():
+                    item.bind(
+                        typs.EnumTyp.create(defn_ast, self.env, self.name),
+                        visibility.Access.from_ast(defn_ast.access),
+                    )
+                case ast.UnionDefn():
+                    template = typs.UnionTypTemplate(defn_ast, self.env, self.name)
+                    value = template if template.comptime_params else template.module_instance
+                    item.bind(value, visibility.Access.from_ast(defn_ast.access))
+                case ast.TraitDefn():
+                    item.bind(
+                        ir_traits.Trait(defn_ast, self.env, self.name),
+                        visibility.Access.from_ast(defn_ast.access),
+                    )
+                case ast.Import():
+                    mod = self.ctx.loader.load(self.ctx.loader.resolve_import(defn_ast.path))
+                    item.bind(mod, visibility.PRIVATE)
+                case ast.ImplDefn():
+                    # Impl blocks are handled separately.
+                    raise AssertionError("impl block reached ordinary definition building")
+        if isinstance(item.value, SrcFnSymbol):
+            src_fn_symbols.append(item.value)
 
     def _build_impl_defn(self, impl_ast: ast.ImplDefn, src_fn_symbols: list[SrcFnSymbol]) -> None:
         # The impl's own comptime parameters, if any, are bound here - before
@@ -944,8 +1003,9 @@ class Mod:
 
         impl = ir_traits.Impl(impl_ast, None, typ, impl_comptime_params, impl_env, self.name)
         impl.check_comptime_params_constrained()
-        self.ctx.impl_registry.add_impl(impl)
-        self._build_impl_fn_symbols(impl_ast, impl, src_fn_symbols)
+        with self.ctx.impl_registry.registering(impl):
+            fns = self._build_impl_fn_symbols(impl_ast, impl)
+        src_fn_symbols.extend(fns)
 
     @staticmethod
     def _check_no_variant_name_clash(impl_ast: ast.ImplDefn, typ: typs.UnionTyp) -> None:
@@ -1006,27 +1066,26 @@ class Mod:
             trait_args=trait_application.args,
         )
         impl.check_comptime_params_constrained()
-        # Registered before building any method: two impls of the same
-        # trait for the same (or overlapping) self type would otherwise
-        # collide on method naming first (DuplicateItemDefnError), a less
-        # specific diagnostic than the coherence violation it actually is.
-        # This is also what checks the orphan rule (see
-        # `ir_traits.Impl.check_orphan_rule`).
-        self.ctx.impl_registry.add_impl(impl)
-
-        self._build_impl_fn_symbols(impl_ast, impl, src_fn_symbols)
-        impl.check_complete()
+        # Checked before building any method: two impls of the same trait
+        # for the same (or overlapping) self type would otherwise collide
+        # on method naming first (DuplicateItemDefnError), a less specific
+        # diagnostic than the coherence violation it actually is. This is
+        # also what checks the orphan rule (see
+        # `ir_traits.Impl.check_orphan_rule`). The impl is registered only
+        # once it is complete, so a rejected impl takes part in no lookup.
+        with self.ctx.impl_registry.registering(impl):
+            fns = self._build_impl_fn_symbols(impl_ast, impl)
+            impl.check_complete()
+        src_fn_symbols.extend(fns)
 
     def _build_impl_fn_symbols(
-        self,
-        impl_ast: ast.ImplDefn,
-        impl: ir_traits.Impl,
-        src_fn_symbols: list[SrcFnSymbol],
-    ) -> None:
-        """Build and register every function in an ``impl`` block.
+        self, impl_ast: ast.ImplDefn, impl: ir_traits.Impl
+    ) -> list[SrcFnSymbol]:
+        """Build every function in an ``impl`` block, returning them in order.
 
         Every built function is registered on ``impl`` and points back at it.
         """
+        fns: list[SrcFnSymbol] = []
         for fn_ast in impl_ast.fn_defns:
             # Generic associated functions/methods aren't supported yet -
             # nothing upstream rejects the syntax, so fail loudly here
@@ -1035,28 +1094,79 @@ class Mod:
             if fn_ast.comptime_params:
                 raise NotImplementedError("generic associated functions aren't supported yet")
             fn = SrcFnSymbol(fn_ast, impl.env, self.name, recv_typ=impl.self_typ, impl=impl)
-            src_fn_symbols.append(fn)
             impl.add_fn_symbol(fn)
             if impl.trait is None:
                 impl.env.add_var(fn.name, fn)
+            fns.append(fn)
+        return fns
 
-    def _add_item(
-        self,
-        name: str,
-        access: visibility.Access,
-        value: ModItemValue,
-        qualify_name: bool = True,
-        span: Optional[src.SrcSpan] = None,
-    ) -> None:
-        item = ModItem(self, name, access, value, qualify_name)
+    @contextlib.contextmanager
+    def _binding_item(
+        self, ns: ir_env.Env.Namespace, name: str, span: src.SrcSpan
+    ) -> Iterator[_PendingItem]:
+        """Check now that an item can be named ``name``, and add it after the block.
+
+        The block builds the item and passes it to the yielded ``_PendingItem``'s ``bind``.
+        If the block raises, nothing is added.
+        """
         if reserved.is_reserved(name):
-            raise errors.ReservedNameError(name, span if span is not None else ast.opt_span(value))
-        # Bind in env before recording the item: Env.add is what rejects a
-        # duplicate definition, and it has to raise before _items is
-        # written to, so that a name can never be silently rebound to a
-        # different item.
-        self.env.add(item._ns, name, value, span)
-        self._items[(item._ns, name)] = item
+            raise errors.ReservedNameError(name, span)
+        with self.env.binding(ns, name, span) as binding:
+            pending = _PendingItem(binding)
+            yield pending
+            item = ModItem(
+                self,
+                name,
+                opt_util.opt_unwrap(pending.access),
+                pending.value,
+                pending.qualify_name,
+            )
+            assert item._ns == ns, f"{name} was checked in the wrong namespace"
+        self._items[(ns, name)] = item
+
+
+@dataclasses.dataclass
+class _PendingItem:
+    """A module item being built, whose name has been checked but not yet bound.
+
+    Its value goes to ``binding``, along with the item's access and symbol qualification.
+    """
+
+    binding: ir_env.PendingBinding
+    access: Optional[visibility.Access] = None
+    qualify_name: bool = True
+
+    def bind(
+        self, value: ModItemValue, access: visibility.Access, qualify_name: bool = True
+    ) -> None:
+        self.binding.bind(value)
+        self.access = access
+        self.qualify_name = qualify_name
+
+    @property
+    def value(self) -> ModItemValue:
+        # Only bind, which takes a ModItemValue, gives the binding its value.
+        return cast(ModItemValue, self.binding.bound())
+
+
+def _comptime_param_owners(defn_ast: ast.DefnKind) -> tuple[ast.Ast, ...]:
+    if isinstance(defn_ast, ast.ImplDefn):
+        return (defn_ast, *defn_ast.fn_defns)
+    return (defn_ast,)
+
+
+def _defn_binding(defn_ast: ast.DefnKind) -> Optional[tuple[ir_env.Env.Namespace, ast.Ident]]:
+    match defn_ast:
+        case ast.VarDefn():
+            return ir_env.Env.Namespace.VARS, defn_ast.let_stmt.ident
+        case ast.ExternFnDecl() | ast.FnDefn():
+            return ir_env.Env.Namespace.VARS, defn_ast.name
+        case ast.StructDefn() | ast.EnumDefn() | ast.UnionDefn() | ast.TraitDefn():
+            return ir_env.Env.Namespace.CONTAINERS, defn_ast.ident
+        case ast.Import():
+            return ir_env.Env.Namespace.CONTAINERS, defn_ast.path.segs[-1].ident
+        case ast.ImplDefn():
+            return None
 
 
 type ModItemValue = (

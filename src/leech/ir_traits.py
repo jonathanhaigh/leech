@@ -4,6 +4,7 @@
 
 """Trait declarations and their implementations."""
 
+import contextlib
 import dataclasses
 import functools
 from collections.abc import Collection, Hashable, Iterator, Mapping
@@ -359,31 +360,51 @@ class ImplRegistry:
     #: ``_impls`` so ``_find_trait_impls_for_typ`` doesn't have to scan
     #: every trait/shape pair ever registered in the program.
     _traits_by_shape: Final[dict[Hashable, list[Trait]]]
+    #: The number of impls registered. A change during ``registering``'s block means its
+    #: check may have gone stale.
+    _impl_count: int
 
     def __init__(self, ctx: compilation.Ctx) -> None:
         self.ctx = ctx
         self._impls = {}
         self._traits_by_shape = {}
+        self._impl_count = 0
 
-    def add_impl(self, impl: Impl) -> None:
-        """Register ``impl``, rejecting it if it's incoherent or conflicts with one
-        already registered.
+    @contextlib.contextmanager
+    def registering(self, impl: Impl) -> Iterator[None]:
+        """Check ``impl`` for coherence and conflicts now, and register it after the block.
+
+        The block finishes building ``impl``. If it raises, ``impl`` is not registered, so
+        it takes part in no lookup or conflict check. If another impl was registered during
+        the block, ``impl`` is checked again before it is registered.
         """
-        impl.check_orphan_rule()
+        self._check_new_impl(impl)
+        impl_count = self._impl_count
+        yield
+        if self._impl_count != impl_count:
+            self._check_new_impl(impl)
+        self._register(impl)
+
+    def _register(self, impl: Impl) -> None:
+        self._impl_count += 1
         shape = _head_shape(impl.self_typ)
         key = (impl.trait, shape)
         impls = self._impls.get(key)
         if impls is None:
             impls = []
-        if impl.trait is not None:
-            self._check_trait_impl_conflicts(impl)
-        else:
-            self._check_inherent_impl_conflicts(impl, impls)
         if key not in self._impls:
             self._impls[key] = impls
             if impl.trait is not None:
                 self._traits_by_shape.setdefault(shape, []).append(impl.trait)
         impls.append(impl)
+
+    def _check_new_impl(self, impl: Impl) -> None:
+        impl.check_orphan_rule()
+        if impl.trait is not None:
+            self._check_trait_impl_conflicts(impl)
+        else:
+            key = (impl.trait, _head_shape(impl.self_typ))
+            self._check_inherent_impl_conflicts(impl, self._impls.get(key, ()))
 
     def _iter_trait_impl_conflict_candidates(self, trait_impl: Impl) -> Iterator[Impl]:
         trait = trait_impl.trait
@@ -481,7 +502,7 @@ class ImplRegistry:
         the program ill-formed: ``Box[bool]`` simply doesn't implement
         ``Show`` when only ``impl[T: Show] Show for Box[T]`` provides it.
         Two impls distinguished only by their bounds still conflict,
-        though, so this gates selection and not ``add_impl``'s
+        though, so this gates selection and not ``registering``'s
         coherence checks.
 
         This holds for an abstract type as much as a concrete one, by way
@@ -509,11 +530,14 @@ class ImplRegistry:
                     )
                     for cycle_impl, _ in cycle.details[:-1]
                 ]
-                raise errors.RecursiveImplSelectionError(
-                    trait.name,
-                    repeated_self_typ.name,
-                    repeated_impl.span,
-                    hops,
+                self.ctx.fail_cycle(
+                    cycle,
+                    errors.RecursiveImplSelectionError(
+                        trait.name,
+                        repeated_self_typ.name,
+                        repeated_impl.span,
+                        hops,
+                    ),
                 )
             return typs.unsatisfied_bound(bindings, impl.env) is None
 
@@ -539,7 +563,7 @@ class ImplRegistry:
             if fn is not None:
                 matches.append(fn)
         # If two matches applied to this concrete type, their impl self types
-        # would overlap. add_impl rejects overlapping inherent impls that
+        # would overlap. registering rejects overlapping inherent impls that
         # declare the same name, so registry coherence guarantees uniqueness.
         assert len(matches) <= 1
         if not matches:

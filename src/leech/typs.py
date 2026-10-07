@@ -194,10 +194,13 @@ def unsatisfied_bound(
                         entries = [
                             (entry.path.str(), entry.path.span) for entry in cycle.details[:-1]
                         ]
-                        raise errors.RecursiveTraitBoundError(
-                            repeated_bound.path.str(),
-                            repeated_bound.path.span,
-                            entries,
+                        e.ctx.fail_cycle(
+                            cycle,
+                            errors.RecursiveTraitBoundError(
+                                repeated_bound.path.str(),
+                                repeated_bound.path.span,
+                                entries,
+                            ),
                         )
                     application = sub_env.resolve_trait(bound.path)
             else:
@@ -667,6 +670,11 @@ class ComptimeParamTyp(Typ):
         self._index = index
         self._name = name
 
+    @property
+    def owner(self) -> Hashable:
+        """The item declaring this parameter."""
+        return self._owner
+
     @abc.abstractmethod
     def check_declaration(self) -> None:
         """Resolve and validate what this parameter's declaration names.
@@ -931,17 +939,24 @@ class StructField:
         """The field's name."""
         return self.ast.ident.name
 
-    @functools.cached_property
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._env.ctx
+
+    @property
+    @compilation.unit
     def typ(self) -> TypKind:
         """The field's type."""
         return Typ.from_ast(self.ast.typ, self._env)
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def access(self) -> visibility.Access:
         """Whether the field is public or private."""
         return visibility.Access.from_ast(self.ast.access)
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def mut(self) -> Mutability:
         """Whether the field may be written through a mut pointer to the struct.
 
@@ -1134,7 +1149,12 @@ class StructTyp(Typ):
         arg_names = ", ".join(typ_arg.name for typ_arg in self.comptime_args)
         return f"{self.template.name}[{arg_names}]"
 
-    @functools.cached_property
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._env.ctx
+
+    @property
+    @compilation.unit
     def fields(self) -> types.MappingProxyType[str, StructField]:
         """Return fields by declaration order after rejecting infinite-size layouts."""
         _check_layout_finite(self, None, None)
@@ -1194,7 +1214,12 @@ class UnionVariantTemplate:
         """How many payload values the variant carries."""
         return len(self.ast.payload_typs)
 
-    @functools.cached_property
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._param_env.ctx
+
+    @property
+    @compilation.unit
     def payload_typs(self) -> tuple[TypKind, ...]:
         """The payload types over the declaration's own comptime parameters."""
         return tuple(Typ.from_ast(typ_ast, self._param_env) for typ_ast in self.ast.payload_typs)
@@ -1236,7 +1261,12 @@ class UnionVariant:
         """How many payload values the variant carries."""
         return self.template.arity
 
-    @functools.cached_property
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._env.ctx
+
+    @property
+    @compilation.unit
     def payload_typs(self) -> tuple[TypKind, ...]:
         """The variant's payload types, substituted for this instance's arguments."""
         return tuple(Typ.from_ast(typ_ast, self._env) for typ_ast in self.ast.payload_typs)
@@ -1399,7 +1429,12 @@ class UnionTyp(Typ):
             ):
                 declared_arg.infer_typ_args(actual_arg, bindings)
 
-    @functools.cached_property
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._env.ctx
+
+    @property
+    @compilation.unit
     def variants(self) -> tuple[UnionVariant, ...]:
         """Return variants by declaration order after rejecting infinite-size layouts."""
         _check_layout_finite(self, None, None)
@@ -1409,7 +1444,8 @@ class UnionTyp(Typ):
         """Return the variant at declaration-order ``index``."""
         return self.variants[index]
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def tag_typ(self) -> IntTyp:
         """The smallest unsigned builtin integer type holding every variant's tag.
 
@@ -1508,7 +1544,12 @@ class EnumTyp(Typ):
     def qualified_name(self) -> str:
         return f"{self.mod_name}::{self.name}"
 
-    @functools.cached_property
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._env.ctx
+
+    @property
+    @compilation.unit
     def variants(self) -> types.MappingProxyType[str, int]:
         """This enum's variants, keyed by name, in declaration order, each
         mapped to its discriminant value - the previous variant's value
@@ -1533,7 +1574,8 @@ class EnumTyp(Typ):
             next_value = value + 1
         return result.items().mapping
 
-    @functools.cached_property
+    @property
+    @compilation.unit
     def backing_typ(self) -> IntTyp:
         """This enum's backing integer type: explicit, or the smallest
         unsigned builtin integer type fitting every discriminant.
@@ -1712,11 +1754,14 @@ def _check_layout_finite(
             for _, hop in cycle.details[1:]:
                 assert hop is not None, "only the root layout frame may omit its incoming hop"
                 hops.append(hop)
-            raise errors.InfiniteSizeTypError(
-                repeated._LAYOUT_KIND,
-                _layout_display_name(repeated, repeated_hop, root_name),
-                repeated.span,
-                hops,
+            typ._env.ctx.fail_cycle(
+                cycle,
+                errors.InfiniteSizeTypError(
+                    repeated._LAYOUT_KIND,
+                    _layout_display_name(repeated, repeated_hop, root_name),
+                    repeated.span,
+                    hops,
+                ),
             )
 
         container_name = _layout_display_name(typ, incoming_hop, root_name)

@@ -117,10 +117,12 @@ Goals:
 
 Non-goals:
 
-- **Parse-error recovery.** A parse error still ends the compilation, and Lark's LALR
-  error recovery is not used. Diagnostics found before the parse error are still printed.
-  Reporting parse errors from several modules, or several per module, is a possible future
-  issue (see [Future work](#future-work)).
+- **Parse-error recovery within a file.** A parse error in the root module still ends the
+  compilation, and Lark's LALR error recovery is not used, so a file reports at most one
+  parse error. A parse error in an imported module rejects that `import` item like any other
+  item error (see [Analysis units](#analysis-units-and-memoized-failure)), so the rest of the
+  program is still checked. Several parse errors per file are a possible future issue (see
+  [Future work](#future-work)).
 - **Fix-it suggestions** (rustc `help:` with replacement code, Clang fix-its). The `Diag`
   model leaves room for them, but this plan neither renders nor applies them.
 - **Translation.** The catalogue keeps all message text in one place, which would make it
@@ -440,7 +442,7 @@ rustc's `TyCtxt` model but grouped so it doesn't become one flat bag of everythi
 
 This matters to the diagnostics work because every analysis unit (#114) needs its `Ctx`, so
 that it can push unit frames, open transactions and report diagnostics. With one root reached through
-`env.ctx`, the `HasCtx` protocol is a single property on each owner. Landing #122 between #93
+`env.ctx`, reaching it is a single `ctx` property on each owner. Landing #122 between #93
 and #114 avoids rewiring those paths twice.
 
 ### Speculative checking: transactions
@@ -488,42 +490,78 @@ warning is discarded), at both probe sites.
 
 An *analysis unit* is a lazily computed declaration property that can report user errors.
 Each unit is computed at most once per compilation, and its outcome is cached as either a
-value or `Failed(reported)`. Forcing a failed unit again raises `ReportedError(reported)` without
+value or the proof of the error it failed with. Forcing a failed unit again raises `ReportedError(reported)` without
 reporting anything, which is Zig's transitive failure.
 
-A decorator in `compilation.py`, `@compilation.analysis_unit`, replaces
-`functools.cached_property` for these properties. It is a *data* descriptor (it defines
-`__set__`, which rejects assignment), and it stores `_Ok(value)` or `_Failed(reported)` in the
-instance under a private key (`_unit_<name>`). Every access goes through the descriptor,
-so a memoized failure is re-raised, never returned. Its owner must implement
-`compilation.HasCtx`, a protocol with a `ctx` property. The owners that lack one today gain
-it: `FnInstance` (through `_fn`), `StructField` (through `_env`), `ComptimeParamTyp` and
-`GenericTypTemplate` (through `_decl_env`), the nominal types (through their template),
-`ModVar`, `Trait` and `Impl` (through their environment). `FnSymbol` reaches its `ctx`
-through `env.ctx`, and `ImplRegistry` already has one. When it computes a unit, the
-descriptor:
+Each unit is a property whose method is decorated with `@compilation.unit`, which asks its
+compilation for the result, computing it with the method the first time:
 
-- pushes a unit frame on `Ctx.unit_stack` (transactions and cycle detection use the stack);
-- catches `ReportedError` and memoizes `Failed(reported)`, without emitting anything, because the
+```python
+@property
+@compilation.unit
+def fields(self) -> Mapping[str, StructField]:
+    _check_layout_finite(self, None, None)
+    return types.MappingProxyType(self._fields)
+```
+
+The decorator is a plain function wrapper (`functools.wraps`), not a descriptor: it calls
+`owner.ctx.unit(owner, method.__name__, ...)`, so the unit is named after the method. Its
+owner must satisfy `compilation.HasCtx`, a protocol with a `ctx` property.
+
+`Ctx.unit(owner, name, compute)` keeps every unit's outcome, a `compilation.UnitResult`, in a
+memo on the `Ctx`, keyed by a `UnitId`: the owner, compared by identity, and the unit's
+name. A `UnitResult` holds either the value or the proof of the error, and owns the handling
+of both: `UnitResult.capture(ctx, step)` runs a step and turns a user error into a
+result, `get()` returns the value or raises `ReportedError`, and `failure` gives the proof.
+User errors are caught in one place, the context manager `Ctx.recovering()`: it reports a
+legacy `UserError` or passes on a `ReportedError`, suppresses it, and yields a `Recovery`
+whose `failure` holds the proof once the block has ended. `capture` is built on it, and so
+is every recovery point that isn't a unit: the declaration-checking loops, the entry point,
+and building each item (`Mod._rejecting_on_error`). Keeping the memo on the compilation rather than on the object needs no descriptor, and
+gives an object reached from several compilations a separate result in each. Each owner
+reaches its compilation through a `ctx` property: `FnSymbol` (through `env`), `FnInstance`
+(through its symbol), `ModVar`, `StructField`, `StructTyp`, `UnionVariantTemplate`,
+`UnionVariant`, `UnionTyp` and `EnumTyp`. When it computes a unit, `Ctx.unit`:
+
+- pushes a unit frame on `Ctx.unit_stack` (transactions use the stack);
+- catches `ReportedError` and memoizes the failure, without emitting anything, because the
   diagnostic was already reported;
 - while legacy `UserError` raise sites remain, also catches `UserError`, emits it, and
-  memoizes `Failed`;
+  memoizes the failure;
 - lets every other exception propagate, since those are internal errors.
 
-The units, which cover every cached property that can report a user error today:
+The units cover every lazily computed property, on an object belonging to one compilation,
+that can report a user error:
 
-| Unit | Current property |
+| Unit | Property |
 | --- | --- |
-| Comptime parameter declaration | `ComptimeParamTyp.check_declaration`, `ValueParamTyp.value_typ` |
-| Function signature | `FnSymbol.params`, `ptr_typ`, `ParsedFnSymbol._fn_typ`, `SrcFnSymbol._comptime_params`, `IntrinsicFnSymbol._typ_params`, `_fn_typ`, and `FnInstance.fn_typ`, `ptr_typ`, `params` |
-| Function body check | `SrcFnSymbol._typ_check_results`, `IntrinsicFnSymbol._typ_check_results` |
+| Function signature | `FnSymbol.params`, `ptr_typ`, `ParsedFnSymbol._fn_typ`, `SrcFnSymbol._comptime_params`, and `FnInstance.fn_typ`, `ptr_typ`, `params` |
+| Function body check | `SrcFnSymbol._typ_check_results` |
 | Function body lowering | `FnInstance.cfg`. It reports only warnings, and runs only after a clean check |
 | Module-variable initializer | `ModVar.typ_check_results`, `cfg`, `initializer` (and so `calculate_typ`) |
-| Struct and union declarations | `StructField.typ`, `access`, `mut`, `GenericTypTemplate.comptime_params`, `_validation_instance`, `StructTyp.fields`, union `variants` and `payload_typs`, `tag_typ` |
-| Nominal layout | infinite-size validation for each instance |
+| Struct and union declarations | `StructField.typ`, `access`, `mut`, `StructTyp.fields`, `UnionVariantTemplate.payload_typs`, `UnionVariant.payload_typs`, `UnionTyp.variants`, `tag_typ` |
 | Enum declaration | `EnumTyp.variants`, `backing_typ` |
-| Trait and impl declarations | `Trait.comptime_params`, and the `Impl` and `ImplRegistry` validation in `ir_traits` (orphan rule, unconstrained parameters, method signatures, conflicting impls) |
-| Entry point | `Mod.designate_entry` |
+
+Some lazily computed state is deliberately not a unit:
+
+- **Things computed while building an item.** Struct, union and trait comptime parameters,
+  impl validation (orphan rule, unconstrained parameters, method signatures, conflicting
+  impls) and the intrinsics' signatures are computed when the item is built, so an error
+  there rejects the item (below) rather than failing a unit.
+- **Comptime parameter objects** (`ComptimeParamTyp.check_declaration`,
+  `ValueParamTyp.value_typ`). The bundled library's AST is parsed once per process, and its
+  parameters are interned by AST node, so they are shared by every compilation in the
+  process, and each holds the environment of whichever compilation created it. A unit would
+  therefore compute against another compilation's environment, wherever its result was
+  stored. Their validation is recovered per parameter instead, and a repeated report of the same error is
+  dropped by the sink's deduplication. This exception is temporary:
+  [#56](https://github.com/jonathanhaigh/leech/issues/56) interns declaration-derived types
+  (comptime parameters and enums) per compilation, after which these become ordinary
+  units.
+- **The entry point** (`Mod.designate_entry`) runs once, recovered like any other step.
+- **Layout validation** (`validate_declaration`, infinite size) is a method rather than a
+  property. Its cycles are reported once by `fail_cycle` (below), and #113 drives it from
+  checking.
 
 Module building (`Mod.build`) reports item-level errors per item, such as duplicate
 definitions, reserved names and invalid impl targets. Building is **staged, then
@@ -536,25 +574,50 @@ and environment. A rejected item commits nothing. Specifically:
 
 - a function, variable, struct, union, enum or trait whose name is valid but already taken
   is dropped. The first definition is kept, and the duplicate's body is never checked;
-- an item with an invalid name (reserved) is committed as a *poisoned item* under that name.
-  Resolving it raises `ReportedError` silently, or yields poison after #116, so later uses don't
-  report "not found". Its body is not checked;
+- any other rejected item with a name, whether the name is reserved or the item is rejected
+  for another reason (such as a receiver outside an impl), is committed as a *poisoned item*
+  under that name. Resolving it raises `ReportedError` silently, or yields poison after
+  #116, so later uses don't report "not found". Its body is not checked. A rejected item
+  still claims its name: a later definition of the same name is reported as a duplicate,
+  since the source really does define the name twice;
 - an impl is registered in `ImplRegistry` only after its methods, signature matching and
   completeness all succeed. A rejected impl takes part in no lookup or conflict check;
 - comptime parameters are recorded under their owning item, and `Ctx` discards them if the
   item is rejected.
 
-Parse errors stay fatal.
+Each of these pairs a check with a later commit, and the commit must not happen without the
+check. Rather than separate "check" and "add" methods whose ordering is a documented
+precondition, the pair is a context manager that checks on entry and commits only if its
+block succeeds, so the commit cannot be reached without the check:
 
-Cycle detection (`Ctx.detect_cycle`) reports a cycle once, at the recurrence. When a cycle
-frame is pushed, it records the depth of `Ctx.unit_stack`. When a recurrence is found, every
-unit frame pushed since the depth recorded by the cycle's first participant is memoized as
-failed, with the cycle's proof. Those frames are exactly the computations that
-transitively need the cyclic value, so none of them can complete. Units below that depth
-did not start the cycle, so they get `ReportedError` like any dependent of a failed unit. They
-memoize their own failure only if they cannot continue, and with poison they often can.
-Re-entering the cycle later from another unit reaches a memoized failure and reports
-nothing.
+```python
+with self.ctx.impl_registry.registering(impl):   # coherence and conflicts checked now
+    fns = self._build_impl_fn_symbols(impl_ast, impl)
+    impl.check_complete()
+# registered here, only if the block succeeded
+```
+
+`ImplRegistry.registering(impl)` checks on entry and registers on a clean exit. Its check is
+relative to the registry's state, so if another impl was registered during the block (the
+registry counts its impls), it checks again before registering.
+`Env.binding(ns, name, span)` likewise checks that a name can be bound in a scope on entry,
+and binds the value that the block passes to the yielded `bind` on a clean exit.
+`Mod._binding_item` builds on it, adding the reserved-name check and the module's item
+record. Checking first is also what lets a rejected `import` skip loading its module.
+
+An `import` item is rejected like any other, including for a parse error in the module it
+imports, so its name is poisoned and the rest of the program is still checked. A parse
+error in the root module ends the compilation.
+
+A cycle is found once from each participant it is entered from: checking trait `A`'s
+bounds finds `A → B → A`, and checking `B`'s finds `B → A → B`. The two diagnostics differ,
+because each starts from a different participant, so deduplication alone would report the
+cycle twice. Every cycle is therefore reported through `Ctx.fail_cycle(cycle, err)`.
+`detect_cycle` gives each cycle a key made of its domain and its set of participants, the
+same whichever participant it was entered from. `fail_cycle` reports the first error for a
+key, and raises `ReportedError` with that error's proof for every later detection. Every
+unit on the cycle's stack unwinds with `ReportedError` and memoizes its failure, so
+re-entering the cycle later from another unit reports nothing either.
 
 ### Poison and expression-level recovery
 
@@ -900,7 +963,7 @@ Existing issues were rescoped, and #114–#122 filed, as follows.
 | --- | --- | --- | --- |
 | #93 (rescoped) | Move accumulated diagnostics into per-compilation state | `diag.Diags` sink holding legacy `UserError`s, `ReportProof`, `ReportedError`, ownership through `Ctx`, structural deduplication (absorbing `build._Diags`). Remove globals and `isolated_diags`. The first error still escapes `compile_to_ir` as today | — |
 | #122 | Make `compilation.Ctx` the root of a compilation's state | `Ctx` owns `diags`, the `ModLoader`, the `ImplRegistry` and a `Builtins` group (intrinsics, `panic_ref`). `Env` keeps only `ctx`. Prelude loaded explicitly or lazily. No behaviour change | — (best after #93, before #114) |
-| #114 | Recover from errors at analysis-unit boundaries | `HasCtx` and `@compilation.analysis_unit`, memoized `Failed`, staged `Mod.build` with poisoned items, cycle memoization, entry point in the recovery loop, sorted output with `note_file` and `Diags.merge`, ICE rendering. Until #115, `compile_to_ir` re-raises the first sorted error | #93 |
+| #114 | Recover from errors at analysis-unit boundaries | `Ctx.unit` with a per-compilation memo, memoized `Failed`, staged `Mod.build` with poisoned items, cycle memoization, entry point in the recovery loop, sorted output with `note_file` and `Diags.merge`, ICE rendering. Until #115, `compile_to_ir` re-raises the first sorted error | #93 |
 | #113 | Report every user error before code generation | Force every declaration unit in checking. Discovery is part of checking, with per-request recovery. Phase boundary. `leech check` without codegen. `LlvmVerificationError` becomes `diag.InternalError` | #93 (best after #114) |
 | #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationFailed`, message-style normalization, `DiagArg` on types and AST, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
 | #72 + #73 | Speculative-probe diagnostics | Sink transactions tied to unit frames. A shared probe helper for function calls and union-variant constructors. Probe failures contribute no inference | #93, #114 |
@@ -939,8 +1002,8 @@ flowchart LR
 
 ## Future work
 
-- **Parse-error recovery:** continue loading other modules after one fails to parse, and
-  possibly use Lark's interactive LALR parser to resynchronize at `;` and `}`.
+- **Parse-error recovery within a file:** use Lark's interactive LALR parser to
+  resynchronize at `;` and `}`, so one file can report several parse errors.
 - **Fix-it suggestions** in the `Diag` model, the renderers, and SARIF `fixes`.
 - **Per-result diagnostics** for incremental compilation (#105).
 - **Specific message improvements** such as #42 and #51, which become catalogue edits.

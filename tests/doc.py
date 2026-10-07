@@ -210,8 +210,9 @@ class DocCase:
             raise AssertionError(
                 f"error message does not contain {self.diag_excerpt!r}: {err.message.message!r}"
             ) from err
-        if emitted:
-            raise AssertionError(f"unexpected emitted diagnostics: {emitted!r}") from err
+        unexpected = tuple(other for other in emitted if other is not err)
+        if unexpected:
+            raise AssertionError(f"unexpected emitted diagnostics: {unexpected!r}") from err
 
 
 @dataclasses.dataclass(frozen=True)

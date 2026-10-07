@@ -5,6 +5,7 @@
 """Per-compilation collection of diagnostics, and proof that an error was reported."""
 
 import enum
+import pathlib
 from collections.abc import Hashable
 from typing import TYPE_CHECKING, Final, Optional
 
@@ -67,11 +68,21 @@ class Diags:
     #: Each distinct diagnostic's key, mapped to its proof if it is an error.
     _seen: Final[dict[Hashable, Optional[ReportProof]]]
     _first_error: Optional[ReportProof]
+    #: Each noted source file's position in file order, by resolved path.
+    _file_ranks: Final[dict[pathlib.Path, int]]
 
     def __init__(self) -> None:
         self._diags = []
         self._seen = {}
         self._first_error = None
+        self._file_ranks = {}
+
+    def note_file(self, path: pathlib.Path) -> None:
+        """Put ``path`` next in file order, unless it is already there.
+
+        ``sorted`` orders diagnostics by their files' places in this order.
+        """
+        self._file_ranks.setdefault(path.resolve(), len(self._file_ranks))
 
     def error(self, err: errors.UserError) -> ReportProof:
         """Record the error ``err`` unless it duplicates an earlier diagnostic.
@@ -111,13 +122,34 @@ class Diags:
         """Record each of ``other``'s diagnostics in its emission order, with its proof.
 
         A diagnostic that duplicates one already recorded keeps the earlier one's proof.
+        Files in ``other``'s file order that this one hasn't noted follow, in that order.
         """
+        for path in other._file_ranks:
+            self.note_file(path)
         for err in other._diags:
             self._record(err, other._seen[_key(err)])
 
     def all(self) -> tuple[errors.UserError, ...]:
         """Every distinct diagnostic, in emission order."""
         return tuple(self._diags)
+
+    def sorted(self) -> tuple[errors.UserError, ...]:
+        """Every distinct diagnostic, in source order.
+
+        Diagnostics are ordered by their primary span's file in file order, then by its
+        start, and otherwise keep their emission order. Files never noted follow every
+        noted file, ordered by path, and a diagnostic without a span follows every
+        diagnostic with one.
+        """
+        return tuple(sorted(self._diags, key=self._source_order_key))
+
+    def _source_order_key(self, err: errors.UserError) -> tuple[int, int, str, int]:
+        span = err.message.span
+        if span is None:
+            return (1, 0, "", 0)
+        path = span.file.path.resolve()
+        rank = self._file_ranks.get(path, len(self._file_ranks))
+        return (0, rank, str(path), span.start)
 
     @property
     def has_errors(self) -> bool:

@@ -189,7 +189,7 @@ def test_interleaved_compilations_have_independent_diags(tmp_path):
     assert clean_diags.all() == ()
 
 
-def test_raised_error_leaves_earlier_warnings_in_the_given_diags(tmp_path):
+def test_raised_error_is_reported_after_earlier_warnings(tmp_path):
     path = tmp_path / "app.leech"
     path.write_text(
         "enum E { A }\n"
@@ -201,5 +201,8 @@ def test_raised_error_leaves_earlier_warnings_in_the_given_diags(tmp_path):
     with pytest.raises(errors.InvalidRetTypError):
         driver.compile_to_ir(leech_src.SrcFile(path), diags=diags)
 
-    assert [type(d) for d in diags.all()] == [errors.UnreachableMatchArmWarning]
-    assert not diags.has_errors
+    assert [type(d) for d in diags.all()] == [
+        errors.UnreachableMatchArmWarning,
+        errors.InvalidRetTypError,
+    ]
+    assert diags.has_errors

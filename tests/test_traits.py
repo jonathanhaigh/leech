@@ -1765,3 +1765,42 @@ def test_self_does_not_resolve_in_free_fn(compiler):
     with pytest.raises(errors.ItemNotFoundError) as exc_info:
         compiler.compile(src)
     assert '"Self"' in str(exc_info.value)
+
+
+def _show_impl_for_s(compiler) -> tuple[ir_traits.Trait, typs.StructTyp, ir_traits.Impl]:
+    mod = compiler.build(
+        """
+        trait Show { fn show(*self) i32; }
+        struct S { x: i32 }
+        impl Show for S { fn show(*self) i32 { return self.*.x; } }
+        """
+    )
+    trait = asserts.checked_cast(
+        mod.env.get(ir_env.Env.Namespace.CONTAINERS, "Show"), ir_traits.Trait
+    )
+    s = asserts.checked_cast(mod.env.get(ir_env.Env.Namespace.CONTAINERS, "S"), typs.StructTyp)
+    impl = asserts.checked_cast(mod.ctx.impl_registry.find_trait_impl(trait, s), ir_traits.Impl)
+    return trait, s, impl
+
+
+def test_registering_registers_nothing_if_the_block_raises(compiler):
+    trait, s, impl = _show_impl_for_s(compiler)
+    registry = ir_traits.ImplRegistry(impl.env.ctx)
+
+    with pytest.raises(RuntimeError), registry.registering(impl):
+        raise RuntimeError("build failed")
+
+    assert registry.find_trait_impl(trait, s) is None
+
+
+def test_registering_checks_again_if_another_impl_was_registered(compiler):
+    _, _, impl = _show_impl_for_s(compiler)
+    registry = ir_traits.ImplRegistry(impl.env.ctx)
+
+    def register_meanwhile() -> None:
+        with registry.registering(impl):
+            pass
+
+    with pytest.raises(errors.ConflictingImplsError), registry.registering(impl):
+        # Registered while the outer registration is in progress, so it conflicts.
+        register_meanwhile()

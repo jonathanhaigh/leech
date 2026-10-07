@@ -178,6 +178,7 @@ class ModLoader:
         if cached is not None:
             return cached
 
+        self.ctx.diags.note_file(key)
         name = mod_id.qualified_name
         other_file = self._files.setdefault(name, key)
         assert other_file == key, f"modules {other_file} and {key} are both named {name}"
@@ -217,7 +218,8 @@ class ModLoader:
         declared after the parameter using it.
         """
         for comptime_param in self.ctx.declared_comptime_params():
-            comptime_param.check_declaration()
+            with self.ctx.recovering():
+                comptime_param.check_declaration()
         for mod in self._mods.values():
             mod.check_declarations()
 

@@ -479,7 +479,10 @@ def test_match_non_exhaustive_with_redundant_arm_warns(compiler):
     diags = diag.Diags()
     with pytest.raises(errors.NonExhaustiveMatchError):
         compiler.compile(src, diags=diags)
-    assert [type(err) for err in diags.all()] == [errors.UnreachableMatchArmWarning]
+    assert [type(err) for err in diags.all()] == [
+        errors.UnreachableMatchArmWarning,
+        errors.NonExhaustiveMatchError,
+    ]
 
 
 def test_match_arm_typ_mismatch_error(compiler):

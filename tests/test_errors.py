@@ -650,7 +650,7 @@ def test_match_arm_typ_mismatch_message(compiler):
     msg = str(exc_info.value)
     assert '"match"' in msg
     assert "mismatching types" in msg
-    assert exc_info.value.message.span is None
+    harness.assert_span_at(exc_info.value.message.span, src, "match (true)")
 
     assert len(exc_info.value.extra) == 2
     first_note, second_note = exc_info.value.extra

@@ -4,15 +4,16 @@
 
 """Compilation-wide state for lazy requests, active semantic computations and diagnostics."""
 
+import abc
 import contextlib
 import dataclasses
 import enum
 import functools
 import operator
-from collections.abc import Callable, Collection, Iterator, Sequence
-from typing import TYPE_CHECKING, Final, Optional, cast
+from collections.abc import Callable, Collection, Hashable, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Final, NoReturn, Optional, Protocol, cast, override
 
-from leech import diag, opt_util, patterns
+from leech import diag, errors, opt_util, patterns
 
 if TYPE_CHECKING:
     from leech import ir_builtins, ir_loader, ir_module, ir_traits, typs
@@ -40,6 +41,8 @@ class Cycle[DetailT]:
     """
 
     details: tuple[DetailT, ...]
+    #: The cycle's domain and participants, whichever participant it was entered from.
+    key: Hashable
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,6 +53,89 @@ class _CycleFrame:
 
 type _InstanceCache[OwnerT, InstanceT] = dict[OwnerT, dict[tuple[typs.Typ, ...], InstanceT]]
 """Instances of ``InstanceT``, keyed by their owning ``OwnerT`` and then by argument tuple."""
+
+
+class HasCtx(Protocol):
+    """An object that belongs to one compilation."""
+
+    @property
+    @abc.abstractmethod
+    def ctx(self) -> Ctx:
+        """The compilation this object belongs to."""
+
+
+def unit[OwnerT: HasCtx, T](calculate: Callable[[OwnerT], T]) -> Callable[[OwnerT], T]:
+    """Make ``calculate`` an analysis unit of its object, computed by ``Ctx.unit``.
+
+    Stack it under ``@property``. The unit is named after ``calculate``.
+    """
+
+    @functools.wraps(calculate)
+    def wrapper(owner: OwnerT) -> T:
+        return owner.ctx.unit(owner, calculate.__name__, lambda: calculate(owner))
+
+    return wrapper
+
+
+@dataclasses.dataclass(frozen=True)
+class UnitResult[T]:
+    """The outcome of a step that may fail with a user error.
+
+    Either the step's value, or the proof that the error it failed with was reported. Make
+    one with ``capture``.
+    """
+
+    _outcome: T | diag.ReportProof
+
+    @staticmethod
+    def capture[V](ctx: Ctx, step: Callable[[], V]) -> UnitResult[V]:
+        """Run ``step``, recovering from a user error it raises as ``Ctx.recovering`` does."""
+        with ctx.recovering() as recovery:
+            value = step()
+            assert not isinstance(value, diag.ReportProof), "a step's value can't be a proof"
+            return UnitResult(value)
+        return UnitResult(opt_util.opt_unwrap(recovery.failure))
+
+    def get(self) -> T:
+        """The step's value, or raise ``diag.ReportedError`` with the failure's proof."""
+        if isinstance(self._outcome, diag.ReportProof):
+            raise diag.ReportedError(self._outcome)
+        return self._outcome
+
+    @property
+    def failure(self) -> Optional[diag.ReportProof]:
+        """The proof of the error the step failed with, or ``None`` if it succeeded."""
+        if isinstance(self._outcome, diag.ReportProof):
+            return self._outcome
+        return None
+
+
+@dataclasses.dataclass
+class Recovery:
+    """What a ``Ctx.recovering`` block failed with."""
+
+    #: The proof of the user error the block failed with, or ``None`` if it succeeded.
+    failure: Optional[diag.ReportProof] = None
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class UnitId:
+    """Identifies one analysis unit: the object it belongs to, and its name.
+
+    Two ids are equal only if they name the same unit of the same object, whatever equality
+    the owner itself defines, so distinct but equal owners never share a unit.
+    """
+
+    owner: object
+    name: str
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, UnitId) and other.owner is self.owner and other.name == self.name
+
+    @override
+    def __hash__(self) -> int:
+        return hash((id(self.owner), self.name))
 
 
 class Ctx:
@@ -71,6 +157,11 @@ class Ctx:
     _requested_union_instances: Final[list[typs.UnionTyp]]
     _union_variant_constructors: Final[dict[typs.UnionTyp, tuple[patterns.VariantConstructor, ...]]]
     _cycle_stacks: Final[dict[CycleDomain, list[_CycleFrame]]]
+    #: The analysis units being computed, outermost first.
+    unit_stack: Final[list[UnitId]]
+    _units: Final[dict[UnitId, UnitResult[Any]]]
+    #: The proof of each cycle reported so far, by ``Cycle.key``.
+    _reported_cycles: Final[dict[Hashable, diag.ReportProof]]
     #: Source-declared comptime parameters in declaration order, used as an
     #: insertion-ordered set because one declaration may be interned twice.
     _declared_comptime_params: Final[dict[typs.ComptimeParamTyp, None]]
@@ -90,6 +181,9 @@ class Ctx:
         self._requested_union_instances = []
         self._union_variant_constructors = {}
         self._cycle_stacks = {}
+        self.unit_stack = []
+        self._units = {}
+        self._reported_cycles = {}
         self._declared_comptime_params = {}
 
     @functools.cached_property
@@ -99,6 +193,62 @@ class Ctx:
         from leech import ir_builtins  # noqa: PLC0415
 
         return ir_builtins.Builtins(self)
+
+    def unit[T](self, owner: object, name: str, compute: Callable[[], T]) -> T:
+        """Return ``owner``'s analysis unit ``name``, calling ``compute`` the first time.
+
+        An analysis unit is a lazily computed property whose computation may report user
+        errors. A failure is cached too: a user error ``compute`` raises is reported once,
+        and every request, including the first, raises ``diag.ReportedError`` carrying its
+        proof. An error already reported, raised as ``diag.ReportedError``, is not reported
+        again. Any other exception propagates and is not cached.
+
+        Results are kept per compilation, so an object shared by several compilations has a
+        separate result in each.
+        """
+        unit_id = UnitId(owner, name)
+        result = self._units.get(unit_id)
+        if result is None:
+            with self._computing(unit_id):
+                result = UnitResult.capture(self, compute)
+            self._units[unit_id] = result
+        return cast(T, result.get())
+
+    @contextlib.contextmanager
+    def _computing(self, unit_id: UnitId) -> Iterator[None]:
+        self.unit_stack.append(unit_id)
+        try:
+            yield
+        finally:
+            popped = self.unit_stack.pop()
+            assert popped is unit_id, "analysis units exited out of order"
+
+    @contextlib.contextmanager
+    def recovering(self) -> Iterator[Recovery]:
+        """Recover from a user error raised in the block, which ends the block.
+
+        The error is reported unless it was already reported, as ``diag.ReportedError``,
+        and is not propagated. The yielded ``Recovery``'s ``failure`` is its proof once the
+        block has ended. Any other exception propagates.
+        """
+        recovery = Recovery()
+        try:
+            yield recovery
+        except diag.ReportedError as err:
+            recovery.failure = err.reported
+        except errors.UserError as err:
+            recovery.failure = self.diags.error(err)
+
+    def discard_comptime_params(self, owners: Collection[Hashable]) -> None:
+        """Forget the recorded comptime parameters declared by any of ``owners``.
+
+        Used when the item declaring them is rejected, so they are never validated.
+        Owners are compared by identity, since equal declarations may be distinct items.
+        """
+        owner_ids = {id(owner) for owner in owners}
+        for param in list(self._declared_comptime_params):
+            if id(param.owner) in owner_ids:
+                del self._declared_comptime_params[param]
 
     def record_comptime_param(self, param: typs.ComptimeParamTyp) -> None:
         """Record a source-declared comptime parameter for later validation.
@@ -126,14 +276,16 @@ class Ctx:
 
         ``same_identity`` compares an earlier active identity with the new one;
         equality is used by default. A caller receiving a cycle must translate it into
-        a diagnostic and raise rather than continue the guarded computation.
+        a diagnostic and pass it to ``fail_cycle`` rather than continue the guarded
+        computation.
         """
         frames = self._cycle_stacks.setdefault(domain, [])
         for index, active in enumerate(frames):
             active_identity = cast(IdentityT, active.identity)
             if same_identity(active_identity, identity):
                 details = tuple(cast(DetailT, frame.detail) for frame in frames[index:])
-                yield Cycle((*details, detail))
+                key = (domain, frozenset(frame.identity for frame in frames[index:]))
+                yield Cycle((*details, detail), key)
                 raise AssertionError("cycle was not translated into a diagnostic")
 
         frame = _CycleFrame(identity, detail)
@@ -143,6 +295,18 @@ class Ctx:
         finally:
             popped = frames.pop()
             assert popped is frame, "active computations exited out of order"
+
+    def fail_cycle[DetailT](self, cycle: Cycle[DetailT], err: errors.UserError) -> NoReturn:
+        """Report ``err`` for ``cycle``, unless the same cycle was reported already, and raise.
+
+        A cycle is found once from each participant it is entered from; it is the same cycle
+        if it has the same domain and participants, and only the first ``err`` is reported.
+        """
+        reported = self._reported_cycles.get(cycle.key)
+        if reported is None:
+            reported = self.diags.error(err)
+            self._reported_cycles[cycle.key] = reported
+        raise diag.ReportedError(reported)
 
     def instantiate_fn(
         self,

@@ -138,12 +138,16 @@ def main() -> None:
     if args.command == "doctor":
         sys.exit(0 if doctor.diagnose(sys.stdout) else 1)
     if args.command == "check":
-        diags = build.check(args.root)
+        with driver.reporting_crashes("leech") as sink:
+            diags = build.check(args.root, sink)
         renderer.display_errors(list(diags))
-        if any(diag.level >= errors.ERROR for diag in diags):
+        if sink.has_errors:
             sys.exit(1)
         sys.exit(0)
-    result = build.build(args.root, output=getattr(args, "o", None), opt_level=args.opt_level)
+    with driver.reporting_crashes("leech") as sink:
+        result = build.build(
+            args.root, output=getattr(args, "o", None), opt_level=args.opt_level, diags=sink
+        )
     renderer.display_errors(list(result.diags))
     if result.exe is None:
         sys.exit(1)

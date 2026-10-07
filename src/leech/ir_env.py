@@ -5,13 +5,17 @@
 """Scope and name resolution for variables, types and modules."""
 
 import collections
+import contextlib
+import dataclasses
 import enum
+from collections.abc import Iterator
 from typing import Final, Optional, cast
 
 from leech import (
     asserts,
     ast,
     compilation,
+    diag,
     errors,
     ir_module,
     ir_traits,
@@ -68,6 +72,27 @@ type _ContainerResult = (
 )
 
 
+@dataclasses.dataclass
+class PendingBinding:
+    """A name checked for binding by ``Env.binding``, whose value is still being built."""
+
+    value: Optional[Container | Var] = None
+
+    def bind(self, value: Container | Var) -> None:
+        assert self.value is None, "a pending binding is bound once"
+        self.value = value
+
+    def bound(self) -> Container | Var:
+        return opt_util.opt_unwrap(self.value)
+
+
+@dataclasses.dataclass(frozen=True)
+class PoisonedName:
+    """What a name is bound to when its definition was rejected with an error."""
+
+    reported: diag.ReportProof
+
+
 class Env:
     """A chained lexical scope with separate variable and container namespaces.
 
@@ -88,7 +113,7 @@ class Env:
                 case Env.Namespace.CONTAINERS:
                     return "type or module"
 
-    items: Final[collections.ChainMap[tuple[Env.Namespace, str], Container | Var]]
+    items: Final[collections.ChainMap[tuple[Env.Namespace, str], Container | Var | PoisonedName]]
     #: Explicit binding spans in this scope, parallel to ``items.maps[0]``.
     _spans: Final[dict[tuple[Env.Namespace, str], src.SrcSpan]]
     #: The compilation this scope belongs to.
@@ -104,12 +129,20 @@ class Env:
         return Env(self.ctx, self)
 
     def get(self, ns: Env.Namespace, name: str) -> Optional[Container | Var]:
-        """Look up ``name`` outward through ``ns``, creating integer types on demand."""
+        """Look up ``name`` outward through ``ns``, creating integer types on demand.
+
+        Looking up a poisoned name raises ``diag.ReportedError`` with the proof of the error
+        that rejected its definition, so a use reports nothing more.
+        """
         key = (ns, name)
         try:
-            return self.items[key]
+            item = self.items[key]
         except KeyError:
             pass
+        else:
+            if isinstance(item, PoisonedName):
+                raise diag.ReportedError(item.reported)
+            return item
 
         if ns == Env.Namespace.CONTAINERS:
             typ = typs.IntTyp.from_name(name)
@@ -128,15 +161,43 @@ class Env:
     ) -> None:
         """Bind ``name`` in this scope, using ``span`` for duplicate diagnostics."""
         key = (ns, name)
-        if key in self.items.maps[0]:
-            existing = self.items[key]
-            if span is None:
-                span = ast.opt_span(item)
-            existing_span = opt_util.opt_or_default(self._spans.get(key), ast.opt_span(existing))
-            raise errors.DuplicateItemDefnError(ns.item_kind(), name, span, existing_span)
+        self._check_can_add(ns, name, opt_util.opt_or_default(span, ast.opt_span(item)))
         self.items[key] = item
         if span is not None:
             self._spans[key] = span
+
+    @contextlib.contextmanager
+    def binding(self, ns: Env.Namespace, name: str, span: src.SrcSpan) -> Iterator[PendingBinding]:
+        """Check now that ``name`` can be bound in this scope, and bind it after the block.
+
+        The block passes the value to the yielded ``PendingBinding``'s ``bind``. If the block
+        raises, nothing is bound. The name is checked again before binding, in case it was
+        bound during the block.
+        """
+        self._check_can_add(ns, name, span)
+        pending = PendingBinding()
+        yield pending
+        self.add(ns, name, pending.bound(), span)
+
+    def _check_can_add(self, ns: Env.Namespace, name: str, span: Optional[src.SrcSpan]) -> None:
+        key = (ns, name)
+        if key in self.items.maps[0]:
+            existing_span = opt_util.opt_or_default(
+                self._spans.get(key), ast.opt_span(self.items[key])
+            )
+            raise errors.DuplicateItemDefnError(ns.item_kind(), name, span, existing_span)
+
+    def poison(
+        self, ns: Env.Namespace, name: str, reported: diag.ReportProof, span: src.SrcSpan
+    ) -> None:
+        """Bind ``name`` in this scope to a definition that was rejected for ``reported``."""
+        key = (ns, name)
+        assert key not in self.items.maps[0], f"{name} is already bound"
+        self.items[key] = PoisonedName(reported)
+        self._spans[key] = span
+
+    def is_bound_here(self, ns: Env.Namespace, name: str) -> bool:
+        return (ns, name) in self.items.maps[0]
 
     def add_var(
         self,

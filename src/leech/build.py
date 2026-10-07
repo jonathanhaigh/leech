@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from typing import Final, Optional
 
-from leech import diag, driver, errors, ll_emit, src
+from leech import diag, driver, errors, ll_emit, opt_util, src
 
 OUT_DIR_NAME: Final[str] = "leech-out"
 """The build output directory, created beside the root module."""
@@ -26,7 +26,7 @@ _CACHEDIR_TAG: Final[str] = (
 
 @dataclasses.dataclass(frozen=True)
 class BuildResult:
-    """The outcome of a build, and every distinct diagnostic it produced in order."""
+    """The outcome of a build, and every distinct diagnostic it produced in source order."""
 
     #: The absolute path of the built executable, or ``None`` if the build failed.
     exe: Optional[pathlib.Path]
@@ -51,7 +51,11 @@ def resolve_cc() -> list[str]:
 
 
 def build(
-    root: pathlib.Path, *, output: Optional[pathlib.Path] = None, opt_level: int = 0
+    root: pathlib.Path,
+    *,
+    output: Optional[pathlib.Path] = None,
+    opt_level: int = 0,
+    diags: Optional[diag.Diags] = None,
 ) -> BuildResult:
     """Build the program whose root module is ``root`` into an executable.
 
@@ -59,13 +63,16 @@ def build(
     Intermediate files go to ``leech-out/<stem>.obj/`` beside the root, and the executable
     to ``output`` or ``leech-out/<stem>``, replaced only once linking succeeds. Compilation
     stops at the first module with an error, without writing an executable.
+
+    Diagnostics are also reported to ``diags``, if given, so that a caller can still render
+    them if the build crashes.
     """
-    diags = diag.Diags()
+    diags = opt_util.opt_or_default(diags, diag.Diags())
     try:
         cc = resolve_cc()
         llvm_irs = _compile_program(root, diags)
         if llvm_irs is None:
-            return BuildResult(None, diags.all())
+            return BuildResult(None, diags.sorted())
         out_dir = root.parent / OUT_DIR_NAME
         obj_dir = out_dir / f"{root.stem}.obj"
         if output is None:
@@ -79,20 +86,21 @@ def build(
             raise errors.BuildOutputError(str(err)) from err
     except errors.UserError as err:
         diags.error(err)
-        return BuildResult(None, diags.all())
-    return BuildResult(exe, diags.all())
+        return BuildResult(None, diags.sorted())
+    return BuildResult(exe, diags.sorted())
 
 
-def check(root: pathlib.Path) -> tuple[errors.UserError, ...]:
+def check(root: pathlib.Path, diags: Optional[diag.Diags] = None) -> tuple[errors.UserError, ...]:
     """Compile the program whose root module is ``root`` as ``build`` does, writing nothing.
 
     Every module is compiled to LLVM IR, since some errors are only found while generating
     it, but nothing is optimized, emitted or linked. Returns every distinct diagnostic in
-    order; the program is valid unless one of them is an error.
+    source order; the program is valid unless one of them is an error. Diagnostics are also
+    reported to ``diags``, if given, as for ``build``.
     """
-    diags = diag.Diags()
+    diags = opt_util.opt_or_default(diags, diag.Diags())
     _compile_program(root, diags)
-    return diags.all()
+    return diags.sorted()
 
 
 def _compile_program(root: pathlib.Path, diags: diag.Diags) -> Optional[dict[str, str]]:
@@ -102,8 +110,7 @@ def _compile_program(root: pathlib.Path, diags: diag.Diags) -> Optional[dict[str
     compilations; ``diags`` keeps one of each. Returns ``None`` once a module fails, without
     compiling the rest.
     """
-    root_compilation = driver.compile_module(src.SrcFile(root), root.stem, entry=True)
-    diags.merge(root_compilation.diags)
+    root_compilation = _compile_module(src.SrcFile(root), root.stem, True, diags)
     root_mod = root_compilation.mod
     if root_mod is None or root_compilation.llvm_ir is None:
         return None
@@ -111,12 +118,22 @@ def _compile_program(root: pathlib.Path, diags: diag.Diags) -> Optional[dict[str
     for mod in root_mod.ctx.loader.mods:
         if mod is root_mod:
             continue
-        compilation = driver.compile_module(mod.ast.span.file, mod.name)
-        diags.merge(compilation.diags)
+        compilation = _compile_module(mod.ast.span.file, mod.name, False, diags)
         if compilation.llvm_ir is None:
             return None
         llvm_irs[mod.name] = compilation.llvm_ir
     return llvm_irs
+
+
+def _compile_module(
+    file: src.SrcFile, qualified_name: str, entry: bool, diags: diag.Diags
+) -> driver.Compilation:
+    """Compile one module, merging its diagnostics into ``diags`` even if it crashes."""
+    module_diags = diag.Diags()
+    try:
+        return driver.compile_module(file, qualified_name, entry, diags=module_diags)
+    finally:
+        diags.merge(module_diags)
 
 
 def _prepare_out_dir(out_dir: pathlib.Path, obj_dir: pathlib.Path) -> None:

@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_values, typs
+from leech import asserts, ast, compilation, diag, errors, ir_env, ir_module, ir_values, typs
 from tests import harness
 
 
@@ -408,7 +408,7 @@ def test_cross_module_var_cycle(compiler):
     ]
 
 
-def test_mod_var_cycle_can_be_retried_after_failure(compiler):
+def test_mod_var_cycle_failure_is_memoized_and_reported_once(compiler):
     src = """
     let b = a;
     let a = b;
@@ -421,13 +421,15 @@ def test_mod_var_cycle_can_be_retried_after_failure(compiler):
     assert item is not None
     var = asserts.checked_cast(item.value, ir_module.ModVar)
 
-    diags = []
+    proofs = []
     for _ in range(2):
-        with pytest.raises(errors.CircularVarInitializerError) as exc_info:
+        with pytest.raises(diag.ReportedError) as exc_info:
             _ = var.initializer
-        diags.append(str(exc_info.value))
+        proofs.append(exc_info.value.reported)
 
-    assert diags[0] == diags[1]
+    assert proofs[0] is proofs[1]
+    assert type(proofs[0].diag) is errors.CircularVarInitializerError
+    assert [type(d) for d in mod.ctx.diags.all()] == [errors.CircularVarInitializerError]
 
 
 def test_mod_var_diamond_dependency_is_not_a_cycle(compiler):

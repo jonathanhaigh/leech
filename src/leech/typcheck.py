@@ -268,7 +268,7 @@ class TypCheck:
 
         if then_typ != typs.NEVER and els_typ != typs.NEVER and then_typ != els_typ:
             raise errors.IfElsTypMismatchError(
-                then_typ.name, if_ast.then.span, els_typ.name, els_ast.span
+                if_ast.span, then_typ.name, if_ast.then.span, els_typ.name, els_ast.span
             )
 
         if then_typ != typs.NEVER:
@@ -317,6 +317,7 @@ class TypCheck:
                 result_span = arm_ast.body.span
             elif arm_typ != result_typ:
                 raise errors.MatchArmTypMismatchError(
+                    match_ast.span,
                     result_typ.name,
                     result_span,
                     arm_typ.name,

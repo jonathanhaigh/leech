@@ -1246,12 +1246,13 @@ class IfElsTypMismatchError(UserError):
 
     def __init__(
         self,
+        if_span: Optional[src.SrcSpan],
         then_typ: str,
         then_span: Optional[src.SrcSpan],
         els_typ: str,
         els_span: Optional[src.SrcSpan],
     ) -> None:
-        super().__init__(ERROR, '"if" and "else" have mismatching types', None)
+        super().__init__(ERROR, '"if" and "else" have mismatching types', if_span)
         self._add_extra(NOTE, f'"if" type is "{then_typ}"', then_span)
         self._add_extra(NOTE, f'"else" type is "{els_typ}"', els_span)
 
@@ -1281,12 +1282,13 @@ class MatchArmTypMismatchError(UserError):
 
     def __init__(
         self,
+        match_span: Optional[src.SrcSpan],
         first_typ: str,
         first_span: Optional[src.SrcSpan],
         second_typ: str,
         second_span: Optional[src.SrcSpan],
     ) -> None:
-        super().__init__(ERROR, '"match" arms have mismatching types', None)
+        super().__init__(ERROR, '"match" arms have mismatching types', match_span)
         self._add_extra(NOTE, f'Match arm type is "{first_typ}"', first_span)
         self._add_extra(NOTE, f'Match arm type is "{second_typ}"', second_span)
 
@@ -1700,6 +1702,21 @@ class TextErrorRenderer:
         """Render each error in order."""
         for err in errs:
             self._display_error(err)
+
+    def display_internal_error(self, errs: Sequence[UserError], err: Exception, tool: str) -> None:
+        """Render the diagnostics found before ``tool`` crashed with ``err``, then report the
+        crash as a bug in ``tool``."""
+        self.display_errors(list(errs))
+        self._display_message(
+            Message(ERROR, f"internal compiler error: {type(err).__name__}: {err}", None)
+        )
+        self._display_message(
+            Message(
+                NOTE,
+                f"this is a bug in {tool}; please report it with the program that triggered it",
+                None,
+            )
+        )
 
     def _display_error(self, err: UserError) -> None:
         self._display_message(err.message)
