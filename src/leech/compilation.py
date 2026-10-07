@@ -51,10 +51,6 @@ class _CycleFrame:
     detail: object
 
 
-type _InstanceCache[OwnerT, InstanceT] = dict[OwnerT, dict[tuple[typs.Typ, ...], InstanceT]]
-"""Instances of ``InstanceT``, keyed by their owning ``OwnerT`` and then by argument tuple."""
-
-
 class HasCtx(Protocol):
     """An object that belongs to one compilation."""
 
@@ -149,11 +145,8 @@ class Ctx:
     impl_registry: Final[ir_traits.ImplRegistry]
     loader: Final[ir_loader.ModLoader]
 
-    _fn_instances: Final[_InstanceCache[ir_module.FnSymbol, ir_module.FnInstance]]
     _requested_fn_instances: Final[list[ir_module.FnInstance]]
-    _struct_instances: Final[_InstanceCache[typs.StructTypTemplate, typs.StructTyp]]
     _requested_struct_instances: Final[list[typs.StructTyp]]
-    _union_instances: Final[_InstanceCache[typs.UnionTypTemplate, typs.UnionTyp]]
     _requested_union_instances: Final[list[typs.UnionTyp]]
     _union_variant_constructors: Final[dict[typs.UnionTyp, tuple[patterns.VariantConstructor, ...]]]
     _cycle_stacks: Final[dict[CycleDomain, list[_CycleFrame]]]
@@ -162,9 +155,8 @@ class Ctx:
     _units: Final[dict[UnitId, UnitResult[Any]]]
     #: The proof of each cycle reported so far, by ``Cycle.key``.
     _reported_cycles: Final[dict[Hashable, diag.ReportProof]]
-    #: Source-declared comptime parameters in declaration order, used as an
-    #: insertion-ordered set because one declaration may be interned twice.
-    _declared_comptime_params: Final[dict[typs.ComptimeParamTyp, None]]
+    #: Source-declared comptime parameters, in declaration order.
+    _declared_comptime_params: Final[list[typs.ComptimeParamTyp]]
 
     def __init__(self, diags: Optional[diag.Diags] = None) -> None:
         # Local because these modules import this one while their classes are initializing.
@@ -173,18 +165,15 @@ class Ctx:
         self.diags = opt_util.opt_or_default(diags, diag.Diags())
         self.impl_registry = ir_traits.ImplRegistry(self)
         self.loader = ir_loader.ModLoader(self)
-        self._fn_instances = {}
         self._requested_fn_instances = []
-        self._struct_instances = {}
         self._requested_struct_instances = []
-        self._union_instances = {}
         self._requested_union_instances = []
         self._union_variant_constructors = {}
         self._cycle_stacks = {}
         self.unit_stack = []
         self._units = {}
         self._reported_cycles = {}
-        self._declared_comptime_params = {}
+        self._declared_comptime_params = []
 
     @functools.cached_property
     def builtins(self) -> ir_builtins.Builtins:
@@ -246,9 +235,9 @@ class Ctx:
         Owners are compared by identity, since equal declarations may be distinct items.
         """
         owner_ids = {id(owner) for owner in owners}
-        for param in list(self._declared_comptime_params):
-            if id(param.owner) in owner_ids:
-                del self._declared_comptime_params[param]
+        self._declared_comptime_params[:] = [
+            param for param in self._declared_comptime_params if id(param.owner) not in owner_ids
+        ]
 
     def record_comptime_param(self, param: typs.ComptimeParamTyp) -> None:
         """Record a source-declared comptime parameter for later validation.
@@ -258,11 +247,11 @@ class Ctx:
         built from source is collected here and checked once the whole
         module graph is loaded.
         """
-        self._declared_comptime_params.setdefault(param, None)
+        self._declared_comptime_params.append(param)
 
     def declared_comptime_params(self) -> Collection[typs.ComptimeParamTyp]:
         """Every recorded comptime parameter, in declaration order."""
-        return self._declared_comptime_params.keys()
+        return self._declared_comptime_params
 
     @contextlib.contextmanager
     def detect_cycle[IdentityT, DetailT](
@@ -308,26 +297,9 @@ class Ctx:
             self._reported_cycles[cycle.key] = reported
         raise diag.ReportedError(reported)
 
-    def instantiate_fn(
-        self,
-        symbol: ir_module.FnSymbol,
-        args: tuple[typs.Typ, ...],
-    ) -> ir_module.FnInstance:
-        """Return the cached function instance for ``symbol`` and ``args``."""
-        cached = self._cached_instance(self._fn_instances, symbol, args)
-        if cached is not None:
-            return cached
-
-        # Local because ir_module imports this module while its classes are initializing.
-        from leech import ir_module  # noqa: PLC0415
-
-        return self._record_instance(
-            self._fn_instances,
-            self._requested_fn_instances,
-            symbol,
-            args,
-            ir_module.FnInstance(symbol, args),
-        )
+    def record_fn_request(self, instance: ir_module.FnInstance) -> None:
+        """Record a newly constructed function instance, for code generation to emit."""
+        self._requested_fn_instances.append(instance)
 
     def requested_fn_instances(self) -> Sequence[ir_module.FnInstance]:
         """Return the live append-only log of requested function instances.
@@ -337,38 +309,9 @@ class Ctx:
         """
         return self._requested_fn_instances
 
-    def instantiate_struct(
-        self,
-        template: typs.StructTypTemplate,
-        args: tuple[typs.Typ, ...],
-        *,
-        record_request: bool,
-    ) -> typs.StructTyp:
-        """Return the cached struct instance for ``template`` and ``args``.
-
-        :param record_request: Whether a newly created instance is appended to
-            ``requested_struct_instances``. Pass ``True`` for an instance a source
-            reference requests, which ``mono.discover`` must find and code
-            generation must emit. Pass ``False`` for an instance code generation already
-            reaches another way, so it must not be discovered as a separate emission
-            request: a non-generic declaration's zero-argument module instance, and a
-            generic template's opaque validation instance. Ignored on a cache hit, since
-            only the request that first creates ``args`` can be recorded.
-        """
-        cached = self._cached_instance(self._struct_instances, template, args)
-        if cached is not None:
-            return cached
-
-        # Local because typs imports this module while its classes are initializing.
-        from leech import typs  # noqa: PLC0415
-
-        return self._record_instance(
-            self._struct_instances,
-            self._requested_struct_instances if record_request else None,
-            template,
-            args,
-            typs.StructTyp(template, args),
-        )
+    def record_struct_request(self, instance: typs.StructTyp) -> None:
+        """Record a newly constructed struct instance that a source reference requests."""
+        self._requested_struct_instances.append(instance)
 
     def requested_struct_instances(self) -> Sequence[typs.StructTyp]:
         """Return the live append-only log of requested struct instances.
@@ -378,38 +321,9 @@ class Ctx:
         """
         return self._requested_struct_instances
 
-    def instantiate_union(
-        self,
-        template: typs.UnionTypTemplate,
-        args: tuple[typs.Typ, ...],
-        *,
-        record_request: bool,
-    ) -> typs.UnionTyp:
-        """Return the cached union instance for ``template`` and ``args``.
-
-        :param record_request: Whether a newly created instance is appended to
-            ``requested_union_instances``. Pass ``True`` for an instance a source
-            reference requests, which ``mono.discover`` must find and code
-            generation must emit. Pass ``False`` for an instance code generation already
-            reaches another way, so it must not be discovered as a separate emission
-            request: a non-generic declaration's zero-argument module instance, and a
-            generic template's opaque validation instance. Ignored on a cache hit, since
-            only the request that first creates ``args`` can be recorded.
-        """
-        cached = self._cached_instance(self._union_instances, template, args)
-        if cached is not None:
-            return cached
-
-        # Local because typs imports this module while its classes are initializing.
-        from leech import typs  # noqa: PLC0415
-
-        return self._record_instance(
-            self._union_instances,
-            self._requested_union_instances if record_request else None,
-            template,
-            args,
-            typs.UnionTyp(template, args),
-        )
+    def record_union_request(self, instance: typs.UnionTyp) -> None:
+        """Record a newly constructed union instance that a source reference requests."""
+        self._requested_union_instances.append(instance)
 
     def requested_union_instances(self) -> Sequence[typs.UnionTyp]:
         """Return the live append-only log of requested union instances.
@@ -429,40 +343,11 @@ class Ctx:
         Held here rather than by whichever body is being checked because
         a constructor's sub-column spaces are built eagerly, so every
         function matching one union would otherwise rebuild every space
-        its payloads can reach. The instances keying this are owned here
-        too, so the memo lasts exactly as long as they do.
+        its payloads can reach. The instances keying this belong to this
+        compilation, so the memo lasts as long as they do.
         """
         cached = self._union_variant_constructors.get(union_typ)
         if cached is None:
             cached = build()
             self._union_variant_constructors[union_typ] = cached
         return cached
-
-    @staticmethod
-    def _cached_instance[OwnerT, InstanceT](
-        cache: _InstanceCache[OwnerT, InstanceT],
-        owner: OwnerT,
-        args: tuple[typs.Typ, ...],
-    ) -> InstanceT | None:
-        """Return the instance cached for one owner and argument list, if any."""
-        instances = cache.get(owner)
-        return None if instances is None else instances.get(args)
-
-    @staticmethod
-    def _record_instance[OwnerT, InstanceT](
-        cache: _InstanceCache[OwnerT, InstanceT],
-        log: Optional[list[InstanceT]],
-        owner: OwnerT,
-        args: tuple[typs.Typ, ...],
-        instance: InstanceT,
-    ) -> InstanceT:
-        """Cache and record a newly constructed instance."""
-        instances = cache.get(owner)
-        if instances is None:
-            instances = {}
-            cache[owner] = instances
-        assert args not in instances, "instance creation re-entered the same request"
-        instances[args] = instance
-        if log is not None:
-            log.append(instance)
-        return instance

@@ -135,7 +135,7 @@ class TypCheck:
         e = e.new_child()
         for param in params:
             assert param.ast is not None
-            param_typ = typs.PtrTyp.get_or_create(param.typ, typs.CONST)
+            param_typ = typs.PtrTyp(param.typ, typs.CONST)
             self.results._set_local_typ(param.ast, param_typ)
             e.add_var(param.ast.name.name, param.ast)
         block_typ = self._check_expr(fn_ast.block, e, ret_typ)
@@ -380,7 +380,7 @@ class TypCheck:
         if column_typ == typs.VOID:
             raise errors.VoidVarInitializerError(pat.span)
         mut = typs.Mutability.from_ast(pat.mut)
-        self.results._set_local_typ(pat, typs.PtrTyp.get_or_create(column_typ, mut))
+        self.results._set_local_typ(pat, typs.PtrTyp(column_typ, mut))
         if reserved.is_reserved(pat.ident.name):
             raise errors.ReservedNameError(pat.ident.name, pat.ident.span)
         e.add_var(pat.ident.name, pat)
@@ -953,7 +953,7 @@ class TypCheck:
         union_typ = self._variant_union_typ(ref, call_ast.args, e, expected_typ, call_ast.span)
         self.results._set_variant_construction(callee_ast, union_typ, ref.variant.index)
         variant = union_typ.variant_at(ref.variant.index)
-        return typs.FnTyp.get_or_create(union_typ, variant.payload_typs)
+        return typs.FnTyp(union_typ, variant.payload_typs)
 
     @staticmethod
     def _check_variant_arity(
@@ -1172,7 +1172,7 @@ class TypCheck:
                 return var.typ
 
         value_typ = self._check_expr(expr_ast, e, None)
-        return typs.PtrTyp.get_or_create(value_typ, self._place_mut(expr_ast, e))
+        return typs.PtrTyp(value_typ, self._place_mut(expr_ast, e))
 
     def _place_mut(self, expr_ast: ast.ExprKind, e: ir_env.Env) -> typs.Mutability:
         """Return the mutability of ``expr_ast``'s place."""
@@ -1292,7 +1292,7 @@ class TypCheck:
         expr_typ, declared_typ = self._check_let_initializer(let_ast, e)
         bound_typ = opt_util.opt_or_default(declared_typ, expr_typ)
         mut = typs.Mutability.from_ast(let_ast.mut)
-        place_typ = typs.PtrTyp.get_or_create(bound_typ, mut)
+        place_typ = typs.PtrTyp(bound_typ, mut)
         self.results._set_local_typ(let_ast, place_typ)
         if reserved.is_reserved(let_ast.ident.name):
             raise errors.ReservedNameError(let_ast.ident.name, let_ast.ident.span)
@@ -1345,7 +1345,7 @@ class TypCheck:
         """Use a literal's suffix, an expected integer type, or finally ``i32``."""
         if lit_ast.explicit_width is not None:
             assert lit_ast.explicit_signage is not None
-            return typs.IntTyp.get_or_create(lit_ast.explicit_width, lit_ast.explicit_signage)
+            return typs.IntTyp(lit_ast.explicit_width, lit_ast.explicit_signage)
         if isinstance(expected_typ, typs.IntTyp):
             return expected_typ
         return typs.I32

@@ -63,9 +63,11 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
     """Base class for a function declaration."""
 
     ast: Final[Optional[FnAstT_co]]
+    _instances: Final[dict[tuple[typs.Typ, ...], FnInstance]]
 
     def __init__(self, fn_ast: Optional[FnAstT_co]) -> None:
         self.ast = fn_ast
+        self._instances = {}
 
     @property
     def span(self) -> Optional[src.SrcSpan]:
@@ -101,12 +103,12 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
     @compilation.unit
     def ptr_typ(self) -> typs.PtrTyp:
         """A const function-pointer type for this declaration's signature."""
-        return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
+        return typs.PtrTyp(self.fn_typ, typs.CONST)
 
     @property
     @abc.abstractmethod
     def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
-        """This declaration's interned comptime parameters in declaration order."""
+        """This declaration's comptime parameters in declaration order."""
 
     @property
     @abc.abstractmethod
@@ -116,6 +118,16 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
     @abc.abstractmethod
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance for ``args``, creating it if needed."""
+
+    def _instance(self, args: tuple[typs.Typ, ...]) -> FnInstance:
+        """Return the instance for ``args``, constructing and requesting it the first time."""
+        instance = self._instances.get(args)
+        if instance is None:
+            instance = FnInstance(self, args)
+            assert args not in self._instances, "instance creation re-entered itself"
+            self._instances[args] = instance
+            self.ctx.record_fn_request(instance)
+        return instance
 
 
 @dataclasses.dataclass(frozen=True)
@@ -170,7 +182,7 @@ class AppliedFn:
     @property
     def ptr_typ(self) -> typs.PtrTyp:
         """A const function-pointer type for the substituted signature."""
-        return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
+        return typs.PtrTyp(self.fn_typ, typs.CONST)
 
 
 class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
@@ -179,6 +191,7 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
     env: Final[ir_env.Env]
     _mod_name: Final[str]
     recv_typ: Final[Optional[typs.Typ]]
+    _comptime_params: Final[tuple[typs.ComptimeParamTyp, ...]]
 
     @override
     def __init__(
@@ -193,10 +206,11 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
         self._mod_name = mod_name
         self.recv_typ = recv_typ
         reserved.check_fn_params(fn_ast)
-        # Eager binding lets signatures and bodies resolve parameters like named types.
-        for comptime_param in typs.comptime_params_from_ast(
+        self._comptime_params = typs.comptime_params_from_ast(
             fn_ast, fn_ast.comptime_params, self.env
-        ):
+        )
+        # Eager binding lets signatures and bodies resolve parameters like named types.
+        for comptime_param in self._comptime_params:
             self.env.add_container(comptime_param.name, comptime_param)
             if isinstance(comptime_param, typs.ValueParamTyp):
                 self.env.add_var(comptime_param.name, comptime_param)
@@ -227,12 +241,10 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
         ]
         if self.ast.receiver is not None:
             assert self.recv_typ is not None
-            recv_typ = typs.PtrTyp.get_or_create(
-                self.recv_typ, typs.Mutability.from_ast(self.ast.receiver.mut)
-            )
+            recv_typ = typs.PtrTyp(self.recv_typ, typs.Mutability.from_ast(self.ast.receiver.mut))
             param_typs.insert(0, recv_typ)
 
-        return typs.FnTyp.get_or_create(ret_typ, tuple(param_typs))
+        return typs.FnTyp(ret_typ, tuple(param_typs))
 
     @override
     def calculate_params(self) -> tuple[ir_values.Param, ...]:
@@ -252,6 +264,11 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
         assert self.ast is not None
         return self.ast.name.name
 
+    @property
+    @override
+    def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
+        return self._comptime_params
+
 
 class ExternFnSymbol(ParsedFnSymbol[ast.ExternFnDecl]):
     """A source-level ``extern`` function declaration without a body."""
@@ -264,7 +281,7 @@ class ExternFnSymbol(ParsedFnSymbol[ast.ExternFnDecl]):
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return this declaration's cached bodyless instance."""
         assert not args, f"{self.name}: extern declarations take no comptime arguments"
-        return self.env.ctx.instantiate_fn(self, args)
+        return self._instance(args)
 
     @property
     def _qualified_name_prefix(self) -> str:
@@ -318,14 +335,7 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
             f"{self.name}: expected {impl_arity} impl and {fn_arity} function comptime arguments; "
             f"got {len(args)} total"
         )
-        return self.env.ctx.instantiate_fn(self, args)
-
-    @property
-    @compilation.unit
-    def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
-        """This function's interned comptime parameters in declaration order."""
-        fn_ast = opt_util.opt_unwrap(self.ast)
-        return typs.comptime_params_from_ast(fn_ast, fn_ast.comptime_params, self.env)
+        return self._instance(args)
 
     @property
     @compilation.unit
@@ -441,7 +451,7 @@ class FnInstance:
     @compilation.unit
     def ptr_typ(self) -> typs.PtrTyp:
         """This instance's concrete function-pointer type."""
-        return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
+        return typs.PtrTyp(self.fn_typ, typs.CONST)
 
     @property
     @compilation.unit
@@ -585,19 +595,16 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
 
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         assert len(args) == len(self.comptime_params)
-        return self.env.ctx.instantiate_fn(self, args)
+        return self._instance(args)
 
     @property
     def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
-        """This intrinsic's interned type parameters in declaration order."""
+        """This intrinsic's type parameters in declaration order."""
         return self._typ_params
 
     @functools.cached_property
     def _typ_params(self) -> tuple[typs.TypParamTyp, ...]:
-        return tuple(
-            typs.TypParamTyp.get_or_create(self, i, name)
-            for i, name in enumerate(self._typ_param_names)
-        )
+        return tuple(typs.TypParamTyp(self, name) for name in self._typ_param_names)
 
     @property
     @override
@@ -734,7 +741,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
-        return typs.PtrTyp.get_or_create(self.initializer.typ, self._mut)
+        return typs.PtrTyp(self.initializer.typ, self._mut)
 
 
 class Mod:
@@ -857,7 +864,7 @@ class Mod:
         span = opt_util.opt_unwrap(fn.ast).name.span
         if fn.is_generic:
             raise errors.EntryMainGenericError(span)
-        entry_typ = typs.FnTyp.get_or_create(typs.I32, ())
+        entry_typ = typs.FnTyp(typs.I32, ())
         if fn.fn_typ is not entry_typ:
             raise errors.EntryMainSignatureError(fn.fn_typ.name, span)
         for mod in self.ctx.loader.mods:
@@ -934,7 +941,7 @@ class Mod:
                     item.bind(value, visibility.Access.from_ast(defn_ast.access))
                 case ast.EnumDefn():
                     item.bind(
-                        typs.EnumTyp.create(defn_ast, self.env, self.name),
+                        typs.EnumTyp(defn_ast, self.env, self.name),
                         visibility.Access.from_ast(defn_ast.access),
                     )
                 case ast.UnionDefn():

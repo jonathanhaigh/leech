@@ -23,7 +23,7 @@ class SizeOfIntrinsicFn(ir_module.IntrinsicFnSymbol):
 
     @override
     def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
-        return typs.FnTyp.get_or_create(typs.USIZE, ())
+        return typs.FnTyp(typs.USIZE, ())
 
     @override
     def _build_body(
@@ -42,9 +42,9 @@ class PtrCastMutIntrinsicFn(ir_module.IntrinsicFnSymbol):
     @override
     def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
         from_typ, to_typ = comptime_params
-        return typs.FnTyp.get_or_create(
-            typs.PtrTyp.get_or_create(to_typ, typs.MUT),
-            (typs.PtrTyp.get_or_create(from_typ, typs.MUT),),
+        return typs.FnTyp(
+            typs.PtrTyp(to_typ, typs.MUT),
+            (typs.PtrTyp(from_typ, typs.MUT),),
         )
 
     @override
@@ -53,7 +53,7 @@ class PtrCastMutIntrinsicFn(ir_module.IntrinsicFnSymbol):
     ) -> None:
         assert builder._fn is not None
         param = builder._fn.params[0]
-        target_typ = typs.PtrTyp.get_or_create(comptime_args[1], typs.MUT)
+        target_typ = typs.PtrTyp(comptime_args[1], typs.MUT)
         casted = builder._curr_bb.ptr_cast(param, target_typ, None)
         builder._curr_bb.ret(casted, None)
 
@@ -67,7 +67,7 @@ class IsNullIntrinsicFn(ir_module.IntrinsicFnSymbol):
     @override
     def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
         (t,) = comptime_params
-        return typs.FnTyp.get_or_create(typs.BOOL, (typs.PtrTyp.get_or_create(t, typs.MUT),))
+        return typs.FnTyp(typs.BOOL, (typs.PtrTyp(t, typs.MUT),))
 
     @override
     def _build_body(
@@ -89,7 +89,7 @@ class EnumToIntIntrinsicFn(ir_module.IntrinsicFnSymbol):
     @override
     def fn_typ_for_comptime_args(self, comptime_params: tuple[typs.Typ, ...]) -> typs.FnTyp:
         (e_typ,) = comptime_params
-        return typs.FnTyp.get_or_create(typs.EnumBackingTyp.get_or_create(e_typ), (e_typ,))
+        return typs.FnTyp(typs.EnumBackingTyp(e_typ), (e_typ,))
 
     @override
     def _build_body(

@@ -226,35 +226,45 @@ example still reports one error (that is #116).
 ## Task 2b (#56): Intern declaration-derived types per compilation
 
 Numbered 2b so the task numbers cited in issues stay valid. #56's body holds the full scope;
-in brief, `Typ`s split by whether their identity depends on a source declaration:
+in brief, `Typ`s split by whether their identity depends on a source declaration, and each
+kind gets its own mechanism instead of one cache on `Typ` that only some subclasses use:
 
 - **Structural** types (`IntTyp`, `BoolTyp`, `VoidTyp`, `NeverTyp`, `PtrTyp`, `ArrayTyp`,
-  `FnTyp`, `ComptimeValueTyp`, `EnumBackingTyp`, `ARRAY_TEMPLATE` and its own parameters)
-  stay interned process-wide. Compound ones can't alias across compilations, because their
-  keys hold their components' identities.
-- **Declaration-derived** types are interned per compilation: `StructTyp` and `UnionTyp`
-  already are; source-declared `TypParamTyp`/`ValueParamTyp` move to a `Ctx` cache keyed by
-  `(owner, index)`; `EnumTyp` is constructed directly when its module is built.
+  `FnTyp`, `ComptimeValueTyp`, `EnumBackingTyp`) derive from `typs.InternedTyp`, whose
+  metaclass makes construction itself intern: `PtrTyp(t, MUT)` returns the process-wide
+  instance for those arguments, so interning cannot be bypassed. Compound ones can't alias
+  across compilations, because their keys hold their components' identities.
+- **Declaration-derived** types are not interned at all. Each is constructed once by what
+  declares it, and compared by identity: struct and union instances by their template,
+  which owns its instance cache, as a function owns its instances (`Ctx` keeps only the
+  request logs that `mono` drains); an `EnumTyp` by its module; a comptime parameter by
+  its declaring item, `ARRAY_TEMPLATE` or an intrinsic.
 
-**Files:** `typs.py`, `compilation.py`, `ir_module.py` (enum construction), `ir_builtins.py`
-or `ir_module.IntrinsicFnSymbol` (intrinsic parameters); tests in `test_typs.py`,
-`test_compilation.py`, `test_enums.py`.
+This is a step towards #14: every applied type is cached by whatever defines its shape, for
+as long as that shape lives.
 
-- Add `Ctx.intern_comptime_param(cls, owner, index, ...)` and use it from
-  `typs.comptime_params_from_ast` and for intrinsics' parameters. `ARRAY_TEMPLATE`'s
-  parameters keep `get_or_create`.
-- Build `EnumTyp` with its constructor in `Mod._build_defn`; drop `EnumTyp.create`'s
-  `Typ._cache` registration and `cache_key`.
-- Convert `ValueParamTyp.value_typ` and `ComptimeParamTyp.check_declaration` (as a unit
-  property such as `checked_declaration`) to units through `Ctx.unit`; give
-  `ComptimeParamTyp` a `ctx`. `ModLoader.check_declarations` forces the unit through
-  `Ctx.recovering`. Remove the spec's temporary exception for comptime parameter objects.
+**Files:** `typs.py`, `compilation.py`, `ir_module.py`, call sites constructing structural
+types; tests in `test_typs.py`.
+
+- Add `typs._InterningMeta` and `typs.InternedTyp`. Remove `Typ._cache`, `create`, `get`,
+  `get_or_create` and `cache_key`; call sites construct types directly. Interned
+  constructors take positional arguments without defaults, which the metaclass checks.
+- Build comptime parameters directly. `ParsedFnSymbol` builds its parameters once, rather
+  than `SrcFnSymbol.comptime_params` rebuilding them and relying on the global cache to
+  return the same objects. Parameters no longer need an index.
+- Build `EnumTyp` with its constructor in `Mod._build_defn`.
+- Move struct and union instances from `Ctx` to their templates
+  (`typs.NominalTypTemplate`), and function instances to their `FnSymbol`. `Ctx` keeps
+  only the request logs.
+- Make `ValueParamTyp`'s written value type and `ComptimeParamTyp.check_declaration`
+  units; give `ComptimeParamTyp` a `ctx`. Remove the spec's temporary exception for
+  comptime parameter objects.
 - Document the interning rule in `Typ`'s docstring.
-- Tests: two live `Ctx`s loading the same bundled generic declaration get distinct
-  parameters whose environments belong to their own compilation; two `Ctx`s sharing one
-  `EnumDefn` both build without asserting (#56's reproducer); a failing comptime
-  parameter check is reported once and memoized; structural types and the module-level
-  constants are unchanged.
+- Tests: structural types are interned by their arguments; an interned type with a default
+  argument is rejected; a function's parameters are built once; two live compilations
+  sharing a bundled generic declaration get distinct parameters belonging to their own
+  compilations; two `Ctx`s sharing one `EnumDefn` get distinct enums (#56's reproducer); a
+  failing comptime parameter check is reported once and memoized.
 
 **Acceptance:** #56's criteria.
 

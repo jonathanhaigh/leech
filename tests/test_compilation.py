@@ -335,3 +335,17 @@ def test_unit_result_lets_internal_errors_propagate():
 
     with pytest.raises(RuntimeError):
         compilation.UnitResult.capture(compilation.Ctx(), crash)
+
+
+def test_fn_instances_are_cached_and_requested_once(compiler):
+    mod = compiler.build("pub fn f[T](x: T) T { return x; }")
+    fn = asserts.checked_cast(
+        opt_util.opt_unwrap(mod.get_item(ir_env.Env.Namespace.VARS, "f")).value,
+        ir_module.SrcFnSymbol,
+    )
+
+    instance = fn.instantiate((typs.I32,))
+
+    assert fn.instantiate((typs.I32,)) is instance
+    assert fn.instantiate((typs.BOOL,)) is not instance
+    assert list(mod.ctx.requested_fn_instances()).count(instance) == 1

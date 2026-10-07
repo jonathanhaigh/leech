@@ -8,11 +8,12 @@ import abc
 import dataclasses
 import enum
 import functools
+import inspect
 import re
 import types
 import weakref
 from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, ClassVar, Final, Optional, Self, override
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Optional, cast, override
 
 from leech import (
     asserts,
@@ -228,16 +229,16 @@ def resolve_comptime_arg(param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: i
     if isinstance(arg_ast, ast.IntLit):
         if arg_ast.explicit_width is not None:
             assert arg_ast.explicit_signage is not None
-            lit_typ: IntTyp = IntTyp.get_or_create(arg_ast.explicit_width, arg_ast.explicit_signage)
+            lit_typ: IntTyp = IntTyp(arg_ast.explicit_width, arg_ast.explicit_signage)
         elif isinstance(param, ValueParamTyp) and isinstance(param.value_typ, IntTyp):
             lit_typ = param.value_typ
         else:
             raise errors.WrongKindOfComptimeArgError(param.name, arg_ast.diag_str(), arg_ast.span)
         if not lit_typ.fits(arg_ast.value):
             raise errors.IntLitOverflowError(arg_ast.value, lit_typ.name, arg_ast.span)
-        return ComptimeValueTyp.get_or_create(lit_typ, arg_ast.value)
+        return ComptimeValueTyp(lit_typ, arg_ast.value)
     if isinstance(arg_ast, ast.BoolLit):
-        return ComptimeValueTyp.get_or_create(BOOL, arg_ast.value)
+        return ComptimeValueTyp(BOOL, arg_ast.value)
     if isinstance(param, ValueParamTyp) and isinstance(arg_ast, ast.BasicTyp):
         # A path argument for a value parameter forwards either another
         # value parameter or the concrete value substituted for one.
@@ -315,40 +316,19 @@ def check_comptime_arg_bounds(
 class Typ(abc.ABC):
     """Base class for identity-compared Leech types.
 
-    Most types are weakly interned here. Struct instances are instead owned by
-    their compilation context.
+    Types are compared with ``is``, so each type has one canonical instance.
+    How that instance is found depends on what determines the type's identity:
+
+    - A structural type (an ``InternedTyp``) is fully determined by its
+      constructor arguments and holds no environment, so constructing one
+      returns the process-wide instance for those arguments. A compound one
+      built over a declaration-derived type holds that type's identity in
+      its key, so it cannot alias across compilations.
+    - A declaration-derived type (a struct or union instance, an enum, a
+      source-declared comptime parameter) is determined by one compilation's
+      declaration, and is constructed once by the object that owns it: its
+      template, its module, or its declaring item.
     """
-
-    _cache: ClassVar[weakref.WeakValueDictionary[Hashable, Typ]] = weakref.WeakValueDictionary()
-
-    @classmethod
-    def create(cls, *args: Hashable) -> Self:
-        """Construct and cache a new instance, asserting that its key is unused."""
-        key = cls.cache_key(*args)
-        asserts.assert_not_in(key, Typ._cache)
-        obj = cls(*args)
-        Typ._cache[key] = obj
-        return obj
-
-    @classmethod
-    def get(cls, *args: Hashable) -> Self:
-        """Return the instance cached under ``args``."""
-        return asserts.checked_cast(Typ._cache[cls.cache_key(*args)], cls)
-
-    @classmethod
-    def get_or_create(cls, *args: Hashable) -> Self:
-        """Return the instance cached under ``args``, creating it when absent."""
-        key = cls.cache_key(*args)
-        obj = Typ._cache.get(key)
-        if obj is None:
-            obj = cls(*args)
-            Typ._cache[key] = obj
-        return asserts.checked_cast(obj, cls)
-
-    @classmethod
-    def cache_key(cls, *args: Hashable) -> Hashable:
-        """Return the cache key for an instance constructed with ``args``."""
-        return (cls, *args)
 
     def coerces_to(self, target_typ: Typ) -> bool:
         """Return whether this type implicitly converts to ``target_typ``.
@@ -404,7 +384,7 @@ class Typ(abc.ABC):
             case ast.BasicTyp():
                 return Typ._basic_typ_from_ast(typ_ast, e)
             case ast.PtrTyp():
-                return PtrTyp.get_or_create(
+                return PtrTyp(
                     Typ.from_ast(typ_ast.pointee_typ, e),
                     Mutability.from_ast(typ_ast.mut),
                 )
@@ -415,7 +395,48 @@ class Typ(abc.ABC):
         return e.resolve_typ(typ_ast.path)
 
 
-class IntTyp(Typ):
+class _InterningMeta(abc.ABCMeta):
+    """Makes constructing a class return its interned instance for those arguments."""
+
+    _instances: weakref.WeakValueDictionary[tuple[Hashable, ...], Any]
+
+    def __new__(
+        mcs, name: str, bases: tuple[type, ...], ns: dict[str, Any], /, **kwargs: Any
+    ) -> _InterningMeta:
+        # Equal calls must give equal keys, so a default argument would let
+        # PtrTyp(t) and PtrTyp(t, CONST) be distinct instances.
+        init = ns.get("__init__")
+        if init is not None:
+            for param in inspect.signature(init).parameters.values():
+                assert param.default is inspect.Parameter.empty, (
+                    f"{name}.__init__: an interned type takes no default arguments"
+                )
+        cls = super().__new__(mcs, name, bases, ns, **kwargs)
+        # One cache per class, so a key needs no class component.
+        cls._instances = weakref.WeakValueDictionary()
+        return cls
+
+    def __call__[T](cls: type[T], *args: Hashable) -> T:
+        instances = asserts.checked_cast(cls, _InterningMeta)._instances
+        obj = instances.get(args)
+        if obj is None:
+            obj = type.__call__(cls, *args)
+            instances[args] = obj
+        return cast(T, obj)
+
+
+class InternedTyp(Typ, metaclass=_InterningMeta):
+    """A structural type: constructing it with equal arguments gives the same instance.
+
+    Its identity is fully determined by its positional constructor arguments,
+    so it is interned process-wide and may be compared with ``is``. Instances
+    are held weakly, so one lives only while something references it. Its
+    ``__init__`` runs only when no instance exists for its arguments, so it
+    must do nothing but store them.
+    """
+
+
+class IntTyp(InternedTyp):
     """A fixed-width signed or unsigned integer type, e.g. ``i32`` or ``u8``."""
 
     width: Final[int]
@@ -489,10 +510,10 @@ class IntTyp(Typ):
             # More digits than CPython will convert to an int.
             return None
         sign = signage.SIGNED if m[1] == "i" else signage.UNSIGNED
-        return IntTyp.get_or_create(width, sign)
+        return IntTyp(width, sign)
 
 
-class BoolTyp(Typ):
+class BoolTyp(InternedTyp):
     """The boolean type."""
 
     @property
@@ -505,15 +526,15 @@ type ComptimeLiteralTyp = IntTyp | BoolTyp
 """A type that can back a literal comptime value parameter or argument."""
 
 
-class CallableTyp(Typ):
+class CallableTyp(InternedTyp):
     """Base class for types of things that can be called."""
 
     ret_typ: Final[TypKind]
     param_typs: Final[tuple[TypKind, ...]]
 
-    def __init__(self, ret_typ: TypKind, param_typs: tuple[TypKind, ...]) -> None:
-        self.ret_typ = ret_typ
-        self.param_typs = param_typs
+    def __init__(self, ret_typ: Typ, param_typs: tuple[Typ, ...]) -> None:
+        self.ret_typ = as_typ_kind(ret_typ)
+        self.param_typs = tuple(as_typ_kind(typ) for typ in param_typs)
 
 
 class FnTyp(CallableTyp):
@@ -527,7 +548,7 @@ class FnTyp(CallableTyp):
 
     @override
     def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
-        return FnTyp.get_or_create(
+        return FnTyp(
             self.ret_typ.substitute_typ_params(mapping),
             tuple(param_typ.substitute_typ_params(mapping) for param_typ in self.param_typs),
         )
@@ -547,14 +568,14 @@ class FnTyp(CallableTyp):
         )
 
 
-class PtrTyp(Typ):
+class PtrTyp(InternedTyp):
     """A pointer type, e.g. ``*i32`` or ``*mut i32``."""
 
     pointee_typ: Final[TypKind]
     mut: Final[Mutability]
 
-    def __init__(self, pointee_typ: TypKind, mut: Mutability) -> None:
-        self.pointee_typ = pointee_typ
+    def __init__(self, pointee_typ: Typ, mut: Mutability) -> None:
+        self.pointee_typ = as_typ_kind(pointee_typ)
         self.mut = mut
 
     @property
@@ -585,7 +606,7 @@ class PtrTyp(Typ):
 
     @override
     def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
-        return PtrTyp.get_or_create(self.pointee_typ.substitute_typ_params(mapping), self.mut)
+        return PtrTyp(self.pointee_typ.substitute_typ_params(mapping), self.mut)
 
     @override
     def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
@@ -598,23 +619,23 @@ class PtrTyp(Typ):
 
     def _new_with_mut(self, mut: Mutability) -> PtrTyp:
         """Return the interned pointer with this pointee and ``mut``."""
-        return PtrTyp.get_or_create(self.pointee_typ, mut)
+        return PtrTyp(self.pointee_typ, mut)
 
 
-class ArrayTyp(Typ):
+class ArrayTyp(InternedTyp):
     """A fixed-length array type, e.g. ``array[i32, 4]``."""
 
     element_typ: Final[TypKind]
     length: Final[TypKind]
 
-    def __init__(self, element_typ: TypKind, length: TypKind) -> None:
-        self.element_typ = element_typ
-        self.length = length
+    def __init__(self, element_typ: Typ, length: Typ) -> None:
+        self.element_typ = as_typ_kind(element_typ)
+        self.length = as_typ_kind(length)
 
     @staticmethod
     def of_length(element_typ: TypKind, length: int) -> ArrayTyp:
-        """Return the cached instance for a concrete literal ``length``."""
-        return ArrayTyp.get_or_create(element_typ, ComptimeValueTyp.get_or_create(USIZE, length))
+        """Return the array type with a concrete literal ``length``."""
+        return ArrayTyp(element_typ, ComptimeValueTyp(USIZE, length))
 
     @property
     def length_value(self) -> int:
@@ -637,7 +658,7 @@ class ArrayTyp(Typ):
 
     @override
     def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
-        return ArrayTyp.get_or_create(
+        return ArrayTyp(
             self.element_typ.substitute_typ_params(mapping),
             self.length.substitute_typ_params(mapping),
         )
@@ -654,41 +675,44 @@ class ArrayTyp(Typ):
 
 
 class ComptimeParamTyp(Typ):
-    """Shared identity, caching, and substitution for a comptime parameter.
+    """Shared identity and substitution for a comptime parameter.
 
-    Interned by its owner and position - a parameter is declared in exactly
-    one place, so the first interning fixes it. Never instantiated
-    directly; use ``TypParamTyp`` or ``ValueParamTyp``.
+    Each parameter is a distinct object, constructed once by whatever
+    declares it, and is compared by identity. Never instantiated directly;
+    use ``TypParamTyp`` or ``ValueParamTyp``.
+
+    :param decl_env: The scope what this parameter's declaration names is
+        resolved in, holding every sibling parameter - see
+        ``comptime_params_from_ast``. Absent for a parameter the compiler
+        declares itself, which names nothing.
     """
 
-    _owner: Final[Hashable]
-    _index: Final[int]
+    _owner: Final[object]
     _name: Final[str]
+    decl_env: Final[Optional[ir_env.Env]]
 
-    def __init__(self, owner: Hashable, index: int, name: str) -> None:
+    def __init__(self, owner: object, name: str, decl_env: Optional[ir_env.Env]) -> None:
         self._owner = owner
-        self._index = index
         self._name = name
+        self.decl_env = decl_env
 
     @property
-    def owner(self) -> Hashable:
+    def owner(self) -> object:
         """The item declaring this parameter."""
         return self._owner
 
+    @property
+    def ctx(self) -> compilation.Ctx:
+        """The compilation of a source-declared parameter."""
+        return opt_util.opt_unwrap(self.decl_env).ctx
+
     @abc.abstractmethod
     def check_declaration(self) -> None:
-        """Resolve and validate what this parameter's declaration names.
+        """Resolve and validate what a source-declared parameter's declaration names.
 
         Deferred until the whole module graph is built, so a bound or a
         declared type may name an item declared after this parameter.
         """
-
-    @override
-    @classmethod
-    def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key a comptime parameter by its declaring item and position."""
-        asserts.assert_gt(len(args), 1)
-        return (cls, args[0], args[1])
 
     @property
     @override
@@ -709,32 +733,23 @@ class ComptimeParamTyp(Typ):
 
 
 class TypParamTyp(ComptimeParamTyp):
-    """An opaque generic type parameter interned by its owner and position.
+    """An opaque generic type parameter.
 
     It has no LLVM representation and stores only its display name, trait
     bounds and the scope those bounds are written in.
-
-    :param decl_env: The scope this parameter's bounds are resolved in,
-        holding every sibling parameter - see
-        ``comptime_params_from_ast``. Not part of the cache key, which
-        the owner alone determines: a parameter is declared in exactly
-        one place, so the first interning fixes it.
     """
 
     bounds: Final[tuple[ast.BasicTyp, ...]]
-    decl_env: Final[Optional[ir_env.Env]]
 
     def __init__(
         self,
-        owner: Hashable,
-        index: int,
+        owner: object,
         name: str,
         bounds: tuple[ast.BasicTyp, ...] = (),
         decl_env: Optional[ir_env.Env] = None,
     ) -> None:
-        super().__init__(owner, index, name)
+        super().__init__(owner, name, decl_env)
         self.bounds = bounds
-        self.decl_env = decl_env
 
     def declares_bound(self, trait: ir_traits.Trait) -> bool:
         """Whether this parameter's own declared bounds include ``trait``.
@@ -749,6 +764,7 @@ class TypParamTyp(ComptimeParamTyp):
         )
 
     @override
+    @compilation.unit
     def check_declaration(self) -> None:
         decl_env = opt_util.opt_unwrap(self.decl_env)
         for bound in self.bounds:
@@ -768,7 +784,7 @@ class TypParamTyp(ComptimeParamTyp):
 
 
 class ValueParamTyp(ComptimeParamTyp):
-    """An opaque comptime value parameter interned by its owner and position.
+    """An opaque comptime value parameter.
 
     It has no LLVM representation of its own; a concrete argument
     substitutes to a ``ComptimeValueTyp`` of the same ``value_typ``.
@@ -778,18 +794,14 @@ class ValueParamTyp(ComptimeParamTyp):
     :param param_ast: The source declaration, whose written type is
         resolved on demand rather than at construction, so it may name a
         type declared later. Mutually exclusive with ``declared_typ``.
-    :param decl_env: The scope this parameter's written type is resolved
-        in - see ``TypParamTyp.decl_env``.
     """
 
     _declared_typ: Final[Optional[ComptimeLiteralTyp]]
     _param_ast: Final[Optional[ast.ValueParam]]
-    _decl_env: Final[Optional[ir_env.Env]]
 
     def __init__(
         self,
-        owner: Hashable,
-        index: int,
+        owner: object,
         name: str,
         declared_typ: Optional[ComptimeLiteralTyp] = None,
         param_ast: Optional[ast.ValueParam] = None,
@@ -798,37 +810,39 @@ class ValueParamTyp(ComptimeParamTyp):
         assert declared_typ is None or param_ast is None, (
             f"{name}: a resolved declared type excludes a source-written one"
         )
-        super().__init__(owner, index, name)
+        super().__init__(owner, name, decl_env)
         self._declared_typ = declared_typ
         self._param_ast = param_ast
-        self._decl_env = decl_env
 
-    @functools.cached_property
+    @property
     def value_typ(self) -> ComptimeLiteralTyp:
-        """This parameter's declared type - an ``IntTyp`` or ``BOOL``.
-
-        Resolving it is what rejects a declaration naming a type no
-        comptime value can have.
-        """
+        """This parameter's declared type - an ``IntTyp`` or ``BOOL``."""
         if self._declared_typ is not None:
             return self._declared_typ
+        return self._written_value_typ
+
+    @property
+    @compilation.unit
+    def _written_value_typ(self) -> ComptimeLiteralTyp:
+        # Resolving it is what rejects a type no comptime value can have.
         typ_ast = opt_util.opt_unwrap(self._param_ast).typ
-        typ = Typ.from_ast(typ_ast, opt_util.opt_unwrap(self._decl_env))
+        typ = Typ.from_ast(typ_ast, opt_util.opt_unwrap(self.decl_env))
         if not isinstance(typ, IntTyp | BoolTyp):
             raise errors.InvalidValueParamTypError(typ.name, typ_ast.span)
         return typ
 
     @override
+    @compilation.unit
     def check_declaration(self) -> None:
         _ = self.value_typ
 
 
-class ComptimeValueTyp(Typ):
+class ComptimeValueTyp(InternedTyp):
     """A concrete compile-time value used as a comptime argument.
 
     The type-level counterpart to ``ir_values.ComptimeValue``:
     a ``Typ`` node whose entire content is one concrete compile-time value,
-    interned the same way every other ``Typ`` is - equal values are
+    interned like every other structural type - equal values are
     therefore always the same instance.
 
     :param value_typ: This value's type - an ``IntTyp`` or ``BOOL``.
@@ -843,13 +857,6 @@ class ComptimeValueTyp(Typ):
         )
         self.value_typ = value_typ
         self.value = value
-
-    @override
-    @classmethod
-    def cache_key(cls, *args: Hashable) -> Hashable:
-        """Key a comptime value by its type and its own value."""
-        asserts.assert_eq(len(args), 2)
-        return (cls, args[0], args[1])
 
     @property
     @override
@@ -884,9 +891,9 @@ class ComptimeValueTyp(Typ):
 
 
 def comptime_params_from_ast(
-    owner: Hashable, comptime_params: Sequence[ast.ComptimeParamKind], e: ir_env.Env
+    owner: object, comptime_params: Sequence[ast.ComptimeParamKind], e: ir_env.Env
 ) -> tuple[ComptimeParamTyp, ...]:
-    """Intern parsed comptime parameters under ``owner``, preserving declaration order.
+    """Build parsed comptime parameters declared by ``owner``, preserving declaration order.
 
     Each parameter's kind comes from its own syntax, so no name is looked
     up here. What its bounds or declared type name is validated later
@@ -903,17 +910,13 @@ def comptime_params_from_ast(
 
     param_env = e.new_child()
     result: list[ComptimeParamTyp] = []
-    for index, param_ast in enumerate(comptime_params):
+    for param_ast in comptime_params:
         param: ComptimeParamTyp
         match param_ast:
             case ast.TypParam():
-                param = TypParamTyp.get_or_create(
-                    owner, index, param_ast.ident.name, param_ast.bounds, param_env
-                )
+                param = TypParamTyp(owner, param_ast.ident.name, param_ast.bounds, param_env)
             case ast.ValueParam():
-                param = ValueParamTyp.get_or_create(
-                    owner, index, param_ast.ident.name, None, param_ast, param_env
-                )
+                param = ValueParamTyp(owner, param_ast.ident.name, None, param_ast, param_env)
         result.append(param)
         e.ctx.record_comptime_param(param)
     # A second pass, so a bound may name a sibling declared after it.
@@ -997,17 +1000,81 @@ class GenericTypTemplate(abc.ABC):
         """Return the usable type for applying ``comptime_args``."""
 
 
-class StructTypTemplate(GenericTypTemplate):
+class NominalTypTemplate[InstanceT: StructTyp | UnionTyp](GenericTypTemplate):
+    """A struct or union declaration, which owns its usable type instances.
+
+    Each instance is constructed once per argument list and held here, so
+    instances live exactly as long as the declaration's compilation.
+    """
+
+    _decl_env: Final[ir_env.Env]
+    mod_name: Final[str]
+    _instances: Final[dict[tuple[Typ, ...], InstanceT]]
+
+    def __init__(self, e: ir_env.Env, mod_name: str) -> None:
+        self._decl_env = e
+        self.mod_name = mod_name
+        self._instances = {}
+
+    @override
+    def instantiate(self, comptime_args: tuple[Typ, ...]) -> InstanceT:
+        """Return the instance for ``comptime_args`` and record its request."""
+        asserts.assert_eq(len(comptime_args), len(self.comptime_params))
+        return self._instance(comptime_args, record_request=True)
+
+    @functools.cached_property
+    def _validation_instance(self) -> InstanceT:
+        """Return the opaque instance used only for declaration validation."""
+        asserts.assert_gt(len(self.comptime_params), 0)
+        return self._instance(self.comptime_params, record_request=False)
+
+    def validate_declaration(self) -> None:
+        """Validate this declaration's layout with its bare root name."""
+        _check_layout_finite(self._validation_instance, None, self.name)
+
+    @functools.cached_property
+    def module_instance(self) -> InstanceT:
+        """Return the zero-argument instance bound for a non-generic declaration."""
+        asserts.assert_eq(len(self.comptime_params), 0)
+        return self._instance((), record_request=False)
+
+    def _instance(self, comptime_args: tuple[Typ, ...], *, record_request: bool) -> InstanceT:
+        """Return the instance for ``comptime_args``, constructing it the first time.
+
+        :param record_request: Whether a newly constructed instance is
+            recorded as requested, so ``mono.discover`` finds it and code
+            generation emits it. ``False`` for an instance code generation
+            already reaches another way: a non-generic declaration's
+            zero-argument module instance, and a generic declaration's
+            opaque validation instance. Ignored when the instance exists,
+            since only the request that constructs it can be recorded.
+        """
+        instance = self._instances.get(comptime_args)
+        if instance is None:
+            instance = self._new_instance(comptime_args)
+            assert comptime_args not in self._instances, "instance creation re-entered itself"
+            self._instances[comptime_args] = instance
+            if record_request:
+                self._record_request(instance)
+        return instance
+
+    @abc.abstractmethod
+    def _new_instance(self, comptime_args: tuple[Typ, ...]) -> InstanceT:
+        pass
+
+    @abc.abstractmethod
+    def _record_request(self, instance: InstanceT) -> None:
+        pass
+
+
+class StructTypTemplate(NominalTypTemplate["StructTyp"]):
     """A struct declaration that owns its usable type instances."""
 
     ast: Final[ast.StructDefn]
-    _decl_env: Final[ir_env.Env]
-    mod_name: Final[str]
 
     def __init__(self, struct_ast: ast.StructDefn, e: ir_env.Env, mod_name: str) -> None:
+        super().__init__(e, mod_name)
         self.ast = struct_ast
-        self._decl_env = e
-        self.mod_name = mod_name
         # Bind parameters before fields so parameter-name errors take priority.
         param_env = e.new_child()
         for comptime_param in self.comptime_params:
@@ -1041,28 +1108,12 @@ class StructTypTemplate(GenericTypTemplate):
         return comptime_params_from_ast(self.ast, self.ast.comptime_params, self._decl_env)
 
     @override
-    def instantiate(self, comptime_args: tuple[Typ, ...]) -> StructTyp:
-        """Return the cached instance for ``comptime_args`` and record its request."""
-        asserts.assert_eq(len(comptime_args), len(self.comptime_params))
-        return self._decl_env.ctx.instantiate_struct(self, comptime_args, record_request=True)
+    def _new_instance(self, comptime_args: tuple[Typ, ...]) -> StructTyp:
+        return StructTyp(self, comptime_args)
 
-    @functools.cached_property
-    def _validation_instance(self) -> StructTyp:
-        """Return the cached opaque instance used only for declaration validation."""
-        asserts.assert_gt(len(self.comptime_params), 0)
-        return self._decl_env.ctx.instantiate_struct(
-            self, self.comptime_params, record_request=False
-        )
-
-    def validate_declaration(self) -> None:
-        """Validate this declaration's layout with its bare root name."""
-        _check_layout_finite(self._validation_instance, None, self.name)
-
-    @functools.cached_property
-    def module_instance(self) -> StructTyp:
-        """Return the zero-argument instance bound for a non-generic declaration."""
-        asserts.assert_eq(len(self.comptime_params), 0)
-        return self._decl_env.ctx.instantiate_struct(self, (), record_request=False)
+    @override
+    def _record_request(self, instance: StructTyp) -> None:
+        self._decl_env.ctx.record_struct_request(instance)
 
 
 class StructTyp(Typ):
@@ -1087,12 +1138,6 @@ class StructTyp(Typ):
             field_ast.ident.name: StructField(index, field_ast, self._env)
             for index, field_ast in enumerate(template.ast.fields)
         }
-
-    @override
-    @classmethod
-    def cache_key(cls, *args: Hashable) -> Hashable:
-        """Reject the global cache because compilation contexts own instances."""
-        raise AssertionError("struct instances are owned by the compilation context")
 
     @property
     def ast(self) -> ast.StructDefn:
@@ -1272,21 +1317,18 @@ class UnionVariant:
         return tuple(Typ.from_ast(typ_ast, self._env) for typ_ast in self.ast.payload_typs)
 
 
-class UnionTypTemplate(GenericTypTemplate):
+class UnionTypTemplate(NominalTypTemplate["UnionTyp"]):
     """A tagged-union declaration that owns its usable type instances."""
 
     ast: Final[ast.UnionDefn]
     variants: Final[types.MappingProxyType[str, UnionVariantTemplate]]
-    _decl_env: Final[ir_env.Env]
     #: The declaration environment with this union's own comptime parameters
     #: bound, which is the scope a variant's payload types resolve in.
     _param_env: Final[ir_env.Env]
-    mod_name: Final[str]
 
     def __init__(self, union_ast: ast.UnionDefn, e: ir_env.Env, mod_name: str) -> None:
+        super().__init__(e, mod_name)
         self.ast = union_ast
-        self._decl_env = e
-        self.mod_name = mod_name
         # Bind parameters before variants so parameter-name errors take priority.
         self._param_env = e.new_child()
         for comptime_param in self.comptime_params:
@@ -1321,28 +1363,12 @@ class UnionTypTemplate(GenericTypTemplate):
         return comptime_params_from_ast(self.ast, self.ast.comptime_params, self._decl_env)
 
     @override
-    def instantiate(self, comptime_args: tuple[Typ, ...]) -> UnionTyp:
-        """Return the cached instance for ``comptime_args`` and record its request."""
-        asserts.assert_eq(len(comptime_args), len(self.comptime_params))
-        return self._decl_env.ctx.instantiate_union(self, comptime_args, record_request=True)
+    def _new_instance(self, comptime_args: tuple[Typ, ...]) -> UnionTyp:
+        return UnionTyp(self, comptime_args)
 
-    @functools.cached_property
-    def _validation_instance(self) -> UnionTyp:
-        """Return the cached opaque instance used only for declaration validation."""
-        asserts.assert_gt(len(self.comptime_params), 0)
-        return self._decl_env.ctx.instantiate_union(
-            self, self.comptime_params, record_request=False
-        )
-
-    def validate_declaration(self) -> None:
-        """Validate this declaration's layout with its bare root name."""
-        _check_layout_finite(self._validation_instance, None, self.name)
-
-    @functools.cached_property
-    def module_instance(self) -> UnionTyp:
-        """Return the zero-argument instance bound for a non-generic declaration."""
-        asserts.assert_eq(len(self.comptime_params), 0)
-        return self._decl_env.ctx.instantiate_union(self, (), record_request=False)
+    @override
+    def _record_request(self, instance: UnionTyp) -> None:
+        self._decl_env.ctx.record_union_request(instance)
 
 
 class UnionTyp(Typ):
@@ -1367,12 +1393,6 @@ class UnionTyp(Typ):
             UnionVariant(variant_template, self._env)
             for variant_template in template.variants.values()
         )
-
-    @override
-    @classmethod
-    def cache_key(cls, *args: Hashable) -> Hashable:
-        """Reject the global cache because compilation contexts own instances."""
-        raise AssertionError("union instances are owned by the compilation context")
 
     @property
     def ast(self) -> ast.UnionDefn:
@@ -1454,7 +1474,7 @@ class UnionTyp(Typ):
         """
         max_tag = max(len(self.template.ast.variants) - 1, 0)
         for width in (8, 16, 32, 64):
-            candidate = IntTyp.get_or_create(width, signage.UNSIGNED)
+            candidate = IntTyp(width, signage.UNSIGNED)
             if candidate.fits(max_tag):
                 return candidate
         raise AssertionError("a declaration cannot list more than 2**64 variants")
@@ -1516,7 +1536,8 @@ class EnumTyp(Typ):
     an explicit or inferred integer type.
 
     Unlike ``StructTyp``, never generic and never instantiated - one
-    ``enum`` declaration is always exactly one ``EnumTyp``.
+    ``enum`` declaration is exactly one ``EnumTyp`` in each compilation,
+    constructed when its module is built.
     """
 
     ast: Final[ast.EnumDefn]
@@ -1527,12 +1548,6 @@ class EnumTyp(Typ):
         self.ast = enum_ast
         self.mod_name = mod_name
         self._env = e
-
-    @override
-    @classmethod
-    def cache_key(cls, *args: Hashable) -> Hashable:
-        asserts.assert_gt(len(args), 0)
-        return (cls, args[0])
 
     @property
     @override
@@ -1588,9 +1603,7 @@ class EnumTyp(Typ):
                 literal = variant_ast.value
                 if literal is not None and literal.explicit_width is not None:
                     assert literal.explicit_signage is not None
-                    literal_typ = IntTyp.get_or_create(
-                        literal.explicit_width, literal.explicit_signage
-                    )
+                    literal_typ = IntTyp(literal.explicit_width, literal.explicit_signage)
                     if not literal_typ.coerces_to(typ):
                         raise errors.EnumVariantValueTypMismatchError(
                             literal_typ.name, typ.name, variant_ast.span
@@ -1604,11 +1617,11 @@ class EnumTyp(Typ):
         max_value = max(values, default=0)
         inferred_signage = signage.SIGNED if min_value < 0 else signage.UNSIGNED
         for width in (8, 16, 32, 64):
-            candidate = IntTyp.get_or_create(width, inferred_signage)
+            candidate = IntTyp(width, inferred_signage)
             if candidate.fits(min_value) and candidate.fits(max_value):
                 return candidate
 
-        widest = IntTyp.get_or_create(64, inferred_signage)
+        widest = IntTyp(64, inferred_signage)
         overflowing_value = min_value if not widest.fits(min_value) else max_value
         overflowing_span = next(
             variant_ast.span
@@ -1623,7 +1636,7 @@ class EnumTyp(Typ):
         return self.ast.span
 
 
-class EnumBackingTyp(Typ):
+class EnumBackingTyp(InternedTyp):
     """The backing integer type of whatever (possibly still opaque) type
     ``inner`` becomes once substituted.
 
@@ -1659,14 +1672,14 @@ class EnumBackingTyp(Typ):
             raise AssertionError(
                 f"EnumBackingTyp's inner type must resolve to an enum, got {substituted_inner.name}"
             )
-        return EnumBackingTyp.get_or_create(substituted_inner)
+        return EnumBackingTyp(substituted_inner)
 
     @override
     def is_concrete(self) -> bool:
         return self.inner.is_concrete()
 
 
-class VoidTyp(Typ):
+class VoidTyp(InternedTyp):
     """The type of an expression that produces no value."""
 
     @property
@@ -1675,7 +1688,7 @@ class VoidTyp(Typ):
         return "void"
 
 
-class NeverTyp(Typ):
+class NeverTyp(InternedTyp):
     """The type of an expression that never completes normally.
 
     Used for expressions such as ``return`` that unconditionally divert
@@ -1787,18 +1800,23 @@ type TypKind = (
 """Every instantiable Typ implementation used by the compiler."""
 
 
+def as_typ_kind(typ: Typ) -> TypKind:
+    """Narrow ``typ`` to ``TypKind``, which every ``Typ`` instance is."""
+    return cast(TypKind, typ)
+
+
 #: The built-in numeric, boolean, string, and control-flow type singletons.
-U8 = IntTyp.get_or_create(8, signage.UNSIGNED)
-I8 = IntTyp.get_or_create(8, signage.SIGNED)
-U32 = IntTyp.get_or_create(32, signage.UNSIGNED)
-I32 = IntTyp.get_or_create(32, signage.SIGNED)
-USIZE = IntTyp.get_or_create(target.ADDR_SIZE, signage.UNSIGNED)
-ISIZE = IntTyp.get_or_create(target.ADDR_SIZE, signage.SIGNED)
+U8 = IntTyp(8, signage.UNSIGNED)
+I8 = IntTyp(8, signage.SIGNED)
+U32 = IntTyp(32, signage.UNSIGNED)
+I32 = IntTyp(32, signage.SIGNED)
+USIZE = IntTyp(target.ADDR_SIZE, signage.UNSIGNED)
+ISIZE = IntTyp(target.ADDR_SIZE, signage.SIGNED)
 CINT = I32
-BOOL = BoolTyp.get_or_create()
-CSTR = PtrTyp.get_or_create(U8, CONST)
-VOID = VoidTyp.get_or_create()
-NEVER = NeverTyp.get_or_create()
+BOOL = BoolTyp()
+CSTR = PtrTyp(U8, CONST)
+VOID = VoidTyp()
+NEVER = NeverTyp()
 
 
 class ArrayTypTemplate(GenericTypTemplate):
@@ -1812,14 +1830,14 @@ class ArrayTypTemplate(GenericTypTemplate):
     @override
     def calculate_comptime_params(self) -> tuple[ComptimeParamTyp, ...]:
         return (
-            TypParamTyp.get_or_create(self, 0, "T"),
-            ValueParamTyp.get_or_create(self, 1, "N", USIZE),
+            TypParamTyp(self, "T"),
+            ValueParamTyp(self, "N", USIZE),
         )
 
     @override
     def instantiate(self, comptime_args: tuple[Typ, ...]) -> ArrayTyp:
         elt_typ, length = comptime_args
-        return ArrayTyp.get_or_create(elt_typ, length)
+        return ArrayTyp(elt_typ, length)
 
 
 #: The singleton backing the built-in ``array[T, N]`` type.

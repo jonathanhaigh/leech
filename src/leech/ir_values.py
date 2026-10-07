@@ -40,7 +40,7 @@ def _gep_typ(base_typ: typs.PtrTyp, index: Value) -> typs.PtrTyp:
             # Pointers can target non-indexable current or future types.
             raise AssertionError(f"can't index into pointee type {typ}")
 
-    return typs.PtrTyp.get_or_create(typ, mut)
+    return typs.PtrTyp(typ, mut)
 
 
 class Value[TypT_co: typs.Typ = typs.Typ, AstT_co: ast.Ast = ast.Ast](abc.ABC):
@@ -340,7 +340,7 @@ class ComptimeAlloc(ComptimePtr):
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
-        return typs.PtrTyp.get_or_create(self.value.typ, self.mut)
+        return typs.PtrTyp(self.value.typ, self.mut)
 
     @override
     def load(self) -> ComptimeValue:
@@ -404,7 +404,7 @@ class ComptimePtrMutRelax(ComptimePtr):
     @override
     def calculate_typ(self) -> typs.PtrTyp:
         base_typ = asserts.checked_cast(self.base.typ, typs.PtrTyp)
-        return typs.PtrTyp.get_or_create(base_typ.pointee_typ, typs.CONST)
+        return typs.PtrTyp(base_typ.pointee_typ, typs.CONST)
 
     @override
     def load(self) -> ComptimeValue:
@@ -721,7 +721,7 @@ class PtrMutRelaxInstr(Instr[typs.PtrTyp]):
     @override
     def calculate_typ(self) -> typs.PtrTyp:
         operand_typ = asserts.checked_cast(self.operand.typ, typs.PtrTyp)
-        return typs.PtrTyp.get_or_create(operand_typ.pointee_typ, typs.CONST)
+        return typs.PtrTyp(operand_typ.pointee_typ, typs.CONST)
 
 
 class AllocaInstr(Instr[typs.PtrTyp]):
@@ -747,7 +747,7 @@ class AllocaInstr(Instr[typs.PtrTyp]):
 
     @override
     def calculate_typ(self) -> typs.PtrTyp:
-        return typs.PtrTyp.get_or_create(self.allocated_typ, self.mut)
+        return typs.PtrTyp(self.allocated_typ, self.mut)
 
 
 class StoreInstr(Instr[typs.VoidTyp]):

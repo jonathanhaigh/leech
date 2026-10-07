@@ -253,7 +253,7 @@ def test_union_tag_typ_is_the_narrowest_unsigned_fit(compiler, count, width):
     mod = compiler.build(_variant_count_src(count))
     wide = _get_union_typ(mod, "Wide")
 
-    assert wide.tag_typ == typs.IntTyp.get_or_create(width, signage.UNSIGNED)
+    assert wide.tag_typ == typs.IntTyp(width, signage.UNSIGNED)
 
 
 def test_duplicate_variant_in_union_defn_error(compiler):

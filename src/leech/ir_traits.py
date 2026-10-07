@@ -46,7 +46,7 @@ class ImplFnSelection:
     @property
     def ptr_typ(self) -> typs.PtrTyp:
         """A const function-pointer type for the selected signature."""
-        return typs.PtrTyp.get_or_create(self.fn_typ, typs.CONST)
+        return typs.PtrTyp(self.fn_typ, typs.CONST)
 
 
 class TraitMethod:
@@ -89,9 +89,7 @@ class TraitMethod:
         for Buf[N]``.
         """
         assert self.ast.receiver is not None
-        recv_typ = typs.PtrTyp.get_or_create(
-            self_typ, typs.Mutability.from_ast(self.ast.receiver.mut)
-        )
+        recv_typ = typs.PtrTyp(self_typ, typs.Mutability.from_ast(self.ast.receiver.mut))
         env = self._trait._env.new_child()
         env.add_container(reserved.SELF_TYP_NAME, self_typ)
         param_typs = [recv_typ] + [
@@ -100,7 +98,7 @@ class TraitMethod:
         ret_typ = (
             typs.VOID if self.ast.ret_typ is None else typs.Typ.from_ast(self.ast.ret_typ, env)
         )
-        fn_typ = typs.FnTyp.get_or_create(ret_typ, tuple(param_typs))
+        fn_typ = typs.FnTyp(ret_typ, tuple(param_typs))
         if not self._trait.comptime_params:
             return fn_typ
         mapping = dict(zip(self._trait.comptime_params, trait_args, strict=True))
@@ -137,7 +135,7 @@ class Trait:
 
     @functools.cached_property
     def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
-        """This trait's own interned generic parameters, in declaration order."""
+        """This trait's own generic parameters, in declaration order."""
         return typs.comptime_params_from_ast(self.ast, self.ast.comptime_params, self._env)
 
     @property

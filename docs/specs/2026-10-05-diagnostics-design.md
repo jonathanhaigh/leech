@@ -521,7 +521,8 @@ and building each item (`Mod._rejecting_on_error`). Keeping the memo on the comp
 gives an object reached from several compilations a separate result in each. Each owner
 reaches its compilation through a `ctx` property: `FnSymbol` (through `env`), `FnInstance`
 (through its symbol), `ModVar`, `StructField`, `StructTyp`, `UnionVariantTemplate`,
-`UnionVariant`, `UnionTyp` and `EnumTyp`. When it computes a unit, `Ctx.unit`:
+`UnionVariant`, `UnionTyp`, `EnumTyp` and a source-declared `ComptimeParamTyp` (through
+its declaration's environment). When it computes a unit, `Ctx.unit`:
 
 - pushes a unit frame on `Ctx.unit_stack` (transactions use the stack);
 - catches `ReportedError` and memoizes the failure, without emitting anything, because the
@@ -535,29 +536,28 @@ that can report a user error:
 
 | Unit | Property |
 | --- | --- |
-| Function signature | `FnSymbol.params`, `ptr_typ`, `ParsedFnSymbol._fn_typ`, `SrcFnSymbol._comptime_params`, and `FnInstance.fn_typ`, `ptr_typ`, `params` |
+| Function signature | `FnSymbol.params`, `ptr_typ`, `ParsedFnSymbol._fn_typ`, and `FnInstance.fn_typ`, `ptr_typ`, `params` |
 | Function body check | `SrcFnSymbol._typ_check_results` |
 | Function body lowering | `FnInstance.cfg`. It reports only warnings, and runs only after a clean check |
 | Module-variable initializer | `ModVar.typ_check_results`, `cfg`, `initializer` (and so `calculate_typ`) |
 | Struct and union declarations | `StructField.typ`, `access`, `mut`, `StructTyp.fields`, `UnionVariantTemplate.payload_typs`, `UnionVariant.payload_typs`, `UnionTyp.variants`, `tag_typ` |
 | Enum declaration | `EnumTyp.variants`, `backing_typ` |
+| Comptime parameter declaration | `ComptimeParamTyp.check_declaration` (a method, since it computes nothing), `ValueParamTyp`'s written value type |
+
+A unit computes against its owner's environment, so the owner must belong to one
+compilation. Declaration-derived types (struct and union
+instances, enums and source-declared comptime parameters) are therefore never shared
+between compilations: each is constructed once by what declares it (its template, its
+module or its declaring item), even when compilations share a bundled module's parsed
+AST. Only structural types (`typs.InternedTyp`) are interned process-wide, and they hold
+no environment ([#56](https://github.com/jonathanhaigh/leech/issues/56)).
 
 Some lazily computed state is deliberately not a unit:
 
-- **Things computed while building an item.** Struct, union and trait comptime parameters,
-  impl validation (orphan rule, unconstrained parameters, method signatures, conflicting
-  impls) and the intrinsics' signatures are computed when the item is built, so an error
-  there rejects the item (below) rather than failing a unit.
-- **Comptime parameter objects** (`ComptimeParamTyp.check_declaration`,
-  `ValueParamTyp.value_typ`). The bundled library's AST is parsed once per process, and its
-  parameters are interned by AST node, so they are shared by every compilation in the
-  process, and each holds the environment of whichever compilation created it. A unit would
-  therefore compute against another compilation's environment, wherever its result was
-  stored. Their validation is recovered per parameter instead, and a repeated report of the same error is
-  dropped by the sink's deduplication. This exception is temporary:
-  [#56](https://github.com/jonathanhaigh/leech/issues/56) interns declaration-derived types
-  (comptime parameters and enums) per compilation, after which these become ordinary
-  units.
+- **Things computed while building an item.** Function, struct, union, trait and impl
+  comptime parameters, impl validation (orphan rule, unconstrained parameters, method
+  signatures, conflicting impls) and the intrinsics' signatures are computed when the item
+  is built, so an error there rejects the item (below) rather than failing a unit.
 - **The entry point** (`Mod.designate_entry`) runs once, recovered like any other step.
 - **Layout validation** (`validate_declaration`, infinite size) is a method rather than a
   property. Its cycles are reported once by `fail_cycle` (below), and #113 drives it from
@@ -622,7 +622,7 @@ re-entering the cycle later from another unit reports nothing either.
 ### Poison and expression-level recovery
 
 `typs.ErrorTyp` is the poison type. It is interned per proof
-(`typs.ErrorTyp.get_or_create(reported)`), with `name` `"{error}"`, which is never rendered
+(`typs.ErrorTyp(reported)`), with `name` `"{error}"`, which is never rendered
 because the sink drops diagnostics that reference it. It can only be obtained through
 `typs.error_typ(reported: ReportProof)`, so poison always follows a reported error and
 records *which* error. `Typ.report_proof()` returns the proof of the first poison
