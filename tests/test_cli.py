@@ -496,10 +496,9 @@ def test_compile_module_returns_raised_error_after_warnings(tmp_path):
 def test_compile_module_fails_on_emitted_error(tmp_path, monkeypatch):
     src_path = tmp_path / "app.leech"
     src_path.write_text("pub fn f() i32 { return 0; }\n")
-    harness.emit_error_after_lowering(monkeypatch)
+    harness.emit_error_while_checking(monkeypatch)
 
     compilation = driver.compile_module(leech_src.SrcFile(src_path))
 
-    assert compilation.mod is not None
     assert compilation.llvm_ir is None
     assert [type(d) for d in compilation.diags.all()] == [errors.CcNotFoundError]

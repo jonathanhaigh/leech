@@ -267,10 +267,8 @@ def test_reserved_variant_name_error(compiler):
 
 
 def test_union_by_value_self_cycle_is_rejected(compiler):
-    mod = compiler.build("union Bad { A, B(Bad) }")
-    with pytest.raises(diag.ReportedError) as exc_info:
-        _ = _get_union_typ(mod, "Bad").variants
-    assert type(exc_info.value.reported.diag) is errors.InfiniteSizeTypError
+    with pytest.raises(errors.InfiniteSizeTypError):
+        compiler.build("union Bad { A, B(Bad) }")
 
 
 def test_union_through_pointer_is_finite(compiler):
@@ -279,43 +277,31 @@ def test_union_through_pointer_is_finite(compiler):
 
 
 def test_union_through_array_element_is_rejected(compiler):
-    mod = compiler.build("union Bad { A, B(array[Bad, 1]) }")
-    with pytest.raises(diag.ReportedError) as exc_info:
-        _ = _get_union_typ(mod, "Bad").variants
-    assert type(exc_info.value.reported.diag) is errors.InfiniteSizeTypError
+    with pytest.raises(errors.InfiniteSizeTypError):
+        compiler.build("union Bad { A, B(array[Bad, 1]) }")
 
 
 def test_union_and_struct_mutual_by_value_cycle_is_rejected(compiler):
-    mod = compiler.build(
-        "union U { A, B(S) }\nstruct S { u: U }",
-    )
-    with pytest.raises(diag.ReportedError) as exc_info:
-        _ = _get_union_typ(mod, "U").variants
-    assert type(exc_info.value.reported.diag) is errors.InfiniteSizeTypError
+    with pytest.raises(errors.InfiniteSizeTypError):
+        compiler.build("union U { A, B(S) }\nstruct S { u: U }")
 
 
 def test_growing_generic_union_declaration_cycle_is_rejected(compiler):
     # Every payload adds an array layer, so exact type identity never
     # repeats; the declaration still recurs with a growing argument.
-    mod = compiler.build("union L[T] { Nil, Cons(L[array[T, 1]]) }")
-    with pytest.raises(diag.ReportedError) as exc_info:
-        _get_union_template(mod, "L").validate_declaration()
-    assert type(exc_info.value.reported.diag) is errors.InfiniteSizeTypError
+    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
+        compiler.build("union L[T] { Nil, Cons(L[array[T, 1]]) }")
 
-    assert exc_info.value.reported.diag.message.message == 'Union "L" has infinite size'
-    assert len(exc_info.value.reported.diag.extra) == 1
-    assert exc_info.value.reported.diag.extra[0].message == (
+    assert exc_info.value.message.message == 'Union "L" has infinite size'
+    assert len(exc_info.value.extra) == 1
+    assert exc_info.value.extra[0].message == (
         'Payload 0 of variant "Cons" of union "L" contains "L[array[T, 1]]" by value'
     )
 
 
 def test_growing_generic_union_cycle_through_a_struct_is_rejected(compiler):
-    mod = compiler.build(
-        "union U[T] { A, B(S[array[T, 1]]) }\nstruct S[T] { u: U[T] }",
-    )
-    with pytest.raises(diag.ReportedError) as exc_info:
-        _get_union_template(mod, "U").validate_declaration()
-    assert type(exc_info.value.reported.diag) is errors.InfiniteSizeTypError
+    with pytest.raises(errors.InfiniteSizeTypError):
+        compiler.build("union U[T] { A, B(S[array[T, 1]]) }\nstruct S[T] { u: U[T] }")
 
 
 def test_cycle_growing_through_a_union_comptime_argument_is_rejected(compiler):
@@ -323,24 +309,18 @@ def test_cycle_growing_through_a_union_comptime_argument_is_rejected(compiler):
     # contains_typ to look inside a UnionTyp's own comptime arguments.
     # Without that the walk never recognises the repeat and recurses until
     # it exhausts the stack.
-    mod = compiler.build("union L[T] { Nil, Cons(L[L[T]]) }")
-    with pytest.raises(diag.ReportedError) as exc_info:
-        _get_union_template(mod, "L").validate_declaration()
-    assert type(exc_info.value.reported.diag) is errors.InfiniteSizeTypError
+    with pytest.raises(errors.InfiniteSizeTypError):
+        compiler.build("union L[T] { Nil, Cons(L[L[T]]) }")
 
 
 def test_cycle_growing_through_a_union_argument_via_a_struct_is_rejected(compiler):
-    mod = compiler.build(
-        "union U[T] { A, B(S[T]) }\nstruct S[T] { u: U[U[T]] }",
-    )
-    with pytest.raises(diag.ReportedError) as exc_info:
-        _get_union_template(mod, "U").validate_declaration()
-    assert type(exc_info.value.reported.diag) is errors.InfiniteSizeTypError
+    with pytest.raises(errors.InfiniteSizeTypError):
+        compiler.build("union U[T] { A, B(S[T]) }\nstruct S[T] { u: U[U[T]] }")
 
 
 def test_generic_union_through_pointer_argument_is_finite(compiler):
     mod = compiler.build("union L[T] { Nil, Cons(T, *L[T]) }")
-    _get_union_template(mod, "L").validate_declaration()
+    _get_union_template(mod, "L").check()
 
 
 def test_variant_resolves_against_an_unapplied_template(compiler):
@@ -799,10 +779,8 @@ def test_comptime_nested_variant_construction(compiler):
 def test_comptime_union_payload_cannot_hold_a_temporary_address(compiler):
     # ComptimeUnion is not a ComptimeAggregate, so without its own arm in
     # _check_not_temporary a temporary pointer would escape inside one.
-    mod = compiler.build("union Boxed { B(*i32) }\npub let g = Boxed::B(&1);")
-    with pytest.raises(diag.ReportedError) as exc_info:
-        _mod_var_value(mod, "g")
-    assert type(exc_info.value.reported.diag) is errors.CannotTakeAddressOfComptimeValueError
+    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+        compiler.build("union Boxed { B(*i32) }\npub let g = Boxed::B(&1);")
 
 
 def _union_instr_cfg(union_typ: typs.UnionTyp, payload: int):

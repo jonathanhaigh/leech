@@ -60,10 +60,22 @@ class HasCtx(Protocol):
         """The compilation this object belongs to."""
 
 
+class Checkable(HasCtx, Protocol):
+    """A declaration that can be checked on its own."""
+
+    def check(self) -> None:
+        """Report every user error in this declaration that doesn't depend on its uses.
+
+        Implemented as an analysis unit, so the check runs once and a failure is reported
+        once, however often it is requested.
+        """
+
+
 def unit[OwnerT: HasCtx, T](calculate: Callable[[OwnerT], T]) -> Callable[[OwnerT], T]:
     """Make ``calculate`` an analysis unit of its object, computed by ``Ctx.unit``.
 
-    Stack it under ``@property``. The unit is named after ``calculate``.
+    Stack it under ``@property`` for a value, or use it on a method taking no arguments for
+    a check that computes nothing. The unit is named after ``calculate``.
     """
 
     @functools.wraps(calculate)
@@ -205,6 +217,7 @@ class Ctx:
 
     @contextlib.contextmanager
     def _computing(self, unit_id: UnitId) -> Iterator[None]:
+        assert unit_id not in self.unit_stack, f"analysis unit {unit_id.name} re-entered itself"
         self.unit_stack.append(unit_id)
         try:
             yield

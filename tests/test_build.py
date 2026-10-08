@@ -349,7 +349,7 @@ def test_build_reports_a_warning_seen_by_several_compilations_once(tmp_path):
 
 def test_build_fails_on_emitted_error(tmp_path, monkeypatch):
     root = write(tmp_path / "hello.leech", _HELLO)
-    harness.emit_error_after_lowering(monkeypatch)
+    harness.emit_error_while_checking(monkeypatch)
 
     result = build.build(root)
 

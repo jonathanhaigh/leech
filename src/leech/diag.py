@@ -56,6 +56,13 @@ class ReportedError(Exception):
         self.reported = reported
 
 
+class InternalError(Exception):
+    """A bug in the compiler that it detected itself, rather than a problem in the program.
+
+    It is reported as an internal compiler error, not as a diagnostic.
+    """
+
+
 class Diags:
     """The diagnostics of one compilation, in emission order, without duplicates.
 

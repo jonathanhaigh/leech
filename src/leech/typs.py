@@ -707,7 +707,7 @@ class ComptimeParamTyp(Typ):
         return opt_util.opt_unwrap(self.decl_env).ctx
 
     @abc.abstractmethod
-    def check_declaration(self) -> None:
+    def check(self) -> None:
         """Resolve and validate what a source-declared parameter's declaration names.
 
         Deferred until the whole module graph is built, so a bound or a
@@ -765,7 +765,7 @@ class TypParamTyp(ComptimeParamTyp):
 
     @override
     @compilation.unit
-    def check_declaration(self) -> None:
+    def check(self) -> None:
         decl_env = opt_util.opt_unwrap(self.decl_env)
         for bound in self.bounds:
             decl_env.resolve_trait(bound.path)
@@ -833,7 +833,7 @@ class ValueParamTyp(ComptimeParamTyp):
 
     @override
     @compilation.unit
-    def check_declaration(self) -> None:
+    def check(self) -> None:
         _ = self.value_typ
 
 
@@ -897,7 +897,7 @@ def comptime_params_from_ast(
 
     Each parameter's kind comes from its own syntax, so no name is looked
     up here. What its bounds or declared type name is validated later
-    instead, by ``ComptimeParamTyp.check_declaration``, driven by the
+    instead, by ``ComptimeParamTyp.check``, driven by the
     record this leaves on ``e.ctx``.
 
     The parameters resolve their own bounds and declared types in a
@@ -1023,14 +1023,24 @@ class NominalTypTemplate[InstanceT: StructTyp | UnionTyp](GenericTypTemplate):
         return self._instance(comptime_args, record_request=True)
 
     @functools.cached_property
-    def _validation_instance(self) -> InstanceT:
-        """Return the opaque instance used only for declaration validation."""
+    def validation_instance(self) -> InstanceT:
+        """The instance applying the declaration's own comptime parameters, for validating it."""
         asserts.assert_gt(len(self.comptime_params), 0)
         return self._instance(self.comptime_params, record_request=False)
 
-    def validate_declaration(self) -> None:
-        """Validate this declaration's layout with its bare root name."""
-        _check_layout_finite(self._validation_instance, None, self.name)
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._decl_env.ctx
+
+    @compilation.unit
+    def check(self) -> None:
+        """Report any error in this declaration's layout or member types.
+
+        Its instances are checked separately, since their member types depend on their
+        arguments. The declaration's own check uses its own parameters as arguments, and
+        reports a layout error with the declaration's bare name.
+        """
+        _check_layout_finite(self.validation_instance, None, self.name)
 
     @functools.cached_property
     def module_instance(self) -> InstanceT:
@@ -1204,6 +1214,11 @@ class StructTyp(Typ):
         """Return fields by declaration order after rejecting infinite-size layouts."""
         _check_layout_finite(self, None, None)
         return types.MappingProxyType(self._fields)
+
+    @compilation.unit
+    def check(self) -> None:
+        for field in self.fields.values():
+            _ = field.typ
 
     def field_at(self, index: int) -> StructField:
         """Return the field at declaration-order ``index``."""
@@ -1460,6 +1475,11 @@ class UnionTyp(Typ):
         _check_layout_finite(self, None, None)
         return self._variants
 
+    @compilation.unit
+    def check(self) -> None:
+        for variant in self.variants:
+            _ = variant.payload_typs
+
     def variant_at(self, index: int) -> UnionVariant:
         """Return the variant at declaration-order ``index``."""
         return self.variants[index]
@@ -1588,6 +1608,10 @@ class EnumTyp(Typ):
             result[name] = value
             next_value = value + 1
         return result.items().mapping
+
+    @compilation.unit
+    def check(self) -> None:
+        _ = self.backing_typ
 
     @property
     @compilation.unit

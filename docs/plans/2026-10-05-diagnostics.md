@@ -274,21 +274,29 @@ types; tests in `test_typs.py`.
 `build.py`, `errors.py` (or `diag.py`); tests per #113 (`tests/test_structs.py`, `tests/test_unions.py`,
 `tests/test_enums.py`, `tests/test_vars.py`, new guard in `tests/test_check.py`).
 
+- Every module item's value implements `compilation.Checkable`, a `check()` unit, and
+  `ModItem.check` delegates to it (skipping imports). This replaces
+  `NominalTypTemplate.validate_declaration` and `ComptimeParamTyp.check_declaration`.
+  `Ctx.unit` asserts a unit never re-enters itself; `ModVar.initializer` detects its cycle
+  outside the unit that evaluates it.
 - `Mod.check_declarations` forces, as units: every module variable's `typ_check_results`,
   `cfg` and `initializer` (only lowering/evaluating an initializer whose check succeeded);
   every struct and union template's validation instance, field and payload types and
   layout; every enum's `variants` and `backing_typ`.
 - Move `mono.discover` from `codegen.Compiler.compile` into checking:
   `driver.compile_to_ir` runs it after `check_declarations` and `designate_entry`, and
-  stores the `MonoResult` on the module; codegen consumes it. Make discovery recover *per
+  stores the `MonoResult` on the module (`Mod.discover_instances`, read through
+  `Mod.instances`); codegen consumes it. Make discovery recover *per
   request*: in each of its work loops (module-variable CFGs, function-instance CFGs, struct
   fields, union payloads), wrap the forcing of one request in `try/except diag.ReportedError`,
   record it as failed, leave it out of `MonoResult`, and continue draining. Test with two
   independently failing generic instances (two infinite-size instances requested from
   different functions), one of which is requested only by an instance that itself fails
   later, and assert the expected set of diagnostics.
-- Phase boundary: after checking, if `diags.has_errors`, stop (`compile_to_ir` raises per
-  the current transitional rule; `compile_module` returns no IR).
+- Phase boundary: after checking, which includes discovery (run even when declarations
+  have errors, since it recovers per request), if `diags.has_errors`, stop
+  (`compile_to_ir` raises per the current transitional rule; `compile_module` returns no
+  IR).
 - Remove the validation-only forcing from `codegen.Compiler.compile`. Codegen asserts
   `not diags.has_errors` on entry, and any `UserError`/`ReportedError` escaping codegen is
   converted to an internal error.
@@ -297,7 +305,11 @@ types; tests in `test_typs.py`.
   (diagnostics rendered, banner, traceback) rather than being a user diagnostic.
 - `build.check` stops after `compile_to_ir` for every module (no IR generation); update its
   docstring.
-- Tests: one per declaration kind in #113's table, raised by `driver.compile_to_ir`. The
+- Tests: one per declaration kind in #113's table, raised by `driver.compile_to_ir`
+  (parametrized in `tests/test_check.py`). Lowering raises no user errors, so the errors
+  that depend on an instance are its struct or union layout and member types; the
+  discovery test therefore drives `mono.discover` on a module that is loaded but not
+  checked (`CompilerHarness.load`), so its declaration errors are first found there. The
   gap cannot reopen silently: codegen converts any user diagnostic it would raise into an
   internal error, so every test program that reaches code generation acts as the guard, and
   a unit test monkeypatches a codegen-time user error to prove the conversion.

@@ -367,7 +367,7 @@ def test_a_failing_comptime_param_check_is_reported_once(compiler):
     proofs = []
     for _ in range(2):
         with pytest.raises(diag.ReportedError) as exc_info:
-            param.check_declaration()
+            param.check()
         proofs.append(exc_info.value.reported)
 
     assert proofs[0] is proofs[1]
@@ -397,7 +397,7 @@ def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(compiler
     assert tuple(second_ctx.requested_struct_instances()) == (second_instance,)
 
 
-def test_struct_validation_instance_is_cached_without_request(compiler):
+def test_structvalidation_instance_is_cached_without_request(compiler):
     parsed_mod = compiler.parse("struct Box[T] { val: T }")
     (struct_ast,) = parsed_mod.defns
     assert isinstance(struct_ast, ast.StructDefn)
@@ -405,9 +405,9 @@ def test_struct_validation_instance_is_cached_without_request(compiler):
     env = ir_env.Env(ctx)
     template = typs.StructTypTemplate(struct_ast, env, "main")
 
-    validation = template._validation_instance
+    validation = template.validation_instance
 
-    assert validation is template._validation_instance
+    assert validation is template.validation_instance
     assert validation.template is template
     assert validation.comptime_args == template.comptime_params
     assert tuple(ctx.requested_struct_instances()) == ()

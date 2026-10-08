@@ -133,6 +133,15 @@ class Trait:
                 )
             self._methods[method.name] = method
 
+    @property
+    def ctx(self) -> compilation.Ctx:
+        return self._env.ctx
+
+    @compilation.unit
+    def check(self) -> None:
+        # A method's signature is only resolved for a concrete Self, by each impl.
+        pass
+
     @functools.cached_property
     def comptime_params(self) -> tuple[typs.ComptimeParamTyp, ...]:
         """This trait's own generic parameters, in declaration order."""

@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from leech import build, cli, diag, driver, errors, ir_loader
+from leech import build, cli, diag, driver, errors, ir_loader, opt_util
 from tests import harness
 
 
@@ -218,19 +218,18 @@ def test_mutually_recursive_trait_bounds_are_reported_once(compiler):
 
 
 def test_build_reports_later_compilations_diagnostics_in_load_order(tmp_path):
-    # Only module a's own compilation generates code for its struct, so the
-    # root's compilation finds the root's warning but not a's error.
+    # Each compilation lowers only its own module's non-generic functions, so a's
+    # warning is found by a's own compilation, after the root's.
     root = tmp_path / "app.leech"
     root.write_text("import a;\npub fn main() i32 { return 0; return 1; }\n")
-    (tmp_path / "a.leech").write_text("struct Inf { x: Inf }\n")
+    (tmp_path / "a.leech").write_text("pub fn f() i32 { return 0; return 1; }\n")
 
     result = build.build(root)
 
-    assert result.exe is None
-    assert [type(d) for d in result.diags] == [
-        errors.UnreachableCodeWarning,
-        errors.InfiniteSizeTypError,
-    ]
+    assert result.exe is not None
+    spans = [opt_util.opt_unwrap(d.message.span) for d in result.diags]
+    assert [type(d) for d in result.diags] == [errors.UnreachableCodeWarning] * 2
+    assert [span.file.path.name for span in spans] == ["app.leech", "a.leech"]
 
 
 def _crash_after_checking(monkeypatch) -> None:

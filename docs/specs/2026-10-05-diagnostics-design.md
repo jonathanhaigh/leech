@@ -521,10 +521,13 @@ and building each item (`Mod._rejecting_on_error`). Keeping the memo on the comp
 gives an object reached from several compilations a separate result in each. Each owner
 reaches its compilation through a `ctx` property: `FnSymbol` (through `env`), `FnInstance`
 (through its symbol), `ModVar`, `StructField`, `StructTyp`, `UnionVariantTemplate`,
-`UnionVariant`, `UnionTyp`, `EnumTyp` and a source-declared `ComptimeParamTyp` (through
-its declaration's environment). When it computes a unit, `Ctx.unit`:
+`UnionVariant`, `UnionTyp`, `EnumTyp`, struct and union templates, `Trait` and a
+source-declared `ComptimeParamTyp` (through its declaration's environment). When it
+computes a unit, `Ctx.unit`:
 
-- pushes a unit frame on `Ctx.unit_stack` (transactions use the stack);
+- pushes a unit frame on `Ctx.unit_stack` (transactions use the stack), asserting that the
+  unit is not already on it: a unit that reaches itself is a compiler bug, so a cycle in
+  the program must be detected before its unit is entered again;
 - catches `ReportedError` and memoizes the failure, without emitting anything, because the
   diagnostic was already reported;
 - while legacy `UserError` raise sites remain, also catches `UserError`, emits it, and
@@ -539,10 +542,11 @@ that can report a user error:
 | Function signature | `FnSymbol.params`, `ptr_typ`, `ParsedFnSymbol._fn_typ`, and `FnInstance.fn_typ`, `ptr_typ`, `params` |
 | Function body check | `SrcFnSymbol._typ_check_results` |
 | Function body lowering | `FnInstance.cfg`. It reports only warnings, and runs only after a clean check |
-| Module-variable initializer | `ModVar.typ_check_results`, `cfg`, `initializer` (and so `calculate_typ`) |
+| Module-variable initializer | `ModVar.typ_check_results`, `cfg`, `_evaluated_initializer` (behind `initializer`'s cycle guard, and so `calculate_typ`) |
 | Struct and union declarations | `StructField.typ`, `access`, `mut`, `StructTyp.fields`, `UnionVariantTemplate.payload_typs`, `UnionVariant.payload_typs`, `UnionTyp.variants`, `tag_typ` |
 | Enum declaration | `EnumTyp.variants`, `backing_typ` |
-| Comptime parameter declaration | `ComptimeParamTyp.check_declaration` (a method, since it computes nothing), `ValueParamTyp`'s written value type |
+| Comptime parameter declaration | `ComptimeParamTyp.check`, `ValueParamTyp`'s written value type |
+| Declaration checks | `check` on every module item's value, and on struct and union instances (below) |
 
 A unit computes against its owner's environment, so the owner must belong to one
 compilation. Declaration-derived types (struct and union
@@ -552,6 +556,18 @@ module or its declaring item), even when compilations share a bundled module's p
 AST. Only structural types (`typs.InternedTyp`) are interned process-wide, and they hold
 no environment ([#56](https://github.com/jonathanhaigh/leech/issues/56)).
 
+Every kind of module item's value implements `compilation.Checkable`: a `check()` method,
+itself a unit, that reports every user error in the declaration that doesn't depend on its
+uses. A `check` computes nothing, so it is a unit on a method rather than a property.
+`ModItem.check` delegates to its value, except for an import, which has nothing left to
+check: its module was found when the item was built, or the item was rejected. The
+imported module is checked as one of the loaded modules. Struct and union templates' `check` validates the layout against the
+declaration's own parameters, and an instance's `check` validates its own layout and
+member types, so discovery checks each instance it finds (#113). Declaration checking
+(`Mod.check_declarations`) calls `check` on every item and every impl function, so a
+declaration kind that doesn't implement it is a type error rather than an unchecked
+declaration.
+
 Some lazily computed state is deliberately not a unit:
 
 - **Things computed while building an item.** Function, struct, union, trait and impl
@@ -559,9 +575,6 @@ Some lazily computed state is deliberately not a unit:
   signatures, conflicting impls) and the intrinsics' signatures are computed when the item
   is built, so an error there rejects the item (below) rather than failing a unit.
 - **The entry point** (`Mod.designate_entry`) runs once, recovered like any other step.
-- **Layout validation** (`validate_declaration`, infinite size) is a method rather than a
-  property. Its cycles are reported once by `fail_cycle` (below), and #113 drives it from
-  checking.
 
 Module building (`Mod.build`) reports item-level errors per item, such as duplicate
 definitions, reserved names and invalid impl targets. Building is **staged, then

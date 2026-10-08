@@ -44,6 +44,10 @@ def compile_to_ir(
     function becomes the program entry point. ``import std::...`` resolves in the bundled
     library, and any other import in the file's package.
 
+    The program is checked completely, including every declaration and the generic
+    instances the module requests, so generating IR for the returned module can find no
+    further user errors. Its instances are in the returned module's ``instances``.
+
     Every diagnostic is reported to ``diags``, which defaults to a new collection, reachable
     through the returned module's ``ctx.diags``. Checking continues past an error in one
     declaration to find errors in others. If there are any errors, the first one in source
@@ -62,6 +66,7 @@ def compile_to_ir(
     if entry:
         with ctx.recovering():
             mod.designate_entry()
+    mod.discover_instances()
     if ctx.diags.has_errors:
         _raise_first_error(ctx.diags)
     return mod
@@ -76,9 +81,10 @@ def _raise_first_error(diags: diag.Diags) -> NoReturn:
 class Compilation:
     """The outcome of compiling one module, and every diagnostic it produced."""
 
-    #: The compiled module, unless an error stopped compilation before it was loaded.
+    #: The checked module, unless an error stopped compilation.
     mod: Optional[ir_module.Mod]
-    #: The module's textual LLVM IR, or ``None`` if any diagnostic is an error.
+    #: The module's textual LLVM IR, or ``None`` if any diagnostic is an error or no IR was
+    #: wanted.
     llvm_ir: Optional[str]
     diags: diag.Diags
 
@@ -88,6 +94,8 @@ def compile_module(
     qualified_name: Optional[str] = None,
     entry: bool = False,
     diags: Optional[diag.Diags] = None,
+    *,
+    generate_ir: bool = True,
 ) -> Compilation:
     """Compile a module to LLVM IR as ``compile_to_llvm_ir`` does, returning its diagnostics.
 
@@ -95,19 +103,20 @@ def compile_module(
     so the module fails if any of them is an error. They are reported to ``diags``, which
     defaults to a new collection. A caller that wants to render them if compilation crashes
     passes its own ``diags``, since an internal error propagates without them.
+
+    Without ``generate_ir``, the module is only checked, which finds the same diagnostics.
     """
     diags = opt_util.opt_or_default(diags, diag.Diags())
     mod = None
     llvm_ir = None
     try:
         mod = compile_to_ir(file, qualified_name, entry, diags)
-        llvm_ir = lower_to_llvm_ir(mod)
     except errors.UserError as err:
         diags.error(err)
     except diag.ReportedError:
         pass
-    if diags.has_errors:
-        llvm_ir = None
+    if mod is not None and generate_ir and not diags.has_errors:
+        llvm_ir = lower_to_llvm_ir(mod)
     return Compilation(mod, llvm_ir, diags)
 
 
@@ -119,24 +128,34 @@ def compile_to_llvm_ir(
 ) -> str:
     """Compile a source file and its imports to textual LLVM IR.
 
-    Arguments, diagnostics and errors are as for ``compile_to_ir``, including errors only
-    found while generating IR.
+    Arguments, diagnostics and errors are as for ``compile_to_ir``.
     """
-    mod = compile_to_ir(file, qualified_name, entry, diags)
-    try:
-        return lower_to_llvm_ir(mod)
-    except errors.UserError as err:
-        mod.ctx.diags.error(err)
-        _raise_first_error(mod.ctx.diags)
-    except diag.ReportedError:
-        _raise_first_error(mod.ctx.diags)
+    return lower_to_llvm_ir(compile_to_ir(file, qualified_name, entry, diags))
 
 
 def lower_to_llvm_ir(mod: ir_module.Mod) -> str:
-    """Generate textual LLVM IR for a module built by ``compile_to_ir``."""
-    compiler = codegen.Compiler(mod)
-    compiler.compile()
+    """Generate textual LLVM IR for a module that ``compile_to_ir`` built without errors.
+
+    Checking has found every user error, so a user error found while generating IR is a
+    compiler bug, raised as ``diag.InternalError``.
+    """
+    diags = mod.ctx.diags
+    assert not diags.has_errors, "IR is only generated for a module without errors"
+    try:
+        compiler = codegen.Compiler(mod)
+        compiler.compile()
+    except errors.UserError as err:
+        raise _user_error_while_generating_ir(err) from err
+    except diag.ReportedError as err:
+        raise _user_error_while_generating_ir(err.reported.diag) from err
+    reported = diags.any_error()
+    if reported is not None:
+        raise _user_error_while_generating_ir(reported.diag)
     return compiler.llvm_ir()
+
+
+def _user_error_while_generating_ir(err: errors.UserError) -> diag.InternalError:
+    return diag.InternalError(f"a user error was found while generating IR: {err}")
 
 
 def _parse_module_name(value: str) -> str:

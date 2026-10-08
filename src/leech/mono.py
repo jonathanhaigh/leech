@@ -8,6 +8,11 @@ Function and struct instances are created on demand while type checking and lowe
 Discovery drains the compilation context's live request logs; resolving one request may
 append more work to the same log. The result remains an over-approximation of reachability
 because validation of an unused declaration can itself request an instance.
+
+Discovery is part of checking: resolving a request can find a user error that depends on
+the instance, such as an instance with infinite size. Each request is resolved separately,
+so an error in one is reported and discovery continues with the rest, leaving the failed
+instance out of the result.
 """
 
 import dataclasses
@@ -66,7 +71,8 @@ def _discover_fn_instances(
     # every local initializer before discovering function instances it requests.
     for item in mod.items:
         if isinstance(item.value, ir_module.ModVar):
-            _ = item.value.cfg
+            with mod.ctx.recovering():
+                _ = item.value.cfg
 
     discovered = []
     requests = mod.ctx.requested_fn_instances()
@@ -74,16 +80,14 @@ def _discover_fn_instances(
     while cursor < len(requests):
         inst = requests[cursor]
         cursor += 1
-        if not inst.is_concrete():
-            continue
-        # Externs have no body to lower or definition to emit. Their module-item walk owns
-        # their declarations independently of reachability, so including one here would
-        # send a bodyless instance down the definition path.
-        if not inst.has_body:
-            continue
-        if not _is_imported_fn_instance(inst, mod):
-            _ = inst.cfg
-        discovered.append(inst)
+        with mod.ctx.recovering() as recovery:
+            if not _needs_code(inst):
+                continue
+            if not _is_imported_fn_instance(inst, mod):
+                # Lowering the body may append further requests.
+                _ = inst.cfg
+        if recovery.failure is None:
+            discovered.append(inst)
 
     local = []
     imported = []
@@ -93,6 +97,17 @@ def _discover_fn_instances(
         else:
             local.append(inst)
     return local, imported
+
+
+def _needs_code(inst: ir_module.FnInstance) -> bool:
+    """Return whether code generation needs ``inst`` from discovery.
+
+    Code generation defines such an instance, or declares it if another module defines it.
+    A non-concrete instance, created while checking a generic body, has no code of its own.
+    An extern has no body to define, and the module-item walk declares it independently of
+    reachability, so including one would send a bodyless instance down the definition path.
+    """
+    return inst.is_concrete() and inst.has_body
 
 
 def _discover_typ_instances(
@@ -122,15 +137,18 @@ def _discover_typ_instances(
             struct_cursor += 1
             if not struct_inst.is_concrete():
                 continue
-            _ = struct_inst.fields
-            structs.append(struct_inst)
+            with ctx.recovering() as recovery:
+                struct_inst.check()
+            if recovery.failure is None:
+                structs.append(struct_inst)
         while union_cursor < len(union_requests):
             union_inst = union_requests[union_cursor]
             union_cursor += 1
             if not union_inst.is_concrete():
                 continue
-            for variant in union_inst.variants:
-                _ = variant.payload_typs
-            unions.append(union_inst)
+            with ctx.recovering() as recovery:
+                union_inst.check()
+            if recovery.failure is None:
+                unions.append(union_inst)
 
     return structs, unions

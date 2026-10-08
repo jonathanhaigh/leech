@@ -11,7 +11,20 @@ import types
 from collections.abc import Mapping
 from typing import ClassVar, Final, Optional
 
-from leech import ast, build, diag, driver, errors, ir_module, ll_emit, opt_util, parse, reserved
+from leech import (
+    ast,
+    build,
+    compilation,
+    diag,
+    driver,
+    errors,
+    ir_module,
+    ll_emit,
+    mono,
+    opt_util,
+    parse,
+    reserved,
+)
 from leech import src as leech_src
 
 _TOOL_TIMEOUT_SECONDS = 30
@@ -29,15 +42,15 @@ def _bundled_mod_llvm_ir() -> Mapping[str, str]:
     return types.MappingProxyType(compiled)
 
 
-def emit_error_after_lowering(monkeypatch) -> None:
-    """Make lowering emit an error without raising it, as multi-error reporting will."""
-    lower = driver.lower_to_llvm_ir
+def emit_error_while_checking(monkeypatch) -> None:
+    """Make checking emit an error without raising it."""
+    discover = mono.discover
 
-    def lower_and_emit(mod: ir_module.Mod) -> str:
+    def discover_and_emit(mod: ir_module.Mod) -> mono.MonoResult:
         mod.ctx.diags.error(errors.CcNotFoundError("emitted"))
-        return lower(mod)
+        return discover(mod)
 
-    monkeypatch.setattr(driver, "lower_to_llvm_ir", lower_and_emit)
+    monkeypatch.setattr(mono, "discover", discover_and_emit)
 
 
 def src_position(src: str, substring: str) -> tuple[int, int]:
@@ -191,6 +204,13 @@ class CompilerHarness:
         mod = self._coerce_mod(src_or_mod)
         path = self.write_mod(mod)
         return parse.parse_mod_ast(leech_src.SrcFile(path))
+
+    def load(self, program: str | TestProgram) -> ir_module.Mod:
+        """Load the root and its imports without checking anything, for inspecting IR lazily."""
+        program = self._coerce_program(program)
+        paths = self._materialize(program)
+        ctx = compilation.Ctx()
+        return ctx.loader.load_root(paths[program.root.name], program.root.name)
 
     def build(
         self, program: str | TestProgram, *, diags: Optional[diag.Diags] = None

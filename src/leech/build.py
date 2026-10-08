@@ -91,47 +91,55 @@ def build(
 
 
 def check(root: pathlib.Path, diags: Optional[diag.Diags] = None) -> tuple[errors.UserError, ...]:
-    """Compile the program whose root module is ``root`` as ``build`` does, writing nothing.
+    """Check the program whose root module is ``root`` as ``build`` does, writing nothing.
 
-    Every module is compiled to LLVM IR, since some errors are only found while generating
-    it, but nothing is optimized, emitted or linked. Returns every distinct diagnostic in
-    source order; the program is valid unless one of them is an error. Diagnostics are also
-    reported to ``diags``, if given, as for ``build``.
+    Modules are checked as ``build`` compiles them, until one has an error, which finds
+    every diagnostic ``build`` would, but no IR is generated. Returns every distinct
+    diagnostic in source order; the program is valid unless one of them is an error.
+    Diagnostics are also reported to ``diags``, if given, as for ``build``.
     """
     diags = opt_util.opt_or_default(diags, diag.Diags())
-    _compile_program(root, diags)
+    _compile_program(root, diags, generate_ir=False)
     return diags.sorted()
 
 
-def _compile_program(root: pathlib.Path, diags: diag.Diags) -> Optional[dict[str, str]]:
+def _compile_program(
+    root: pathlib.Path, diags: diag.Diags, *, generate_ir: bool = True
+) -> Optional[dict[str, str]]:
     """Compile every module of the program separately, returning LLVM IR by module name.
 
     Each compilation reloads the whole program, so one problem is often reported by several
     compilations; ``diags`` keeps one of each. Returns ``None`` once a module fails, without
-    compiling the rest.
+    compiling the rest. Without ``generate_ir``, every module is only checked, and the
+    result maps no module to IR.
     """
-    root_compilation = _compile_module(src.SrcFile(root), root.stem, True, diags)
+    root_compilation = _compile_module(src.SrcFile(root), root.stem, True, diags, generate_ir)
     root_mod = root_compilation.mod
-    if root_mod is None or root_compilation.llvm_ir is None:
+    if root_mod is None or root_compilation.diags.has_errors:
         return None
-    llvm_irs = {root_mod.name: root_compilation.llvm_ir}
+    compilations = [root_compilation]
     for mod in root_mod.ctx.loader.mods:
-        if mod is root_mod:
-            continue
-        compilation = _compile_module(mod.ast.span.file, mod.name, False, diags)
-        if compilation.llvm_ir is None:
-            return None
-        llvm_irs[mod.name] = compilation.llvm_ir
-    return llvm_irs
+        if mod is not root_mod:
+            compilation = _compile_module(mod.ast.span.file, mod.name, False, diags, generate_ir)
+            if compilation.diags.has_errors:
+                return None
+            compilations.append(compilation)
+    return {
+        opt_util.opt_unwrap(compilation.mod).name: compilation.llvm_ir
+        for compilation in compilations
+        if compilation.llvm_ir is not None
+    }
 
 
 def _compile_module(
-    file: src.SrcFile, qualified_name: str, entry: bool, diags: diag.Diags
+    file: src.SrcFile, qualified_name: str, entry: bool, diags: diag.Diags, generate_ir: bool
 ) -> driver.Compilation:
     """Compile one module, merging its diagnostics into ``diags`` even if it crashes."""
     module_diags = diag.Diags()
     try:
-        return driver.compile_module(file, qualified_name, entry, diags=module_diags)
+        return driver.compile_module(
+            file, qualified_name, entry, diags=module_diags, generate_ir=generate_ir
+        )
     finally:
         diags.merge(module_diags)
 
@@ -169,7 +177,9 @@ def _emit_object(
     try:
         linked = ll_emit.link([ll_emit.parse(llvm_ir) for llvm_ir in llvm_irs.values()])
     except RuntimeError as err:
-        raise errors.LlvmVerificationError(str(err).strip(), obj_dir) from err
+        raise diag.InternalError(
+            f"the generated LLVM IR in {obj_dir} failed to link or verify: {str(err).strip()}"
+        ) from err
     ll_emit.optimize(linked, opt_level)
     obj_path = obj_dir / f"{stem}.o"
     obj_path.write_bytes(ll_emit.emit(linked, ll_emit.EmitKind.OBJ, opt_level))

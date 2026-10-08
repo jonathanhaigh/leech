@@ -1683,18 +1683,6 @@ class DoctorFixNote(UserError):  # noqa: N818 - a note, not an error
         super().__init__(NOTE, fix, None)
 
 
-class LlvmVerificationError(UserError):
-    """Raised when generated LLVM IR fails to link or verify, which is a compiler bug."""
-
-    def __init__(self, reason: str, ir_dir: pathlib.Path) -> None:
-        super().__init__(
-            ERROR,
-            f"Internal compiler error: the generated LLVM IR in {ir_dir} failed to link or "
-            f"verify: {reason}",
-            None,
-        )
-
-
 class TextErrorRenderer:
     """Renders diagnostics as plain text, with a source excerpt, to stderr."""
 

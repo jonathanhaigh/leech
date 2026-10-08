@@ -9,7 +9,7 @@ import contextlib
 import dataclasses
 import functools
 from collections.abc import Collection, Iterator, Mapping
-from typing import Final, Optional, cast, override
+from typing import TYPE_CHECKING, Final, Optional, cast, override
 
 from leech import (
     asserts,
@@ -30,6 +30,9 @@ from leech import (
     typs,
     visibility,
 )
+
+if TYPE_CHECKING:
+    from leech import mono
 
 
 @dataclasses.dataclass
@@ -57,6 +60,14 @@ class ModItem:
         if self.qualify_name:
             return f"{self.mod.name}::{self.name}"
         return self.name
+
+    def check(self) -> None:
+        # An import has nothing left to check: its module was found when the item was
+        # built, or the item would have been rejected. The module itself is checked as one
+        # of the loaded modules, not through its imports.
+        if not isinstance(self.value, Mod):
+            declaration: compilation.Checkable = self.value
+            declaration.check()
 
 
 class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
@@ -118,6 +129,10 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
     @abc.abstractmethod
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the cached instance for ``args``, creating it if needed."""
+
+    @abc.abstractmethod
+    def check(self) -> None:
+        pass
 
     def _instance(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return the instance for ``args``, constructing and requesting it the first time."""
@@ -278,6 +293,11 @@ class ExternFnSymbol(ParsedFnSymbol[ast.ExternFnDecl]):
         """Extern declarations have no comptime parameters."""
         return ()
 
+    @override
+    @compilation.unit
+    def check(self) -> None:
+        _ = self.fn_typ
+
     def instantiate(self, args: tuple[typs.Typ, ...]) -> FnInstance:
         """Return this declaration's cached bodyless instance."""
         assert not args, f"{self.name}: extern declarations take no comptime arguments"
@@ -336,6 +356,11 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
             f"got {len(args)} total"
         )
         return self._instance(args)
+
+    @override
+    @compilation.unit
+    def check(self) -> None:
+        _ = self.typ_check_results
 
     @property
     @compilation.unit
@@ -602,6 +627,12 @@ class IntrinsicFnSymbol(FnSymbol[ast.FnDefn], LowerableFn):
         """This intrinsic's type parameters in declaration order."""
         return self._typ_params
 
+    @override
+    @compilation.unit
+    def check(self) -> None:
+        # An intrinsic's signature is the compiler's own, so it has nothing to check.
+        pass
+
     @functools.cached_property
     def _typ_params(self) -> tuple[typs.TypParamTyp, ...]:
         return tuple(typs.TypParamTyp(self, name) for name in self._typ_param_names)
@@ -687,8 +718,11 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     def is_temporary(self) -> bool:
         return False
 
-    @property
     @compilation.unit
+    def check(self) -> None:
+        _ = self.initializer
+
+    @property
     def initializer(self) -> ir_values.ComptimeValue:
         """This variable's initial value, evaluated at compile time.
 
@@ -697,7 +731,8 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
         requires (directly or transitively, possibly through other modules)
         evaluating this same variable's initializer again.
         """
-        assert self.ast is not None
+        # The cycle is detected here, outside the unit, so that it is found before the
+        # unit would be entered again.
         with self.env.ctx.detect_cycle(
             compilation.CycleDomain.MOD_VAR_INITIALIZER,
             self,
@@ -713,7 +748,12 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
                         [(var.name, var.span) for var in cycle.details[:-1]],
                     ),
                 )
-            return comptime.Interpreter(self.cfg, (), (), self.env.ctx.builtins.panic_ref).eval()
+            return self._evaluated_initializer
+
+    @property
+    @compilation.unit
+    def _evaluated_initializer(self) -> ir_values.ComptimeValue:
+        return comptime.Interpreter(self.cfg, (), (), self.env.ctx.builtins.panic_ref).eval()
 
     @property
     @compilation.unit
@@ -759,6 +799,7 @@ class Mod:
     _poisoned: Final[dict[tuple[ir_env.Env.Namespace, str], diag.ReportProof]]
     _src_fn_symbols: tuple[SrcFnSymbol, ...]
     _entry_fn: Optional[SrcFnSymbol]
+    _instances: Optional[mono.MonoResult]
 
     def __init__(self, name: str, mod_ast: ast.Mod, ctx: compilation.Ctx) -> None:
         # Deferred because intrinsic classes subclass IntrinsicFnSymbol.
@@ -772,6 +813,7 @@ class Mod:
         self.env = builtin_env.new_child()
         self._src_fn_symbols = ()
         self._entry_fn = None
+        self._instances = None
 
         ir_builtins.register(builtin_env, ctx.builtins)
 
@@ -839,13 +881,35 @@ class Mod:
             self._poisoned[(ns, ident.name)] = reported
 
     def check_declarations(self) -> None:
-        """Type-check every body after the complete import graph has been built.
+        """Check every declaration after the complete import graph has been built.
 
-        An error in one body is reported, and checking continues with the next.
+        This finds every user error in the module's own declarations that does not depend
+        on which generic instances the program requests: every function body, module
+        variable initializer (including its compile-time evaluation), struct, union and
+        enum. An error in one declaration is reported, and checking continues with the next.
         """
+        for item in self._items.values():
+            with self.ctx.recovering():
+                item.check()
+        # Impl functions are not items.
         for fn in self._src_fn_symbols:
             with self.ctx.recovering():
-                _ = fn.typ_check_results
+                fn.check()
+
+    def discover_instances(self) -> None:
+        """Find the instances the module must emit, once its program has been checked.
+
+        An error in one instance is reported, and discovery continues with the others.
+        """
+        # Local because mono imports this module.
+        from leech import mono  # noqa: PLC0415
+
+        self._instances = mono.discover(self)
+
+    @property
+    def instances(self) -> mono.MonoResult:
+        """The instances ``discover_instances`` found."""
+        return opt_util.opt_unwrap(self._instances)
 
     def designate_entry(self) -> None:
         """Make this module's ``main`` the program entry point, after validating it.

@@ -107,9 +107,7 @@ def test_fn_candidate_applies_impl_args_before_fn_args(compiler):
 
 
 def test_explicit_fn_application_is_recorded_before_instantiation(compiler):
-    mod = compiler.build(
-        "fn id[T](x: T) T { x } pub fn main() i32 { id[i32](1) }",
-    )
+    mod = compiler.load("fn id[T](x: T) T { x } pub fn main() i32 { id[i32](1) }")
     fn = _get_generic_fn(mod, "id")
     main = _get_fn(mod, "main")
     main_ast = asserts.checked_cast(main.ast, ast.FnDefn)

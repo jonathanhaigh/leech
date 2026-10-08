@@ -219,7 +219,7 @@ class ModLoader:
         """
         for comptime_param in self.ctx.declared_comptime_params():
             with self.ctx.recovering():
-                comptime_param.check_declaration()
+                comptime_param.check()
         for mod in self._mods.values():
             mod.check_declarations()
 

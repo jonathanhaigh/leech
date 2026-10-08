@@ -19,7 +19,6 @@ from leech import (
     ir_values,
     ll_layout,
     ll_typs,
-    mono,
     naming,
     signage,
     target,
@@ -149,7 +148,7 @@ class Compiler:
         self._mod_var_globals = {}
 
     def compile(self) -> None:
-        """Compile declarations before bodies and discover generic instances to a fixpoint.
+        """Compile declarations before bodies, then the instances checking discovered.
 
         Imported functions remain declarations, but imported struct layouts are defined locally.
         Generic templates have no LLVM representation; only their reachable instances do.
@@ -168,26 +167,7 @@ class Compiler:
             ):
                 self._declare_mod_item(item)
 
-        # A generic struct's own fields are never lowered - only an
-        # instantiation's are, below - but they're still validated here,
-        # against the struct's own (opaque) comptime parameters, the same as
-        # every other declared struct's: an infinite-size struct is
-        # rejected whether or not anything in the program instantiates it.
-        #
-        # An enum has nothing to declare or compile (see _ll_typ's EnumTyp
-        # case), so it's forced here purely to validate it (duplicate
-        # variants, a non-integer or overflowing explicit backing type)
-        # whether or not the program ever references it, the same as a
-        # generic struct's. backing_typ itself reads every variant, so
-        # forcing it alone already forces (and catches duplicates in)
-        # variants too.
-        for item in self._program_items():
-            if isinstance(item.value, typs.StructTypTemplate | typs.UnionTypTemplate):
-                item.value.validate_declaration()
-            elif isinstance(item.value, typs.EnumTyp):
-                _ = item.value.backing_typ
-
-        result = mono.discover(self._mod)
+        result = self._mod.instances
         for struct_inst in result.struct_instances:
             self._declare_nominal_instance(struct_inst)
         for union_inst in result.union_instances:

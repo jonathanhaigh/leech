@@ -349,3 +349,15 @@ def test_fn_instances_are_cached_and_requested_once(compiler):
     assert fn.instantiate((typs.I32,)) is instance
     assert fn.instantiate((typs.BOOL,)) is not instance
     assert list(mod.ctx.requested_fn_instances()).count(instance) == 1
+
+
+def test_unit_that_reaches_itself_is_an_internal_error():
+    owner: _Owner
+
+    def reenter() -> int:
+        return owner.value
+
+    owner = _Owner(compilation.Ctx(), reenter)
+
+    with pytest.raises(AssertionError, match="value re-entered itself"):
+        _ = owner.value

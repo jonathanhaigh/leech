@@ -416,7 +416,7 @@ def test_mod_var_cycle_failure_is_memoized_and_reported_once(compiler):
         return 0;
     }
     """
-    mod = compiler.build(src)
+    mod = compiler.load(src)
     item = mod.get_item(ir_env.Env.Namespace.VARS, "b")
     assert item is not None
     var = asserts.checked_cast(item.value, ir_module.ModVar)
