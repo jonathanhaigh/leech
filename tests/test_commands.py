@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from leech import diag, errors, session
+from leech import diag, errors, session, toolchain
 from leech.cli import common
 from leech.cli import leech as leech_cli
 
@@ -18,9 +18,9 @@ _HELLO = 'import std::io;\npub fn main() i32 { io::println("hello"); return 0; }
 _ICE = "internal compiler error"
 
 
-def run_tool(*args, env=None) -> subprocess.CompletedProcess:
+def run_tool(*args, env=None, cwd=None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [str(a) for a in args], capture_output=True, text=True, check=False, env=env
+        [str(a) for a in args], capture_output=True, text=True, check=False, env=env, cwd=cwd
     )
 
 
@@ -56,8 +56,39 @@ def test_every_command_has_a_parser():
 
     assert list(command_parsers) == ["build", "run", "check", "doctor"]
     assert command_parsers["build"].parse_args(["app.leech", "-O1", "-o", "app"]) == (
-        argparse.Namespace(root=pathlib.Path("app.leech"), opt_level=1, o=pathlib.Path("app"))
+        argparse.Namespace(
+            root=pathlib.Path("app.leech"),
+            emit=frozenset({toolchain.OutputKind.EXE}),
+            o=pathlib.Path("app"),
+            opt_level=1,
+        )
     )
+
+
+@pytest.mark.parametrize(
+    ("args", "outputs"),
+    (
+        ([], {toolchain.OutputKind.EXE: pathlib.Path("app")}),
+        (["-o", "bin/x"], {toolchain.OutputKind.EXE: pathlib.Path("bin/x")}),
+        (
+            ["--emit", "asm,llvm-ir,asm"],
+            {
+                toolchain.OutputKind.ASM: pathlib.Path("app.s"),
+                toolchain.OutputKind.LLVM_IR: pathlib.Path("app.ll"),
+            },
+        ),
+    ),
+)
+def test_output_options_map_kinds_to_paths(args, outputs):
+    group = common.OutputOptions()
+    parser = argparse.ArgumentParser()
+    group.add_arguments(parser)
+    parsed = parser.parse_args(args)
+    parsed.root = pathlib.Path("src/app.leech")
+
+    group.validate(parser, parsed)
+
+    assert parsed.outputs == outputs
 
 
 @pytest.mark.parametrize(
@@ -74,7 +105,7 @@ def test_build_failure_is_a_diagnostic_not_a_crash(tmp_path, src, cc, expected):
     if cc is not None:
         env["CC"] = cc
 
-    proc = run_tool("leech", "build", root, env=env)
+    proc = run_tool("leech", "build", root, env=env, cwd=tmp_path)
 
     assert proc.returncode == 1
     assert proc.stderr.startswith(expected)
@@ -86,25 +117,11 @@ def test_unwritable_build_output_is_a_diagnostic_not_a_crash(tmp_path):
     out = tmp_path / "out"
     out.mkdir()
 
-    proc = run_tool("leech", "build", root, "-o", out)
+    proc = run_tool("leech", "build", root, "-o", out, cwd=tmp_path)
 
     assert proc.returncode == 1
-    assert proc.stderr.startswith("ERROR: Cannot write build output: ")
+    assert proc.stderr == f"ERROR: Cannot write build output: {out} is a directory\n"
     assert _ICE not in proc.stderr
-
-
-def test_leechc_compiles_only_its_module(tmp_path):
-    # Only the imported module's own compilation lowers its public functions, which is
-    # where the unreachable code is found.
-    root = write(tmp_path / "app.leech", "import a;\npub fn main() i32 { return 0; }\n")
-    write(tmp_path / "a.leech", "pub fn f() i32 { return 0; return 1; }\n")
-
-    leechc = run_tool("leechc", root, "--entry", "-o", tmp_path / "app.ll")
-    build = run_tool("leech", "build", root, "-o", tmp_path / "app")
-
-    assert (leechc.returncode, leechc.stderr) == (errors.NOTE, "")
-    assert build.returncode == 0
-    assert build.stderr.startswith("WARNING: return statement is unreachable")
 
 
 def test_run_renders_build_diagnostics_once(tmp_path, monkeypatch, capsys):
@@ -174,11 +191,13 @@ def test_crash_after_run_renders_build_diagnostics_once(tmp_path, monkeypatch, c
     assert stderr.index(warning) < stderr.index("ERROR: internal compiler error")
 
 
-def test_leechc_unwritable_output_is_a_diagnostic_not_a_crash(tmp_path):
-    root = write(tmp_path / "app.leech", "pub fn f() i32 { return 0; }\n")
+def test_output_in_a_missing_directory_is_a_diagnostic_not_a_crash(tmp_path):
+    root = write(tmp_path / "app.leech", _HELLO)
 
-    proc = run_tool("leechc", root, "-o", tmp_path / "missing" / "app.ll")
+    proc = run_tool(
+        "leech", "build", root, "--emit", "llvm-ir", "-o", tmp_path / "missing" / "app.ll"
+    )
 
-    assert proc.returncode == errors.ERROR
+    assert proc.returncode == 1
     assert proc.stderr.startswith("ERROR: Cannot write build output: ")
     assert _ICE not in proc.stderr

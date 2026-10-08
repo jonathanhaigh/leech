@@ -95,15 +95,3 @@ def emit(mod: llb.ModuleRef, kind: EmitKind, opt_level: int) -> bytes:
             return _target_machine(opt_level).emit_assembly(mod).encode()
         case EmitKind.OBJ:
             return _target_machine(opt_level).emit_object(mod)
-
-
-def emit_from_ir(llvm_ir: str, kind: EmitKind, opt_level: int) -> bytes:
-    """Optimize and serialize one module's textual IR.
-
-    Unoptimized textual IR is returned unchanged rather than reprinted by LLVM.
-    """
-    if kind == EmitKind.LLVM_IR and opt_level == 0:
-        return llvm_ir.encode()
-    mod = parse(llvm_ir)
-    optimize(mod, opt_level)
-    return emit(mod, kind, opt_level)

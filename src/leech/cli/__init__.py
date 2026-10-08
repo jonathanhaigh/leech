@@ -2,4 +2,4 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""The command-line tools: ``leech`` and ``leechc``."""
+"""The ``leech`` command line."""

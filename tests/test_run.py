@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import hashlib
 import os
 import pathlib
 import signal
@@ -16,10 +17,24 @@ from leech.cli import leech as leech_cli
 _HELLO = 'import std::io;\npub fn main() i32 { io::println("hello"); return 0; }\n'
 
 
-def run_leech(*args, cwd=None) -> subprocess.CompletedProcess:
+def run_leech(*args, cwd=None, env=None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["leech", *(str(a) for a in args)], capture_output=True, text=True, check=False, cwd=cwd
+        ["leech", *(str(a) for a in args)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=cwd,
+        env=env,
     )
+
+
+def cached_exe(root: pathlib.Path, cache: pathlib.Path | None = None) -> pathlib.Path:
+    """Return where ``leech run`` puts ``root``'s executable in ``cache``, by default the
+    cache the tests use."""
+    if cache is None:
+        cache = pathlib.Path(os.environ["XDG_CACHE_HOME"])
+    digest = hashlib.sha256(os.fsencode(root.absolute())).hexdigest()
+    return cache / "leech" / "run" / digest / root.stem
 
 
 def write(path: pathlib.Path, text: str) -> pathlib.Path:
@@ -39,16 +54,16 @@ class _ExecInterceptedError(Exception):
 def exec_calls(monkeypatch):
     """Record ``leech run`` builds and stop where it would replace the process."""
     builds = []
-    real_build = common.build_exe
+    real_build = common.build
 
-    def recording_build(root, output, session):
-        builds.append({"output": output, "opt_level": session.opt_level})
-        return real_build(root, output, session)
+    def recording_build(root, outputs, session):
+        builds.append({"outputs": outputs, "opt_level": session.opt_level})
+        real_build(root, outputs, session)
 
     def fake_execv(path, argv):
         raise _ExecInterceptedError(path, argv)
 
-    monkeypatch.setattr(common, "build_exe", recording_build)
+    monkeypatch.setattr(common, "build", recording_build)
     monkeypatch.setattr(os, "execv", fake_execv)
     return builds
 
@@ -95,7 +110,57 @@ def test_run_root_outside_working_directory(tmp_path):
     proc = run_leech("run", "sub/app.leech", cwd=tmp_path)
 
     assert (proc.returncode, proc.stdout) == (0, "hello\n")
-    assert (tmp_path / "sub" / "leech-out" / "app").exists()
+    assert cached_exe(tmp_path / "sub" / "app.leech").exists()
+
+
+def test_run_writes_nothing_in_the_current_directory(tmp_path):
+    root = write(tmp_path / "app.leech", _HELLO)
+
+    proc = run_leech("run", root, cwd=tmp_path)
+
+    assert (proc.returncode, proc.stdout) == (0, "hello\n")
+    assert [path.name for path in tmp_path.iterdir()] == ["app.leech"]
+
+
+def test_rerun_replaces_the_cached_executable(tmp_path):
+    root = write(tmp_path / "app.leech", "pub fn main() i32 { return 1; }\n")
+    assert run_leech("run", root).returncode == 1
+    write(root, "pub fn main() i32 { return 2; }\n")
+
+    assert run_leech("run", root).returncode == 2
+
+    assert [path.name for path in cached_exe(root).parent.iterdir()] == ["app"]
+
+
+def test_run_ignores_a_relative_cache_home(tmp_path):
+    root = write(tmp_path / "app.leech", _HELLO)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {**os.environ, "XDG_CACHE_HOME": "relative", "HOME": str(home)}
+
+    proc = run_leech("run", root, cwd=tmp_path, env=env)
+
+    assert (proc.returncode, proc.stdout) == (0, "hello\n")
+    exe = cached_exe(root, home / ".cache")
+    assert exe.exists()
+    assert not (tmp_path / "relative").exists()
+    created = [path for path in exe.parents if path.is_relative_to(home / ".cache")]
+    assert len(created) == 4
+    assert {path.stat().st_mode & 0o777 for path in created} == {0o700}
+
+
+def test_concurrent_runs_of_one_root_share_its_cached_executable(tmp_path):
+    root = write(tmp_path / "app.leech", _HELLO)
+    command = ["leech", "run", str(root)]
+
+    with (
+        subprocess.Popen(command, stdout=subprocess.PIPE, text=True) as first,
+        subprocess.Popen(command, stdout=subprocess.PIPE, text=True) as second,
+    ):
+        outputs = [first.communicate(timeout=60)[0], second.communicate(timeout=60)[0]]
+
+    assert (first.returncode, second.returncode, outputs) == (0, 0, ["hello\n", "hello\n"])
+    assert [path.name for path in cached_exe(root).parent.iterdir()] == ["app"]
 
 
 def test_run_build_failure_runs_nothing(tmp_path):
@@ -135,7 +200,7 @@ def test_run_arguments(tmp_path, monkeypatch, exec_calls, args, opt_level, progr
     )
 
     assert [call["opt_level"] for call in exec_calls] == [opt_level]
-    exe = (root.parent / "leech-out" / "app").absolute()
+    exe = cached_exe(root)
     assert intercepted.path == str(exe)
     assert intercepted.argv == [str(exe), *program_args]
 
@@ -181,7 +246,7 @@ def test_run_reports_exec_failure_without_traceback(tmp_path, monkeypatch, capsy
 
     assert exc_info.value.code == 1
     assert signal.getsignal(signal.SIGPIPE) == signal.SIG_IGN
-    exe = (tmp_path / "leech-out" / "app").absolute()
+    exe = cached_exe(root)
     assert capsys.readouterr().err == (
         f"ERROR: Cannot run {exe}: [Errno 13] Permission denied: '{exe}'\n"
     )

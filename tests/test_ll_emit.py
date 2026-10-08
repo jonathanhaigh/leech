@@ -28,6 +28,12 @@ entry:
 """
 
 
+def _emit(llvm_ir: str, kind: ll_emit.EmitKind, opt_level: int) -> bytes:
+    mod = ll_emit.parse(llvm_ir)
+    ll_emit.optimize(mod, opt_level)
+    return ll_emit.emit(mod, kind, opt_level)
+
+
 @pytest.mark.parametrize(
     ("kind", "suffix"),
     (
@@ -49,23 +55,19 @@ def test_emit_kind_suffixes(kind, suffix):
     ),
 )
 def test_emit_binary_formats_have_magic_numbers(kind, prefix):
-    assert ll_emit.emit_from_ir(_ADD_IR, kind, 0).startswith(prefix)
+    assert _emit(_ADD_IR, kind, 0).startswith(prefix)
 
 
 def test_emit_asm_is_text_assembly():
-    asm = ll_emit.emit_from_ir(_ADD_IR, ll_emit.EmitKind.ASM, 0).decode()
+    asm = _emit(_ADD_IR, ll_emit.EmitKind.ASM, 0).decode()
 
     assert ".text" in asm
     assert "add:" in asm
 
 
-def test_unoptimized_llvm_ir_is_returned_unchanged():
-    assert ll_emit.emit_from_ir(_ADD_IR, ll_emit.EmitKind.LLVM_IR, 0) == _ADD_IR.encode()
-
-
 def test_optimization_removes_redundant_memory_traffic():
-    unoptimized = ll_emit.emit_from_ir(_ADD_IR, ll_emit.EmitKind.LLVM_IR, 0).decode()
-    optimized = ll_emit.emit_from_ir(_ADD_IR, ll_emit.EmitKind.LLVM_IR, 2).decode()
+    unoptimized = _emit(_ADD_IR, ll_emit.EmitKind.LLVM_IR, 0).decode()
+    optimized = _emit(_ADD_IR, ll_emit.EmitKind.LLVM_IR, 2).decode()
 
     assert "alloca" in unoptimized
     assert "alloca" not in optimized

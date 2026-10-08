@@ -11,6 +11,11 @@ For: #95–#104 (see [Issue breakdown](#issue-breakdown)), plus
 
 Implementation plan: [Build tooling plan](../plans/2026-10-02-build-tooling.md).
 
+> **Superseded in part.** The [build pipeline and CLI restructure](2026-10-08-build-pipeline-restructure-design.md)
+> removes `leechc`, the `leech-out/` output directory and per-module compilation: `leech build
+> --emit` writes the whole program's outputs to the current directory, and `leech run` builds
+> into a per-user cache. The rest of this design still describes `leech`.
+
 ## Outcome
 
 A user with Python 3.14, uv and a C toolchain can install `leechc` and `leech` from a source

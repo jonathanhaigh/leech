@@ -12,9 +12,9 @@ from leech import codegen, diag, errors, mono, program, session
 from tests import harness
 
 
-def run_leech(*args) -> subprocess.CompletedProcess:
+def run_leech(*args, cwd=None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["leech", *(str(a) for a in args)], capture_output=True, text=True, check=False
+        ["leech", *(str(a) for a in args)], capture_output=True, text=True, check=False, cwd=cwd
     )
 
 
@@ -33,7 +33,7 @@ def test_check_valid_program_writes_nothing(tmp_path):
     write(tmp_path / "x" / "a.leech", "pub fn f() i32 { return 0; }\n")
     before = listing(tmp_path)
 
-    proc = run_leech("check", root)
+    proc = run_leech("check", root, cwd=tmp_path)
 
     assert (proc.returncode, proc.stdout, proc.stderr) == (0, "", "")
     assert listing(tmp_path) == before
@@ -42,11 +42,11 @@ def test_check_valid_program_writes_nothing(tmp_path):
 def test_check_reports_type_error(tmp_path):
     root = write(tmp_path / "main.leech", "pub fn main() i32 { return true; }\n")
 
-    proc = run_leech("check", root)
+    proc = run_leech("check", root, cwd=tmp_path)
 
     assert proc.returncode == 1
     assert proc.stderr.startswith("ERROR: ")
-    assert not (tmp_path / "leech-out").exists()
+    assert [path.name for path in tmp_path.iterdir()] == ["main.leech"]
 
 
 def test_check_reports_warning_and_succeeds(tmp_path):
@@ -64,11 +64,11 @@ def test_check_reports_struct_declaration_error(tmp_path):
         "struct S { s: S }\npub fn main() i32 { return 0; }\n",
     )
 
-    proc = run_leech("check", root)
+    proc = run_leech("check", root, cwd=tmp_path)
 
     assert proc.returncode == 1
     assert proc.stderr.startswith('ERROR: Struct "S" has infinite size\n')
-    assert not (tmp_path / "leech-out").exists()
+    assert [path.name for path in tmp_path.iterdir()] == ["main.leech"]
 
 
 def test_check_reports_error_in_an_imported_module(tmp_path):

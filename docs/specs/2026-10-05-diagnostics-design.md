@@ -750,7 +750,7 @@ note: 7 more errors and 2 more warnings not shown; use -fmax-errors=0 to show al
 
 Analysis does not stop at the cap. Leech programs are small, and stopping early would make
 *which* errors are shown depend on forcing order, which defeats sorting. SARIF output
-ignores the cap, because tools want everything. `leechc` and `leech check`/`build`/`run`
+ignores the cap, because tools want everything. `leech check`, `leech build` and `leech run`
 accept the option.
 
 ### Internal compiler errors
@@ -760,7 +760,7 @@ collected so far, then reports the crash, and re-raises so the traceback is prin
 
 ```text
 error: internal compiler error: AssertionError: ...
-note: this is a bug in leechc; please report it with the program that triggered it
+note: this is a bug in leech; please report it with the program that triggered it
 ```
 
 Users see their real errors even when poison handling has a gap. The crash is still
@@ -829,8 +829,8 @@ error: aborting due to 1 previous error; 1 warning emitted
 
 ### Warning control
 
-The options use gcc and clang spellings, and are accepted by `leechc` and
-`leech check`/`build`/`run`:
+The options use gcc and clang spellings, and are accepted by `leech check`, `leech build` and
+`leech run`:
 
 | Option | Effect |
 | --- | --- |
@@ -851,9 +851,8 @@ naming an error kind in these options is reported as `unknown-warning-option`.
 
 ### `leech explain`
 
-`leech explain NAME` prints `src/leech/diag_docs/NAME.md` to stdout, and `leechc --explain
-NAME` does the same (rustc spelling). An unknown name is a usage error that suggests the
-closest names. Each explanation describes the problem in full sentences, then gives an
+`leech explain NAME` prints `src/leech/diag_docs/NAME.md` to stdout. An unknown name is a
+usage error that suggests the closest names. Each explanation describes the problem in full sentences, then gives an
 erroneous example and a corrected one. Its Leech code fences carry the existing
 documentation-test metadata (`error=<name>` on the erroneous one), so `tests/doc.py` checks
 them. Explanations are optional at first. A test lists the catalogue kinds that have no
@@ -864,7 +863,7 @@ its explanation.
 
 `-fdiagnostics-format=text|sarif` (clang spelling; gcc's `sarif-stderr`/`sarif-file`
 variants are not provided). `sarif` writes one SARIF 2.1.0 log to stderr in place of the
-text output. The log has one run whose tool driver is `leechc` or `leech` with its version,
+text output. The log has one run whose tool driver is `leech` with its version,
 and a `rules` entry for each kind that appears (`id` = name, `shortDescription` = the
 template with fields left as `{name}`, `helpUri` omitted). Each diagnostic becomes one
 `result`:
@@ -887,7 +886,7 @@ stderr afterwards, so consumers should use `leech build` when they need the log 
   compilation reads its session's `diags` afterwards. The test harness does this.
 - The command line's `Command` base catches `CompilationFailed`, as it catches the first
   `UserError` today, and renders every diagnostic in the session.
-- `leechc` exits with the maximum effective level, as today. `leech` exits 1 on any error.
+- `leech` exits 1 on any error.
 
 ### Testing model
 
@@ -979,9 +978,9 @@ Existing issues were rescoped, and #114–#122 filed, as follows.
 | #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationFailed`, message-style normalization, `DiagArg` on types and AST, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
 | #72 + #73 | Speculative-probe diagnostics | Sink transactions tied to unit frames. A shared probe helper for function calls and union-variant constructors. Probe failures contribute no inference | #93, #114 |
 | #116 | Poison type and expression-level error recovery | `typs.ErrorTyp`, `error_typ(reported)`, `TypCheck._error`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
-| #117 | Limit reported errors with `-fmax-errors` | Cap with withheld-count note, on `leechc` and `leech` | #114 |
+| #117 | Limit reported errors with `-fmax-errors` | Cap with withheld-count note, on `leech` | #114 |
 | #118 | Render diagnostics in the rustc layout | `diag_text.py`: header, location, full-span underlines, labels, multi-line spans, notes, summary, `-fdiagnostics-color` | #115 |
-| #119 | Explain diagnostics with `leech explain` | `diag_docs/*.md`, `leech explain`, `leechc --explain`, doc-tested examples, shrinking allowlist | #115 |
+| #119 | Explain diagnostics with `leech explain` | `diag_docs/*.md`, `leech explain`, doc-tested examples, shrinking allowlist | #115 |
 | #120 | Control warnings with `-W` options | `WarningPolicy`, the six options, `unknown-warning-option` | #115 |
 | #121 | Emit diagnostics as SARIF | `diag_sarif.py`, `-fdiagnostics-format=text\|sarif` | #115 |
 

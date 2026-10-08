@@ -5,7 +5,7 @@
 [project]
 name = "leech"
 version = "0.0.1"
-description = "leechc, the compiler for the Leech systems programming language"
+description = "The compiler and build tool for the Leech systems programming language"
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MPL-2.0"
@@ -28,7 +28,6 @@ dependencies = [
 
 [project.scripts]
 leech = "leech.cli.leech:main"
-leechc = "leech.cli.leechc:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

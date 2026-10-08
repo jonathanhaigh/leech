@@ -6,10 +6,11 @@
 
 import dataclasses
 import pathlib
-from collections.abc import Mapping
 from typing import Final, NoReturn, Optional
 
-from leech import codegen, compilation, diag, errors, ir_module, opt_util
+from llvmlite import binding as llb
+
+from leech import codegen, compilation, diag, errors, ir_module, ll_emit, opt_util
 from leech import session as session_mod
 
 
@@ -42,19 +43,33 @@ class Program:
                 modules.append(
                     _check_in_child_session(mod.ast.span.file.path, mod.name, False, session)
                 )
-        return CheckedProgram(tuple(modules))
+        return CheckedProgram(session, tuple(modules))
 
 
 @dataclasses.dataclass(frozen=True)
 class CheckedProgram:
     """A program with no errors, each of its modules checked in its own compilation."""
 
+    session: session_mod.Session
     #: The root module first, then the others in load order.
     modules: tuple[CheckedModule, ...]
 
-    def module_llvm_irs(self) -> Mapping[str, str]:
-        """Generate each module's textual LLVM IR, by qualified module name."""
-        return {module.mod.name: module.llvm_ir() for module in self.modules}
+    def llvm_module(self) -> llb.ModuleRef:
+        """Generate the program as one LLVM module, optimized at the session's level.
+
+        The module is named after the root module. Generated IR that fails to parse, link or
+        verify is a compiler bug, raised as ``diag.InternalError``.
+        """
+        llvm_irs = [module.llvm_ir() for module in self.modules]
+        try:
+            linked = ll_emit.link([ll_emit.parse(llvm_ir) for llvm_ir in llvm_irs])
+        except RuntimeError as err:
+            raise diag.InternalError(
+                f"the generated LLVM IR failed to link or verify: {str(err).strip()}"
+            ) from err
+        linked.name = self.modules[0].mod.name
+        ll_emit.optimize(linked, self.session.opt_level)
+        return linked
 
 
 def _check_in_child_session(

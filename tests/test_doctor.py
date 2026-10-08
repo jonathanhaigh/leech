@@ -15,11 +15,13 @@ from leech import ir_loader
 from leech.cli import doctor
 
 
-def run_doctor(cc=None) -> subprocess.CompletedProcess:
+def run_doctor(cc=None, cwd=None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     if cc is not None:
         env["CC"] = cc
-    return subprocess.run(["leech", "doctor"], capture_output=True, text=True, check=False, env=env)
+    return subprocess.run(
+        ["leech", "doctor"], capture_output=True, text=True, check=False, env=env, cwd=cwd
+    )
 
 
 def fake_cc(tmp_path: pathlib.Path, script: str) -> pathlib.Path:
@@ -40,6 +42,13 @@ def test_doctor_passes_with_working_toolchain():
     assert lines[2].startswith("C compiler: cc (")
     assert lines[3].startswith("  ")
     assert lines[4:] == ["Build and run a test program: ok"]
+
+
+def test_doctor_writes_nothing_in_the_current_directory(tmp_path):
+    proc = run_doctor(cwd=tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_doctor_reports_missing_cc():

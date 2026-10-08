@@ -12,6 +12,13 @@ from tests import doc, harness
 pytest_plugins = ("pytester",)
 
 
+@pytest.fixture(autouse=True)
+def _private_cache_home(monkeypatch, tmp_path_factory) -> None:
+    """Keep ``leech run``'s executables, in this process and its children, out of the user's
+    cache."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path_factory.mktemp("cache")))
+
+
 @pytest.fixture
 def compiler(tmp_path: pathlib.Path) -> harness.CompilerHarness:
     return harness.CompilerHarness(tmp_path)

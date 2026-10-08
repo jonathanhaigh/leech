@@ -5,6 +5,7 @@
 """The ``leech`` command: build and run Leech programs from their root modules."""
 
 import argparse
+import hashlib
 import os
 import pathlib
 import signal
@@ -45,44 +46,36 @@ class RootArgument(common.OptionGroup):
 
 class BuildCommand(common.Command):
     name = "build"
-    help = "build a program into an executable"
+    help = "build a program into an executable or other outputs"
     description = (
-        "Build a program and every module it imports into an executable. Intermediate "
-        f"files go to {toolchain.OUT_DIR_NAME}/ beside ROOT."
+        "Build a program and every module it imports. Each output is named after ROOT's "
+        "stem and written to the current directory, unless -o names it. A program that "
+        "fails to compile or link writes nothing."
     )
-    option_groups = (RootArgument(), common.OptimizationOptions())
-
-    @override
-    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
-        super().add_arguments(parser)
-        parser.add_argument(
-            "-o",
-            help=f"executable to write (default: {toolchain.OUT_DIR_NAME}/<ROOT stem> beside ROOT)",
-            metavar="EXE",
-            type=pathlib.Path,
-        )
+    option_groups = (RootArgument(), common.OutputOptions(), common.OptimizationOptions())
 
     @override
     def run(self, args: argparse.Namespace, session: session_mod.Session) -> int:
-        common.build_exe(args.root, args.o, session)
+        common.build(args.root, args.outputs, session)
         return 0
 
 
 class RunCommand(common.Command):
-    """Builds a program, then replaces this process with it."""
+    """Builds a program into a per-user cache, then replaces this process with it."""
 
     name = "run"
     help = "build a program, then run it"
     description = (
-        f"Build a program as 'leech build' does, into {toolchain.OUT_DIR_NAME}/ beside ROOT, "
-        "then run it with any arguments given after '--'. The program's output and exit "
-        "status are its own."
+        "Build a program as 'leech build' does, into a per-user cache rather than the current "
+        "directory, then run it with any arguments given after '--'. The program's output and "
+        "exit status are its own."
     )
     option_groups = (RootArgument(), common.OptimizationOptions())
 
     @override
     def run(self, args: argparse.Namespace, session: session_mod.Session) -> int:
-        exe = common.build_exe(args.root, None, session)
+        exe = _run_cache_dir(args.root) / args.root.stem
+        common.build(args.root, {toolchain.OutputKind.EXE: exe}, session)
         self.render_diags(session)
         sys.stdout.flush()
         sys.stderr.flush()
@@ -90,6 +83,32 @@ class RunCommand(common.Command):
             _exec_natively(exe, args.program_args)
         except OSError as err:
             raise errors.RunFailedError(exe, str(err)) from err
+
+
+def _run_cache_dir(root: pathlib.Path) -> pathlib.Path:
+    """Return the absolute directory ``leech run`` builds ``root``'s executable in, creating it.
+
+    It is ``leech/run/<sha256 of the root's absolute path>`` in the user's cache directory.
+    Directories created are private to the user.
+    """
+    name = hashlib.sha256(os.fsencode(root.absolute())).hexdigest()
+    directory = _cache_home() / "leech" / "run" / name
+    try:
+        for path in reversed((directory, *directory.parents)):
+            if not path.is_dir():
+                path.mkdir(mode=0o700, exist_ok=True)
+    except OSError as err:
+        raise errors.BuildOutputError(str(err)) from err
+    return directory
+
+
+def _cache_home() -> pathlib.Path:
+    """Return ``$XDG_CACHE_HOME`` if it is absolute, as the XDG specification requires, or
+    ``~/.cache``."""
+    cache = pathlib.Path(os.environ.get("XDG_CACHE_HOME", ""))
+    if cache.is_absolute():
+        return cache
+    return pathlib.Path.home() / ".cache"
 
 
 class CheckCommand(common.Command):

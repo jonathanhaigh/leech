@@ -60,12 +60,15 @@ class BuildResult:
 
 
 def build_exe(root: pathlib.Path) -> BuildResult:
-    """Build an executable as ``leech build`` does, without rendering its diagnostics."""
+    """Build an executable beside ``root``, named after its stem, as ``leech build`` does,
+    without rendering its diagnostics."""
     session = session_mod.Session()
-    exe = None
+    exe = root.with_suffix("").absolute()
+    built = None
     with common.reporting_user_errors(session):
-        exe = common.build_exe(root, None, session)
-    return BuildResult(exe, session.diags.sorted())
+        common.build(root, {toolchain.OutputKind.EXE: exe}, session)
+        built = exe
+    return BuildResult(built, session.diags.sorted())
 
 
 def check_program(root: pathlib.Path) -> tuple[errors.UserError, ...]:

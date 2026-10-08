@@ -2,20 +2,20 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""What the command-line tools share: commands, option groups, crash reporting and builds."""
+"""What the ``leech`` commands share: the command and option-group bases, and builds."""
 
 import abc
 import argparse
 import contextlib
 import importlib.metadata
 import pathlib
-from collections.abc import Iterator
-from typing import ClassVar, Optional
+from collections.abc import Iterator, Mapping
+from typing import ClassVar
 
 import llvmlite
 from llvmlite import binding as llb
 
-from leech import diag, errors, ll_emit, opt_util, program, target, toolchain
+from leech import diag, errors, ll_emit, program, target, toolchain
 from leech import session as session_mod
 
 
@@ -74,13 +74,60 @@ class OptimizationOptions(OptionGroup):
         session.opt_level = args.opt_level
 
 
+def _parse_output_kinds(value: str) -> frozenset[toolchain.OutputKind]:
+    kinds = set[toolchain.OutputKind]()
+    for name in value.split(","):
+        try:
+            kinds.add(toolchain.OutputKind(name))
+        except ValueError:
+            choices = ", ".join(kind.value for kind in toolchain.OutputKind)
+            raise argparse.ArgumentTypeError(
+                f"invalid kind {name!r} (choose from {choices})"
+            ) from None
+    return frozenset(kinds)
+
+
+class OutputOptions(OptionGroup):
+    """``--emit`` and ``-o``: which outputs to write, and where.
+
+    Validation sets ``args.outputs``, mapping each requested kind to its path: ``-o``, or the
+    root's stem with the kind's suffix in the current directory.
+    """
+
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        kinds = ", ".join(kind.value for kind in toolchain.OutputKind)
+        parser.add_argument(
+            "--emit",
+            default=frozenset({toolchain.OutputKind.EXE}),
+            help=f"comma-separated outputs to write, from {kinds} (default: exe)",
+            metavar="KIND[,KIND...]",
+            type=_parse_output_kinds,
+        )
+        parser.add_argument(
+            "-o",
+            help="the output's path, with one --emit kind (default: ./<ROOT stem><suffix>)",
+            metavar="PATH",
+            type=pathlib.Path,
+        )
+
+    def validate(self, parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+        kinds: frozenset[toolchain.OutputKind] = args.emit
+        if args.o is not None:
+            if len(kinds) != 1:
+                parser.error("-o is only accepted with one --emit kind")
+            (kind,) = kinds
+            args.outputs = {kind: args.o}
+        else:
+            args.outputs = {kind: pathlib.Path(f"{args.root.stem}{kind.suffix}") for kind in kinds}
+
+
 class Command(abc.ABC):
     """A command-line command: its arguments, and what it does in a session.
 
     The command's diagnostics are rendered once it finishes, unless it rendered them itself
     with ``render_diags``. A user error it raises is
-    reported to the session and fails the command, as an error already reported does; any
-    other exception is reported as an internal compiler error.
+    reported to the session and fails the command with status 1, as an error already reported
+    does; any other exception is reported as an internal compiler error.
     """
 
     name: ClassVar[str]
@@ -107,10 +154,6 @@ class Command(abc.ABC):
     def run(self, args: argparse.Namespace, session: session_mod.Session) -> int:
         """Do the command's work, returning the exit status."""
 
-    def failure_status(self, session: session_mod.Session) -> int:
-        """The exit status when ``run`` raises a user error."""
-        return 1
-
     def execute(self, args: argparse.Namespace, tool: str) -> int:
         """Run the command in a new session, render its diagnostics, and return the exit
         status."""
@@ -118,11 +161,9 @@ class Command(abc.ABC):
         for group in self.option_groups:
             group.configure(args, session)
         with self._reporting_crashes(session, tool):
-            status: Optional[int] = None
+            status = 1
             with reporting_user_errors(session):
                 status = self.run(args, session)
-            if status is None:
-                status = self.failure_status(session)
         self.render_diags(session)
         return status
 
@@ -151,23 +192,18 @@ class Command(abc.ABC):
             raise
 
 
-def build_exe(
-    root: pathlib.Path, output: Optional[pathlib.Path], session: session_mod.Session
-) -> pathlib.Path:
-    """Build the program whose root module is ``root`` into an executable at ``output``.
+def build(
+    root: pathlib.Path,
+    outputs: Mapping[toolchain.OutputKind, pathlib.Path],
+    session: session_mod.Session,
+) -> None:
+    """Build the program whose root module is ``root``, writing each requested output to its
+    path, as ``toolchain.write_outputs`` does.
 
-    Intermediate files go to the output directory beside the root, and the executable to
-    ``output`` or its default path there, replaced only once linking succeeds. Returns the
-    executable's absolute path.
+    A requested executable needs ``$CC``, which is resolved before the program is checked.
     """
-    linker = toolchain.Linker.from_env()
+    linker = None
+    if toolchain.OutputKind.EXE in outputs:
+        linker = toolchain.Linker.from_env()
     checked = program.Program(root, entry=True).check(session)
-    out_dir = toolchain.OutputDir(root)
-    exe = opt_util.opt_or_default(output, out_dir.default_exe).absolute()
-    try:
-        out_dir.prepare()
-        obj = out_dir.emit_object(checked.module_llvm_irs(), session.opt_level)
-        linker.link(obj, exe)
-    except OSError as err:
-        raise errors.BuildOutputError(str(err)) from err
-    return exe
+    toolchain.write_outputs(checked.llvm_module(), outputs, session.opt_level, linker)

@@ -8,13 +8,13 @@ SPDX-License-Identifier: MPL-2.0
 
 ## Project Structure & Module Organization
 
-This repository implements `leechc`, the compiler for the Leech language, in Python 3.14.
-Leech is the language, `leechc` is the compiler command, and `leech` is the Python package
-(and the planned build-tool command); keep the three distinct in prose. Compiler code lives
+This repository implements the compiler for the Leech language in Python 3.14. Leech is the
+language, and `leech` is both the Python package and the command that builds programs; say
+which one you mean in prose. Compiler code lives
 in `src/leech/`: parsing uses `parse.py` and `leech.lark`, semantic and IR work uses
 `typcheck.py`, `ir_*.py`, and `comptime.py`, and LLVM output is produced by `codegen.py`.
 `program.py` drives a compilation in a `session.py` session, `toolchain.py` writes objects
-and links executables, and the `leech` and `leechc` commands live in `cli/`.
+and links executables, and the `leech` command lives in `cli/`.
 Standard-library sources are under `src/leech/std/`. Tests mirror language features in
 `tests/test_*.py`; shared test helpers live in `tests/harness.py`.
 
@@ -25,13 +25,12 @@ Standard-library sources are under `src/leech/std/`. Tests mirror language featu
 - `uv run pytest tests/test_traits.py::test_name` runs one test.
 - `uv run ruff check .` checks lint and import rules; `uv run ruff format .` formats code.
 - `uv run basedpyright` performs static type checking.
-- `uv run leechc input.leech -o output.ll` compiles a source file to LLVM IR.
-  `--emit {llvm-ir,llvm-bc,asm,obj}` picks the output format, `-O0`…`-O3` the optimization
-  level, and `--entry` makes the module's `main` the program entry point. Options follow
+- `uv run leech build input.leech` builds a program and its imports into the executable
+  `./input`. `--emit KIND[,KIND...]` picks the outputs from `exe` (the default), `obj`, `asm`,
+  `llvm-ir` and `llvm-bc`, each written to `./input` with the kind's suffix, or to `-o PATH`
+  when only one is requested; `-O0`…`-O3` picks the optimization level. Options follow
   gcc/clang names where one fits, and rustc/cargo names otherwise.
-- `uv run leech build input.leech` builds a program and its imports into
-  `leech-out/input` beside it.
-- `uv run leech run input.leech -- ARGS` builds it the same way, then runs it.
+- `uv run leech run input.leech -- ARGS` builds it into a per-user cache, then runs it.
 - `uv run leech check input.leech` reports a program's diagnostics without writing files.
 - `uv run leech doctor` checks that the toolchain can build and run programs.
 - `uv run reuse lint` verifies license metadata.

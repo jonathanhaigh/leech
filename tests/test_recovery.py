@@ -9,7 +9,6 @@ import pytest
 
 from leech import diag, errors, ir_loader, opt_util
 from leech.cli import leech as leech_cli
-from leech.cli import leechc
 from tests import harness
 
 
@@ -245,28 +244,21 @@ def _crash_after_checking(monkeypatch) -> None:
     monkeypatch.setattr(ir_loader.ModLoader, "check_declarations", check_then_crash)
 
 
-@pytest.mark.parametrize(
-    ("argv", "tool"),
-    ((["leechc"], "leechc"), (["leech", "check"], "leech"), (["leech", "build"], "leech")),
-)
-def test_internal_error_renders_earlier_diagnostics_first(
-    tmp_path, monkeypatch, capsys, argv, tool
-):
+@pytest.mark.parametrize("command", ("check", "build"))
+def test_internal_error_renders_earlier_diagnostics_first(tmp_path, monkeypatch, capsys, command):
     src_path = tmp_path / "app.leech"
     src_path.write_text("pub fn main() i32 { return true; }\n")
     _crash_after_checking(monkeypatch)
-    monkeypatch.setattr(sys, "argv", [*argv, str(src_path)])
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["leech", command, str(src_path)])
 
     with pytest.raises(RuntimeError, match="boom"):
-        if tool == "leechc":
-            leechc.main()
-        else:
-            leech_cli.main()
+        leech_cli.main()
 
     stderr = capsys.readouterr().err
     user_error = stderr.index("ERROR: Return expression has invalid type")
     ice = stderr.index("ERROR: internal compiler error: RuntimeError: boom")
-    note = stderr.index(f"NOTE: this is a bug in {tool}; please report it")
+    note = stderr.index("NOTE: this is a bug in leech; please report it")
     assert user_error < ice < note
 
 

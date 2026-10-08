@@ -68,10 +68,12 @@ class DoctorCommand(common.Command):
         with tempfile.TemporaryDirectory(prefix="leech-doctor-") as tmp_dir:
             root = pathlib.Path(tmp_dir) / "doctor.leech"
             root.write_text(_TEST_PROGRAM)
-            exe = None
+            exe = pathlib.Path(tmp_dir) / "doctor"
+            built = False
             with common.reporting_user_errors(session):
-                exe = common.build_exe(root, None, session)
-            if exe is None:
+                common.build(root, {toolchain.OutputKind.EXE: exe}, session)
+                built = True
+            if not built:
                 linking = any(
                     isinstance(err, errors.LinkFailedError) for err in session.diags.all()
                 )

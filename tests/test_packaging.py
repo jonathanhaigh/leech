@@ -73,7 +73,6 @@ def test_wheel_declares_console_scripts(wheel):
     entry_points.read_string(_dist_info_file(wheel, "entry_points.txt"))
     assert dict(entry_points["console_scripts"]) == {
         "leech": "leech.cli.leech:main",
-        "leechc": "leech.cli.leechc:main",
     }
 
 

@@ -2,4 +2,5 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""The ``leechc`` compiler for the Leech language, with its bundled standard library."""
+"""The compiler for the Leech language, run as the ``leech`` command, with its bundled standard
+library."""

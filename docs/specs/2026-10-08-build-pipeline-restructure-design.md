@@ -359,7 +359,8 @@ Leech source:
   raising `LinkFailedError`, as `build._link` does. The linker is resolved only when an
   executable is requested, so every other output kind works without a C compiler, as
   `leechc --emit` did.
-- `emit(module, kind, path, opt_level)` writes one output kind through `ll_emit`.
+- `write_outputs(module, outputs, opt_level, linker)` writes the requested output kinds
+  through `ll_emit`, staging and committing them as [Outputs](#outputs-d12) describes.
 - A build's intermediates live in a `tempfile.TemporaryDirectory`, deleted when the build
   ends, whether it succeeds or not.
 
@@ -406,8 +407,9 @@ anything:
    temporary directory may be on another filesystem, where `os.replace` fails; replacing
    from the same directory is atomic per file. An executable keeps its mode bits.
 3. **Failure model.** Each destination is either its old content or its complete new
-   content, never partial. If committing one output fails (for example, the destination is
-   a directory, or permission is denied), it is reported as `BuildOutputError`, outputs
+   content, never partial. A destination that is a directory is reported as
+   `BuildOutputError` before anything is staged or committed. If committing one output fails
+   (for example, permission is denied), it is reported as `BuildOutputError`, outputs
    already committed in this build stay, later ones are not attempted, and any staged
    temporary beside a destination is removed. Atomic replacement of several files at once is
    not possible, so this is the strongest guarantee; it only arises when the file system

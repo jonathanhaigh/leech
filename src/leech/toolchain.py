@@ -2,26 +2,41 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Turning LLVM IR into files: object emission, the build output directory and the linker."""
+"""Turning an LLVM module into files: output kinds, the linker, and writing outputs."""
 
+import enum
 import os
 import pathlib
 import shlex
 import shutil
 import subprocess
-from collections.abc import Mapping
-from typing import Final
+import tempfile
+from collections.abc import Iterable, Mapping
+from typing import Final, Optional
 
-from leech import diag, errors, ll_emit
+from llvmlite import binding as llb
 
-OUT_DIR_NAME: Final[str] = "leech-out"
-"""The build output directory, created beside the root module."""
+from leech import errors, ll_emit
 
-_CACHEDIR_TAG: Final[str] = (
-    "Signature: 8a477f597d28d172789f06886806bc55\n"
-    "# This file is a cache directory tag created by leech.\n"
-    "# For information about cache directory tags see https://bford.info/cachedir/\n"
-)
+
+class OutputKind(enum.Enum):
+    """An output a build can write, named as on the command line.
+
+    Outputs are produced in the order the kinds are defined.
+    """
+
+    LLVM_IR = "llvm-ir"
+    LLVM_BC = "llvm-bc"
+    ASM = "asm"
+    OBJ = "obj"
+    EXE = "exe"
+
+    @property
+    def suffix(self) -> str:
+        """The file suffix of this kind's default path."""
+        if self is OutputKind.EXE:
+            return ""
+        return ll_emit.EmitKind(self.value).suffix
 
 
 class Linker:
@@ -50,92 +65,97 @@ class Linker:
         return cls(tuple(command))
 
     def link(self, obj: pathlib.Path, exe: pathlib.Path) -> None:
-        """Link ``exe``, replacing any old file only once the linker has produced a new one."""
-        tmp_exe = exe.with_name(f".{exe.name}.leech-tmp")
-        command = [*self.command, str(obj), "-o", str(tmp_exe)]
+        """Link ``obj`` into the executable ``exe``, which must not exist yet."""
+        command = [*self.command, str(obj), "-o", str(exe)]
         try:
-            try:
-                proc = subprocess.run(command, capture_output=True, text=True, check=False)
-            except OSError as err:
-                raise errors.LinkFailedError(
-                    shlex.join(command), "could not run", str(err)
-                ) from err
-            if proc.returncode != 0:
-                raise errors.LinkFailedError(
-                    shlex.join(command),
-                    f"exited with status {proc.returncode}",
-                    proc.stdout + proc.stderr,
-                )
-            if tmp_exe.is_symlink() or not tmp_exe.is_file():
-                raise errors.LinkFailedError(
-                    shlex.join(command),
-                    "succeeded but wrote no executable",
-                    proc.stdout + proc.stderr,
-                )
-            tmp_exe.replace(exe)
-        finally:
-            tmp_exe.unlink(missing_ok=True)
+            proc = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError as err:
+            raise errors.LinkFailedError(shlex.join(command), "could not run", str(err)) from err
+        if proc.returncode != 0:
+            raise errors.LinkFailedError(
+                shlex.join(command),
+                f"exited with status {proc.returncode}",
+                proc.stdout + proc.stderr,
+            )
+        if exe.is_symlink() or not exe.is_file():
+            raise errors.LinkFailedError(
+                shlex.join(command), "succeeded but wrote no executable", proc.stdout + proc.stderr
+            )
 
 
-class OutputDir:
-    """The build output directory beside a root module, ``leech-out/``.
+def write_outputs(
+    module: llb.ModuleRef,
+    outputs: Mapping[OutputKind, pathlib.Path],
+    opt_level: int,
+    linker: Optional[Linker],
+) -> None:
+    """Write each requested kind of ``module``'s output to its path, generating machine code at
+    ``opt_level`` and linking an executable with ``linker``.
 
-    It holds the default executable, ``<stem>``, and the intermediate files of building it,
-    in ``<stem>.obj/``.
+    Every output is produced in a temporary directory before any path is replaced, so a failed
+    link changes nothing. Each path is then replaced atomically, in the order of the kinds, so
+    it holds either its old content or its complete new content; if replacing one fails, the
+    ones already replaced keep their new content. ``module`` must not be used afterwards.
     """
+    assert outputs, "no outputs requested"
+    assert (linker is not None) == (OutputKind.EXE in outputs), "a linker is needed for exe only"
+    try:
+        for path in outputs.values():
+            if path.is_dir():
+                raise errors.BuildOutputError(f"{path} is a directory")
+        with tempfile.TemporaryDirectory(prefix="leech-") as tmp_dir:
+            staged = _stage(module, outputs.keys(), opt_level, linker, pathlib.Path(tmp_dir))
+            for kind in OutputKind:
+                if kind in outputs:
+                    _commit(staged[kind], outputs[kind])
+    except OSError as err:
+        raise errors.BuildOutputError(str(err)) from err
 
-    path: Final[pathlib.Path]
-    _stem: Final[str]
-    _obj_dir: Final[pathlib.Path]
 
-    def __init__(self, root: pathlib.Path) -> None:
-        self.path = root.parent / OUT_DIR_NAME
-        self._stem = root.stem
-        self._obj_dir = self.path / f"{root.stem}.obj"
+def _stage(
+    module: llb.ModuleRef,
+    kinds: Iterable[OutputKind],
+    opt_level: int,
+    linker: Optional[Linker],
+    directory: pathlib.Path,
+) -> dict[OutputKind, pathlib.Path]:
+    """Write each kind of output into ``directory``, with an object for the executable."""
+    to_stage = set(kinds)
+    if OutputKind.EXE in to_stage:
+        to_stage.add(OutputKind.OBJ)
+    staged = dict[OutputKind, pathlib.Path]()
+    for kind in OutputKind:
+        if kind not in to_stage:
+            continue
+        path = directory / f"program{kind.suffix}"
+        match kind:
+            case OutputKind.EXE:
+                assert linker is not None
+                linker.link(staged[OutputKind.OBJ], path)
+            case OutputKind.ASM:
+                # Generating machine code changes the module, so the object, generated
+                # next, must not see what generating assembly did.
+                emitted = ll_emit.emit(module.clone(), ll_emit.EmitKind.ASM, opt_level)
+                path.write_bytes(emitted)
+            case _:
+                path.write_bytes(ll_emit.emit(module, ll_emit.EmitKind(kind.value), opt_level))
+        staged[kind] = path
+    return staged
 
-    @property
-    def default_exe(self) -> pathlib.Path:
-        return self.path / self._stem
 
-    def prepare(self) -> None:
-        """Create the directory, marked as ignorable, with an empty intermediates directory.
+def _commit(staged: pathlib.Path, path: pathlib.Path) -> None:
+    """Replace ``path`` with a copy of ``staged``, keeping ``staged``'s mode bits.
 
-        The output directory must be a real directory, so that clearing old intermediates can
-        only ever delete files inside it.
-        """
-        if self.path.is_symlink() or (self.path.exists() and not self.path.is_dir()):
-            raise errors.BuildOutputError(f"{self.path} exists but is not a directory")
-        self.path.mkdir(exist_ok=True)
-        gitignore = self.path / ".gitignore"
-        if not gitignore.exists():
-            gitignore.write_text("*\n")
-        cachedir_tag = self.path / "CACHEDIR.TAG"
-        if not cachedir_tag.exists():
-            cachedir_tag.write_text(_CACHEDIR_TAG)
-        if self._obj_dir.is_symlink() or self._obj_dir.is_file():
-            self._obj_dir.unlink()
-        elif self._obj_dir.exists():
-            shutil.rmtree(self._obj_dir)
-        self._obj_dir.mkdir()
-
-    def emit_object(self, llvm_irs: Mapping[str, str], opt_level: int) -> pathlib.Path:
-        """Save each module's IR, by qualified module name, then link, optimize and emit them
-        as one object file.
-
-        IR that fails to link or verify is a compiler bug, raised as ``diag.InternalError``.
-        """
-        for name, llvm_ir in llvm_irs.items():
-            ir_path = self._obj_dir.joinpath(*name.split("::")).with_suffix(".ll")
-            ir_path.parent.mkdir(parents=True, exist_ok=True)
-            ir_path.write_text(llvm_ir)
-        try:
-            linked = ll_emit.link([ll_emit.parse(llvm_ir) for llvm_ir in llvm_irs.values()])
-        except RuntimeError as err:
-            raise diag.InternalError(
-                f"the generated LLVM IR in {self._obj_dir} failed to link or verify: "
-                f"{str(err).strip()}"
-            ) from err
-        ll_emit.optimize(linked, opt_level)
-        obj_path = self._obj_dir / f"{self._stem}.o"
-        obj_path.write_bytes(ll_emit.emit(linked, ll_emit.EmitKind.OBJ, opt_level))
-        return obj_path
+    The copy is made beside ``path`` first, because ``staged`` may be on another file system,
+    from which it can't be renamed into place.
+    """
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".leech-tmp", dir=path.parent)
+    tmp = pathlib.Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as tmp_file, staged.open("rb") as staged_file:
+            shutil.copyfileobj(staged_file, tmp_file)
+        shutil.copymode(staged, tmp)
+        tmp.replace(path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
