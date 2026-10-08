@@ -82,6 +82,6 @@ def test_alloc_different_typs_use_distinct_size_of_instantiations(compiler):
         return 0;
     }
     """
-    ir_text = compiler.compile(main_src).mods["main"].llvm_ir
+    ir_text = compiler.compile(main_src).llvm_ir
     assert 'call i64 @"__size_of[i32]"' in ir_text
     assert 'call i64 @"__size_of[bool]"' in ir_text

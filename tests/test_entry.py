@@ -17,7 +17,7 @@ def test_root_not_named_main_is_entry_point(compiler):
 
     compiled = compiler.compile(program, entry=True)
 
-    llvm_ir = compiled.mods["app"].llvm_ir
+    llvm_ir = compiled.llvm_ir
     assert 'define i32 @"app::main"()' in llvm_ir
     assert 'call i32 @"app::main"()' in llvm_ir
     compiler.check(program, exit_status=5)
@@ -35,7 +35,7 @@ def test_entry_module_can_be_imported_by_name(compiler):
 
 
 def test_entry_is_off_by_default(compiler):
-    llvm_ir = compiler.compile("pub fn main() i32 { 0 }").mods["main"].llvm_ir
+    llvm_ir = compiler.compile("pub fn main() i32 { 0 }").llvm_ir
 
     assert 'define i32 @"main::main"()' in llvm_ir
     assert 'define i32 @"main"()' not in llvm_ir
@@ -117,7 +117,7 @@ def test_imported_extern_main_with_entry_type_shares_the_entry_symbol(compiler):
         harness.ModSrc("helper", "extern fn main() i32;"),
     )
 
-    llvm_ir = compiler.compile(program, entry=True).mods["main"].llvm_ir
+    llvm_ir = compiler.compile(program, entry=True).llvm_ir
 
     assert llvm_ir.count('@"main"()') == 1
     assert 'define i32 @"main"()' in llvm_ir

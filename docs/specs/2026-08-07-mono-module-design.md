@@ -6,6 +6,13 @@ SPDX-License-Identifier: MPL-2.0
 
 # Extract a `mono.py` module for generic-instance discovery
 
+> **Later change.** Discovery now runs once per program, as the
+> [build pipeline and CLI restructure](2026-10-08-build-pipeline-restructure-design.md#one-compilation-per-program)
+> describes: `mono.discover(ctx)` starts from every loaded module's public non-generic
+> functions and module variables, and the entry point, and every instance it finds is defined
+> in the program's one LLVM module. The per-module roots below ("local items, public imports")
+> describe the design as it was.
+
 ## Problem
 
 `codegen.py` currently mixes two distinct jobs inside `Compiler`:

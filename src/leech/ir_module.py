@@ -9,7 +9,7 @@ import contextlib
 import dataclasses
 import functools
 from collections.abc import Collection, Iterator, Mapping
-from typing import TYPE_CHECKING, Final, Optional, cast, override
+from typing import Final, Optional, cast, override
 
 from leech import (
     asserts,
@@ -30,9 +30,6 @@ from leech import (
     typs,
     visibility,
 )
-
-if TYPE_CHECKING:
-    from leech import mono
 
 
 @dataclasses.dataclass
@@ -799,7 +796,6 @@ class Mod:
     _poisoned: Final[dict[tuple[ir_env.Env.Namespace, str], diag.ReportProof]]
     _src_fn_symbols: tuple[SrcFnSymbol, ...]
     _entry_fn: Optional[SrcFnSymbol]
-    _instances: Optional[mono.MonoResult]
 
     def __init__(self, name: str, mod_ast: ast.Mod, ctx: compilation.Ctx) -> None:
         # Deferred because intrinsic classes subclass IntrinsicFnSymbol.
@@ -813,7 +809,6 @@ class Mod:
         self.env = builtin_env.new_child()
         self._src_fn_symbols = ()
         self._entry_fn = None
-        self._instances = None
 
         ir_builtins.register(builtin_env, ctx.builtins)
 
@@ -895,21 +890,6 @@ class Mod:
         for fn in self._src_fn_symbols:
             with self.ctx.recovering():
                 fn.check()
-
-    def discover_instances(self) -> None:
-        """Find the instances the module must emit, once its program has been checked.
-
-        An error in one instance is reported, and discovery continues with the others.
-        """
-        # Local because mono imports this module.
-        from leech import mono  # noqa: PLC0415
-
-        self._instances = mono.discover(self)
-
-    @property
-    def instances(self) -> mono.MonoResult:
-        """The instances ``discover_instances`` found."""
-        return opt_util.opt_unwrap(self._instances)
 
     def designate_entry(self) -> None:
         """Make this module's ``main`` the program entry point, after validating it.

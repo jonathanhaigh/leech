@@ -3,12 +3,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import dataclasses
-import functools
 import pathlib
 import signal
 import subprocess
-import types
-from collections.abc import Mapping
 from typing import ClassVar, Final, Optional
 
 from leech import (
@@ -31,17 +28,6 @@ from leech.cli import common
 _TOOL_TIMEOUT_SECONDS = 30
 # Holds the linked program; no module path can reach it, since names are identifiers.
 _LINK_DIR = ".link"
-
-
-@functools.cache
-def _bundled_mod_llvm_ir() -> Mapping[str, str]:
-    std_root = pathlib.Path(leech_program.__file__).parent / "std"
-    compiled = dict[str, str]()
-    for path in sorted(std_root.glob("*.leech")):
-        name = f"std::{path.stem}"
-        checked = leech_program.check_module(path, session_mod.Session(), qualified_name=name)
-        compiled[name] = checked.llvm_ir()
-    return types.MappingProxyType(compiled)
 
 
 def _session(diags: Optional[diag.Diags]) -> session_mod.Session:
@@ -83,9 +69,9 @@ def emit_error_while_checking(monkeypatch) -> None:
     """Make checking emit an error without raising it."""
     discover = mono.discover
 
-    def discover_and_emit(mod: ir_module.Mod) -> mono.MonoResult:
-        mod.ctx.diags.error(errors.CcNotFoundError("emitted"))
-        return discover(mod)
+    def discover_and_emit(ctx: compilation.Ctx) -> mono.MonoResult:
+        ctx.diags.error(errors.CcNotFoundError("emitted"))
+        return discover(ctx)
 
     monkeypatch.setattr(mono, "discover", discover_and_emit)
 
@@ -148,7 +134,10 @@ class ModSrc:
 
 @dataclasses.dataclass(frozen=True)
 class TestProgram:
-    """A root module and the supporting modules compiled with it."""
+    """A root module and the supporting modules it may import.
+
+    The root module is named after its file, so its name has one segment.
+    """
 
     # Prevent pytest from collecting this Test-prefixed model as a test class.
     __test__: ClassVar[bool] = False
@@ -161,6 +150,8 @@ class TestProgram:
         names = [mod.name for mod in mods]
         if len(names) != len(set(names)):
             raise ValueError("test program contains duplicate module names")
+        if "::" in self.root.name:
+            raise ValueError(f"root module name has several segments: {self.root.name!r}")
 
     @classmethod
     def from_main(cls, src: str, *mods: ModSrc) -> TestProgram:
@@ -168,27 +159,12 @@ class TestProgram:
 
 
 @dataclasses.dataclass(frozen=True)
-class CompiledMod:
-    """One compiled source module and its materialized LLVM artifact."""
+class CompiledProgram:
+    """A compiled program's LLVM IR, written beside its root module, and its diagnostics."""
 
-    mod: ModSrc
-    src_path: pathlib.Path
     llvm_path: pathlib.Path
     llvm_ir: str = dataclasses.field(repr=False)
-
-
-class CompiledProgram:
-    """Compiled modules keyed by qualified name in declaration order, and their diagnostics."""
-
-    mods: Final[Mapping[str, CompiledMod]]
-    diags: Final[diag.Diags]
-
-    def __init__(self, mods: Mapping[str, CompiledMod], diags: diag.Diags) -> None:
-        self.mods = types.MappingProxyType(dict(mods))
-        self.diags = diags
-
-    def __repr__(self) -> str:
-        return f"{type(self).__name__}(mods={tuple(self.mods)!r})"
+    diags: diag.Diags = dataclasses.field(repr=False)
 
 
 class CompilerHarness:
@@ -252,16 +228,16 @@ class CompilerHarness:
     def build(
         self, program: str | TestProgram, *, diags: Optional[diag.Diags] = None
     ) -> ir_module.Mod:
-        """Build semantic IR for the root after materializing every supplied module.
+        """Check the program after materializing every supplied module, returning its root.
 
         The diagnostics are the returned module's ``ctx.diags``.
         """
         program = self._coerce_program(program)
         paths = self._materialize(program)
-        checked = leech_program.check_module(
-            paths[program.root.name], _session(diags), qualified_name=program.root.name
+        checked = leech_program.Program(paths[program.root.name], entry=False).check(
+            _session(diags)
         )
-        return checked.mod
+        return checked.root
 
     def compile(
         self,
@@ -270,24 +246,18 @@ class CompilerHarness:
         entry: bool = False,
         diags: Optional[diag.Diags] = None,
     ) -> CompiledProgram:
-        """Compile every supplied module independently under its declared name.
+        """Compile the program, after materializing every supplied module, into one module of
+        LLVM IR, written beside the root module.
 
-        With ``entry``, the root module's ``main`` becomes the program entry point. Every
-        module's compilation emits to the same diagnostics.
+        With ``entry``, the root module's ``main`` becomes the program entry point.
         """
         session = _session(diags)
         program = self._coerce_program(program)
-        src_paths = self._materialize(program)
-        compiled = dict[str, CompiledMod]()
-        for mod in (program.root, *program.mods):
-            src_path = src_paths[mod.name]
-            llvm_ir = leech_program.check_module(
-                src_path, session, qualified_name=mod.name, entry=entry and mod is program.root
-            ).llvm_ir()
-            llvm_path = src_path.with_suffix(".ll")
-            self._write_src(llvm_path, llvm_ir)
-            compiled[mod.name] = CompiledMod(mod, src_path, llvm_path, llvm_ir)
-        return CompiledProgram(compiled, session.diags)
+        src_path = self._materialize(program)[program.root.name]
+        llvm_ir = leech_program.Program(src_path, entry=entry).check(session).llvm_ir()
+        llvm_path = src_path.with_suffix(".ll")
+        self._write_src(llvm_path, llvm_ir)
+        return CompiledProgram(llvm_path, llvm_ir, session.diags)
 
     def _tool_failure(
         self,
@@ -337,14 +307,12 @@ class CompilerHarness:
             ) from exc
 
     def _link(self, compiled: CompiledProgram) -> pathlib.Path:
-        """Link the program and the bundled modules into a native executable, as leech does."""
-        llvm_irs = [mod.llvm_ir for mod in compiled.mods.values()]
-        llvm_irs.extend(_bundled_mod_llvm_ir().values())
-        linked = ll_emit.link([ll_emit.parse(llvm_ir) for llvm_ir in llvm_irs])
+        """Link the program into a native executable, as leech does."""
         link_dir = self.workspace / _LINK_DIR
         link_dir.mkdir(exist_ok=True)
         obj_path = link_dir / "program.o"
-        obj_path.write_bytes(ll_emit.emit(linked, ll_emit.EmitKind.OBJ, 0))
+        module = ll_emit.parse(compiled.llvm_ir)
+        obj_path.write_bytes(ll_emit.emit(module, ll_emit.EmitKind.OBJ, 0))
         exe_path = link_dir / "program"
         try:
             linker = toolchain.Linker.from_env()
@@ -358,7 +326,7 @@ class CompilerHarness:
     def run(
         self, program: str | TestProgram, *, diags: Optional[diag.Diags] = None
     ) -> subprocess.CompletedProcess[str]:
-        """Run a program entered through its root's ``main``, linking unshadowed bundled modules."""
+        """Run a program entered through its root's ``main``."""
         program = self._coerce_program(program)
         compiled = self.compile(program, entry=True, diags=diags)
         exe_path = self._link(compiled)

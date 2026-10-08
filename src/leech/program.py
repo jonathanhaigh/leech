@@ -6,11 +6,11 @@
 
 import dataclasses
 import pathlib
-from typing import Final, NoReturn, Optional
+from typing import Final, NoReturn
 
 from llvmlite import binding as llb
 
-from leech import codegen, compilation, diag, errors, ir_module, ll_emit, opt_util
+from leech import codegen, compilation, diag, errors, ir_module, ll_emit, mono
 from leech import session as session_mod
 
 
@@ -18,7 +18,8 @@ class Program:
     """A root module and every module it imports, not yet checked.
 
     The root module is named after its file stem, so its package is its own directory. With
-    ``entry``, its ``main`` becomes the program entry point.
+    ``entry``, its ``main`` becomes the program entry point. ``import std::...`` resolves in
+    the bundled library, and any other import in the root's package.
     """
 
     root: Final[pathlib.Path]
@@ -29,95 +30,28 @@ class Program:
         self.entry = entry
 
     def check(self, session: session_mod.Session) -> CheckedProgram:
-        """Check every module of the program in a compilation of its own.
+        """Load, check and discover the whole program in one compilation.
 
-        The root module is compiled first, then every module it loaded, stopping at the first
-        module with an error, which is raised as ``check_module`` raises it. Each compilation
-        reloads the whole program, so one problem is often found by several compilations;
-        the session's diagnostics keep one of each.
+        Every diagnostic is reported to the session. Checking continues past an error in one
+        declaration to find errors in others. If there are any errors, the first one in
+        source order is raised.
         """
-        root = _check_in_child_session(self.root, self.root.stem, self.entry, session)
-        modules = [root]
-        for mod in root.mod.ctx.loader.mods:
-            if mod is not root.mod:
-                modules.append(
-                    _check_in_child_session(mod.ast.span.file.path, mod.name, False, session)
-                )
-        return CheckedProgram(session, tuple(modules))
-
-
-@dataclasses.dataclass(frozen=True)
-class CheckedProgram:
-    """A program with no errors, each of its modules checked in its own compilation."""
-
-    session: session_mod.Session
-    #: The root module first, then the others in load order.
-    modules: tuple[CheckedModule, ...]
-
-    def llvm_module(self) -> llb.ModuleRef:
-        """Generate the program as one LLVM module, optimized at the session's level.
-
-        The module is named after the root module. Generated IR that fails to parse, link or
-        verify is a compiler bug, raised as ``diag.InternalError``.
-        """
-        llvm_irs = [module.llvm_ir() for module in self.modules]
+        ctx = compilation.Ctx(session)
         try:
-            linked = ll_emit.link([ll_emit.parse(llvm_ir) for llvm_ir in llvm_irs])
-        except RuntimeError as err:
-            raise diag.InternalError(
-                f"the generated LLVM IR failed to link or verify: {str(err).strip()}"
-            ) from err
-        linked.name = self.modules[0].mod.name
-        ll_emit.optimize(linked, self.session.opt_level)
-        return linked
-
-
-def _check_in_child_session(
-    path: pathlib.Path, qualified_name: str, entry: bool, parent: session_mod.Session
-) -> CheckedModule:
-    """Check a module with its own diagnostics, merged into ``parent``'s even if it crashes."""
-    child = dataclasses.replace(parent, diags=diag.Diags())
-    try:
-        return check_module(path, child, qualified_name=qualified_name, entry=entry)
-    finally:
-        parent.diags.merge(child.diags)
-
-
-def check_module(
-    path: pathlib.Path,
-    session: session_mod.Session,
-    *,
-    qualified_name: Optional[str] = None,
-    entry: bool = False,
-) -> CheckedModule:
-    """Load and check a module's whole program, and discover the instances the module needs.
-
-    ``qualified_name`` defaults to the file's stem and must match the file's location in its
-    package, where it qualifies the module's symbols. With ``entry``, the module's ``main``
-    function becomes the program entry point. ``import std::...`` resolves in the bundled
-    library, and any other import in the file's package.
-
-    Every diagnostic is reported to the session. Checking continues past an error in one
-    declaration to find errors in others. If there are any errors, the first one in source
-    order is raised.
-    """
-    qualified_name = opt_util.opt_or_default(qualified_name, path.stem)
-    ctx = compilation.Ctx(session)
-    try:
-        mod = ctx.loader.load_root(path, qualified_name)
-    except errors.UserError as err:
-        ctx.diags.error(err)
-        _raise_first_error(ctx.diags)
-    except diag.ReportedError:
-        _raise_first_error(ctx.diags)
-    ctx.loader.check_declarations()
-    if entry:
-        with ctx.recovering():
-            mod.designate_entry()
-    mod.discover_instances()
-    if ctx.diags.has_errors:
-        _raise_first_error(ctx.diags)
-    return CheckedModule(mod)
+            root = ctx.loader.load_root(self.root, self.root.stem)
+        except errors.UserError as err:
+            ctx.diags.error(err)
+            _raise_first_error(ctx.diags)
+        except diag.ReportedError:
+            _raise_first_error(ctx.diags)
+        ctx.loader.check_declarations()
+        if self.entry:
+            with ctx.recovering():
+                root.designate_entry()
+        instances = mono.discover(ctx)
+        if ctx.diags.has_errors:
+            _raise_first_error(ctx.diags)
+        return CheckedProgram(ctx, root, instances)
 
 
 def _raise_first_error(diags: diag.Diags) -> NoReturn:
@@ -126,21 +60,23 @@ def _raise_first_error(diags: diag.Diags) -> NoReturn:
 
 
 @dataclasses.dataclass(frozen=True)
-class CheckedModule:
-    """A module whose compilation found no errors, so generating its code finds none."""
+class CheckedProgram:
+    """A program with no errors, so generating its code finds none."""
 
-    mod: ir_module.Mod
+    ctx: compilation.Ctx
+    root: ir_module.Mod
+    instances: mono.MonoResult
 
     def llvm_ir(self) -> str:
-        """Generate the module's textual LLVM IR.
+        """Generate the program as one module of textual LLVM IR.
 
         A user error found while generating IR is a compiler bug, raised as
         ``diag.InternalError``.
         """
-        diags = self.mod.ctx.diags
-        assert not diags.has_errors, "IR is only generated for a module without errors"
+        diags = self.ctx.diags
+        assert not diags.has_errors, "IR is only generated for a program without errors"
         try:
-            compiler = codegen.Compiler(self.mod)
+            compiler = codegen.Compiler(self.root, self.instances)
             compiler.compile()
         except errors.UserError as err:
             raise _user_error_while_generating_ir(err) from err
@@ -150,6 +86,22 @@ class CheckedModule:
         if reported is not None:
             raise _user_error_while_generating_ir(reported.diag)
         return compiler.llvm_ir()
+
+    def llvm_module(self) -> llb.ModuleRef:
+        """Generate the program, parsed and optimized at the session's level.
+
+        The module is named after the root module. Generated IR that fails to parse or verify
+        is a compiler bug, raised as ``diag.InternalError``.
+        """
+        try:
+            module = ll_emit.parse(self.llvm_ir())
+        except RuntimeError as err:
+            raise diag.InternalError(
+                f"the generated LLVM IR failed to parse or verify: {str(err).strip()}"
+            ) from err
+        module.name = self.root.name
+        ll_emit.optimize(module, self.ctx.session.opt_level)
+        return module
 
 
 def _user_error_while_generating_ir(err: errors.UserError) -> diag.InternalError:

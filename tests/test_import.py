@@ -2,9 +2,12 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import collections
+
 import pytest
 
-from leech import errors, mono
+from leech import ast, diag, errors, mono, parse, typcheck
+from leech import src as leech_src
 from tests import harness
 
 
@@ -44,7 +47,7 @@ def test_import_fn(compiler):
     compiler.check(program, stdout="abc\n", exit_status=101)
 
 
-def test_imported_non_generic_fn_is_a_monomorphization_leaf(compiler):
+def test_imported_fn_and_its_private_callees_are_discovered_once(compiler):
     main_src = """
     import a;
     pub fn main() i32 { return a::f(); }
@@ -56,11 +59,11 @@ def test_imported_non_generic_fn_is_a_monomorphization_leaf(compiler):
     program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
     mod = compiler.build(program)
 
-    result = mono.discover(mod)
+    result = mono.discover(mod.ctx)
 
-    assert {inst.qualified_name for inst in result.imported_fn_instances} == {"a::f"}
-    assert all(inst.qualified_name != "a::f" for inst in result.fn_instances)
-    assert all(inst.qualified_name != "a::id[i32]" for inst in result.fn_instances)
+    names = [inst.qualified_name for inst in result.fn_instances]
+    assert names.count("a::f") == 1
+    assert names.count("a::id[i32]") == 1
 
 
 def test_unused_imported_extern_keeps_bare_declaration(compiler):
@@ -68,7 +71,7 @@ def test_unused_imported_extern_keeps_bare_declaration(compiler):
     a_src = "extern fn unused(val: i32) i32;"
 
     compiled = compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
-    ir_text = compiled.mods["main"].llvm_ir
+    ir_text = compiled.llvm_ir
 
     declaration = next(line for line in ir_text.splitlines() if '"unused"' in line)
     assert declaration.startswith('declare i32 @"unused"')
@@ -108,7 +111,7 @@ def test_imported_unreachable_body_can_request_unused_struct_instance(compiler):
     """
     program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
 
-    ir_text = compiler.compile(program).mods["main"].llvm_ir
+    ir_text = compiler.compile(program).llvm_ir
 
     assert '%"a::Widget[bool]" = type' in ir_text
 
@@ -798,3 +801,142 @@ def test_self_import(compiler):
     }
     """
     compiler.check(main_src, exit_status=7)
+
+
+def test_program_is_parsed_and_checked_once(compiler, monkeypatch):
+    parsed = collections.Counter[str]()
+    parse_mod_ast = parse.parse_mod_ast
+
+    def counting_parse(file: leech_src.SrcFile) -> ast.Mod:
+        parsed[file.path.name] += 1
+        return parse_mod_ast(file)
+
+    checked = collections.Counter[tuple[str, str]]()
+    check_fn = typcheck.TypCheck.check_fn
+
+    def counting_check_fn(self, fn_ast, *args):
+        checked[(fn_ast.span.file.path.name, fn_ast.name.name)] += 1
+        return check_fn(self, fn_ast, *args)
+
+    monkeypatch.setattr(parse, "parse_mod_ast", counting_parse)
+    monkeypatch.setattr(typcheck.TypCheck, "check_fn", counting_check_fn)
+    program = harness.TestProgram.from_main(
+        "import a;\nimport b;\npub fn main() i32 { a::f() + b::g() }",
+        harness.ModSrc("a", "import b;\npub fn f() i32 { b::g() }"),
+        harness.ModSrc("b", "pub fn g() i32 { 1 }"),
+    )
+
+    compiler.check(program, exit_status=2)
+
+    assert parsed == {"main.leech": 1, "a.leech": 1, "b.leech": 1}
+    assert {("main.leech", "main"), ("a.leech", "f"), ("b.leech", "g")} <= checked.keys()
+    assert set(checked.values()) == {1}
+
+
+def test_warning_in_a_module_imported_twice_is_reported_once(compiler):
+    program = harness.TestProgram.from_main(
+        "import a;\nimport b;\npub fn main() i32 { a::f() + b::g() }",
+        harness.ModSrc("a", "import w;\npub fn f() i32 { w::v() }"),
+        harness.ModSrc("b", "import w;\npub fn g() i32 { w::v() }"),
+        harness.ModSrc("w", "pub fn v() i32 { return 1; return 2; }"),
+    )
+    diags = diag.Diags()
+
+    compiler.compile(program, diags=diags)
+
+    assert [type(d) for d in diags.all()] == [errors.UnreachableCodeWarning]
+
+
+def test_private_fn_reached_only_from_another_modules_public_fn_is_generated(compiler):
+    program = harness.TestProgram.from_main(
+        "import a;\npub fn main() i32 { 0 }",
+        harness.ModSrc("a", "fn helper() i32 { 7 }\npub fn f() i32 { helper() }"),
+    )
+
+    llvm_ir = compiler.compile(program).llvm_ir
+
+    assert 'define private i32 @"a::helper"()' in llvm_ir
+
+
+def test_generic_instance_used_by_two_modules_is_defined_once(compiler):
+    program = harness.TestProgram.from_main(
+        "import a;\nimport b;\npub fn main() i32 { a::f() + b::g() }",
+        harness.ModSrc("a", "import g;\npub fn f() i32 { g::id[i32](1) }"),
+        harness.ModSrc("b", "import g;\npub fn g() i32 { g::id[i32](2) }"),
+        harness.ModSrc("g", "pub fn id[T](x: T) T { x }"),
+    )
+
+    llvm_ir = compiler.compile(program, entry=True).llvm_ir
+
+    assert llvm_ir.count('define linkonce_odr i32 @"g::id[i32]"(') == 1
+    compiler.check(program, exit_status=3)
+
+
+def _extern_declarations(llvm_ir: str, symbol: str) -> list[str]:
+    return [
+        line
+        for line in llvm_ir.splitlines()
+        if line.startswith("declare") and f'@"{symbol}"(' in line
+    ]
+
+
+def test_redeclaring_a_prelude_extern_shares_its_declaration(compiler):
+    src = """
+    extern fn write(fd: i32, buf: *u8, count: usize) isize;
+    pub fn main() i32 {
+        write(1, "hi\\n", 3usize);
+        return 0i32;
+    }
+    """
+
+    assert len(_extern_declarations(compiler.compile(src).llvm_ir, "write")) == 1
+    compiler.check(src, stdout="hi\n")
+
+
+def test_modules_may_declare_one_extern_identically(compiler):
+    program = harness.TestProgram.from_main(
+        "import a;\nimport b;\npub fn main() i32 { a::f(); b::g(); 0 }",
+        harness.ModSrc("a", 'extern fn puts(s: *u8) i32;\npub fn f() { puts("a"); }'),
+        harness.ModSrc("b", 'extern fn puts(s: *u8) i32;\npub fn g() { puts("b"); }'),
+    )
+
+    assert len(_extern_declarations(compiler.compile(program).llvm_ir, "puts")) == 1
+    compiler.check(program, stdout="a\nb\n")
+
+
+def test_conflicting_extern_declarations_are_reported_at_the_later_one(compiler):
+    a_src = 'extern fn puts(s: *u8) i32;\npub fn f() { puts("a"); }'
+    b_src = 'extern fn puts(s: *u8) i64;\npub fn g() { puts("b"); }'
+    program = harness.TestProgram.from_main(
+        "import a;\nimport b;\npub fn main() i32 { a::f(); b::g(); 0 }",
+        harness.ModSrc("a", a_src),
+        harness.ModSrc("b", b_src),
+    )
+
+    with pytest.raises(errors.ConflictingExternDeclError) as exc_info:
+        compiler.build(program)
+
+    harness.assert_span_at(exc_info.value.message.span, b_src, "extern fn puts")
+    (note,) = exc_info.value.extra
+    harness.assert_span_at(note.span, a_src, "extern fn puts")
+
+
+def test_extern_conflicting_with_the_preludes_is_reported_at_the_programs(compiler):
+    src = "extern fn write(fd: i32, buf: *u8, count: usize) i32;\npub fn main() i32 { 0 }"
+
+    with pytest.raises(errors.ConflictingExternDeclError) as exc_info:
+        compiler.build(src)
+
+    harness.assert_span_at(exc_info.value.message.span, src, "extern fn write")
+    (note,) = exc_info.value.extra
+    assert note.span is not None
+    assert note.span.file.path.name == "prelude.leech"
+
+
+def test_extern_declarations_differing_only_in_pointer_mutability_conflict(compiler):
+    program = harness.TestProgram.from_main(
+        "import std::mem;\nextern fn free(p: *u8);\npub fn main() i32 { 0 }"
+    )
+
+    with pytest.raises(errors.ConflictingExternDeclError):
+        compiler.build(program)

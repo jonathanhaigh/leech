@@ -105,7 +105,7 @@ def test_extern_fn_value_remains_global_initializer(compiler):
     var = asserts.checked_cast(item.value, ir_module.ModVar)
     assert isinstance(var.initializer, ir_module.FnRef)
 
-    ir_text = compiler.compile(source).mods["main"].llvm_ir
+    ir_text = compiler.compile(source).llvm_ir
 
     assert '@"main::p" = private global i32 (i8*)* @"puts"' in ir_text
 

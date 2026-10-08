@@ -273,6 +273,27 @@ class DuplicateItemDefnError(UserError):
             self._add_extra(NOTE, "Previous definition here", existing_span)
 
 
+class ConflictingExternDeclError(UserError):
+    """Raised when an extern function is declared with a different type from an earlier
+    declaration of the same symbol."""
+
+    def __init__(
+        self,
+        name: str,
+        typ_name: str,
+        span: Optional[src.SrcSpan],
+        earlier_typ_name: str,
+        earlier_span: Optional[src.SrcSpan],
+    ) -> None:
+        super().__init__(
+            ERROR,
+            f'Extern function "{name}" is declared with type "{typ_name}", but was declared '
+            f'with type "{earlier_typ_name}"',
+            span,
+        )
+        self._add_extra(NOTE, "Earlier declaration here", earlier_span)
+
+
 class NotCallableError(UserError):
     """Raised when calling a value whose type isn't a function pointer."""
 

@@ -631,7 +631,7 @@ def test_generic_impl_block_method_instances_get_distinct_mangled_symbols(compil
         return 0;
     }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src).llvm_ir
     assert '@"main::Box[i32]::get"' in ir_text
     assert '@"main::Box[bool]::get"' in ir_text
 
@@ -1016,7 +1016,7 @@ def test_mono_discovers_struct_requested_while_resolving_fields(compiler):
     outer = _get_struct_template(mod, "Outer")
     outer.instantiate((typs.I32,))
 
-    result = mono.discover(mod)
+    result = mono.discover(mod.ctx)
     names = {inst.qualified_name for inst in result.struct_instances}
 
     assert names == {"main::Outer[i32]", "main::Inner[i32]"}
@@ -1098,5 +1098,5 @@ def test_struct_value_param_mangled_name(compiler):
         return buf.data.[0] - 1;
     }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src).llvm_ir
     assert '%"main::Buf[i32, 4]"' in ir_text

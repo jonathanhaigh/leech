@@ -85,7 +85,7 @@ def test_uncalled_private_fn_is_not_emitted(compiler):
     fn unused_private() i32 { return 1; }
     pub fn main() i32 { return 0; }
     """
-    llvm_ir = compiler.compile(src).mods["main"].llvm_ir
+    llvm_ir = compiler.compile(src).llvm_ir
     assert 'define private i32 @"main::unused_private"' not in llvm_ir
 
 
@@ -94,7 +94,7 @@ def test_uncalled_public_generic_fn_has_no_instance_to_emit(compiler):
     pub fn unused_generic[T](x: T) T { return x; }
     pub fn main() i32 { return 0; }
     """
-    llvm_ir = compiler.compile(src).mods["main"].llvm_ir
+    llvm_ir = compiler.compile(src).llvm_ir
     assert "unused_generic[" not in llvm_ir
 
 
@@ -146,7 +146,7 @@ def test_function_instance_symbols_and_linkage(compiler):
             + public_fn() + id[i32](6) - 21;
     }
     """
-    ir_text = compiler.compile(src, entry=True).mods["main"].llvm_ir
+    ir_text = compiler.compile(src, entry=True).llvm_ir
 
     assert 'define i32 @"main::main"' in ir_text
     assert 'define i32 @"main"()' in ir_text
@@ -788,10 +788,14 @@ def test_mono_discovers_requests_appended_while_lowering_generic_fn(compiler):
     outer = _get_generic_fn(mod, "outer")
     outer.instantiate((typs.I32,))
 
-    result = mono.discover(mod)
+    result = mono.discover(mod.ctx)
     names = {inst.qualified_name for inst in result.fn_instances}
 
-    assert names == {"main::outer[i32]", "main::inner[i32]", "__size_of[i32]"}
+    assert {name for name in names if not name.startswith("std::")} == {
+        "main::outer[i32]",
+        "main::inner[i32]",
+        "__size_of[i32]",
+    }
 
 
 def test_mono_discovers_recursive_instance_once(compiler):
@@ -806,7 +810,7 @@ def test_mono_discovers_recursive_instance_once(compiler):
     depth = _get_generic_fn(mod, "depth")
     instance = depth.instantiate((typs.I32,))
 
-    result = mono.discover(mod)
+    result = mono.discover(mod.ctx)
 
     assert result.fn_instances.count(instance) == 1
 
@@ -932,7 +936,7 @@ def test_equal_value_args_share_one_instance(compiler):
         return f[4]() - f[4]();
     }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src).llvm_ir
     assert ir_text.count('define linkonce_odr i32 @"main::f[4]"') == 1
 
 
@@ -943,7 +947,7 @@ def test_distinct_value_args_get_distinct_instances(compiler):
         return f[4]() - f[5]() + 1;
     }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src).llvm_ir
     assert 'define linkonce_odr i32 @"main::f[4]"' in ir_text
     assert 'define linkonce_odr i32 @"main::f[5]"' in ir_text
 

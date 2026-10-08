@@ -72,9 +72,13 @@ def test_build_multi_module_program_with_std_modules(tmp_path):
     proc = run_leech("build", root, "--emit", "llvm-ir,exe", cwd=tmp_path)
 
     assert proc.returncode == 0, proc.stderr
-    llvm_ir = (tmp_path / "main.ll").read_text()
+    definitions = [
+        line
+        for line in (tmp_path / "main.ll").read_text().splitlines()
+        if line.startswith("define")
+    ]
     for symbol in ("main::main", "x::a::g", "x::b::h", "std::io::println"):
-        assert f'@"{symbol}"(' in llvm_ir
+        assert sum(f'@"{symbol}"(' in line for line in definitions) == 1
     result = run_exe(tmp_path / "main")
     assert (result.returncode, result.stdout) == (6, "multi\n")
 

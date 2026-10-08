@@ -87,52 +87,6 @@ def test_errors_reexports_diag_levels():
     assert (errors.NOTE, errors.WARNING, errors.ERROR) == (diag.NOTE, diag.WARNING, diag.ERROR)
 
 
-def test_merge_keeps_one_of_each_in_emission_order():
-    warning = errors.UnreachableCodeWarning("statement", None)
-    error = errors.CcNotFoundError("cc")
-    first = diag.Diags()
-    first.warn(warning)
-    first.error(error)
-    second = diag.Diags()
-    second.error(errors.CcNotFoundError("cc"))
-    second.error(errors.CcNotFoundError("other"))
-    merged = diag.Diags()
-
-    merged.merge(first)
-    merged.merge(second)
-
-    assert [d.message.message for d in merged.all()] == [
-        warning.message.message,
-        error.message.message,
-        errors.CcNotFoundError("other").message.message,
-    ]
-    assert merged.all()[:2] == (warning, error)
-
-
-def test_merge_keeps_the_other_diags_proofs():
-    first = diag.Diags()
-    reported = first.error(errors.CcNotFoundError("cc"))
-    merged = diag.Diags()
-
-    merged.merge(first)
-
-    assert merged.any_error() is reported
-    assert merged.error(errors.CcNotFoundError("cc")) is reported
-
-
-def test_merge_keeps_the_existing_proof_of_a_duplicate():
-    merged = diag.Diags()
-    existing = merged.error(errors.CcNotFoundError("cc"))
-    other = diag.Diags()
-    other_proof = other.error(errors.CcNotFoundError("cc"))
-
-    merged.merge(other)
-
-    assert existing is not other_proof
-    assert merged.any_error() is existing
-    assert merged.error(errors.CcNotFoundError("cc")) is existing
-
-
 def test_proof_holds_the_recorded_error():
     diags = diag.Diags()
     first = errors.CcNotFoundError("cc")
@@ -173,7 +127,7 @@ def test_ctx_reports_to_its_sessions_diags():
     assert compilation.Ctx().diags is not compilation.Ctx().diags
 
 
-def test_interleaved_compilations_have_independent_diags(tmp_path):
+def test_programs_have_independent_diags(tmp_path):
     warned_path = tmp_path / "warned.leech"
     warned_path.write_text("pub fn f() i32 { return 1; return 2; }\n")
     clean_path = tmp_path / "clean.leech"
@@ -181,8 +135,8 @@ def test_interleaved_compilations_have_independent_diags(tmp_path):
     warned_diags = diag.Diags()
     clean_diags = diag.Diags()
 
-    warned = program.check_module(warned_path, session.Session(warned_diags))
-    clean = program.check_module(clean_path, session.Session(clean_diags))
+    warned = program.Program(warned_path, entry=False).check(session.Session(warned_diags))
+    clean = program.Program(clean_path, entry=False).check(session.Session(clean_diags))
     warned.llvm_ir()
     clean.llvm_ir()
 
@@ -200,7 +154,7 @@ def test_raised_error_is_reported_after_earlier_warnings(tmp_path):
     diags = diag.Diags()
 
     with pytest.raises(errors.InvalidRetTypError):
-        program.check_module(path, session.Session(diags))
+        program.Program(path, entry=False).check(session.Session(diags))
 
     assert [type(d) for d in diags.all()] == [
         errors.UnreachableMatchArmWarning,

@@ -5,7 +5,6 @@
 import pathlib
 import signal
 import subprocess
-from typing import cast
 
 import pytest
 
@@ -132,6 +131,11 @@ def test_program_rejects_duplicate_mod_names():
         harness.TestProgram.from_main("", first, second)
 
 
+def test_program_rejects_a_root_named_by_several_segments():
+    with pytest.raises(ValueError, match="root module name has several segments"):
+        harness.TestProgram(harness.ModSrc("pkg::app", ""))
+
+
 def test_compiler_fixture_uses_test_workspace(
     compiler: harness.CompilerHarness,
     tmp_path: pathlib.Path,
@@ -149,15 +153,9 @@ def test_harness_instances_have_independent_workspaces(tmp_path_factory):
     assert first.workspace != second.workspace
 
 
-def test_harnesses_share_only_immutable_bundled_ir(tmp_path_factory):
+def test_harnesses_write_only_to_their_own_workspaces(tmp_path_factory):
     first = harness.CompilerHarness(tmp_path_factory.mktemp("first-run"))
     second = harness.CompilerHarness(tmp_path_factory.mktemp("second-run"))
-
-    bundled_ir = harness._bundled_mod_llvm_ir()
-    assert harness._bundled_mod_llvm_ir() is bundled_ir
-    mutable_view = cast(dict[str, str], bundled_ir)
-    with pytest.raises(TypeError):
-        mutable_view["std::extra"] = ""
 
     assert first.run("pub fn main() i32 { 1 }").returncode == 1
     assert second.run("pub fn main() i32 { 2 }").returncode == 2
@@ -252,18 +250,14 @@ def test_write_mod_returns_materialized_path(compiler: harness.CompilerHarness):
     assert path.read_text(encoding="utf-8") == mod.src
 
 
-def test_compile_returns_structured_main_artifact(compiler: harness.CompilerHarness):
+def test_compile_writes_the_programs_ir_beside_its_root(compiler: harness.CompilerHarness):
     compiled = compiler.compile("pub fn main() i32 { 0 }")
 
-    main = compiled.mods["main"]
-    assert main.mod.name == "main"
-    assert main.src_path == compiler.workspace / "main.leech"
-    assert main.llvm_path == compiler.workspace / "main.ll"
-    assert main.llvm_path.read_text(encoding="utf-8") == main.llvm_ir
-    assert 'define i32 @"main::main"' in main.llvm_ir
-    assert 'define i32 @"main"()' not in main.llvm_ir
-    assert "llvm_ir" not in repr(main)
-    assert repr(compiled) == "CompiledProgram(mods=('main',))"
+    assert compiled.llvm_path == compiler.workspace / "main.ll"
+    assert compiled.llvm_path.read_text(encoding="utf-8") == compiled.llvm_ir
+    assert 'define i32 @"main::main"' in compiled.llvm_ir
+    assert 'define i32 @"main"()' not in compiled.llvm_ir
+    assert repr(compiled) == f"CompiledProgram(llvm_path={compiled.llvm_path!r})"
 
 
 def test_each_compile_has_its_own_diags(compiler: harness.CompilerHarness):
@@ -283,19 +277,7 @@ def test_compile_emits_to_the_given_diags(compiler: harness.CompilerHarness):
     assert [type(d) for d in diags.all()] == [errors.UnreachableCodeWarning]
 
 
-def test_compile_returns_artifacts_in_declaration_order(compiler: harness.CompilerHarness):
-    program = harness.TestProgram.from_main(
-        "import a; pub fn main() i32 { a::answer() }",
-        harness.ModSrc("a", "pub fn answer() i32 { 42 }"),
-    )
-
-    compiled = compiler.compile(program)
-
-    assert tuple(compiled.mods) == ("main", "a")
-    assert compiled.mods["a"].llvm_path == compiler.workspace / "a.ll"
-
-
-def test_compile_names_nested_mods_after_their_paths(compiler: harness.CompilerHarness):
+def test_compile_generates_every_imported_module(compiler: harness.CompilerHarness):
     program = harness.TestProgram.from_main(
         "import pkg::a; pub fn main() i32 { a::answer() }",
         harness.ModSrc(
@@ -307,34 +289,14 @@ def test_compile_names_nested_mods_after_their_paths(compiler: harness.CompilerH
 
     compiled = compiler.compile(program)
 
-    assert tuple(compiled.mods) == ("main", "pkg::a", "pkg::sub::helper")
-    assert 'define i32 @"pkg::sub::helper::answer"' in compiled.mods["pkg::sub::helper"].llvm_ir
-
-
-def test_compile_keeps_same_stem_mods_distinct(compiler: harness.CompilerHarness):
-    program = harness.TestProgram.from_main(
-        "pub fn main() i32 { 0 }",
-        harness.ModSrc("a_pkg::helper", "pub fn a() i32 { 1 }"),
-        harness.ModSrc("b_pkg::helper", "pub fn b() i32 { 2 }"),
-    )
-
-    compiled = compiler.compile(program)
-
-    assert compiled.mods["a_pkg::helper"].llvm_path == compiler.workspace / "a_pkg/helper.ll"
-    assert compiled.mods["b_pkg::helper"].llvm_path == compiler.workspace / "b_pkg/helper.ll"
+    for symbol in ("main::main", "pkg::a::answer", "pkg::sub::helper::answer"):
+        assert f'define i32 @"{symbol}"()' in compiled.llvm_ir
+    assert [path.name for path in compiler.workspace.rglob("*.ll")] == ["main.ll"]
 
 
 def test_compile_propagates_user_error(compiler: harness.CompilerHarness):
     with pytest.raises(errors.InvalidRetTypError):
         compiler.compile("pub fn main() i32 { true }")
-
-
-def test_compiled_mod_mapping_is_read_only(compiler: harness.CompilerHarness):
-    compiled = compiler.compile("pub fn main() i32 { 0 }")
-    mutable_view = cast(dict[str, harness.CompiledMod], compiled.mods)
-
-    with pytest.raises(TypeError):
-        mutable_view["other"] = compiled.mods["main"]
 
 
 def test_run_returns_separate_streams_and_status(compiler: harness.CompilerHarness):
@@ -378,8 +340,8 @@ def test_compile_with_entry_defines_c_main_for_root_only(compiler: harness.Compi
 
     compiled = compiler.compile(program, entry=True)
 
-    assert 'define i32 @"main"()' in compiled.mods["main"].llvm_ir
-    assert 'define i32 @"main"()' not in compiled.mods["helper"].llvm_ir
+    assert compiled.llvm_ir.count('define i32 @"main"()') == 1
+    assert 'define i32 @"helper::main"()' in compiled.llvm_ir
 
 
 def test_check_failure_reports_expected_and_actual(compiler: harness.CompilerHarness):

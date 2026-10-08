@@ -209,7 +209,7 @@ def _write(path, text):
 
 
 def _compile(main_path):
-    return program.check_module(main_path, session.Session()).llvm_ir()
+    return program.Program(main_path, entry=False).check(session.Session()).llvm_ir()
 
 
 def test_directory_named_like_module_is_not_a_module(tmp_path):
@@ -221,8 +221,8 @@ def test_directory_named_like_module_is_not_a_module(tmp_path):
 
 
 def test_non_root_module_compiles_against_the_root_package(compiler):
-    # Each module is compiled on its own, named after its location, so every module agrees
-    # on the names of the modules they share and their symbols link.
+    # Every module is named after its location in the root's package, so the modules agree
+    # on the names of the modules they share.
     program = harness.TestProgram.from_main(
         "import x::a;\nimport x::b;\npub fn main() i32 { return a::g() + b::h(); }",
         harness.ModSrc("x::a", "pub fn g() i32 { return 2; }"),

@@ -146,7 +146,7 @@ def test_discovery_reports_each_failing_instance_and_continues(compiler):
         """
     )
 
-    result = mono.discover(mod)
+    result = mono.discover(mod.ctx)
 
     found = mod.ctx.diags.sorted()
     assert [type(d) for d in found] == [
@@ -156,7 +156,13 @@ def test_discovery_reports_each_failing_instance_and_continues(compiler):
     ]
     assert ["MissingA" in d.message.message for d in found[:2]] == [True, False]
     assert result.struct_instances == ()
-    assert {inst.qualified_name for inst in result.fn_instances} == {"main::f", "main::g"}
+    assert _main_instance_names(result) == ["main::f", "main::g"]
+
+
+def _main_instance_names(result: mono.MonoResult) -> list[str]:
+    """The discovered function instances' names, apart from the bundled library's."""
+    names = (inst.qualified_name for inst in result.fn_instances)
+    return [name for name in names if not name.startswith("std::")]
 
 
 def _check_main(tmp_path) -> pathlib.Path:
@@ -170,7 +176,7 @@ def test_user_error_raised_while_generating_ir_is_internal(tmp_path, monkeypatch
     monkeypatch.setattr(codegen.Compiler, "compile", fail)
 
     with pytest.raises(diag.InternalError, match="while generating IR"):
-        program.check_module(_check_main(tmp_path), session.Session(), entry=True).llvm_ir()
+        program.Program(_check_main(tmp_path), entry=True).check(session.Session()).llvm_ir()
 
 
 def test_user_error_emitted_while_generating_ir_is_internal(tmp_path, monkeypatch):
@@ -178,19 +184,19 @@ def test_user_error_emitted_while_generating_ir_is_internal(tmp_path, monkeypatc
 
     def emit(compiler: codegen.Compiler) -> None:
         compile_(compiler)
-        compiler._mod.ctx.diags.error(errors.CcNotFoundError("cc"))
+        compiler._root.ctx.diags.error(errors.CcNotFoundError("cc"))
 
     monkeypatch.setattr(codegen.Compiler, "compile", emit)
 
     with pytest.raises(diag.InternalError, match="while generating IR"):
-        program.check_module(_check_main(tmp_path), session.Session(), entry=True).llvm_ir()
+        program.Program(_check_main(tmp_path), entry=True).check(session.Session()).llvm_ir()
 
 
 def test_check_generates_no_ir(tmp_path, monkeypatch):
-    def fail(_module) -> str:
+    def fail(_program) -> str:
         raise AssertionError("check generated IR")
 
-    monkeypatch.setattr(program.CheckedModule, "llvm_ir", fail)
+    monkeypatch.setattr(program.CheckedProgram, "llvm_ir", fail)
     root = write(tmp_path / "main.leech", "pub fn main() i32 { return 0; return 1; }\n")
 
     found = harness.check_program(root)
@@ -209,10 +215,10 @@ def test_check_reports_unused_extern_signature_error(tmp_path):
 def test_discovery_continues_past_a_failing_signature(compiler):
     mod = compiler.load("pub fn bad(x: Missing) {}\npub fn good() {}")
 
-    result = mono.discover(mod)
+    result = mono.discover(mod.ctx)
 
     assert [type(d) for d in mod.ctx.diags.all()] == [errors.ItemNotFoundError]
-    assert [inst.qualified_name for inst in result.fn_instances] == ["main::good"]
+    assert _main_instance_names(result) == ["main::good"]
 
 
 def test_discovery_runs_despite_declaration_errors(compiler):

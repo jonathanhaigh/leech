@@ -238,7 +238,7 @@ def test_compiled_module_carries_nonempty_datalayout(compiler):
         return 0;
     }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src).llvm_ir
     assert 'target datalayout = ""' not in ir_text
     assert 'target datalayout = "' in ir_text
 
@@ -347,7 +347,7 @@ def test_size_of_intrinsic_compiled_once_across_multiple_calls(compiler):
         return 0;
     }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src).llvm_ir
     assert ir_text.count('define linkonce_odr i64 @"__size_of[i32]"') == 1
 
 

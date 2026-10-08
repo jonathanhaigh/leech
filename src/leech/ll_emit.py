@@ -2,11 +2,10 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
-"""Parsing, linking, optimizing and emitting generated LLVM IR in-process."""
+"""Parsing, optimizing and emitting generated LLVM IR in-process."""
 
 import enum
 import functools
-from collections.abc import Sequence
 
 from llvmlite import binding as llb
 
@@ -59,19 +58,6 @@ def parse(llvm_ir: str) -> llb.ModuleRef:
     mod = llb.parse_assembly(llvm_ir)
     mod.verify()
     return mod
-
-
-def link(mods: Sequence[llb.ModuleRef]) -> llb.ModuleRef:
-    """Link ``mods`` into the first of them, which is returned verified.
-
-    The other modules are consumed and must not be used afterwards.
-    """
-    assert mods, "nothing to link"
-    linked, *rest = mods
-    for mod in rest:
-        linked.link_in(mod)
-    linked.verify()
-    return linked
 
 
 def optimize(mod: llb.ModuleRef, opt_level: int) -> None:

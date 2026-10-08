@@ -297,7 +297,7 @@ def test_uncalled_sibling_of_a_generic_trait_impl_is_not_emitted(compiler):
         return b.used() - 1;
     }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src).llvm_ir
     assert "used" in ir_text
     assert "unused" not in ir_text
 

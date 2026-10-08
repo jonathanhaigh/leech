@@ -97,44 +97,29 @@ class Diags:
         Returns the proof of ``err``, or of the earlier diagnostic it duplicates.
         """
         assert err.level == ERROR, f"not an error: {err!r}"
-        reported = self._record(err, None)
+        reported = self._record(err)
         assert reported is not None
         return reported
 
     def warn(self, err: errors.UserError) -> None:
         """Record the warning ``err`` unless it duplicates an earlier diagnostic."""
         assert err.level == WARNING, f"not a warning: {err!r}"
-        self._record(err, None)
+        self._record(err)
 
-    def _record(
-        self, err: errors.UserError, reported: Optional[ReportProof]
-    ) -> Optional[ReportProof]:
-        """Record ``err`` with ``reported``, its proof from another ``Diags``, if any."""
+    def _record(self, err: errors.UserError) -> Optional[ReportProof]:
+        """Record ``err`` unless it duplicates an earlier diagnostic, returning the proof of
+        ``err`` or of the earlier diagnostic if it is an error."""
         key = _key(err)
         if key in self._seen:
             return self._seen[key]
+        reported = None
         if err.level >= ERROR:
-            if reported is None:
-                reported = ReportProof(_KEY, err)
-            assert reported.diag is err, "a proof must prove the diagnostic it is recorded with"
+            reported = ReportProof(_KEY, err)
             if self._first_error is None:
                 self._first_error = reported
-        else:
-            assert reported is None, "only errors have proofs"
         self._seen[key] = reported
         self._diags.append(err)
         return reported
-
-    def merge(self, other: Diags) -> None:
-        """Record each of ``other``'s diagnostics in its emission order, with its proof.
-
-        A diagnostic that duplicates one already recorded keeps the earlier one's proof.
-        Files in ``other``'s file order that this one hasn't noted follow, in that order.
-        """
-        for path in other._file_ranks:
-            self.note_file(path)
-        for err in other._diags:
-            self._record(err, other._seen[_key(err)])
 
     def all(self) -> tuple[errors.UserError, ...]:
         """Every distinct diagnostic, in emission order."""

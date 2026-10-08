@@ -408,7 +408,7 @@ def test_rejects_abbreviated_long_options(tmp_path):
     assert "unrecognized arguments: --emi llvm-ir" in proc.stderr
 
 
-def test_check_module_reports_its_own_warnings(tmp_path):
+def test_program_reports_its_own_warnings(tmp_path):
     warning_path = tmp_path / "app.leech"
     warning_path.write_text("pub fn f() i32 { return 1; return 2; }\n")
     clean_path = tmp_path / "clean.leech"
@@ -416,8 +416,8 @@ def test_check_module_reports_its_own_warnings(tmp_path):
     warned = session.Session()
     clean = session.Session()
 
-    program.check_module(warning_path, warned).llvm_ir()
-    program.check_module(clean_path, clean).llvm_ir()
+    program.Program(warning_path, entry=False).check(warned).llvm_ir()
+    program.Program(clean_path, entry=False).check(clean).llvm_ir()
 
     assert warned.diags.level == errors.WARNING
     assert [type(d) for d in warned.diags.all()] == [errors.UnreachableCodeWarning]
@@ -425,7 +425,7 @@ def test_check_module_reports_its_own_warnings(tmp_path):
     assert clean.diags.level == errors.NOTE
 
 
-def test_check_module_reports_raised_error_after_warnings(tmp_path):
+def test_program_reports_raised_error_after_warnings(tmp_path):
     src_path = tmp_path / "app.leech"
     src_path.write_text(
         "enum E { A }\n"
@@ -435,7 +435,7 @@ def test_check_module_reports_raised_error_after_warnings(tmp_path):
     compilation = session.Session()
 
     with pytest.raises(errors.InvalidRetTypError):
-        program.check_module(src_path, compilation)
+        program.Program(src_path, entry=False).check(compilation)
 
     assert compilation.diags.level == errors.ERROR
     assert [type(d) for d in compilation.diags.all()] == [
@@ -444,13 +444,13 @@ def test_check_module_reports_raised_error_after_warnings(tmp_path):
     ]
 
 
-def test_check_module_fails_on_emitted_error(tmp_path, monkeypatch):
+def test_program_fails_on_emitted_error(tmp_path, monkeypatch):
     src_path = tmp_path / "app.leech"
     src_path.write_text("pub fn f() i32 { return 0; }\n")
     harness.emit_error_while_checking(monkeypatch)
     compilation = session.Session()
 
     with pytest.raises(errors.CcNotFoundError):
-        program.check_module(src_path, compilation)
+        program.Program(src_path, entry=False).check(compilation)
 
     assert [type(d) for d in compilation.diags.all()] == [errors.CcNotFoundError]

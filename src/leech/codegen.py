@@ -19,6 +19,7 @@ from leech import (
     ir_values,
     ll_layout,
     ll_typs,
+    mono,
     naming,
     signage,
     target,
@@ -75,9 +76,10 @@ def _checked_builder_value(value: Optional[ll.Value]) -> ll.Value:
 
 
 class Compiler:
-    """Lower one Leech IR module to LLVM IR."""
+    """Lower a checked Leech program to one LLVM module."""
 
-    _mod: Final[ir_module.Mod]
+    _root: Final[ir_module.Mod]
+    _instances: Final[mono.MonoResult]
     ll_mod: Final[ll.Module]
     _ll_mod_items: Final[Compiler._LLItems]
     _tmp_name: Final[naming.VarNamer]
@@ -139,18 +141,19 @@ class Compiler:
         #: Raw overflow-intrinsic results shared with their paired flag instructions.
         overflow_calls: dict[ir_values.CheckedBinOpInstr, ll.Value]
 
-    def __init__(self, mod: ir_module.Mod) -> None:
-        self._mod = mod
-        self.ll_mod = ll.Module(name=mod.name, context=ll.Context())
+    def __init__(self, root: ir_module.Mod, instances: mono.MonoResult) -> None:
+        """Prepare to compile ``root``'s program, defining the instances discovery found."""
+        self._root = root
+        self._instances = instances
+        self.ll_mod = ll.Module(name=root.name, context=ll.Context())
         self._ll_mod_items = Compiler._LLItems(self)
         self._tmp_name = naming.VarNamer()
         self._overflow_intrinsics = {}
         self._mod_var_globals = {}
 
     def compile(self) -> None:
-        """Compile declarations before bodies, then the instances checking discovered.
+        """Compile every module's declarations before bodies, then the discovered instances.
 
-        Imported functions remain declarations, but imported struct layouts are defined locally.
         Generic templates have no LLVM representation; only their reachable instances do.
         """
         self.ll_mod.triple = target.TRIPLE
@@ -167,7 +170,7 @@ class Compiler:
             ):
                 self._declare_mod_item(item)
 
-        result = self._mod.instances
+        result = self._instances
         for struct_inst in result.struct_instances:
             self._declare_nominal_instance(struct_inst)
         for union_inst in result.union_instances:
@@ -175,36 +178,32 @@ class Compiler:
 
         for inst in result.fn_instances:
             self._declare_fn_instance(inst)
-        for inst in result.imported_fn_instances:
-            self._declare_fn_instance(inst)
 
-        for item in self._mod.items:
+        for item in self._program_items():
             self._compile_mod_item(item)
 
         for inst in result.fn_instances:
             self._compile_fn_instance(inst)
 
-        if self._mod.entry_fn is not None:
-            self._define_entry_point(self._mod.entry_fn.instantiate(()))
+        if self._root.entry_fn is not None:
+            self._define_entry_point(self._root.entry_fn.instantiate(()))
 
     def llvm_ir(self) -> str:
-        """Render the compiled module as textual LLVM IR naming its source file.
+        """Render the compiled module as textual LLVM IR naming the root's source file.
 
         The source file name becomes the ``source_filename`` that LLVM reports in assembly and
         object output.
         """
         header, _, body = str(self.ll_mod).partition("\n")
         assert header.startswith("; ModuleID"), header
-        src_path = self._mod.ast.span.file.path
+        src_path = self._root.ast.span.file.path
         return f"{header}\nsource_filename = {_ll_string_literal(str(src_path))}\n{body}\n"
 
     def _program_items(self) -> Iterator[ir_module.ModItem]:
-        """Yield local items and public imported items in module load order."""
-        for mod in self._mod.ctx.loader.mods:
+        """Yield every module's items, apart from its imports, in module load order."""
+        for mod in self._root.ctx.loader.mods:
             for item in mod.items:
-                if isinstance(item.value, ir_module.Mod):
-                    continue
-                if mod is self._mod or item.access == visibility.PUBLIC:
+                if not isinstance(item.value, ir_module.Mod):
                     yield item
 
     def _declare_nominal_instance(self, inst: typs.StructTyp | typs.UnionTyp) -> None:
@@ -218,7 +217,7 @@ class Compiler:
             case ir_module.ModVar():
                 self._declare_mod_var(item, item.value)
             case ir_module.ExternFnSymbol():
-                self._declare_mod_fn(item, item.value)
+                self._declare_extern_fn(item.value)
             case ir_module.FnSymbol():
                 pass
             case typs.StructTyp():
@@ -260,10 +259,8 @@ class Compiler:
             case typs.EnumTyp():
                 return None
             case ir_module.Mod():
-                # An import contributes no symbols of its own; the
-                # imported module's items are handled by compile()'s walk
-                # over the whole program.
-                return None
+                # _program_items() filters imports before this method.
+                raise AssertionError(f"import reached module-item compilation: {item}")
             case ir_traits.Trait():
                 # A declaration, not a value with a body to compile.
                 return None
@@ -273,9 +270,8 @@ class Compiler:
 
         A constant reaching a union cannot use the union's own LLVM type,
         so the global takes an ad-hoc one. Only that type is derived here,
-        never the constant: the constant is another module's to build when
-        the variable is imported, and building one would need globals this
-        pass has not reached.
+        never the constant: building one would need globals this pass has
+        not reached.
         """
         declared_ll_typ = asserts.checked_cast(self._ll_mod_items.get(var.typ.pointee_typ), ll.Type)
         ll_typ = self._target_layout_typ(var.initializer)
@@ -308,11 +304,21 @@ class Compiler:
         asserts.assert_eq(str(_ll_typ_of(initializer)), str(ll_val.type.pointee))  # type: ignore
         ll_val.initializer = initializer  # type: ignore
 
-    def _declare_mod_fn(self, item: ir_module.ModItem, fn: ir_module.ExternFnSymbol) -> ll.Value:
+    def _declare_extern_fn(self, fn: ir_module.ExternFnSymbol) -> ll.Value:
+        """Declare an extern function, sharing one declaration among those of its symbol.
+
+        Checking has rejected declarations of one symbol with different types. A declaration
+        has no linkage of its own, whatever the extern's access.
+        """
         inst = fn.instantiate(())
-        ll_fn = ll.Function(self.ll_mod, self._ll_mod_items.get(inst.fn_typ), inst.qualified_name)
+        ll_fn_typ = self._ll_mod_items.get(inst.fn_typ)
+        existing = self.ll_mod.globals.get(inst.qualified_name)
+        if existing is None:
+            ll_fn = ll.Function(self.ll_mod, ll_fn_typ, inst.qualified_name)
+        else:
+            ll_fn = asserts.checked_cast(existing, ll.Function)
+            asserts.assert_eq(str(ll_fn.function_type), str(ll_fn_typ))
         self._ll_mod_items.set(inst.ref, ll_fn)
-        _set_linkage(ll_fn, item.access)
         return ll_fn
 
     def _declare_fn_instance(self, inst: ir_module.FnInstance) -> ll.Value:
@@ -332,8 +338,8 @@ class Compiler:
     def _define_entry_point(self, entry: ir_module.FnInstance) -> None:
         """Define the C ``main`` symbol as a call to ``entry`` that returns its result.
 
-        An imported ``extern fn main`` has already declared the symbol, with the same type, so
-        its declaration receives the definition.
+        An ``extern fn main`` has already declared the symbol, with the same type, so its
+        declaration receives the definition.
         """
         ll_entry = asserts.checked_cast(self._ll_mod_items.get(entry.ref), ll.Function)
         ll_main_typ = ll.FunctionType(ll.IntType(32), ())
@@ -662,8 +668,8 @@ class Compiler:
         variant each union holds - while the constant needs its contents,
         resolving each pointer to the global it names. A global's LLVM
         type is fixed when it is constructed, and at that point the globals
-        a constant would reach may be declared later, may hold a function
-        not yet declared, or may be another module's private business.
+        a constant would reach may be declared later, or may hold a function
+        not yet declared.
         """
         if not _contains_union(value.typ):
             return asserts.checked_cast(self._ll_mod_items.get(value.typ), ll.Type)

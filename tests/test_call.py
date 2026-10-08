@@ -155,7 +155,7 @@ def test_used_extern_emits_one_declaration_and_no_definition(compiler):
     pub fn main() i32 { puts("hello"); return 0; }
     """
 
-    lines = compiler.compile(src).mods["main"].llvm_ir.splitlines()
+    lines = compiler.compile(src).llvm_ir.splitlines()
 
     assert sum(line.startswith('declare i32 @"puts"') for line in lines) == 1
     assert not any(line.startswith("define") and '@"puts"' in line for line in lines)

@@ -280,6 +280,20 @@ def test_mod_and_typ_name_clash_message(compiler):
     assert str(exc_info.value) == 'Duplicate definition of type or module "a"'
 
 
+def test_conflicting_extern_decl_message(compiler):
+    src = "extern fn write(fd: i32, buf: *u8, count: usize) i32;\npub fn main() i32 { 0 }"
+
+    with pytest.raises(errors.ConflictingExternDeclError) as exc_info:
+        compiler.build(src)
+
+    assert str(exc_info.value) == (
+        'Extern function "write" is declared with type "fn(i32, *u8, u64) i32", but was '
+        'declared with type "fn(i32, *u8, u64) i64"'
+    )
+    (note,) = exc_info.value.extra
+    assert note.message == "Earlier declaration here"
+
+
 def test_duplicate_generic_fn_message_has_both_declaration_spans(compiler):
     src = """fn id[T](x: T) T { x }
 fn id[U](x: U) U { x }

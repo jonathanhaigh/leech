@@ -18,15 +18,6 @@ entry:
 }
 """
 
-_CALLER_IR = """declare i32 @"add"(i32, i32)
-
-define i32 @"three"() {
-entry:
-  %"r" = call i32 @"add"(i32 1, i32 2)
-  ret i32 %"r"
-}
-"""
-
 
 def _emit(llvm_ir: str, kind: ll_emit.EmitKind, opt_level: int) -> bytes:
     mod = ll_emit.parse(llvm_ir)
@@ -71,14 +62,6 @@ def test_optimization_removes_redundant_memory_traffic():
 
     assert "alloca" in unoptimized
     assert "alloca" not in optimized
-
-
-def test_link_resolves_declarations_across_modules():
-    linked = ll_emit.link([ll_emit.parse(_CALLER_IR), ll_emit.parse(_ADD_IR)])
-
-    ll_emit.optimize(linked, 2)
-
-    assert "ret i32 3" in str(linked)
 
 
 def test_optimize_rejects_unsupported_level():

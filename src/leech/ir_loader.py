@@ -16,7 +16,7 @@ import pathlib
 from collections.abc import Collection
 from typing import Final, Optional
 
-from leech import asserts, ast, compilation, errors, ir_module, parse, src
+from leech import asserts, ast, compilation, errors, ir_module, parse, src, typs
 
 #: Resolved package directory containing the bundled standard library.
 _BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
@@ -222,6 +222,35 @@ class ModLoader:
                 comptime_param.check()
         for mod in self._mods.values():
             mod.check_declarations()
+        self._check_extern_fns()
+
+    def _check_extern_fns(self) -> None:
+        """Report each extern function declared with a different type from an earlier
+        declaration of its symbol, since a program declares each symbol once.
+
+        Declarations are ordered by their modules' load order, then by position. Each is
+        reported at most once, with a note at the earliest declaration it conflicts with.
+        """
+        by_symbol = dict[str, list[tuple[ir_module.ExternFnSymbol, typs.FnTyp]]]()
+        for mod in self._mods.values():
+            for item in mod.items:
+                fn = item.value
+                if not isinstance(fn, ir_module.ExternFnSymbol):
+                    continue
+                with self.ctx.recovering() as recovery:
+                    fn_typ = fn.fn_typ
+                if recovery.failure is not None:
+                    continue
+                earlier = by_symbol.setdefault(fn.name, [])
+                conflicting = next((decl for decl in earlier if decl[1] != fn_typ), None)
+                if conflicting is not None:
+                    other, other_typ = conflicting
+                    self.ctx.diags.error(
+                        errors.ConflictingExternDeclError(
+                            fn.name, fn_typ.name, fn.span, other_typ.name, other.span
+                        )
+                    )
+                earlier.append((fn, fn_typ))
 
     @property
     def mods(self) -> Collection[ir_module.Mod]:

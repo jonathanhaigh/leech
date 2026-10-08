@@ -1087,7 +1087,7 @@ def test_recursive_union_walks_at_runtime(compiler):
 def _discovered(compiler, src: str) -> tuple[list[str], list[str]]:
     """The struct and union instances monomorphization finds, by name."""
     mod = compiler.build(src)
-    result = mono.discover(mod)
+    result = mono.discover(mod.ctx)
     return (
         [inst.name for inst in result.struct_instances],
         [inst.name for inst in result.union_instances],
@@ -1553,7 +1553,7 @@ def test_zero_variant_union_is_lowered_but_uninhabited(compiler):
     pub fn absurd(e: Empty) i32 { return match (e) {}; }
     pub fn main() i32 { return 0; }
     """
-    ir_text = compiler.compile(src).mods["main"].llvm_ir
+    ir_text = compiler.compile(src).llvm_ir
     # A definition, not the declaration that carries the same spelling:
     # the point is that the empty match was lowered, not that the symbol
     # was named. Its one block falls straight through to `unreachable`,

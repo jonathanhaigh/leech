@@ -367,7 +367,6 @@ class Diags:
     def error(self, d: Diag) -> ReportProof: ...  # d's kind must be an error kind
     def warn(self, d: Diag) -> None: ...  # d's kind must be a warning kind
     def fail(self, d: Diag) -> NoReturn: ...  # error(d), then raise ReportedError
-    def merge(self, other: Diags) -> None: ...
     @contextlib.contextmanager
     def transaction(self) -> Iterator[Transaction]: ...
     @property
@@ -380,8 +379,8 @@ There is no severity-agnostic public `emit`: callers know whether they are repor
 error or a warning, and each method has the signature that suits it. `error` and `warn`
 assert that the diagnostic's kind has the matching default level, so a mismatch is caught
 where it is made. A call site builds the diagnostic with `diag.Diag.new(kinds.X, span, ...)`;
-`TypCheck._error` wraps that for the type checker. `error`, `warn` and `merge` (for another
-sink's diagnostics) all record a diagnostic as follows. The sink:
+`TypCheck._error` wraps that for the type checker. `error` and `warn` both record a
+diagnostic as follows. The sink:
 
 1. Applies the `WarningPolicy` (`-w`, `-Werror`, `-Wno-<name>`, ...) to get the effective
    level, and drops a diagnostic that the policy disables.
@@ -410,9 +409,6 @@ hold a `ReportProof`, which only the sink's `error` produces, so forgetting to r
 rather than a runtime assert on an untested path.
 
 The sink keeps each error's proof, so there is exactly one proof per reported error.
-`Diags.merge(other)` records `other`'s diagnostics *with their proofs* instead of creating
-new ones; a diagnostic that duplicates one already recorded keeps the earlier proof. Proofs
-held by code in the other compilation therefore still prove errors in the merged sink.
 
 `ReportedError(Exception)` carries a proof. It is the only exception that unwinds for a user
 error, and it is caught only at recovery boundaries ([analysis units](#analysis-units-and-memoized-failure),
@@ -454,7 +450,7 @@ proof if it is used to fail a unit, or carried by a `ReportedError` that escapes
 transaction. They also reject one carried by a poison type that reaches a recorded fact or
 the sink. Poison types carry their proof (see [Poison](#poison-and-expression-level-recovery)),
 so this check is always possible. Committing a transaction records its buffered
-diagnostics in the sink with their existing proofs, as `merge` does, so the proofs that code
+diagnostics in the sink with their existing proofs, so the proofs that code
 inside the transaction already holds stay valid.
 
 A transaction captures only diagnostics of the unit that opened it. If the probe forces
@@ -730,13 +726,8 @@ Lazy forcing decides emission order, which looks arbitrary to a user. Sorting ma
 output independent of which function first forced a broken declaration. Within one
 compilation the order is deterministic, and the test suite pins it.
 
-A build merges several compilations, because each module is compiled separately and reloads
-the program. `Diags.merge(other)` copies `other`'s diagnostics and their proofs with
-deduplication, and appends any file it has not seen, in `other`'s file order. The build merges the root
-compilation first. Since the root compilation loads the whole program, its file order is
-authoritative, and later compilations only add files it never reached. The emission
-sequence of merged diagnostics continues the target's own sequence, in `other`'s emission
-order.
+A build is one compilation of the whole program, so its sink holds every diagnostic once,
+and its file order covers every file the program loads.
 
 ### Error cap
 
