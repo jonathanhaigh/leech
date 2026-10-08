@@ -4,8 +4,7 @@
 
 import pytest
 
-from leech import driver, errors
-from leech import src as leech_src
+from leech import errors, program, session
 from tests import harness
 
 
@@ -210,7 +209,7 @@ def _write(path, text):
 
 
 def _compile(main_path):
-    return driver.compile_to_llvm_ir(leech_src.SrcFile(main_path), "main")
+    return program.check_module(main_path, session.Session()).llvm_ir()
 
 
 def test_directory_named_like_module_is_not_a_module(tmp_path):

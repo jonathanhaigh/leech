@@ -197,8 +197,8 @@ Leech has no manifest yet (#106).
 
 ```text
 cli/            command line: parsing, Session construction, rendering, exit status
-  leech.py        Command classes: check, build, run, doctor
-  doctor.py       the doctor command's checks
+  leech.py        Command classes: check, build, run; the command list
+  doctor.py       the doctor command and its checks
   common.py       Command base, option groups, version text, crash reporting
 toolchain.py    the system linker ($CC), temporary build directories, output writing
 program.py      Program -> CheckedProgram -> LLVM module          (library API)

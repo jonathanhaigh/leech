@@ -78,10 +78,10 @@ No behaviour change: the same commands, options, outputs, diagnostics and exit s
    [error boundary](../specs/2026-10-08-build-pipeline-restructure-design.md#errors-and-the-command-boundary):
    it runs `run` inside `reporting_crashes`, catches `errors.UserError` (reporting it to
    `session.diags`) and `diag.ReportedError`, returns status 1 for them, then renders the
-   diagnostics and exits. `cli/leech.py`: `CheckCommand`, `BuildCommand`, `RunCommand` and
-   `DoctorCommand`, with `RootArgument` and today's argument splitting at `--`, validation
-   and exit statuses. `cli/doctor.py`: today's `doctor.diagnose`, building through
-   `program` and `toolchain`.
+   diagnostics and exits. `cli/leech.py`: `CheckCommand`, `BuildCommand` and `RunCommand`,
+   with `RootArgument` and today's argument splitting at `--`, validation and exit statuses.
+   `cli/doctor.py`: `DoctorCommand`, with today's `doctor.diagnose` checks as its methods,
+   building through `program` and `toolchain`.
 5. **`leechc`, unchanged.** `cli/leechc.py` is `leechc` as one command with its options. It
    must keep compiling **only its file's module**, not every module that file imports, so it
    calls `program.py`'s private single-module compilation directly rather than
@@ -128,7 +128,9 @@ CLI tests pass unchanged).
 1. **Remove `leechc`.** Delete `cli/leechc.py` and its script entry. Move `test_cli.py`'s
    behaviour tests that still apply (version text, `-O` validation, emit kinds, crash
    rendering) to `leech` equivalents; delete the rest (`--module-name`, `--entry`,
-   severity-based exit status).
+   severity-based exit status). Remove `Command.failure_status`, which exists only for
+   `leechc`'s severity-based status: `Command.execute` returns 1 when `run` raises a user
+   error.
 2. **`OutputOptions`.** `--emit KIND[,KIND...]` with `exe` (default), `obj`, `asm`,
    `llvm-ir`, `llvm-bc`; `-o PATH` only with exactly one kind, otherwise a usage error
    (exit 2); an unknown kind is a usage error. Only `BuildCommand` uses the group.

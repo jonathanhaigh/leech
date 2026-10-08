@@ -7,7 +7,9 @@ import sys
 
 import pytest
 
-from leech import build, cli, diag, driver, errors, ir_loader, opt_util
+from leech import diag, errors, ir_loader, opt_util
+from leech.cli import leech as leech_cli
+from leech.cli import leechc
 from tests import harness
 
 
@@ -224,7 +226,7 @@ def test_build_reports_later_compilations_diagnostics_in_load_order(tmp_path):
     root.write_text("import a;\npub fn main() i32 { return 0; return 1; }\n")
     (tmp_path / "a.leech").write_text("pub fn f() i32 { return 0; return 1; }\n")
 
-    result = build.build(root)
+    result = harness.build_exe(root)
 
     assert result.exe is not None
     spans = [opt_util.opt_unwrap(d.message.span) for d in result.diags]
@@ -257,9 +259,9 @@ def test_internal_error_renders_earlier_diagnostics_first(
 
     with pytest.raises(RuntimeError, match="boom"):
         if tool == "leechc":
-            driver.main()
+            leechc.main()
         else:
-            cli.main()
+            leech_cli.main()
 
     stderr = capsys.readouterr().err
     user_error = stderr.index("ERROR: Return expression has invalid type")

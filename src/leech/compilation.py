@@ -14,6 +14,7 @@ from collections.abc import Callable, Collection, Hashable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Optional, Protocol, cast, override
 
 from leech import diag, errors, opt_util, patterns
+from leech import session as session_mod
 
 if TYPE_CHECKING:
     from leech import ir_builtins, ir_loader, ir_module, ir_traits, typs
@@ -149,11 +150,12 @@ class UnitId:
 class Ctx:
     """The root of one compilation's state.
 
-    Owns the diagnostics, the module loader, the trait implementations and the builtins, as
-    well as lazy requests and active semantic computations. Constructing one loads nothing.
+    Owns the module loader, the trait implementations and the builtins, as well as lazy
+    requests and active semantic computations. Reports diagnostics to its session's.
+    Constructing one loads nothing.
     """
 
-    diags: Final[diag.Diags]
+    session: Final[session_mod.Session]
     impl_registry: Final[ir_traits.ImplRegistry]
     loader: Final[ir_loader.ModLoader]
 
@@ -170,11 +172,11 @@ class Ctx:
     #: Source-declared comptime parameters, in declaration order.
     _declared_comptime_params: Final[list[typs.ComptimeParamTyp]]
 
-    def __init__(self, diags: Optional[diag.Diags] = None) -> None:
+    def __init__(self, session: Optional[session_mod.Session] = None) -> None:
         # Local because these modules import this one while their classes are initializing.
         from leech import ir_loader, ir_traits  # noqa: PLC0415
 
-        self.diags = opt_util.opt_or_default(diags, diag.Diags())
+        self.session = opt_util.opt_or_default(session, session_mod.Session())
         self.impl_registry = ir_traits.ImplRegistry(self)
         self.loader = ir_loader.ModLoader(self)
         self._requested_fn_instances = []
@@ -186,6 +188,10 @@ class Ctx:
         self._units = {}
         self._reported_cycles = {}
         self._declared_comptime_params = []
+
+    @property
+    def diags(self) -> diag.Diags:
+        return self.session.diags
 
     @functools.cached_property
     def builtins(self) -> ir_builtins.Builtins:

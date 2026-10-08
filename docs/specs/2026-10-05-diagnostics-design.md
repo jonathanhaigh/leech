@@ -355,10 +355,9 @@ the branch spans as labels. Only tool and driver failures, and an entry module w
 
 ### The sink: `diag.Diags`
 
-One `Diags` per compilation. `driver.compile_to_ir` and `driver.compile_to_llvm_ir` take an
-optional caller-owned `diags` argument, and create a sink when none is given.
-`driver.compile_module` always creates one. The sink exists before parsing begins and is
-passed to `ir_loader.ModLoader`, which stores it on `compilation.Ctx`. Every phase reaches it the way it reaches the context: through
+One `Diags` per invocation, held by its `session.Session`, which the caller creates. Each
+`compilation.Ctx` refers to its session and reaches the sink as `ctx.diags`. The sink exists
+before parsing begins. Every phase reaches it the way it reaches the context: through
 `ir_env.Env.ctx`, the `ModLoader`, or an explicit constructor argument. That last route
 covers `ir_builder.CfgBuilder`, which takes the `Ctx` and reports the unreachable code that
 `ir_values` blocks record (blocks themselves report nothing), and `comptime.Interpreter`.
@@ -694,13 +693,13 @@ validation) fails its unit instead when a component is poison.
 
 ### Phase boundary: no code generation with errors
 
-`driver.compile_to_ir` loads, builds and checks every module. With #113, it also forces
+`program.Program.check` loads, builds and checks every module. With #113, it also forces
 every declaration's units, designates the entry point (when asked), and runs
 monomorphization discovery, all inside the recovery loop. Then, if `diags.has_errors`, it
-raises `CompilationFailed`, and `driver.compile_module` returns a `Compilation` without IR.
-A parse error or other `ReportedError` that escapes loading is caught by `compile_to_ir` itself.
-A `UserError` that escapes before #115 is emitted into the sink first. Either way, it ends in
-`CompilationFailed`, so direct callers see the same contract as `compile_module`. Code generation therefore never runs on an invalid program.
+raises `CompilationFailed`, so no `CheckedProgram` exists to generate code from. A parse
+error or other `ReportedError` that escapes loading is caught by `check` itself. A
+`UserError` that escapes before #115 is emitted into the sink first. Either way, it ends in
+`CompilationFailed`. Code generation therefore never runs on an invalid program.
 Code generation does not force anything purely for validation, and a user diagnostic
 emitted during code generation is an internal error. `leech check` stops after checking,
 without generating IR.
@@ -756,7 +755,7 @@ accept the option.
 
 ### Internal compiler errors
 
-If a non-`ReportedError` exception escapes a compilation, the driver renders every diagnostic
+If a non-`ReportedError` exception escapes a compilation, the command line renders every diagnostic
 collected so far, then reports the crash, and re-raises so the traceback is printed:
 
 ```text
@@ -883,12 +882,11 @@ stderr afterwards, so consumers should use `leech build` when they need the log 
 
 ### Library API and exit status
 
-- `driver.compile_to_ir` and `driver.compile_to_llvm_ir` raise `diag.CompilationFailed`
-  when the compilation has errors. Warnings alone don't make them raise. A caller that
-  wants warnings from a successful compilation passes its own `diags` sink and reads it
-  afterwards. The test harness does this.
-- `driver.compile_module` and `build.check`/`build.build` return every diagnostic and never
-  raise for user errors, as today.
+- `program.Program.check` raises `diag.CompilationFailed` when the program has errors.
+  Warnings alone don't make it raise. A caller that wants warnings from a successful
+  compilation reads its session's `diags` afterwards. The test harness does this.
+- The command line's `Command` base catches `CompilationFailed`, as it catches the first
+  `UserError` today, and renders every diagnostic in the session.
 - `leechc` exits with the maximum effective level, as today. `leech` exits 1 on any error.
 
 ### Testing model
@@ -915,11 +913,11 @@ the exact diagnostic identity.
   consumer depends on them yet, and nothing has been released
   ([#109](https://github.com/jonathanhaigh/leech/issues/109)).
 - Exit statuses do not change.
-- `driver.compile_to_ir` raises `CompilationFailed` instead of the first `UserError`. Every
+- `program.Program.check` raises `CompilationFailed` instead of the first `UserError`. Every
   in-repository caller is updated in the same change.
 - `UserError` classes and `Diag` values coexist only during the migration: the sink accepts
   both until the catalogue issue lands, and the unit decorator catches both.
-- Between unit recovery (#114) and the catalogue (#115), `driver.compile_to_ir` re-raises the
+- Between unit recovery (#114) and the catalogue (#115), `program.Program.check` re-raises the
   first error in render order as its original `UserError`. The existing
   `pytest.raises(errors.SomeError)` tests keep working until #115 rewrites them to full-list
   assertions on `CompilationFailed`.

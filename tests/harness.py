@@ -13,19 +13,20 @@ from typing import ClassVar, Final, Optional
 
 from leech import (
     ast,
-    build,
     compilation,
     diag,
-    driver,
     errors,
     ir_module,
     ll_emit,
     mono,
-    opt_util,
     parse,
     reserved,
+    toolchain,
 )
+from leech import program as leech_program
+from leech import session as session_mod
 from leech import src as leech_src
+from leech.cli import common
 
 _TOOL_TIMEOUT_SECONDS = 30
 # Holds the linked program; no module path can reach it, since names are identifiers.
@@ -34,12 +35,45 @@ _LINK_DIR = ".link"
 
 @functools.cache
 def _bundled_mod_llvm_ir() -> Mapping[str, str]:
-    std_root = pathlib.Path(driver.__file__).parent / "std"
+    std_root = pathlib.Path(leech_program.__file__).parent / "std"
     compiled = dict[str, str]()
     for path in sorted(std_root.glob("*.leech")):
         name = f"std::{path.stem}"
-        compiled[name] = driver.compile_to_llvm_ir(leech_src.SrcFile(path), name)
+        checked = leech_program.check_module(path, session_mod.Session(), qualified_name=name)
+        compiled[name] = checked.llvm_ir()
     return types.MappingProxyType(compiled)
+
+
+def _session(diags: Optional[diag.Diags]) -> session_mod.Session:
+    if diags is None:
+        return session_mod.Session()
+    return session_mod.Session(diags)
+
+
+@dataclasses.dataclass(frozen=True)
+class BuildResult:
+    """The outcome of ``build_exe``, and every distinct diagnostic it produced in source order."""
+
+    #: The absolute path of the built executable, or ``None`` if the build failed.
+    exe: Optional[pathlib.Path]
+    diags: tuple[errors.UserError, ...]
+
+
+def build_exe(root: pathlib.Path) -> BuildResult:
+    """Build an executable as ``leech build`` does, without rendering its diagnostics."""
+    session = session_mod.Session()
+    exe = None
+    with common.reporting_user_errors(session):
+        exe = common.build_exe(root, None, session)
+    return BuildResult(exe, session.diags.sorted())
+
+
+def check_program(root: pathlib.Path) -> tuple[errors.UserError, ...]:
+    """Check a program as ``leech check`` does, returning its diagnostics in source order."""
+    session = session_mod.Session()
+    with common.reporting_user_errors(session):
+        leech_program.Program(root, entry=True).check(session)
+    return session.diags.sorted()
 
 
 def emit_error_while_checking(monkeypatch) -> None:
@@ -221,9 +255,10 @@ class CompilerHarness:
         """
         program = self._coerce_program(program)
         paths = self._materialize(program)
-        return driver.compile_to_ir(
-            leech_src.SrcFile(paths[program.root.name]), program.root.name, diags=diags
+        checked = leech_program.check_module(
+            paths[program.root.name], _session(diags), qualified_name=program.root.name
         )
+        return checked.mod
 
     def compile(
         self,
@@ -237,22 +272,19 @@ class CompilerHarness:
         With ``entry``, the root module's ``main`` becomes the program entry point. Every
         module's compilation emits to the same diagnostics.
         """
-        diags = opt_util.opt_or_default(diags, diag.Diags())
+        session = _session(diags)
         program = self._coerce_program(program)
         src_paths = self._materialize(program)
         compiled = dict[str, CompiledMod]()
         for mod in (program.root, *program.mods):
             src_path = src_paths[mod.name]
-            llvm_ir = driver.compile_to_llvm_ir(
-                leech_src.SrcFile(src_path),
-                mod.name,
-                entry=entry and mod is program.root,
-                diags=diags,
-            )
+            llvm_ir = leech_program.check_module(
+                src_path, session, qualified_name=mod.name, entry=entry and mod is program.root
+            ).llvm_ir()
             llvm_path = src_path.with_suffix(".ll")
             self._write_src(llvm_path, llvm_ir)
             compiled[mod.name] = CompiledMod(mod, src_path, llvm_path, llvm_ir)
-        return CompiledProgram(compiled, diags)
+        return CompiledProgram(compiled, session.diags)
 
     def _tool_failure(
         self,
@@ -312,10 +344,10 @@ class CompilerHarness:
         obj_path.write_bytes(ll_emit.emit(linked, ll_emit.EmitKind.OBJ, 0))
         exe_path = link_dir / "program"
         try:
-            cc = build.resolve_cc()
+            linker = toolchain.Linker.from_env()
         except errors.UserError as err:
             raise AssertionError(f"{err}; workspace: {self.workspace}") from err
-        result = self._invoke_tool([*cc, str(obj_path), "-o", str(exe_path)])
+        result = self._invoke_tool([*linker.command, str(obj_path), "-o", str(exe_path)])
         if result.returncode != 0:
             raise self._tool_failure("linking failed", result)
         return exe_path

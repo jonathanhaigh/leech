@@ -8,8 +8,8 @@ import subprocess
 
 import pytest
 
-from leech import build, codegen, diag, driver, errors, mono
-from leech import src as leech_src
+from leech import codegen, diag, errors, mono, program, session
+from tests import harness
 
 
 def run_leech(*args) -> subprocess.CompletedProcess:
@@ -159,9 +159,8 @@ def test_discovery_reports_each_failing_instance_and_continues(compiler):
     assert {inst.qualified_name for inst in result.fn_instances} == {"main::f", "main::g"}
 
 
-def _check_main(tmp_path) -> leech_src.SrcFile:
-    path = write(tmp_path / "main.leech", "pub fn main() i32 { return 0; }\n")
-    return leech_src.SrcFile(path)
+def _check_main(tmp_path) -> pathlib.Path:
+    return write(tmp_path / "main.leech", "pub fn main() i32 { return 0; }\n")
 
 
 def test_user_error_raised_while_generating_ir_is_internal(tmp_path, monkeypatch):
@@ -171,7 +170,7 @@ def test_user_error_raised_while_generating_ir_is_internal(tmp_path, monkeypatch
     monkeypatch.setattr(codegen.Compiler, "compile", fail)
 
     with pytest.raises(diag.InternalError, match="while generating IR"):
-        driver.compile_to_llvm_ir(_check_main(tmp_path), entry=True)
+        program.check_module(_check_main(tmp_path), session.Session(), entry=True).llvm_ir()
 
 
 def test_user_error_emitted_while_generating_ir_is_internal(tmp_path, monkeypatch):
@@ -184,17 +183,17 @@ def test_user_error_emitted_while_generating_ir_is_internal(tmp_path, monkeypatc
     monkeypatch.setattr(codegen.Compiler, "compile", emit)
 
     with pytest.raises(diag.InternalError, match="while generating IR"):
-        driver.compile_to_llvm_ir(_check_main(tmp_path), entry=True)
+        program.check_module(_check_main(tmp_path), session.Session(), entry=True).llvm_ir()
 
 
 def test_check_generates_no_ir(tmp_path, monkeypatch):
-    def fail(_mod) -> str:
+    def fail(_module) -> str:
         raise AssertionError("check generated IR")
 
-    monkeypatch.setattr(driver, "lower_to_llvm_ir", fail)
+    monkeypatch.setattr(program.CheckedModule, "llvm_ir", fail)
     root = write(tmp_path / "main.leech", "pub fn main() i32 { return 0; return 1; }\n")
 
-    found = build.check(root)
+    found = harness.check_program(root)
 
     assert [type(d) for d in found] == [errors.UnreachableCodeWarning]
 
@@ -204,7 +203,7 @@ def test_check_reports_unused_extern_signature_error(tmp_path):
         tmp_path / "main.leech", "extern fn f() Missing;\npub fn main() i32 { return 0; }\n"
     )
 
-    assert [type(d) for d in build.check(root)] == [errors.ItemNotFoundError]
+    assert [type(d) for d in harness.check_program(root)] == [errors.ItemNotFoundError]
 
 
 def test_discovery_continues_past_a_failing_signature(compiler):

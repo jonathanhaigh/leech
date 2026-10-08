@@ -13,6 +13,8 @@ Leech is the language, `leechc` is the compiler command, and `leech` is the Pyth
 (and the planned build-tool command); keep the three distinct in prose. Compiler code lives
 in `src/leech/`: parsing uses `parse.py` and `leech.lark`, semantic and IR work uses
 `typcheck.py`, `ir_*.py`, and `comptime.py`, and LLVM output is produced by `codegen.py`.
+`program.py` drives a compilation in a `session.py` session, `toolchain.py` writes objects
+and links executables, and the `leech` and `leechc` commands live in `cli/`.
 Standard-library sources are under `src/leech/std/`. Tests mirror language features in
 `tests/test_*.py`; shared test helpers live in `tests/harness.py`.
 

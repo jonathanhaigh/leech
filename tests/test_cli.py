@@ -10,8 +10,8 @@ import sys
 
 import pytest
 
-from leech import driver, errors, target
-from leech import src as leech_src
+from leech import errors, program, session, target
+from leech.cli import leechc
 from tests import harness
 
 
@@ -38,7 +38,7 @@ def run_tool(*command) -> subprocess.CompletedProcess:
 def run_leechc_in_process(monkeypatch, *args) -> int:
     monkeypatch.setattr(sys, "argv", ["leechc", *(str(a) for a in args)])
     with pytest.raises(SystemExit) as exc_info:
-        driver.main()
+        leechc.main()
     code = exc_info.value.code
     assert isinstance(code, int)
     return code
@@ -380,7 +380,7 @@ def test_cli_rejects_unsupported_optimization_level(tmp_path):
 def test_cli_object_files_link_into_position_independent_executable(tmp_path):
     app_path = tmp_path / "app.leech"
     app_path.write_text('import std::io;\nfn main() i32 { io::println("linked"); return 3; }\n')
-    std_root = pathlib.Path(driver.__file__).parent / "std"
+    std_root = pathlib.Path(program.__file__).parent / "std"
     modules = (
         (app_path, ("--entry",)),
         (std_root / "io.leech", ("--module-name", "std::io")),
@@ -459,33 +459,35 @@ def test_cli_rejects_abbreviated_long_options(tmp_path):
     assert "unrecognized arguments: --module app" in proc.stderr
 
 
-def test_compile_module_returns_its_own_warnings(tmp_path):
+def test_check_module_reports_its_own_warnings(tmp_path):
     warning_path = tmp_path / "app.leech"
     warning_path.write_text("pub fn f() i32 { return 1; return 2; }\n")
     clean_path = tmp_path / "clean.leech"
     clean_path.write_text("pub fn f() i32 { return 1; }\n")
+    warned = session.Session()
+    clean = session.Session()
 
-    warned = driver.compile_module(leech_src.SrcFile(warning_path))
-    clean = driver.compile_module(leech_src.SrcFile(clean_path))
+    program.check_module(warning_path, warned).llvm_ir()
+    program.check_module(clean_path, clean).llvm_ir()
 
-    assert warned.llvm_ir is not None
     assert warned.diags.level == errors.WARNING
     assert [type(d) for d in warned.diags.all()] == [errors.UnreachableCodeWarning]
     assert clean.diags.all() == ()
     assert clean.diags.level == errors.NOTE
 
 
-def test_compile_module_returns_raised_error_after_warnings(tmp_path):
+def test_check_module_reports_raised_error_after_warnings(tmp_path):
     src_path = tmp_path / "app.leech"
     src_path.write_text(
         "enum E { A }\n"
         "pub fn f(e: E) i32 { return match (e) { E::A => 1i32, _ => 2i32, }; }\n"
         "pub fn g() i32 { return true; }\n"
     )
+    compilation = session.Session()
 
-    compilation = driver.compile_module(leech_src.SrcFile(src_path))
+    with pytest.raises(errors.InvalidRetTypError):
+        program.check_module(src_path, compilation)
 
-    assert compilation.llvm_ir is None
     assert compilation.diags.level == errors.ERROR
     assert [type(d) for d in compilation.diags.all()] == [
         errors.UnreachableMatchArmWarning,
@@ -493,12 +495,13 @@ def test_compile_module_returns_raised_error_after_warnings(tmp_path):
     ]
 
 
-def test_compile_module_fails_on_emitted_error(tmp_path, monkeypatch):
+def test_check_module_fails_on_emitted_error(tmp_path, monkeypatch):
     src_path = tmp_path / "app.leech"
     src_path.write_text("pub fn f() i32 { return 0; }\n")
     harness.emit_error_while_checking(monkeypatch)
+    compilation = session.Session()
 
-    compilation = driver.compile_module(leech_src.SrcFile(src_path))
+    with pytest.raises(errors.CcNotFoundError):
+        program.check_module(src_path, compilation)
 
-    assert compilation.llvm_ir is None
     assert [type(d) for d in compilation.diags.all()] == [errors.CcNotFoundError]

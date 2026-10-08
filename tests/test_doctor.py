@@ -2,14 +2,17 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import argparse
 import importlib.metadata
 import os
 import pathlib
 import platform
 import subprocess
-import sys
 
-from leech import doctor
+import pytest
+
+from leech import ir_loader
+from leech.cli import doctor
 
 
 def run_doctor(cc=None) -> subprocess.CompletedProcess:
@@ -153,10 +156,29 @@ def test_doctor_reports_hanging_test_program(tmp_path, monkeypatch, capsys):
     )
     monkeypatch.setenv("CC", str(cc))
 
-    assert not doctor.diagnose(sys.stdout)
+    assert doctor.DoctorCommand().execute(argparse.Namespace(), "leech") == 1
 
     captured = capsys.readouterr()
     assert captured.out.endswith("Run the test program: FAILED\n")
     assert captured.err.startswith(
         "ERROR: Running the test program did not finish within 1 seconds\n"
     )
+
+
+def test_doctor_renders_build_diagnostics_before_a_crash(monkeypatch, capsys):
+    monkeypatch.setattr(doctor, "_TEST_PROGRAM", "pub fn main() i32 { return true; }\n")
+    check = ir_loader.ModLoader.check_declarations
+
+    def check_then_crash(loader: ir_loader.ModLoader) -> None:
+        check(loader)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ir_loader.ModLoader, "check_declarations", check_then_crash)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        doctor.DoctorCommand().execute(argparse.Namespace(), "leech")
+
+    stderr = capsys.readouterr().err
+    user_error = stderr.index("ERROR: Return expression has invalid type")
+    ice = stderr.index("ERROR: internal compiler error: RuntimeError: boom")
+    assert user_error < ice

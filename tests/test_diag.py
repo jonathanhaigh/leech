@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 
-from leech import compilation, diag, driver, errors
+from leech import compilation, diag, errors, program, session
 from leech import src as leech_src
 
 
@@ -165,10 +165,11 @@ def test_reported_error_carries_its_proof():
     assert diag.ReportedError(reported).reported is reported
 
 
-def test_ctx_reports_to_the_given_diags():
-    diags = diag.Diags()
+def test_ctx_reports_to_its_sessions_diags():
+    compiler_session = session.Session()
 
-    assert compilation.Ctx(diags).diags is diags
+    assert compilation.Ctx(compiler_session).session is compiler_session
+    assert compilation.Ctx(compiler_session).diags is compiler_session.diags
     assert compilation.Ctx().diags is not compilation.Ctx().diags
 
 
@@ -180,10 +181,10 @@ def test_interleaved_compilations_have_independent_diags(tmp_path):
     warned_diags = diag.Diags()
     clean_diags = diag.Diags()
 
-    warned = driver.compile_to_ir(leech_src.SrcFile(warned_path), diags=warned_diags)
-    clean = driver.compile_to_ir(leech_src.SrcFile(clean_path), diags=clean_diags)
-    driver.lower_to_llvm_ir(warned)
-    driver.lower_to_llvm_ir(clean)
+    warned = program.check_module(warned_path, session.Session(warned_diags))
+    clean = program.check_module(clean_path, session.Session(clean_diags))
+    warned.llvm_ir()
+    clean.llvm_ir()
 
     assert [type(d) for d in warned_diags.all()] == [errors.UnreachableCodeWarning]
     assert clean_diags.all() == ()
@@ -199,7 +200,7 @@ def test_raised_error_is_reported_after_earlier_warnings(tmp_path):
     diags = diag.Diags()
 
     with pytest.raises(errors.InvalidRetTypError):
-        driver.compile_to_ir(leech_src.SrcFile(path), diags=diags)
+        program.check_module(path, session.Session(diags))
 
     assert [type(d) for d in diags.all()] == [
         errors.UnreachableMatchArmWarning,

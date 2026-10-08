@@ -10,7 +10,8 @@ import sys
 
 import pytest
 
-from leech import build, cli
+from leech.cli import common
+from leech.cli import leech as leech_cli
 
 _HELLO = 'import std::io;\npub fn main() i32 { io::println("hello"); return 0; }\n'
 
@@ -38,16 +39,16 @@ class _ExecInterceptedError(Exception):
 def exec_calls(monkeypatch):
     """Record ``leech run`` builds and stop where it would replace the process."""
     builds = []
-    real_build = build.build
+    real_build = common.build_exe
 
-    def recording_build(root, **kwargs):
-        builds.append(kwargs)
-        return real_build(root, **kwargs)
+    def recording_build(root, output, session):
+        builds.append({"output": output, "opt_level": session.opt_level})
+        return real_build(root, output, session)
 
     def fake_execv(path, argv):
         raise _ExecInterceptedError(path, argv)
 
-    monkeypatch.setattr(build, "build", recording_build)
+    monkeypatch.setattr(common, "build_exe", recording_build)
     monkeypatch.setattr(os, "execv", fake_execv)
     return builds
 
@@ -55,7 +56,7 @@ def exec_calls(monkeypatch):
 def run_in_process(monkeypatch, *args) -> _ExecInterceptedError:
     monkeypatch.setattr(sys, "argv", ["leech", *(str(a) for a in args)])
     with pytest.raises(_ExecInterceptedError) as exc_info:
-        cli.main()
+        leech_cli.main()
     return exc_info.value
 
 
@@ -176,7 +177,7 @@ def test_run_reports_exec_failure_without_traceback(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(sys, "argv", ["leech", "run", str(root)])
 
     with pytest.raises(SystemExit) as exc_info:
-        cli.main()
+        leech_cli.main()
 
     assert exc_info.value.code == 1
     assert signal.getsignal(signal.SIGPIPE) == signal.SIG_IGN

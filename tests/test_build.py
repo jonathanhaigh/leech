@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from leech import build, errors
+from leech import errors
 from tests import harness
 
 _HELLO = 'import std::io;\npub fn main() i32 { io::println("hello"); return 0; }\n'
@@ -325,8 +325,8 @@ def test_builds_have_independent_diags(tmp_path):
     warned_root = write(tmp_path / "warned.leech", "pub fn main() i32 { return 0; return 1; }\n")
     root = write(tmp_path / "hello.leech", _HELLO)
 
-    warned = build.build(warned_root)
-    result = build.build(root)
+    warned = harness.build_exe(warned_root)
+    result = harness.build_exe(root)
 
     assert warned.exe is not None
     assert [type(d) for d in warned.diags] == [errors.UnreachableCodeWarning]
@@ -341,7 +341,7 @@ def test_build_reports_a_warning_seen_by_several_compilations_once(tmp_path):
         "enum E { A }\npub fn f() i32 { return match (E::A) { E::A => 0i32, _ => 1i32, }; }\n",
     )
 
-    result = build.build(root)
+    result = harness.build_exe(root)
 
     assert result.exe is not None
     assert [type(d) for d in result.diags] == [errors.UnreachableMatchArmWarning]
@@ -351,7 +351,7 @@ def test_build_fails_on_emitted_error(tmp_path, monkeypatch):
     root = write(tmp_path / "hello.leech", _HELLO)
     harness.emit_error_while_checking(monkeypatch)
 
-    result = build.build(root)
+    result = harness.build_exe(root)
 
     assert result.exe is None
     assert [type(d) for d in result.diags] == [errors.CcNotFoundError]
