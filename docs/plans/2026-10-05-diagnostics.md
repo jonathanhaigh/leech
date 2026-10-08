@@ -27,9 +27,8 @@ the later implementation, after manual approval and a separate instruction to im
   `asserts`, and docstrings that do not point at plans, specs or issues.
 - New files carry SPDX headers. `diag_docs/*.md` files are covered by `REUSE.toml` (or
   carry HTML-comment headers, as `docs/` Markdown does).
-- CLI option names follow gcc/clang, then rustc/cargo. Both `leechc` and
-  `leech check`/`build`/`run` accept every diagnostics option, through a shared argparse
-  helper.
+- CLI option names follow gcc/clang, then rustc/cargo. `leech check`/`build`/`run` accept
+  every diagnostics option, through a shared `DiagnosticOptions` option group (see Task 3b).
 
 ## Suggested order and parallelism
 
@@ -316,6 +315,18 @@ types; tests in `test_typs.py`.
 
 **Acceptance:** #113's criteria.
 
+## Task 3b: Build pipeline and CLI restructure
+
+A sub-plan, [Build pipeline and CLI restructure](2026-10-08-build-pipeline-restructure.md),
+with its own [design](../specs/2026-10-08-build-pipeline-restructure-design.md) and three
+issues (#124, #125, #126). It lands before Task 4: it restructures the pipeline into a `Session` and
+`Program`/`CheckedProgram` stages, removes `leechc` in favour of `leech build --emit`, and
+checks and generates each program in one compilation. Later tasks' references to
+`driver.compile_to_ir`, `leechc` and per-module compilation are read in its terms: the
+transitional "raise the first error" rule that Task 4 replaces lives in `Program.check`, and
+command-line options are added through its shared option groups. Later tasks below already
+name the restructured modules (`program`, `session`, `cli/`).
+
 ## Task 4 (#115): Replace `UserError` classes with a diagnostic catalogue
 
 Staged so every commit is green.
@@ -334,7 +345,7 @@ templates. Give every legacy class a `kind` class attribute pointing at its entr
 aliases, template fields parse, templates start with a literal lowercase word or `"`, no
 trailing `.`.
 
-**Commit B — `CompilationFailed` and test codemod.** `driver.compile_to_ir` raises
+**Commit B — `CompilationFailed` and test codemod.** `program.Program.check` raises
 `CompilationFailed` with all diagnostics in sorted order (replacing #114's transitional raise).
 A one-off codemod script (kept out of the repo, or under `scripts/` and deleted in the same
 commit) rewrites `with pytest.raises(errors.X) as exc_info:` blocks to
@@ -346,7 +357,7 @@ collection), and any fences in `README.md`/`docs/guide/` and the `tests/test_doc
 are rewritten. Message-text assertions are updated to the normalized wording.
 
 **Commit C… — migrate raise sites, one module per commit** (`parse`, `ir_env`, `typs`,
-`ir_traits`, `ir_module`, `ir_loader`, `comptime`, `typcheck`, `build`/`doctor`/`driver`):
+`ir_traits`, `ir_module`, `ir_loader`, `comptime`, `typcheck`, `toolchain`/`program`/`cli`):
 `raise errors.X(...)` becomes `e.ctx.diags.fail(diag.Diag.new(kinds.X, span, ...))` (or `error`/
 `warn` where control continues), constructing labels and notes explicitly. Decide per
 diagnostic whether a spanned note becomes a `Label` or stays a `Note` (design rule), and
@@ -437,11 +448,11 @@ codegen path observes poison.
 
 ## Task 7 (#117): Limit reported errors with `-fmax-errors`
 
-**Files:** new shared option helper (e.g. `src/leech/diag_options.py`), `driver.py`,
-`cli.py`, `diag_text.py` (or `errors.TextErrorRenderer` if #118 has not landed);
+**Files:** a new `DiagnosticOptions` option group in `cli/common.py`, `cli/leech.py`,
+`diag_text.py` (or `errors.TextErrorRenderer` if #118 has not landed);
 `tests/test_cli.py`, `tests/test_check.py`.
 
-- `-fmax-errors=N` (non-negative int, default 20) on `leechc` and `leech check`/`build`/`run`,
+- `-fmax-errors=N` (non-negative int, default 20) on `leech check`/`build`/`run`,
   passed to the text renderer. Rendering stops after the Nth error; the withheld-count note
   is printed; `0` disables the cap. Exit status is unaffected.
 - The final summary counts every collected diagnostic; when the cap withholds any, the
@@ -453,7 +464,7 @@ codegen path observes poison.
 
 ## Task 8 (#118): Render diagnostics in the rustc layout
 
-**Files:** `diag_text.py`, `driver.py`, `cli.py`, `doctor.py`; tests in new
+**Files:** `diag_text.py`, `cli/common.py`, `cli/leech.py`, `cli/doctor.py`; tests in new
 `tests/test_diag_text.py`, updates to CLI golden output tests.
 
 - Implement the design's layout: header with name, `-->` location (cwd-relative when
@@ -472,11 +483,11 @@ codegen path observes poison.
 
 ## Task 9 (#119): Explain diagnostics with `leech explain`
 
-**Files:** new `src/leech/diag_docs/*.md`, `cli.py`, `driver.py`, `diag_text.py`,
+**Files:** new `src/leech/diag_docs/*.md`, `cli/leech.py` (an `ExplainCommand`), `diag_text.py`,
 `pyproject.toml` (package data, if not already included by `uv_build`), `REUSE.toml`,
 `tests/doc.py`, new `tests/test_explain.py`, `tests/explain_allowlist.txt`.
 
-- `leech explain NAME` and `leechc --explain NAME` print the file; unknown names exit 2 with
+- `leech explain NAME` prints the file; unknown names exit 2 with
   close matches (`difflib.get_close_matches`). Aliases for renamed kinds resolve.
 - Seed explanations for the most common kinds (name resolution, type mismatches, calls,
   unreachable code), and record every other kind in the allowlist; a test fails if a kind
@@ -488,7 +499,8 @@ codegen path observes poison.
 
 ## Task 10 (#120): Control warnings with `-W` options
 
-**Files:** `diag.py` (`WarningPolicy`), shared option helper, `driver.py`, `cli.py`,
+**Files:** `diag.py` (`WarningPolicy`), `session.py` (the session's policy), the
+`DiagnosticOptions` option group, `cli/leech.py`,
 `diag_kinds.py` (`UNKNOWN_WARNING_OPTION`); tests in new `tests/test_warning_options.py`.
 
 - Parse `-w`, `-W<name>`, `-Wno-<name>`, `-Werror`, `-Werror=<name>`, `-Wno-error=<name>` in
@@ -497,16 +509,16 @@ codegen path observes poison.
   before compilation.
 - `Diags.warn` applies the policy and records the promoting option in `Diag.promoted_by`;
   promoted warnings render with the `(-Werror)` / `(-Werror=<name>)` suffix, count as
-  errors, block codegen and set the exit status. `Diags.merge` preserves `promoted_by`.
+  errors, block codegen and set the exit status.
   `-W` names resolve through `diag_kinds.lookup`, so aliases work.
 - Tests: each option alone; both suffixes; `-Werror -Wno-error=unreachable-code`;
   later-wins ordering (`-Werror=x -Wno-error=x` and the reverse); `-w` overriding `-Werror`;
   unknown name; an error kind named in `-Wno-`; promoted warning blocks `leech build` output
-  and keeps its suffix after build-level merging.
+  and keeps its suffix.
 
 ## Task 11 (#121): Emit diagnostics as SARIF
 
-**Files:** new `diag_sarif.py`, shared option helper, `driver.py`, `cli.py`; tests in new
+**Files:** new `diag_sarif.py`, the `DiagnosticOptions` option group, `cli/leech.py`; tests in new
 `tests/test_diag_sarif.py`.
 
 - `-fdiagnostics-format=text|sarif`; `sarif` writes one SARIF 2.1.0 log to stderr with the
@@ -523,7 +535,7 @@ codegen path observes poison.
 
 - After #118, update `README.md` and any user-guide pages that show diagnostic output to the new
   layout; documentation fences already use names after #115.
-- After #117, #120 and #121, document the options in `leechc --help`/`leech --help` text and in the
+- After #117, #120 and #121, document the options in `leech --help` text and in the
   user guide's getting-started troubleshooting section, if it exists by then.
 - Update `AGENTS.md` (in #115, extended by #116 and #119) with a short diagnostics convention: add
   a `DiagKind` to `diag_kinds.py` following the message style; report with the sink rather
