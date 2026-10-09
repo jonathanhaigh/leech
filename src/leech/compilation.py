@@ -304,7 +304,7 @@ class Ctx:
             popped = frames.pop()
             assert popped is frame, "active computations exited out of order"
 
-    def fail_cycle[DetailT](self, cycle: Cycle[DetailT], err: errors.UserError) -> NoReturn:
+    def fail_cycle[DetailT](self, cycle: Cycle[DetailT], err: diag.AnyDiag) -> NoReturn:
         """Report ``err`` for ``cycle``, unless the same cycle was reported already, and raise.
 
         A cycle is found once from each participant it is entered from; it is the same cycle

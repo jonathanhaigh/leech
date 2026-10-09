@@ -746,7 +746,7 @@ def test_non_trait_bound_diagnosed_the_same_either_declaration_order(compiler, f
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
 def test_bound_names_non_trait_via_method_call(compiler):
@@ -760,7 +760,7 @@ def test_bound_names_non_trait_via_method_call(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
 def test_bound_names_unapplied_generic_non_trait(compiler):
@@ -772,7 +772,7 @@ def test_bound_names_unapplied_generic_non_trait(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
 #: One never-applied declaration of each kind that can take comptime
@@ -797,7 +797,7 @@ def test_non_trait_bound_on_unused_declaration_is_rejected(compiler, decl):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
 def test_bound_names_non_trait_on_unused_typ_param(compiler):
@@ -812,7 +812,7 @@ def test_bound_names_non_trait_on_unused_typ_param(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
 def test_bound_names_non_trait_on_generic_struct_instantiation(compiler):
@@ -827,7 +827,7 @@ def test_bound_names_non_trait_on_generic_struct_instantiation(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
 def test_trait_missing_method_not_implemented(compiler):
@@ -1069,7 +1069,7 @@ def test_impl_for_non_trait(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
 def test_impl_for_unapplied_generic_non_trait(compiler):
@@ -1081,7 +1081,7 @@ def test_impl_for_unapplied_generic_non_trait(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
 def test_trait_used_as_typ(compiler):
@@ -1438,10 +1438,11 @@ def test_bound_referencing_sibling_typ_param_satisfied(compiler):
 
 
 def _assert_recursive_trait_bound_error(err, primary: str, cycle: list[str]) -> None:
-    assert err.message.message == f'Trait bound "{primary}" is part of a recursive bound cycle'
-    assert [note.message for note in err.extra] == [
-        f'Trait bound "{name}" participates in this cycle' for name in cycle
-    ]
+    assert f'"{primary}"' in str(err)
+    assert isinstance(err, diag.Diag)
+    assert [note.msg.kind for note in err.notes] == [diag_kinds.BOUND_IN_CYCLE] * len(cycle)
+    for note, name in zip(err.notes, cycle, strict=True):
+        assert f'"{name}"' in note.msg.text()
 
 
 def test_self_referential_trait_bound(compiler):
@@ -1652,7 +1653,7 @@ def test_bound_method_reports_wrong_trait_arg_kind_before_unsupported_error(comp
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a comptime value" in str(exc_info.value.diags[0])
+    assert "comptime value" in str(exc_info.value.diags[0])
 
 
 def test_bound_method_reports_trait_arg_bound_error_before_unsupported_error(compiler):

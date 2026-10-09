@@ -478,6 +478,12 @@ def test_value_param_used_as_struct_field_typ_is_rejected(compiler):
     assert exc_info.value.kinds == (diag_kinds.VALUE_USED_AS_TYPE,)
 
 
+def _field_notes(err: diag.AnyDiag) -> list[str]:
+    assert isinstance(err, diag.Diag)
+    assert all(note.msg.kind is diag_kinds.FIELD_CONTAINS_BY_VALUE for note in err.notes)
+    return [note.msg.text() for note in err.notes]
+
+
 def test_generic_struct_infinite_size_via_own_typ_param(compiler):
     # Regardless of what T ends up being, L[T] always directly contains
     # another L[T] by value - infinite size, whether or not anything in
@@ -492,11 +498,9 @@ def test_generic_struct_infinite_size_via_own_typ_param(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
-    assert (
-        harness.user_error(exc_info.value.diags[0]).extra[0].message
-        == 'Field "x" of struct "L" contains "L[T]" by value'
-    )
+    (note,) = _field_notes(exc_info.value.diags[0])
+    assert '"x"' in note
+    assert '"L[T]"' in note
 
 
 def test_generic_struct_ptr_to_self_is_finite(compiler):
@@ -522,14 +526,9 @@ def test_growing_generic_struct_declaration_cycle(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
-    assert (
-        harness.user_error(exc_info.value.diags[0]).message.message
-        == 'Struct "L" has infinite size'
-    )
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
-    assert harness.user_error(exc_info.value.diags[0]).extra[0].message == (
-        'Field "x" of struct "L" contains "L[array[T, 1]]" by value'
-    )
+    assert '"L"' in str(exc_info.value.diags[0])
+    (note,) = _field_notes(exc_info.value.diags[0])
+    assert '"L[array[T, 1]]"' in note
 
 
 def test_growing_generic_struct_declaration_cycle_through_pointer_arg(compiler):
@@ -541,9 +540,8 @@ def test_growing_generic_struct_declaration_cycle_through_pointer_arg(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
-    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
-        'Field "x" of struct "L" contains "L[*T]" by value'
-    ]
+    (note,) = _field_notes(exc_info.value.diags[0])
+    assert '"L[*T]"' in note
 
 
 def test_mutual_growing_generic_struct_declaration_cycle(compiler):
@@ -556,10 +554,11 @@ def test_mutual_growing_generic_struct_declaration_cycle(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,) * 2
 
-    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
-        'Field "x" of struct "A" contains "B[T]" by value',
-        'Field "y" of struct "B[T]" contains "A[array[T, 1]]" by value',
-    ]
+    first, second = _field_notes(exc_info.value.diags[0])
+    assert '"A"' in first
+    assert '"B[T]"' in first
+    assert '"B[T]"' in second
+    assert '"A[array[T, 1]]"' in second
 
 
 def test_generic_struct_nested_cycle_keeps_nested_root_name(compiler):
@@ -572,13 +571,9 @@ def test_generic_struct_nested_cycle_keeps_nested_root_name(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,) * 2
 
-    assert (
-        harness.user_error(exc_info.value.diags[0]).message.message
-        == 'Struct "B[T]" has infinite size'
-    )
-    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
-        'Field "y" of struct "B[T]" contains "B[T]" by value'
-    ]
+    assert '"B[T]"' in str(exc_info.value.diags[0])
+    (note,) = _field_notes(exc_info.value.diags[0])
+    assert '"B[T]"' in note
 
 
 def test_generic_impl_block_body_typechecks(compiler):

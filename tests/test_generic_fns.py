@@ -999,7 +999,7 @@ def test_unmarked_value_param_is_a_typ_param(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a trait" in str(exc_info.value.diags[0])
+    assert '"usize"' in str(exc_info.value.diags[0])
 
 
 def test_typ_arg_given_for_value_param_is_rejected(compiler):
@@ -1013,7 +1013,7 @@ def test_typ_arg_given_for_value_param_is_rejected(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a comptime value" in str(exc_info.value.diags[0])
+    assert "comptime value" in str(exc_info.value.diags[0])
 
 
 def test_value_arg_given_for_typ_param_is_rejected(compiler):
@@ -1066,7 +1066,7 @@ def test_typ_arg_on_bare_generic_value_param_fn_reference_is_rejected(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
-    assert "names a type, not a comptime value" in str(exc_info.value.diags[0])
+    assert "comptime value" in str(exc_info.value.diags[0])
 
 
 def test_value_param_used_as_param_typ_is_rejected(compiler):

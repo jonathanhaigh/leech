@@ -77,7 +77,8 @@ numeric coverage threshold is configured; new behavior and regressions should be
 explicitly. Identify a diagnostic by its kind (`diag_kinds.X`) and location, not its message
 text, so that rewording a message doesn't break tests. Check the text only for a term that
 matters, such as the name of the item the diagnostic is about, and with `in` rather than
-comparing the whole message.
+comparing the whole message. Where it matters which value fills which field, check the
+message's arguments (`msg.args`) instead.
 
 ## Review Guidelines
 

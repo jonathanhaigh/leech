@@ -336,7 +336,7 @@ Staged so every commit is green.
 `LlvmVerificationError` is already an `InternalError` after #113, and any other class whose
 message says "internal compiler error" joins it. New `diag_kinds.py` with `lookup(name)`
 (aliases); `diag.py` gains `DiagKind` (with `aliases`), `MsgKind`, `Msg`, `Label`, `Note`,
-`Diag` (with `new`/`with_label`/`with_note` helpers and `promoted_by`), the `DiagArg`
+`Diag` (with `new`/`with_primary_label`/`with_note` helpers and `promoted_by`), the `DiagArg`
 protocol, and `CompilationError(diags)` with `.diags` and `.kinds`. Add one `DiagKind` per
 user-diagnostic class (except that the too-many and too-few argument classes share
 `argument-count-mismatch`) and one `MsgKind` per distinct note, with names following the
@@ -366,19 +366,20 @@ still expect the `UserError` class until their module is migrated.
 **Commit C… — migrate raise sites, one module per commit** (`parse`, `ir_env`, `typs`,
 `ir_traits`, `ir_module`, `ir_loader`, `comptime`, `typcheck`, `toolchain`/`program`/`cli`):
 `raise errors.X(...)` becomes `e.ctx.diags.raise_error(kinds.X, span, ...)` (or `error`/`warn`
-where control continues), building a `Diag` explicitly when it has labels or notes. Decide per
-diagnostic whether a spanned note becomes a `Label` or stays a `Note` (design rule), and give
-every diagnostic that has any source location a primary span (for example
+where control continues), building a `Diag` explicitly when it has labels or notes. A spanned
+note that points at a related span, such as a previous definition, becomes a label
+(`Diag.with_label`) in whichever file it is; notes that explain a chain in order stay notes.
+Give every diagnostic that has any source location a primary span (for example
 `conflicting-branch-types` and `conflicting-match-arm-types` take the whole `if`/`match`
 expression, with the branches as labels). A commit migrates every raise site of each class its
 module raises, in whichever module, and deletes the class, so a kind is never reported in both
 forms or with two wordings. `Diags.error`/`warn` accepts only `Diag` when the last class is
 gone. The first of these commits (`parse`) makes the sink, `ReportProof`, `CompilationError`
 and the text renderer accept a `Diag` beside a `UserError`; the next adds `Diags.raise_error`
-and lets the reporting methods build the `Diag`. The renderer shows a `Diag`'s
-message and notes in the existing layout; the first module whose diagnostics have labels
-decides how that layout shows them. Tests read a not-yet-migrated diagnostic's `message` and
-`extra` through `harness.user_error`, which goes away with the last class.
+and lets the reporting methods build the `Diag`. The renderer shows a `Diag`'s message and
+notes in the existing layout, and, from `typs` on, each label as a note with its own excerpt,
+as spanned notes print today. Tests read a not-yet-migrated diagnostic's `message` and `extra`
+through `harness.user_error`, which goes away with the last class.
 
 **Final commit.** Delete `errors.py` and `TextErrorRenderer`'s dependence on it (the
 existing renderer moves to `diag_text.py` unchanged in layout, using catalogue messages);
@@ -483,17 +484,18 @@ codegen path observes poison.
 
 - Implement the design's layout: header with name, `-->` location (cwd-relative when
   possible), gutter, `^` primary and `-` secondary underlines across the full span, inline
-  and connector-line labels, multi-line spans, spanless `= note:` and spanned `note:`
-  sub-snippets, the summary line, and the `leech explain` pointer (only once #119 has added
-  explanations; until then omitted).
+  and connector-line labels, labels in another file (choosing between rustc's `:::` section
+  and a spanned `note:`, as the design describes), multi-line spans, spanless `= note:` and
+  spanned `note:` sub-snippets, the summary line, and the `leech explain` pointer (only once
+  #119 has added explanations; until then omitted).
 - `-fdiagnostics-color=auto|always|never` with `NO_COLOR` and TTY detection; colours only
   wrap level words, names and underlines.
 - `leech doctor` output uses the same renderer.
 - Tests: golden-text tests for a single-line span, two labels on one line, overlapping
-  labels, a multi-line span, a spanless diagnostic, a spanned note in another file, tabs in
-  source lines (expanded to four spaces consistently in line and underline), wide line
-  numbers, the summary line forms (`1 previous error`, `N previous errors`, warnings only),
-  and colour on/off.
+  labels, a label in another file, a multi-line span, a spanless diagnostic, a spanned note
+  in another file, tabs in source lines (expanded to four spaces consistently in line and
+  underline), wide line numbers, the summary line forms (`1 previous error`, `N previous
+  errors`, warnings only), and colour on/off.
 
 ## Task 9 (#119): Explain diagnostics with `leech explain`
 

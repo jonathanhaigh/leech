@@ -316,9 +316,11 @@ pub fn main() i32 { 0 }
     harness.assert_span_at(span, src, "fn id[U]")
     err = exc_info.value.diags[0]
     assert isinstance(err, diag.Diag)
-    (note,) = err.notes
-    assert note.msg.kind is diag_kinds.PREVIOUS_DEFN_HERE
-    harness.assert_span_at(note.span, src, "fn id[T]")
+    assert err.notes == ()
+    (label,) = err.labels
+    assert label.msg is not None
+    assert label.msg.kind is diag_kinds.PREVIOUS_DEFN_HERE
+    harness.assert_span_at(label.span, src, "fn id[T]")
 
 
 def test_overlapping_inherent_impl_assoc_fn_name_clash_message(compiler):
@@ -346,9 +348,11 @@ def test_overlapping_inherent_impl_assoc_fn_name_clash_message(compiler):
     harness.assert_span_at(span, src, "get(*self) i32 { 1 }")
 
     assert isinstance(err, diag.Diag)
-    (note,) = err.notes
-    assert note.msg.kind is diag_kinds.PREVIOUS_DEFN_HERE
-    harness.assert_span_at(note.span, src, "get(*self) i32 { 0 }")
+    assert err.notes == ()
+    (label,) = err.labels
+    assert label.msg is not None
+    assert label.msg.kind is diag_kinds.PREVIOUS_DEFN_HERE
+    harness.assert_span_at(label.span, src, "get(*self) i32 { 0 }")
 
 
 def test_infinite_size_struct_message(compiler):
@@ -369,16 +373,17 @@ def test_infinite_size_struct_message(compiler):
 
     msg = str(exc_info.value.diags[0])
     assert '"A"' in msg
-    assert "infinite size" in msg
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "struct A")
 
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 2
-    first, second = harness.user_error(exc_info.value.diags[0]).extra
-    assert first.message == 'Field "b" of struct "A" contains "B" by value'
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    first, second = err.notes
+    assert first.msg.kind is second.msg.kind is diag_kinds.FIELD_CONTAINS_BY_VALUE
+    assert '"b"' in first.msg.text()
     harness.assert_span_at(first.span, src, "b: B")
-    assert second.message == 'Field "a" of struct "B" contains "A" by value'
+    assert '"a"' in second.msg.text()
     harness.assert_span_at(second.span, src, "a: A")
 
 
@@ -447,23 +452,20 @@ def test_recursive_trait_bound_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_TRAIT_BOUND,)
 
-    assert (
-        harness.user_error(exc_info.value.diags[0]).message.message
-        == 'Trait bound "Y[T]" is part of a recursive bound cycle'
-    )
-    span = exc_info.value.diags[0].span
-    harness.assert_span_at(span, src, "Y[T]] { fn x")
+    err = exc_info.value.diags[0]
+    assert '"Y[T]"' in str(err)
+    harness.assert_span_at(err.span, src, "Y[T]] { fn x")
 
-    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
-        'Trait bound "Y[T]" participates in this cycle',
-        'Trait bound "Z[T]" participates in this cycle',
-        'Trait bound "X[T]" participates in this cycle',
-    ]
+    assert isinstance(err, diag.Diag)
+    assert [note.msg.kind for note in err.notes] == [diag_kinds.BOUND_IN_CYCLE] * 3
+    assert '"Y[T]"' in err.notes[0].msg.text()
+    assert '"Z[T]"' in err.notes[1].msg.text()
+    assert '"X[T]"' in err.notes[2].msg.text()
     expected_spans = [
         harness.src_position(src, text) for text in ("Y[T]] { fn x", "Z[T]] { fn y", "X[T]] { fn z")
     ]
     actual_spans = []
-    for note in harness.user_error(exc_info.value.diags[0]).extra:
+    for note in err.notes:
         assert note.span is not None
         actual_spans.append((note.span.start_line, note.span.start_col))
     assert actual_spans == expected_spans
@@ -758,10 +760,11 @@ pub fn main() i32 {
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"id"' in msg
-    assert "got 2" in msg
-    assert "expected 1" in msg
+    err = exc_info.value.diags[0]
+    assert '"id"' in str(err)
+    # Which count fills which field, not just that both appear.
+    assert isinstance(err, diag.Diag)
+    assert (err.msg.args["given"], err.msg.args["expected"]) == (2, 1)
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "id[i32, bool](5)")
@@ -906,14 +909,15 @@ def test_infinite_size_union_message(compiler):
 
     msg = str(exc_info.value.diags[0])
     assert '"Tree"' in msg
-    assert "infinite size" in msg
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "union Tree")
 
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
-    (hop,) = harness.user_error(exc_info.value.diags[0]).extra
-    assert hop.message == 'Payload 1 of variant "Node" of union "Tree" contains "Tree" by value'
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    (hop,) = err.notes
+    assert hop.msg.kind is diag_kinds.PAYLOAD_CONTAINS_BY_VALUE
+    assert '"Node"' in hop.msg.text()
     harness.assert_span_at(hop.span, src, "Tree),")
 
 

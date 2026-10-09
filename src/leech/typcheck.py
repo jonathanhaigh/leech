@@ -204,7 +204,12 @@ class TypCheck:
             case ast.IntLit():
                 typ = self._infer_int_lit_typ(expr_ast, expected_typ)
                 if not typ.fits(expr_ast.value):
-                    raise errors.IntLitOverflowError(expr_ast.value, typ.name, expr_ast.span)
+                    e.ctx.diags.raise_error(
+                        diag_kinds.INTEGER_LITERAL_OVERFLOW,
+                        expr_ast.span,
+                        value=expr_ast.value,
+                        typ=typ,
+                    )
                 self.results._set_folded_int_lit(expr_ast, typ, expr_ast.value)
                 return typ
             case ast.BoolLit():
@@ -348,7 +353,9 @@ class TypCheck:
             )
 
         if while_ast.label is not None and reserved.is_reserved(while_ast.label.name):
-            raise errors.ReservedNameError(while_ast.label.name, while_ast.label.span)
+            e.ctx.diags.raise_error(
+                diag_kinds.RESERVED_NAME, while_ast.label.span, name=while_ast.label.name
+            )
         self._loop_labels.append((opt_util.opt_map(while_ast.label, lambda x: x.name), while_ast))
         try:
             block_typ = self._check_expr(while_ast.block, e, None)
@@ -368,7 +375,7 @@ class TypCheck:
             case ast.BindingPattern():
                 return self._check_binding_pattern(pat, column_typ, e)
             case ast.IntLitPattern():
-                return self._check_int_lit_pattern(pat, column_typ)
+                return self._check_int_lit_pattern(pat, column_typ, e)
             case ast.BoolLitPattern():
                 return self._check_bool_lit_pattern(pat, column_typ)
             case ast.PathPattern():
@@ -384,12 +391,12 @@ class TypCheck:
         mut = typs.Mutability.from_ast(pat.mut)
         self.results._set_local_typ(pat, typs.PtrTyp(column_typ, mut))
         if reserved.is_reserved(pat.ident.name):
-            raise errors.ReservedNameError(pat.ident.name, pat.ident.span)
+            e.ctx.diags.raise_error(diag_kinds.RESERVED_NAME, pat.ident.span, name=pat.ident.name)
         e.add_var(pat.ident.name, pat)
         return patterns.WildcardPattern()
 
     def _check_int_lit_pattern(
-        self, pat: ast.IntLitPattern, column_typ: typs.Typ
+        self, pat: ast.IntLitPattern, column_typ: typs.Typ, e: ir_env.Env
     ) -> patterns.ConstructorPattern:
         lit_typ = self._infer_int_lit_typ(
             pat.lit,
@@ -397,7 +404,9 @@ class TypCheck:
         )
         value = -pat.lit.value if pat.negative else pat.lit.value
         if not lit_typ.fits(value):
-            raise errors.IntLitOverflowError(value, lit_typ.name, pat.span)
+            e.ctx.diags.raise_error(
+                diag_kinds.INTEGER_LITERAL_OVERFLOW, pat.span, value=value, typ=lit_typ
+            )
         if not isinstance(column_typ, typs.IntTyp) or lit_typ != column_typ:
             raise errors.PatternTypMismatchError(
                 pat.diag_str(),
@@ -878,7 +887,9 @@ class TypCheck:
                 )
             value = -op_ast.operand.value
             if not typ.fits(value):
-                raise errors.IntLitOverflowError(value, typ.name, op_ast.span)
+                e.ctx.diags.raise_error(
+                    diag_kinds.INTEGER_LITERAL_OVERFLOW, op_ast.span, value=value, typ=typ
+                )
             self.results._set_folded_int_lit(op_ast, typ, value)
             return typ
 
@@ -1303,7 +1314,9 @@ class TypCheck:
         place_typ = typs.PtrTyp(bound_typ, mut)
         self.results._set_local_typ(let_ast, place_typ)
         if reserved.is_reserved(let_ast.ident.name):
-            raise errors.ReservedNameError(let_ast.ident.name, let_ast.ident.span)
+            e.ctx.diags.raise_error(
+                diag_kinds.RESERVED_NAME, let_ast.ident.span, name=let_ast.ident.name
+            )
         e.add_var(let_ast.ident.name, let_ast)
         return expr_typ == typs.NEVER
 

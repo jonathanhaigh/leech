@@ -214,8 +214,7 @@ def test_diag_new_takes_the_kind_level_and_adds_labels_and_notes_in_order(tmp_pa
     d = (
         diag.Diag.new(_ARG_KIND, span, name="x", typ=typs.BOOL)
         .with_primary_label(diag.MsgKind('has type "{typ}"'), typ=typs.BOOL)
-        .with_label(other)
-        .with_label(other, _NOTE_KIND, name="x")
+        .with_label(_NOTE_KIND, other, name="x")
         .with_note(_NOTE_KIND, other, name="x")
         .with_note(diag.MsgKind("a spanless note"))
     )
@@ -226,10 +225,7 @@ def test_diag_new_takes_the_kind_level_and_adds_labels_and_notes_in_order(tmp_pa
     assert d.promoted_by is None
     assert d.msg.text() == 'cannot use "x" of type "bool"'
     assert d.primary_label is not None and d.primary_label.text() == 'has type "bool"'
-    assert [(label.span, label.msg and label.msg.text()) for label in d.labels] == [
-        (other, None),
-        (other, '"x" defined here'),
-    ]
+    assert [(label.span, label.msg.text()) for label in d.labels] == [(other, '"x" defined here')]
     assert [(note.msg.text(), note.span) for note in d.notes] == [
         ('"x" defined here', other),
         ("a spanless note", None),
@@ -239,12 +235,6 @@ def test_diag_new_takes_the_kind_level_and_adds_labels_and_notes_in_order(tmp_pa
 def test_diag_message_needs_a_diag_kind():
     with pytest.raises(AssertionError):
         diag.Diag(diag.Msg(_NOTE_KIND, {"name": "x"}), None, diag.ERROR)
-
-
-def test_unlabelled_span_takes_no_arguments(tmp_path):
-    d = diag.Diag.new(_ARG_KIND, None, name="x", typ="i32")
-    with pytest.raises(AssertionError):
-        d.with_label(_span(tmp_path / "a.leech"), None, name="x")
 
 
 def test_compilation_error_lists_kinds_in_order():
@@ -275,7 +265,7 @@ def test_diags_with_the_same_kind_messages_and_spans_are_duplicates(tmp_path):
     def make(name: str, note_span: leech_src.SrcSpan) -> diag.Diag:
         return (
             diag.Diag.new(_ARG_KIND, span, name=name, typ=typs.BOOL)
-            .with_label(other, _NOTE_KIND, name=name)
+            .with_label(_NOTE_KIND, other, name=name)
             .with_note(_NOTE_KIND, note_span, name=name)
         )
 
@@ -309,26 +299,33 @@ def test_diags_and_user_errors_are_sorted_together(tmp_path):
     assert diags.sorted() == (early, later, late)
 
 
-def test_text_renderer_shows_a_diags_message_and_notes(tmp_path, capsys):
+def test_text_renderer_shows_a_diags_labels_and_notes_as_notes(tmp_path, capsys):
     path = tmp_path / "a.leech"
     path.write_text("fn f() {}\n")
     file = leech_src.SrcFile(path)
+    fn_span = leech_src.SrcSpan(file, 0, 2, 1, 1, 1, 3)
+    name_span = leech_src.SrcSpan(file, 3, 4, 1, 1, 4, 5)
     d = (
-        diag.Diag.new(_ARG_KIND, leech_src.SrcSpan(file, 3, 4, 1, 1, 4, 5), name="f", typ="i32")
-        .with_note(_NOTE_KIND, name="f")
-        .with_note(_NOTE_KIND, leech_src.SrcSpan(file, 0, 2, 1, 1, 1, 3), name="g")
+        diag.Diag.new(_ARG_KIND, name_span, name="f", typ="i32")
+        .with_primary_label(_NOTE_KIND, name="p")
+        .with_label(_NOTE_KIND, fn_span, name="l")
+        .with_note(_NOTE_KIND, name="n")
+        .with_note(_NOTE_KIND, fn_span, name="s")
     )
 
     errors.TextErrorRenderer().display_errors([d])
 
+    excerpt = "1| fn f() {}\n"
     assert capsys.readouterr().err == (
         'ERROR: cannot use "f" of type "i32"\n'
-        "1| fn f() {}\n"
-        "------^\n"
-        'NOTE: "f" defined here\n'
-        'NOTE: "g" defined here\n'
-        "1| fn f() {}\n"
-        "---^\n"
+        f"{excerpt}------^\n"
+        'NOTE: "p" defined here\n'
+        f"{excerpt}------^\n"
+        'NOTE: "l" defined here\n'
+        f"{excerpt}---^\n"
+        'NOTE: "n" defined here\n'
+        'NOTE: "s" defined here\n'
+        f"{excerpt}---^\n"
     )
 
 

@@ -299,13 +299,13 @@ def test_growing_generic_union_declaration_cycle_is_rejected(compiler):
         compiler.build("union L[T] { Nil, Cons(L[array[T, 1]]) }")
     assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
-    assert (
-        harness.user_error(exc_info.value.diags[0]).message.message == 'Union "L" has infinite size'
-    )
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
-    assert harness.user_error(exc_info.value.diags[0]).extra[0].message == (
-        'Payload 0 of variant "Cons" of union "L" contains "L[array[T, 1]]" by value'
-    )
+    err = exc_info.value.diags[0]
+    assert '"L"' in str(err)
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
+    assert note.msg.kind is diag_kinds.PAYLOAD_CONTAINS_BY_VALUE
+    assert '"Cons"' in note.msg.text()
+    assert '"L[array[T, 1]]"' in note.msg.text()
 
 
 def test_growing_generic_union_cycle_through_a_struct_is_rejected(compiler):

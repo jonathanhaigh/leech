@@ -60,7 +60,7 @@ class TraitMethod:
     def __init__(self, fn_ast: ast.TraitFnDecl, trait: Trait) -> None:
         if fn_ast.receiver is None:
             raise errors.TraitMethodMissingReceiverError(fn_ast.name.name, fn_ast.span)
-        reserved.check_fn_params(fn_ast)
+        reserved.check_fn_params(fn_ast, trait.ctx.diags)
         self.ast = fn_ast
         self._trait = trait
 
@@ -127,7 +127,9 @@ class Trait:
         for method_ast in trait_ast.fn_decls:
             method = TraitMethod(method_ast, self)
             if reserved.is_reserved(method.name):
-                raise errors.ReservedNameError(method.name, method_ast.name.span)
+                self.ctx.diags.raise_error(
+                    diag_kinds.RESERVED_NAME, method_ast.name.span, name=method.name
+                )
             existing = self._methods.get(method.name)
             if existing is not None:
                 _raise_duplicate_definition(
@@ -297,7 +299,7 @@ class Impl:
                 raise errors.ExtraMethodInImplError(trait.name, fn.name, fn.span)
         elif reserved.is_reserved(fn.name):
             assert fn.ast is not None
-            raise errors.ReservedNameError(fn.name, fn.ast.name.span)
+            self.env.ctx.diags.raise_error(diag_kinds.RESERVED_NAME, fn.ast.name.span, name=fn.name)
         existing = self._fn_symbols.get(fn.name)
         if existing is not None:
             kind = "associated function" if trait is None else "method"
@@ -642,5 +644,5 @@ def _raise_duplicate_definition(
 ) -> NoReturn:
     d = diag.Diag.new(diag_kinds.DUPLICATE_DEFINITION, span, item_kind=item_kind, name=name)
     if previous_span is not None:
-        d = d.with_note(diag_kinds.PREVIOUS_DEFN_HERE, previous_span)
+        d = d.with_label(diag_kinds.PREVIOUS_DEFN_HERE, previous_span)
     ctx.diags.raise_error(d)

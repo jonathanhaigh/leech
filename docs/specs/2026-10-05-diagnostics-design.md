@@ -324,7 +324,7 @@ class Msg:
 @dataclasses.dataclass(frozen=True)
 class Label:
     span: src.SrcSpan
-    msg: Optional[Msg]  # text shown beside the underline, if any
+    msg: Msg  # text shown beside the underline
 
 @dataclasses.dataclass(frozen=True)
 class Note:
@@ -344,9 +344,11 @@ class Diag:
 
 A `Diag` is built with a small fluent helper, for example
 `diag.Diag.new(kinds.UNKNOWN_NAME, span, item_kind=..., name=...).with_label(...)`, where
-each `with_*` returns a new frozen value. A diagnostic that today puts a spanned note in
-`extra` becomes a secondary `Label` when the span is in the same file and close to the
-primary span. Otherwise it stays a spanned `Note`. The migration decides this per diagnostic.
+each `with_*` returns a new frozen value. A spanned note in today's `extra` that points at a
+related span, such as a previous definition, becomes a secondary `Label`, whichever file the
+span is in; every label has text. Notes that explain a chain in order, such as a cycle's
+steps, stay notes. How a label is shown is the renderer's choice (see the rustc layout
+below), so a raise site never depends on where the related span is.
 
 A diagnostic with any source location has a primary span. Today some, such as
 `IfElsTypMismatchError` and `MatchArmTypMismatchError`, put their only spans in notes. These
@@ -861,8 +863,11 @@ error: aborting due to 1 previous error; 1 warning emitted
   `note: ...` header with its own snippet when spanned.
 - The location line uses the file path relative to the current directory when the file is
   under it, and the absolute path otherwise.
-- `^` underlines the whole primary span. `-` underlines secondary labels. Label text goes
-  after the underline, or on connector lines when labels overlap on one line. A
+- `^` underlines the whole primary span. `-` underlines secondary labels in the primary
+  span's file. Label text goes after the underline, or on connector lines when labels
+  overlap on one line. A label in another file is shown in its own excerpt, either as
+  rustc's `::: path:line:col` section within the diagnostic or as a spanned `note:` with the
+  label's text; #118 chooses between them. A
   multi-line span shows its first and last lines joined by a vertical bar, as rustc does.
   The gutter is sized to the largest line number shown.
 - A summary line ends the output when there are errors or warnings. It counts every

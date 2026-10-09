@@ -67,7 +67,9 @@ def test_check_reports_struct_declaration_error(tmp_path):
     proc = run_leech("check", root, cwd=tmp_path)
 
     assert proc.returncode == 1
-    assert proc.stderr.startswith('ERROR: Struct "S" has infinite size\n')
+    header = proc.stderr.splitlines()[0]
+    assert header.startswith("ERROR: ")
+    assert '"S"' in header
     assert [path.name for path in tmp_path.iterdir()] == ["main.leech"]
 
 
@@ -78,7 +80,9 @@ def test_check_reports_error_in_an_imported_module(tmp_path):
     proc = run_leech("check", root)
 
     assert proc.returncode == 1
-    assert proc.stderr.startswith('ERROR: Struct "S" has infinite size\n')
+    header = proc.stderr.splitlines()[0]
+    assert header.startswith("ERROR: ")
+    assert '"S"' in header
 
 
 def test_check_needs_no_c_compiler(tmp_path):

@@ -18,6 +18,7 @@ from leech import (
     compilation,
     comptime,
     diag,
+    diag_kinds,
     errors,
     ir_builder,
     ir_env,
@@ -217,7 +218,7 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
         self.env = e.new_child()
         self._mod_name = mod_name
         self.recv_typ = recv_typ
-        reserved.check_fn_params(fn_ast)
+        reserved.check_fn_params(fn_ast, e.ctx.diags)
         self._comptime_params = typs.comptime_params_from_ast(
             fn_ast, fn_ast.comptime_params, self.env
         )
@@ -1161,7 +1162,7 @@ class Mod:
         If the block raises, nothing is added.
         """
         if reserved.is_reserved(name):
-            raise errors.ReservedNameError(name, span)
+            self.ctx.diags.raise_error(diag_kinds.RESERVED_NAME, span, name=name)
         with self.env.binding(ns, name, span) as binding:
             pending = _PendingItem(binding)
             yield pending

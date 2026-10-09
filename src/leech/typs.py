@@ -21,7 +21,6 @@ from leech import (
     compilation,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     opt_util,
     reserved,
@@ -194,17 +193,16 @@ def unsatisfied_bound(
                 ) as cycle:
                     if cycle is not None:
                         repeated_bound = cycle.details[0]
-                        entries = [
-                            (entry.path.str(), entry.path.span) for entry in cycle.details[:-1]
-                        ]
-                        e.ctx.fail_cycle(
-                            cycle,
-                            errors.RecursiveTraitBoundError(
-                                repeated_bound.path.str(),
-                                repeated_bound.path.span,
-                                entries,
-                            ),
+                        d = diag.Diag.new(
+                            diag_kinds.RECURSIVE_TRAIT_BOUND,
+                            repeated_bound.path.span,
+                            bound=repeated_bound.path.str(),
                         )
+                        for entry in cycle.details[:-1]:
+                            d = d.with_note(
+                                diag_kinds.BOUND_IN_CYCLE, entry.path.span, bound=entry.path.str()
+                            )
+                        e.ctx.fail_cycle(cycle, d)
                     application = sub_env.resolve_trait(bound.path)
             else:
                 application = sub_env.resolve_trait(bound.path)
@@ -235,9 +233,16 @@ def resolve_comptime_arg(param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: i
         elif isinstance(param, ValueParamTyp) and isinstance(param.value_typ, IntTyp):
             lit_typ = param.value_typ
         else:
-            raise errors.WrongKindOfComptimeArgError(param.name, arg_ast.diag_str(), arg_ast.span)
+            e.ctx.diags.raise_error(
+                diag_kinds.COMPTIME_ARGUMENT_KIND_MISMATCH,
+                arg_ast.span,
+                arg=arg_ast.diag_str(),
+                param=param.name,
+            )
         if not lit_typ.fits(arg_ast.value):
-            raise errors.IntLitOverflowError(arg_ast.value, lit_typ.name, arg_ast.span)
+            e.ctx.diags.raise_error(
+                diag_kinds.INTEGER_LITERAL_OVERFLOW, arg_ast.span, value=arg_ast.value, typ=lit_typ
+            )
         return ComptimeValueTyp(lit_typ, arg_ast.value)
     if isinstance(arg_ast, ast.BoolLit):
         return ComptimeValueTyp(BOOL, arg_ast.value)
@@ -263,8 +268,12 @@ def resolve_explicit_comptime_args(
     if not args_ast:
         e.ctx.diags.raise_error(diag_kinds.MISSING_COMPTIME_ARGUMENT, span, item=item_name)
     if len(args_ast) != len(comptime_params):
-        raise errors.WrongNumberOfComptimeArgsError(
-            item_name, len(args_ast), len(comptime_params), span
+        e.ctx.diags.raise_error(
+            diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,
+            span,
+            item=item_name,
+            given=len(args_ast),
+            expected=len(comptime_params),
         )
     comptime_args = tuple(
         resolve_comptime_arg(param, arg_ast, e)
@@ -301,18 +310,33 @@ def check_comptime_arg_bounds(
             arg_value_typ = arg.value_typ
         if isinstance(param, ValueParamTyp):
             if arg_value_typ is None:
-                raise errors.WrongKindOfComptimeArgError(param.name, arg.name, span)
+                e.ctx.diags.raise_error(
+                    diag_kinds.COMPTIME_ARGUMENT_KIND_MISMATCH, span, arg=arg, param=param
+                )
             if arg_value_typ is not param.value_typ:
-                raise errors.WrongComptimeValueTypError(arg.name, param.value_typ.name, span)
+                e.ctx.diags.raise_error(
+                    diag_kinds.COMPTIME_ARGUMENT_TYPE_MISMATCH,
+                    span,
+                    arg=arg,
+                    expected_typ=param.value_typ,
+                )
         else:
             if arg_value_typ is not None:
-                raise errors.WrongKindOfComptimeArgError(param.name, arg.name, span)
+                e.ctx.diags.raise_error(
+                    diag_kinds.COMPTIME_ARGUMENT_KIND_MISMATCH, span, arg=arg, param=param
+                )
             typ_param_bindings[asserts.checked_cast(param, TypParamTyp)] = arg
 
     violated = unsatisfied_bound(typ_param_bindings, e)
     if violated is not None:
         typ_param, typ_arg, trait = violated
-        raise errors.UnsatisfiedBoundError(typ_arg.name, trait.name, typ_param.name, span)
+        e.ctx.diags.raise_error(
+            diag_kinds.UNSATISFIED_TRAIT_BOUND,
+            span,
+            typ_arg=typ_arg,
+            trait=trait.name,
+            param=typ_param,
+        )
 
 
 class Typ(abc.ABC):
@@ -838,7 +862,9 @@ class ValueParamTyp(ComptimeParamTyp):
         typ_ast = opt_util.opt_unwrap(self._param_ast).typ
         typ = Typ.from_ast(typ_ast, opt_util.opt_unwrap(self.decl_env))
         if not isinstance(typ, IntTyp | BoolTyp):
-            raise errors.InvalidValueParamTypError(typ.name, typ_ast.span)
+            opt_util.opt_unwrap(self.decl_env).ctx.diags.raise_error(
+                diag_kinds.UNSUPPORTED_VALUE_PARAMETER_TYPE, typ_ast.span, typ=typ
+            )
         return typ
 
     @override
@@ -916,7 +942,9 @@ def comptime_params_from_ast(
     """
     for param_ast in comptime_params:
         if reserved.is_reserved(param_ast.ident.name):
-            raise errors.ReservedNameError(param_ast.ident.name, param_ast.ident.span)
+            e.ctx.diags.raise_error(
+                diag_kinds.RESERVED_NAME, param_ast.ident.span, name=param_ast.ident.name
+            )
 
     param_env = e.new_child()
     result: list[ComptimeParamTyp] = []
@@ -1105,11 +1133,13 @@ class StructTypTemplate(NominalTypTemplate["StructTyp"]):
         for field_ast in struct_ast.fields:
             name = field_ast.ident.name
             if reserved.is_reserved(name):
-                raise errors.ReservedNameError(name, field_ast.ident.span)
+                e.ctx.diags.raise_error(diag_kinds.RESERVED_NAME, field_ast.ident.span, name=name)
             existing = field_asts.get(name)
             if existing is not None:
-                raise errors.DuplicateFieldInStructDefnError(
-                    name, field_ast.ident.span, existing.ident.span
+                e.ctx.diags.raise_error(
+                    diag.Diag.new(
+                        diag_kinds.DUPLICATE_STRUCT_FIELD, field_ast.ident.span, field=name
+                    ).with_label(diag_kinds.PREVIOUS_DEFN_HERE, existing.ident.span)
                 )
             field_asts[name] = field_ast
 
@@ -1236,13 +1266,13 @@ class StructTyp(Typ):
 
     def _layout_edges(
         self, container_name: str
-    ) -> Iterator[tuple[errors.TypLayoutHopKind, NominalLayoutTyp]]:
+    ) -> Iterator[tuple[TypLayoutHopKind, NominalLayoutTyp]]:
         for field_ast in self.ast.fields:
             contained = _by_value_nominal(Typ.from_ast(field_ast.typ, self._env))
             if contained is None:
                 continue
             yield (
-                errors.StructFieldHop(
+                StructFieldHop(
                     container_name, contained.name, field_ast.span, field_ast.ident.name
                 ),
                 contained,
@@ -1364,11 +1394,13 @@ class UnionTypTemplate(NominalTypTemplate["UnionTyp"]):
         for index, variant_ast in enumerate(union_ast.variants):
             name = variant_ast.ident.name
             if reserved.is_reserved(name):
-                raise errors.ReservedNameError(name, variant_ast.ident.span)
+                e.ctx.diags.raise_error(diag_kinds.RESERVED_NAME, variant_ast.ident.span, name=name)
             existing = variants.get(name)
             if existing is not None:
-                raise errors.DuplicateVariantInUnionDefnError(
-                    name, variant_ast.ident.span, existing.ast.ident.span
+                e.ctx.diags.raise_error(
+                    diag.Diag.new(
+                        diag_kinds.DUPLICATE_UNION_VARIANT, variant_ast.ident.span, variant=name
+                    ).with_label(diag_kinds.PREVIOUS_DEFN_HERE, existing.ast.ident.span)
                 )
             variants[name] = UnionVariantTemplate(index, variant_ast, self._param_env)
         self.variants = types.MappingProxyType(variants)
@@ -1511,14 +1543,14 @@ class UnionTyp(Typ):
 
     def _layout_edges(
         self, container_name: str
-    ) -> Iterator[tuple[errors.TypLayoutHopKind, NominalLayoutTyp]]:
+    ) -> Iterator[tuple[TypLayoutHopKind, NominalLayoutTyp]]:
         for variant_ast in self.template.ast.variants:
             for index, typ_ast in enumerate(variant_ast.payload_typs):
                 contained = _by_value_nominal(Typ.from_ast(typ_ast, self._env))
                 if contained is None:
                     continue
                 yield (
-                    errors.UnionPayloadHop(
+                    UnionPayloadHop(
                         container_name,
                         contained.name,
                         typ_ast.span,
@@ -1611,10 +1643,16 @@ class EnumTyp(Typ):
                 value = variant_ast.value.value
             name = variant_ast.ident.name
             if reserved.is_reserved(name):
-                raise errors.ReservedNameError(name, variant_ast.ident.span)
+                self._env.ctx.diags.raise_error(
+                    diag_kinds.RESERVED_NAME, variant_ast.ident.span, name=name
+                )
             if name in result:
                 previous_span = next(v.span for v in self.ast.variants if v.ident.name == name)
-                raise errors.DuplicateVariantInEnumDefnError(name, variant_ast.span, previous_span)
+                self._env.ctx.diags.raise_error(
+                    diag.Diag.new(
+                        diag_kinds.DUPLICATE_ENUM_VARIANT, variant_ast.span, variant=name
+                    ).with_label(diag_kinds.PREVIOUS_DEFN_HERE, previous_span)
+                )
             result[name] = value
             next_value = value + 1
         return result.items().mapping
@@ -1632,37 +1670,48 @@ class EnumTyp(Typ):
         if self.ast.backing_typ is not None:
             typ = Typ.from_ast(self.ast.backing_typ, self._env)
             if not isinstance(typ, IntTyp):
-                raise errors.EnumBackingTypNotIntError(typ.name, self.ast.backing_typ.span)
+                self._env.ctx.diags.raise_error(
+                    diag_kinds.NON_INTEGER_ENUM_BACKING_TYPE, self.ast.backing_typ.span, typ=typ
+                )
             for variant_ast, value in zip(self.ast.variants, self.variants.values(), strict=True):
                 literal = variant_ast.value
                 if literal is not None and literal.explicit_width is not None:
                     assert literal.explicit_signage is not None
                     literal_typ = IntTyp(literal.explicit_width, literal.explicit_signage)
                     if not literal_typ.coerces_to(typ):
-                        raise errors.EnumVariantValueTypMismatchError(
-                            literal_typ.name, typ.name, variant_ast.span
+                        self._env.ctx.diags.raise_error(
+                            diag_kinds.ENUM_DISCRIMINANT_TYPE_MISMATCH,
+                            variant_ast.span,
+                            value_typ=literal_typ,
+                            backing_typ=typ,
                         )
                 if not typ.fits(value):
-                    raise errors.IntLitOverflowError(value, typ.name, variant_ast.span)
+                    self._env.ctx.diags.raise_error(
+                        diag_kinds.INTEGER_LITERAL_OVERFLOW, variant_ast.span, value=value, typ=typ
+                    )
             return typ
 
         values = self.variants.values()
         min_value = min(values, default=0)
         max_value = max(values, default=0)
         inferred_signage = signage.SIGNED if min_value < 0 else signage.UNSIGNED
-        for width in (8, 16, 32, 64):
+        for width in (8, 16, 32):
             candidate = IntTyp(width, inferred_signage)
             if candidate.fits(min_value) and candidate.fits(max_value):
                 return candidate
 
         widest = IntTyp(64, inferred_signage)
-        overflowing_value = min_value if not widest.fits(min_value) else max_value
-        overflowing_span = next(
-            variant_ast.span
-            for variant_ast, value in zip(self.ast.variants, values, strict=True)
-            if value == overflowing_value
-        )
-        raise errors.EnumDiscriminantOverflowError(overflowing_value, overflowing_span)
+        if not (widest.fits(min_value) and widest.fits(max_value)):
+            overflowing_value = min_value if not widest.fits(min_value) else max_value
+            overflowing_span = next(
+                variant_ast.span
+                for variant_ast, value in zip(self.ast.variants, values, strict=True)
+                if value == overflowing_value
+            )
+            self._env.ctx.diags.raise_error(
+                diag_kinds.ENUM_DISCRIMINANT_OVERFLOW, overflowing_span, value=overflowing_value
+            )
+        return widest
 
     @property
     def span(self) -> src.SrcSpan:
@@ -1743,6 +1792,60 @@ type NominalLayoutTyp = StructTyp | UnionTyp
 """A nominal type whose declaration can hold another type by value."""
 
 
+@dataclasses.dataclass(frozen=True)
+class TypLayoutHop:
+    """Base class for one by-value edge followed while checking a layout.
+
+    ``container`` and ``contained`` are the display names of the type the
+    edge leaves and the one it reaches; ``span`` locates the declaration
+    that spells the edge out.
+    """
+
+    container: str
+    contained: str
+    span: Optional[src.SrcSpan]
+
+
+@dataclasses.dataclass(frozen=True)
+class StructFieldHop(TypLayoutHop):
+    """A struct field holding its type by value."""
+
+    field_name: str
+
+    def noted(self, d: diag.Diag) -> diag.Diag:
+        """Return ``d`` with a note describing this edge."""
+        return d.with_note(
+            diag_kinds.FIELD_CONTAINS_BY_VALUE,
+            self.span,
+            field=self.field_name,
+            container=self.container,
+            contained=self.contained,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class UnionPayloadHop(TypLayoutHop):
+    """A union variant's payload position holding its type by value."""
+
+    variant_name: str
+    payload_index: int
+
+    def noted(self, d: diag.Diag) -> diag.Diag:
+        """Return ``d`` with a note describing this edge."""
+        return d.with_note(
+            diag_kinds.PAYLOAD_CONTAINS_BY_VALUE,
+            self.span,
+            index=self.payload_index,
+            variant=self.variant_name,
+            container=self.container,
+            contained=self.contained,
+        )
+
+
+type TypLayoutHopKind = StructFieldHop | UnionPayloadHop
+"""One kind of by-value layout edge."""
+
+
 def _by_value_nominal(typ: Typ) -> Optional[NominalLayoutTyp]:
     """Return the nominal type held by value at ``typ``, unwrapping arrays.
 
@@ -1758,7 +1861,7 @@ def _by_value_nominal(typ: Typ) -> Optional[NominalLayoutTyp]:
 
 
 def _layout_display_name(
-    typ: NominalLayoutTyp, hop: Optional[errors.TypLayoutHopKind], root_name: Optional[str]
+    typ: NominalLayoutTyp, hop: Optional[TypLayoutHopKind], root_name: Optional[str]
 ) -> str:
     return root_name if hop is None and root_name is not None else typ.name
 
@@ -1778,7 +1881,7 @@ def _layout_repeats(earlier: NominalLayoutTyp, current: NominalLayoutTyp) -> boo
 
 def _check_layout_finite(
     typ: NominalLayoutTyp,
-    incoming_hop: Optional[errors.TypLayoutHopKind],
+    incoming_hop: Optional[TypLayoutHopKind],
     root_name: Optional[str],
 ) -> None:
     """Reject exact or structurally growing by-value layout cycles.
@@ -1788,7 +1891,7 @@ def _check_layout_finite(
     generic declaration through its opaque instance still reports the bare
     declared name.
     """
-    detail: tuple[NominalLayoutTyp, Optional[errors.TypLayoutHopKind]] = (typ, incoming_hop)
+    detail: tuple[NominalLayoutTyp, Optional[TypLayoutHopKind]] = (typ, incoming_hop)
     with typ._env.ctx.detect_cycle(
         compilation.CycleDomain.TYPE_LAYOUT,
         typ,
@@ -1797,19 +1900,16 @@ def _check_layout_finite(
     ) as cycle:
         if cycle is not None:
             repeated, repeated_hop = cycle.details[0]
-            hops = []
+            d = diag.Diag.new(
+                diag_kinds.INFINITELY_SIZED_TYPE,
+                repeated.span,
+                typ_kind=repeated._LAYOUT_KIND,
+                typ=_layout_display_name(repeated, repeated_hop, root_name),
+            )
             for _, hop in cycle.details[1:]:
                 assert hop is not None, "only the root layout frame may omit its incoming hop"
-                hops.append(hop)
-            typ._env.ctx.fail_cycle(
-                cycle,
-                errors.InfiniteSizeTypError(
-                    repeated._LAYOUT_KIND,
-                    _layout_display_name(repeated, repeated_hop, root_name),
-                    repeated.span,
-                    hops,
-                ),
-            )
+                d = hop.noted(d)
+            typ._env.ctx.fail_cycle(cycle, d)
 
         container_name = _layout_display_name(typ, incoming_hop, root_name)
         for hop, contained in typ._layout_edges(container_name):

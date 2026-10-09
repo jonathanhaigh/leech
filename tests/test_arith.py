@@ -387,7 +387,7 @@ def test_comptime_int_operation_overflow_distinct_from_lit_overflow(compiler):
     # Neither operand literal (100i8) overflows on its own - only the
     # result of adding them does. This must raise PanicAtComptimeError (the
     # runtime overflow check, evaluated at compile time), not
-    # IntLitOverflowError (which only ever rejects a literal itself).
+    # integer-literal-overflow (which only ever rejects a literal itself).
     src = """
     let x = 100i8 + 100i8;
     pub fn main() i32 {

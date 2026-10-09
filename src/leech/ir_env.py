@@ -189,7 +189,7 @@ class Env:
                 diag_kinds.DUPLICATE_DEFINITION, span, item_kind=ns.item_kind(), name=name
             )
             if existing_span is not None:
-                d = d.with_note(diag_kinds.PREVIOUS_DEFN_HERE, existing_span)
+                d = d.with_label(diag_kinds.PREVIOUS_DEFN_HERE, existing_span)
             self.ctx.diags.raise_error(d)
 
     def poison(

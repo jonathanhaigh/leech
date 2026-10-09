@@ -124,10 +124,10 @@ def _arg_str(value: DiagArgValue) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class Label:
-    """A secondary span, with the text shown beside its underline, if any."""
+    """A secondary span, with the text shown beside its underline."""
 
     span: src.SrcSpan
-    msg: Optional[Msg]
+    msg: Msg
 
 
 @dataclasses.dataclass(frozen=True)
@@ -173,17 +173,9 @@ class Diag:
         assert self.span is not None, "a spanless diagnostic has no primary label"
         return dataclasses.replace(self, primary_label=Msg(kind, args))
 
-    def with_label(
-        self, span: src.SrcSpan, kind: Optional[MsgKind] = None, /, **args: DiagArgValue
-    ) -> Self:
-        """Return this diagnostic with a secondary span, labelled with ``kind``'s text if
-        given."""
-        msg = None
-        if kind is None:
-            assert not args, "an unlabelled span takes no arguments"
-        else:
-            msg = Msg(kind, args)
-        return dataclasses.replace(self, labels=(*self.labels, Label(span, msg)))
+    def with_label(self, kind: MsgKind, span: src.SrcSpan, /, **args: DiagArgValue) -> Self:
+        """Return this diagnostic with ``kind``'s text at a related ``span``, in any file."""
+        return dataclasses.replace(self, labels=(*self.labels, Label(span, Msg(kind, args))))
 
     def with_note(
         self, kind: MsgKind, span: Optional[src.SrcSpan] = None, /, **args: DiagArgValue
@@ -425,7 +417,7 @@ def _key(err: AnyDiag) -> Hashable:
                 err.msg.text(),
                 _location(err.span),
                 _opt_text(err.primary_label),
-                *((_location(label.span), _opt_text(label.msg)) for label in err.labels),
+                *((_location(label.span), label.msg.text()) for label in err.labels),
                 *((note.msg.text(), _location(note.span)) for note in err.notes),
             )
         case _:

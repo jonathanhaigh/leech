@@ -11,7 +11,7 @@ explain, and easier to relax later than to tighten.
 
 from typing import Final
 
-from leech import ast, errors
+from leech import ast, diag, diag_kinds
 
 #: The name of the type an impl block or trait method is written against,
 #: bound per context rather than declared.
@@ -72,10 +72,12 @@ def is_reserved(name: str) -> bool:
     return name in KEYWORDS or name in TYP_NAMES or typs.IntTyp.is_name(name)
 
 
-def check_fn_params(fn_ast: ast.FnDecl) -> None:
-    """Raise if any of a function's declared parameters takes a reserved
-    name. Declared parameters exclude any receiver.
+def check_fn_params(fn_ast: ast.FnDecl, diags: diag.Diags) -> None:
+    """Fail with an error reported to ``diags`` if any of a function's declared parameters
+    takes a reserved name. Declared parameters exclude any receiver.
     """
     for param_ast in fn_ast.params:
         if is_reserved(param_ast.name.name):
-            raise errors.ReservedNameError(param_ast.name.name, param_ast.name.span)
+            diags.raise_error(
+                diag_kinds.RESERVED_NAME, param_ast.name.span, name=param_ast.name.name
+            )

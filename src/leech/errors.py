@@ -90,53 +90,6 @@ class CannotInferComptimeArgError(UserError):
         self._add_extra(NOTE, f'Give it explicitly, e.g. "{item_name}[...]"', None)
 
 
-class WrongNumberOfComptimeArgsError(UserError):
-    """Raised when a generic item is given the wrong number of explicit
-    comptime arguments."""
-
-    kind = diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH
-
-    def __init__(
-        self, item_name: str, given: int, expected: int, span: Optional[src.SrcSpan]
-    ) -> None:
-        super().__init__(
-            ERROR,
-            (
-                f'Wrong number of comptime arguments for generic item "{item_name}":'
-                f" got {given}, expected {expected}"
-            ),
-            span,
-        )
-
-
-class WrongKindOfComptimeArgError(UserError):
-    """Raised when a type argument is given for a value parameter, or a
-    value argument is given for a type parameter."""
-
-    kind = diag_kinds.COMPTIME_ARGUMENT_KIND_MISMATCH
-
-    def __init__(self, param_name: str, arg_desc: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'{arg_desc} does not match the kind of parameter "{param_name}" expects',
-            span,
-        )
-
-
-class WrongComptimeValueTypError(UserError):
-    """Raised when a value argument's type doesn't match its parameter's
-    declared type."""
-
-    kind = diag_kinds.COMPTIME_ARGUMENT_TYPE_MISMATCH
-
-    def __init__(self, arg_name: str, expected_typ_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'Value "{arg_name}" does not have the expected type "{expected_typ_name}"',
-            span,
-        )
-
-
 class AssignToConstError(UserError):
     """Raised when assigning through a const pointer or to a const place."""
 
@@ -705,49 +658,6 @@ class AmbiguousMethodError(UserError):
         )
 
 
-class ReservedNameError(UserError):
-    """Raised when a declaration takes a name the language reserves."""
-
-    kind = diag_kinds.RESERVED_NAME
-
-    def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'"{name}" is reserved and cannot be used as a name', span)
-
-
-class InvalidValueParamTypError(UserError):
-    """Raised when a ``value`` comptime parameter's declared type is one no
-    compile-time value can have."""
-
-    kind = diag_kinds.UNSUPPORTED_VALUE_PARAMETER_TYPE
-
-    def __init__(self, typ_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'"{typ_name}" is not a supported comptime value parameter type',
-            span,
-        )
-
-
-class RecursiveTraitBoundError(UserError):
-    """Raised because recursive trait bounds are not supported."""
-
-    kind = diag_kinds.RECURSIVE_TRAIT_BOUND
-
-    def __init__(
-        self,
-        bound_name: str,
-        bound_span: Optional[src.SrcSpan],
-        cycle: Sequence[tuple[str, Optional[src.SrcSpan]]],
-    ) -> None:
-        super().__init__(
-            ERROR,
-            f'Trait bound "{bound_name}" is part of a recursive bound cycle',
-            bound_span,
-        )
-        for name, span in cycle:
-            self._add_extra(NOTE, f'Trait bound "{name}" participates in this cycle', span)
-
-
 @dataclasses.dataclass(frozen=True)
 class ImplSelectionHop:
     """One implementation obligation participating in a selection cycle."""
@@ -780,29 +690,6 @@ class RecursiveImplSelectionError(UserError):
                 f'Implementation "{hop.impl_name}" participates in this cycle',
                 hop.impl_span,
             )
-
-
-class UnsatisfiedBoundError(UserError):
-    """Raised when a generic instantiation's type argument doesn't
-    implement a bound its type parameter declares."""
-
-    kind = diag_kinds.UNSATISFIED_TRAIT_BOUND
-
-    def __init__(
-        self,
-        typ_arg_name: str,
-        trait_name: str,
-        typ_param_name: str,
-        span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(
-            ERROR,
-            (
-                f'Type "{typ_arg_name}" does not implement trait "{trait_name}",'
-                f' required by bound on type parameter "{typ_param_name}"'
-            ),
-            span,
-        )
 
 
 class TypeOfBraceExprInvalidError(UserError):
@@ -1060,188 +947,6 @@ class DuplicateFieldInStructExprError(UserError):
             )
 
 
-class DuplicateFieldInStructDefnError(UserError):
-    """Raised when a struct declaration defines the same field name twice."""
-
-    kind = diag_kinds.DUPLICATE_STRUCT_FIELD
-
-    def __init__(
-        self,
-        field_name: str,
-        duplicate_span: Optional[src.SrcSpan],
-        previous_span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(
-            ERROR,
-            f'Duplicate field "{field_name}" in struct definition',
-            duplicate_span,
-        )
-        if previous_span is not None:
-            self._add_extra(
-                NOTE,
-                f'Definition of field "{field_name}" previously given here',
-                previous_span,
-            )
-
-
-class DuplicateVariantInUnionDefnError(UserError):
-    """Raised when a union declaration defines the same variant name twice."""
-
-    kind = diag_kinds.DUPLICATE_UNION_VARIANT
-
-    def __init__(
-        self,
-        variant_name: str,
-        duplicate_span: Optional[src.SrcSpan],
-        previous_span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(
-            ERROR,
-            f'Duplicate variant "{variant_name}" in union definition',
-            duplicate_span,
-        )
-        if previous_span is not None:
-            self._add_extra(
-                NOTE,
-                f'Variant "{variant_name}" previously given here',
-                previous_span,
-            )
-
-
-class DuplicateVariantInEnumDefnError(UserError):
-    """Raised when an enum declaration defines the same variant name twice."""
-
-    kind = diag_kinds.DUPLICATE_ENUM_VARIANT
-
-    def __init__(
-        self,
-        variant_name: str,
-        duplicate_span: Optional[src.SrcSpan],
-        previous_span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(
-            ERROR,
-            f'Duplicate variant "{variant_name}" in enum definition',
-            duplicate_span,
-        )
-        if previous_span is not None:
-            self._add_extra(
-                NOTE,
-                f'Variant "{variant_name}" previously given here',
-                previous_span,
-            )
-
-
-class EnumBackingTypNotIntError(UserError):
-    """Raised when an enum's explicit backing type isn't an integer type."""
-
-    kind = diag_kinds.NON_INTEGER_ENUM_BACKING_TYPE
-
-    def __init__(self, typ_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'Enum backing type "{typ_name}" is not an integer type', span)
-
-
-class EnumVariantValueTypMismatchError(UserError):
-    """Raised when a variant's explicitly-suffixed discriminant literal
-    doesn't match its enum's explicit backing type."""
-
-    kind = diag_kinds.ENUM_DISCRIMINANT_TYPE_MISMATCH
-
-    def __init__(self, value_typ: str, backing_typ: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'Enum variant value has type "{value_typ}", but the enum\'s backing '
-            f'type is "{backing_typ}"',
-            span,
-        )
-
-
-class EnumDiscriminantOverflowError(UserError):
-    """Raised when an enum has no explicit backing type and one of its
-    discriminants doesn't fit any builtin integer type, so no backing type
-    can be inferred."""
-
-    kind = diag_kinds.ENUM_DISCRIMINANT_OVERFLOW
-
-    def __init__(self, value: int, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR, f"Enum discriminant {value} does not fit in any built-in integer type", span
-        )
-
-
-@dataclasses.dataclass(frozen=True)
-class TypLayoutHop:
-    """Base class for one by-value edge followed while checking a layout.
-
-    ``container`` and ``contained`` are the display names of the type the
-    edge leaves and the one it reaches; ``span`` locates the declaration
-    that spells the edge out.
-    """
-
-    container: str
-    contained: str
-    span: Optional[src.SrcSpan]
-
-
-@dataclasses.dataclass(frozen=True)
-class StructFieldHop(TypLayoutHop):
-    """A struct field holding its type by value."""
-
-    field_name: str
-
-
-@dataclasses.dataclass(frozen=True)
-class UnionPayloadHop(TypLayoutHop):
-    """A union variant's payload position holding its type by value."""
-
-    variant_name: str
-    payload_index: int
-
-
-type TypLayoutHopKind = StructFieldHop | UnionPayloadHop
-"""One kind of by-value layout edge."""
-
-
-def _layout_hop_note(hop: TypLayoutHopKind) -> str:
-    match hop:
-        case StructFieldHop(field_name=field_name):
-            return (
-                f'Field "{field_name}" of struct "{hop.container}" '
-                f'contains "{hop.contained}" by value'
-            )
-        case UnionPayloadHop(variant_name=variant_name, payload_index=payload_index):
-            return (
-                f'Payload {payload_index} of variant "{variant_name}" of union '
-                f'"{hop.container}" contains "{hop.contained}" by value'
-            )
-
-
-class InfiniteSizeTypError(UserError):
-    """Raised when a layout follows a recursive by-value declaration cycle.
-
-    The recursion may be direct, pass through other nominal types or arrays, or recur
-    through structurally growing arguments of one generic declaration. A member behind a
-    pointer does not count because a pointer's size does not depend on its pointee. Arrays
-    of any length do count, including zero-length arrays, because LLVM rejects recursive
-    identified struct layouts even when an intervening array has no elements.
-    """
-
-    kind = diag_kinds.INFINITELY_SIZED_TYPE
-
-    def __init__(
-        self,
-        typ_kind: str,
-        typ_name: str,
-        typ_span: Optional[src.SrcSpan],
-        cycle: Sequence[TypLayoutHopKind],
-    ) -> None:
-        super().__init__(
-            ERROR, f'{_sentence_case(typ_kind)} "{typ_name}" has infinite size', typ_span
-        )
-        for hop in cycle:
-            self._add_extra(NOTE, _layout_hop_note(hop), hop.span)
-
-
 class FieldAccessIntoInvalidTypError(UserError):
     """Raised when using ``.`` field access on a non-struct type."""
 
@@ -1486,15 +1191,6 @@ class InvalidIndexTypError(UserError):
 
     def __init__(self, typ: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Invalid index typ "{typ}"', span)
-
-
-class IntLitOverflowError(UserError):
-    """Raised when an integer literal doesn't fit in its type's width."""
-
-    kind = diag_kinds.INTEGER_LITERAL_OVERFLOW
-
-    def __init__(self, value: int, typ: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'Integer literal {value} does not fit in type "{typ}"', span)
 
 
 class DerefInvalidTypError(UserError):
@@ -1803,8 +1499,12 @@ class TextErrorRenderer:
     def _display_error(self, err: diag.AnyDiag) -> None:
         match err:
             case diag.Diag():
-                assert err.primary_label is None and not err.labels, "labels aren't shown yet"
+                # Labels are shown as spanned notes.
                 self._display_message(Message(err.level, err.msg.text(), err.span))
+                if err.primary_label is not None:
+                    self._display_message(Message(NOTE, err.primary_label.text(), err.span))
+                for label in err.labels:
+                    self._display_message(Message(NOTE, label.msg.text(), label.span))
                 for note in err.notes:
                     self._display_message(Message(NOTE, note.msg.text(), note.span))
             case UserError():
