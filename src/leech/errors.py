@@ -544,91 +544,6 @@ class PositionalElementInStructExprError(UserError):
         )
 
 
-class ImplForNonNominalTypError(UserError):
-    """Raised when an ``impl`` block targets a type other than a struct or union."""
-
-    kind = diag_kinds.UNSUPPORTED_IMPL_TYPE
-
-    def __init__(self, typ_diag: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'"impl" blocks are only supported for struct and union types, found {typ_diag}',
-            span,
-        )
-
-
-class ImplForNonLocalTypError(UserError):
-    """Raised when an ``impl`` block targets a type defined in another module."""
-
-    kind = diag_kinds.IMPL_OUTSIDE_TYPE_MODULE
-
-    def __init__(self, typ_diag: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            (
-                '"impl" blocks are only supported for types defined in the'
-                f" same module, found {typ_diag}"
-            ),
-            span,
-        )
-
-
-class FnNameClashesWithUnionVariantError(UserError):
-    """Raised when an inherent function takes the name of one of the union's variants."""
-
-    kind = diag_kinds.CONFLICTING_VARIANT_AND_FUNCTION_NAMES
-
-    def __init__(
-        self,
-        fn_name: str,
-        union_name: str,
-        fn_span: Optional[src.SrcSpan],
-        variant_span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(
-            ERROR,
-            f'Associated function "{fn_name}" has the same name as a variant of union'
-            f' "{union_name}"',
-            fn_span,
-        )
-        self._add_extra(
-            NOTE,
-            f'A path into "{union_name}" names the variant, so "{union_name}::{fn_name}"'
-            " could not name this function",
-            None,
-        )
-        if variant_span is not None:
-            self._add_extra(NOTE, f'Variant "{fn_name}" declared here', variant_span)
-
-
-class ImplForNonTraitError(UserError):
-    """Raised when an ``impl ... for ...`` block's head doesn't name a trait."""
-
-    kind = diag_kinds.NON_TRAIT_IMPL
-
-    def __init__(self, name_diag: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'"impl ... for ..." blocks require a trait, found {name_diag}',
-            span,
-        )
-
-
-class SelfParamOutsideImplError(UserError):
-    """Raised when a function outside an ``impl`` block - including an
-    ``extern`` declaration, which can never be an associated function -
-    declares a ``*self``/``*mut self`` receiver."""
-
-    kind = diag_kinds.SELF_PARAMETER_OUTSIDE_IMPL
-
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            '"self" parameter is only allowed on functions defined inside an "impl" block',
-            span,
-        )
-
-
 class NotAMethodError(UserError):
     """Raised when calling ``x.name(...)`` where ``name`` is an associated
     function of ``x``'s struct type, but that function has no ``self``
@@ -1034,23 +949,6 @@ class VoidVarInitializerError(UserError):
         super().__init__(ERROR, "Variable initializer cannot be void", span)
 
 
-class CircularVarInitializerError(UserError):
-    """Raised when a module variable's initializer depends on itself,
-    directly or transitively through other module variables."""
-
-    kind = diag_kinds.RECURSIVE_INITIALIZER
-
-    def __init__(
-        self,
-        var_name: str,
-        var_span: Optional[src.SrcSpan],
-        cycle: Sequence[tuple[str, Optional[src.SrcSpan]]],
-    ) -> None:
-        super().__init__(ERROR, f'Initializer of variable "{var_name}" depends on itself', var_span)
-        for name, span in cycle:
-            self._add_extra(NOTE, f'Variable "{name}" defined here', span)
-
-
 class CannotTakeAddressOfComptimeValueError(UserError):
     """Raised when a compile-time-evaluated expression's result would need
     the address of a temporary that has no address at runtime."""
@@ -1156,70 +1054,6 @@ class StdModNameReservedError(UserError):
             f'Module name "{name}" for "{path}" is reserved: names starting with "std" belong '
             "to the bundled standard library",
             None,
-        )
-
-
-class EntryMainMissingError(UserError):
-    """Raised when the program entry module declares no ``main``."""
-
-    kind = diag_kinds.MISSING_MAIN_FUNCTION
-
-    def __init__(self, mod_name: str, path: pathlib.Path) -> None:
-        super().__init__(
-            ERROR,
-            f'Entry module "{mod_name}" ({path}) has no "main" function',
-            None,
-        )
-
-
-class EntryMainNotDefinedFnError(UserError):
-    """Raised when the entry module's ``main`` is a module variable or an ``extern``
-    declaration rather than a function with a body."""
-
-    kind = diag_kinds.NON_FUNCTION_MAIN
-
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            'The program entry point "main" must be a function defined with a body',
-            span,
-        )
-
-
-class EntryMainGenericError(UserError):
-    """Raised when the entry module's ``main`` has comptime parameters."""
-
-    kind = diag_kinds.GENERIC_MAIN
-
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, 'The program entry point "main" cannot be generic', span)
-
-
-class EntryMainSignatureError(UserError):
-    """Raised when the entry module's ``main`` is not ``fn main() i32``."""
-
-    kind = diag_kinds.MAIN_TYPE_MISMATCH
-
-    def __init__(self, fn_typ_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'The program entry point "main" must have type "fn() i32", not "{fn_typ_name}"',
-            span,
-        )
-
-
-class EntryMainExternConflictError(UserError):
-    """Raised when an ``extern fn main`` declares the C ``main`` symbol with a type other
-    than the program entry point's."""
-
-    kind = diag_kinds.CONFLICTING_MAIN_DECLARATIONS
-
-    def __init__(self, fn_typ_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'"extern fn main" has type "{fn_typ_name}", but the program entry point defines '
-            'the C "main" symbol with type "fn() i32"',
-            span,
         )
 
 

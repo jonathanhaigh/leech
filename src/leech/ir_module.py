@@ -19,7 +19,6 @@ from leech import (
     comptime,
     diag,
     diag_kinds,
-    errors,
     ir_builder,
     ir_env,
     ir_traits,
@@ -724,8 +723,8 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     def initializer(self) -> ir_values.ComptimeValue:
         """This variable's initial value, evaluated at compile time.
 
-        Computed lazily, on first access. Raises
-        ``errors.CircularVarInitializerError`` if evaluating it
+        Computed lazily, on first access. Reports
+        ``recursive-initializer`` if evaluating it
         requires (directly or transitively, possibly through other modules)
         evaluating this same variable's initializer again.
         """
@@ -737,15 +736,11 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
             self,
         ) as cycle:
             if cycle is not None:
-                self.ctx.fail_cycle(
-                    cycle,
-                    errors.CircularVarInitializerError(
-                        self.name,
-                        self.span,
-                        # The final detail repeats the first to close the cycle.
-                        [(var.name, var.span) for var in cycle.details[:-1]],
-                    ),
-                )
+                d = diag.Diag.new(diag_kinds.RECURSIVE_INITIALIZER, self.span, var=self.name)
+                # The final detail repeats the first to close the cycle.
+                for var in cycle.details[:-1]:
+                    d = d.with_note(diag_kinds.DEFINED_HERE, var.span, name=var.name)
+                self.ctx.fail_cycle(cycle, d)
             return self._evaluated_initializer
 
     @property
@@ -902,16 +897,21 @@ class Mod:
         """
         item = self.get_item(ir_env.Env.Namespace.VARS, "main")
         if item is None:
-            raise errors.EntryMainMissingError(self.name, self.ast.span.file.path)
+            self.ctx.diags.raise_error(
+                diag_kinds.MISSING_MAIN_FUNCTION,
+                None,
+                mod=self.name,
+                path=str(self.ast.span.file.path),
+            )
         if not isinstance(item.value, SrcFnSymbol):
-            raise errors.EntryMainNotDefinedFnError(ast.opt_span(item.value))
+            self.ctx.diags.raise_error(diag_kinds.NON_FUNCTION_MAIN, ast.opt_span(item.value))
         fn = item.value
         span = opt_util.opt_unwrap(fn.ast).name.span
         if fn.is_generic:
-            raise errors.EntryMainGenericError(span)
+            self.ctx.diags.raise_error(diag_kinds.GENERIC_MAIN, span)
         entry_typ = typs.FnTyp(typs.I32, ())
         if fn.fn_typ is not entry_typ:
-            raise errors.EntryMainSignatureError(fn.fn_typ.name, span)
+            self.ctx.diags.raise_error(diag_kinds.MAIN_TYPE_MISMATCH, span, fn_typ=fn.fn_typ)
         for mod in self.ctx.loader.mods:
             extern_item = mod.get_item(ir_env.Env.Namespace.VARS, "main")
             if (
@@ -919,8 +919,10 @@ class Mod:
                 and isinstance(extern_item.value, ExternFnSymbol)
                 and extern_item.value.fn_typ is not entry_typ
             ):
-                raise errors.EntryMainExternConflictError(
-                    extern_item.value.fn_typ.name, ast.opt_span(extern_item.value)
+                self.ctx.diags.raise_error(
+                    diag_kinds.CONFLICTING_MAIN_DECLARATIONS,
+                    ast.opt_span(extern_item.value),
+                    fn_typ=extern_item.value.fn_typ,
                 )
         self._entry_fn = fn
 
@@ -967,7 +969,9 @@ class Mod:
                     )
                 case ast.ExternFnDecl():
                     if defn_ast.receiver is not None:
-                        raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
+                        self.ctx.diags.raise_error(
+                            diag_kinds.SELF_PARAMETER_OUTSIDE_IMPL, defn_ast.receiver.span
+                        )
                     item.bind(
                         ExternFnSymbol(defn_ast, self.env, self.name),
                         visibility.PUBLIC,
@@ -975,7 +979,9 @@ class Mod:
                     )
                 case ast.FnDefn():
                     if defn_ast.receiver is not None:
-                        raise errors.SelfParamOutsideImplError(defn_ast.receiver.span)
+                        self.ctx.diags.raise_error(
+                            diag_kinds.SELF_PARAMETER_OUTSIDE_IMPL, defn_ast.receiver.span
+                        )
                     item.bind(
                         SrcFnSymbol(defn_ast, self.env, self.name),
                         visibility.Access.from_ast(defn_ast.access),
@@ -1041,14 +1047,20 @@ class Mod:
         """
         impl_typ_ast = impl_ast.typ
         if not isinstance(impl_typ_ast, ast.BasicTyp):
-            raise errors.ImplForNonNominalTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+            self.ctx.diags.raise_error(
+                diag_kinds.UNSUPPORTED_IMPL_TYPE, impl_typ_ast.span, typ=impl_typ_ast.diag_str()
+            )
 
         typ = typs.Typ.from_ast(impl_typ_ast, impl_env)
         if not isinstance(typ, typs.StructTyp | typs.UnionTyp):
-            raise errors.ImplForNonNominalTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+            self.ctx.diags.raise_error(
+                diag_kinds.UNSUPPORTED_IMPL_TYPE, impl_typ_ast.span, typ=impl_typ_ast.diag_str()
+            )
 
         if len(impl_typ_ast.path.segs) > 1:
-            raise errors.ImplForNonLocalTypError(impl_typ_ast.diag_str(), impl_typ_ast.span)
+            self.ctx.diags.raise_error(
+                diag_kinds.IMPL_OUTSIDE_TYPE_MODULE, impl_typ_ast.span, typ=impl_typ_ast.diag_str()
+            )
 
         if isinstance(typ, typs.UnionTyp):
             self._check_no_variant_name_clash(impl_ast, typ)
@@ -1059,8 +1071,7 @@ class Mod:
             fns = self._build_impl_fn_symbols(impl_ast, impl)
         src_fn_symbols.extend(fns)
 
-    @staticmethod
-    def _check_no_variant_name_clash(impl_ast: ast.ImplDefn, typ: typs.UnionTyp) -> None:
+    def _check_no_variant_name_clash(self, impl_ast: ast.ImplDefn, typ: typs.UnionTyp) -> None:
         """Reject an associated function named after one of the union's variants.
 
         A path into a union resolves a variant before an associated
@@ -1074,11 +1085,17 @@ class Mod:
         for fn_defn in impl_ast.fn_defns:
             variant = typ.template.variants.get(fn_defn.name.name)
             if variant is not None:
-                raise errors.FnNameClashesWithUnionVariantError(
-                    fn_defn.name.name,
-                    typ.template.name,
-                    fn_defn.name.span,
-                    variant.ast.ident.span,
+                fn_name = fn_defn.name.name
+                union_name = typ.template.name
+                self.ctx.diags.raise_error(
+                    diag.Diag.new(
+                        diag_kinds.CONFLICTING_VARIANT_AND_FUNCTION_NAMES,
+                        fn_defn.name.span,
+                        fn=fn_name,
+                        union=union_name,
+                    )
+                    .with_label(diag_kinds.DEFINED_HERE, variant.ast.ident.span, name=fn_name)
+                    .with_note(diag_kinds.VARIANT_SHADOWS_FN, union=union_name, fn=fn_name)
                 )
 
     def _build_trait_impl_defn(
@@ -1103,7 +1120,9 @@ class Mod:
         """
         trait_typ_ast = impl_ast.typ
         if not isinstance(trait_typ_ast, ast.BasicTyp):
-            raise errors.ImplForNonTraitError(trait_typ_ast.diag_str(), trait_typ_ast.span)
+            self.ctx.diags.raise_error(
+                diag_kinds.NON_TRAIT_IMPL, trait_typ_ast.span, name=trait_typ_ast.diag_str()
+            )
         trait_application = impl_env.resolve_trait(trait_typ_ast.path)
 
         self_typ = typs.Typ.from_ast(opt_util.opt_unwrap(impl_ast.for_typ), impl_env)

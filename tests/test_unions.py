@@ -1408,6 +1408,14 @@ def test_assoc_fn_named_after_a_variant_rejected(compiler, order):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_VARIANT_AND_FUNCTION_NAMES,)
 
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert (err.msg.args["fn"], err.msg.args["union"]) == ("A", "U")
+    harness.assert_span_at(err.span, src, "A()")
+    assert [label.msg.kind for label in err.labels] == [diag_kinds.DEFINED_HERE]
+    harness.assert_span_at(err.labels[0].span, src, "A, B")
+    assert [note.msg.kind for note in err.notes] == [diag_kinds.VARIANT_SHADOWS_FN]
+
 
 def test_assoc_fn_named_after_a_variant_of_a_generic_union_rejected(compiler):
     src = """

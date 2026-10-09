@@ -12,7 +12,6 @@ from leech import (
     compilation,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     ir_module,
     ir_values,
@@ -368,12 +367,11 @@ def test_mod_var_self_cycle(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
-    assert (
-        harness.user_error(exc_info.value.diags[0]).message.message
-        == 'Initializer of variable "a" depends on itself'
-    )
-    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
-        'Variable "a" defined here'
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert err.msg.args["var"] == "a"
+    assert [(note.msg.kind, note.msg.args["name"]) for note in err.notes] == [
+        (diag_kinds.DEFINED_HERE, "a"),
     ]
 
 
@@ -403,14 +401,13 @@ def test_mod_var_three_way_cycle(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
-    assert (
-        harness.user_error(exc_info.value.diags[0]).message.message
-        == 'Initializer of variable "a" depends on itself'
-    )
-    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
-        'Variable "a" defined here',
-        'Variable "b" defined here',
-        'Variable "c" defined here',
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert err.msg.args["var"] == "a"
+    assert [(note.msg.kind, note.msg.args["name"]) for note in err.notes] == [
+        (diag_kinds.DEFINED_HERE, "a"),
+        (diag_kinds.DEFINED_HERE, "b"),
+        (diag_kinds.DEFINED_HERE, "c"),
     ]
 
 
@@ -433,13 +430,12 @@ def test_cross_module_var_cycle(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
-    assert (
-        harness.user_error(exc_info.value.diags[0]).message.message
-        == 'Initializer of variable "x" depends on itself'
-    )
-    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
-        'Variable "x" defined here',
-        'Variable "y" defined here',
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert err.msg.args["var"] == "x"
+    assert [(note.msg.kind, note.msg.args["name"]) for note in err.notes] == [
+        (diag_kinds.DEFINED_HERE, "x"),
+        (diag_kinds.DEFINED_HERE, "y"),
     ]
 
 
@@ -463,8 +459,8 @@ def test_mod_var_cycle_failure_is_memoized_and_reported_once(compiler):
         proofs.append(exc_info.value.reported)
 
     assert proofs[0] is proofs[1]
-    assert type(proofs[0].diag) is errors.CircularVarInitializerError
-    assert [type(d) for d in mod.ctx.diags.all()] == [errors.CircularVarInitializerError]
+    assert proofs[0].diag.kind is diag_kinds.RECURSIVE_INITIALIZER
+    assert [d.kind for d in mod.ctx.diags.all()] == [diag_kinds.RECURSIVE_INITIALIZER]
 
 
 def test_mod_var_diamond_dependency_is_not_a_cycle(compiler):

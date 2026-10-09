@@ -47,8 +47,10 @@ def test_missing_main_is_reported(compiler):
     assert exc_info.value.kinds == (diag_kinds.MISSING_MAIN_FUNCTION,)
 
     assert exc_info.value.diags[0].span is None
-    assert str(exc_info.value.diags[0]).startswith('Entry module "main" (')
-    assert str(exc_info.value.diags[0]).endswith('main.leech) has no "main" function')
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert err.msg.args["mod"] == "main"
+    assert str(err.msg.args["path"]).endswith("main.leech")
 
 
 @pytest.mark.parametrize(
@@ -89,9 +91,7 @@ def test_main_with_wrong_signature_is_reported(compiler, src, fn_typ_name):
         compiler.compile(src, entry=True)
     assert exc_info.value.kinds == (diag_kinds.MAIN_TYPE_MISMATCH,)
 
-    assert str(exc_info.value.diags[0]) == (
-        f'The program entry point "main" must have type "fn() i32", not "{fn_typ_name}"'
-    )
+    assert f'"{fn_typ_name}"' in str(exc_info.value.diags[0])
     harness.assert_span_at(exc_info.value.diags[0].span, src, "main")
 
 

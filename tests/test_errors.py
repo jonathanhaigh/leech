@@ -421,19 +421,17 @@ def test_circular_var_initializer_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"b"' in msg
-    assert "depends on itself" in msg
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert err.msg.args["var"] == "b"
+    harness.assert_span_at(err.span, src, "let b")
 
-    span = exc_info.value.diags[0].span
-    harness.assert_span_at(span, src, "let b")
-
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 2
-    first, second = harness.user_error(exc_info.value.diags[0]).extra
-    assert first.message == 'Variable "b" defined here'
-    harness.assert_span_at(first.span, src, "let b")
-    assert second.message == 'Variable "a" defined here'
-    harness.assert_span_at(second.span, src, "let a")
+    assert [(note.msg.kind, note.msg.args["name"]) for note in err.notes] == [
+        (diag_kinds.DEFINED_HERE, "b"),
+        (diag_kinds.DEFINED_HERE, "a"),
+    ]
+    harness.assert_span_at(err.notes[0].span, src, "let b")
+    harness.assert_span_at(err.notes[1].span, src, "let a")
 
 
 def test_recursive_trait_bound_message(compiler):
