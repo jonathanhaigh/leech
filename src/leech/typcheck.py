@@ -717,7 +717,7 @@ class TypCheck:
                         " isn't supported yet"
                     )
                 matches.append(method)
-        return ir_traits.disambiguate(matches, name, typ_param.name, span)
+        return ir_traits.disambiguate(matches, name, typ_param, span, e.ctx.diags)
 
     def _resolve_fn_call(
         self, candidate: ir_module.FnCandidate, call_ast: ast.CallExpr, e: ir_env.Env

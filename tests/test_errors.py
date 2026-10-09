@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import diag, diag_kinds
+from leech import diag, diag_kinds, typs
 from tests import harness
 
 
@@ -483,20 +483,17 @@ def test_recursive_impl_selection_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
 
-    assert (
-        harness.user_error(exc_info.value.diags[0]).message.message
-        == 'Selecting an implementation of trait "A" for type "i32" is recursive'
-    )
-    span = exc_info.value.diags[0].span
-    harness.assert_span_at(span, src, "impl[T: B]")
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert (err.msg.args["trait"], err.msg.args["typ"]) == ("A", typs.I32)
+    harness.assert_span_at(err.span, src, "impl[T: B]")
 
-    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
-        'Implementation "<T as A>" participates in this cycle',
-        'Implementation "<T as B>" participates in this cycle',
-    ]
+    assert [note.msg.kind for note in err.notes] == [diag_kinds.IMPL_IN_CYCLE] * 2
+    assert '"<T as A>"' in err.notes[0].msg.text()
+    assert '"<T as B>"' in err.notes[1].msg.text()
     expected_spans = [harness.src_position(src, text) for text in ("impl[T: B]", "impl[T: A]")]
     actual_spans = []
-    for note in harness.user_error(exc_info.value.diags[0]).extra:
+    for note in err.notes:
         assert note.span is not None
         actual_spans.append((note.span.start_line, note.span.start_col))
     assert actual_spans == expected_spans
@@ -838,9 +835,7 @@ pub fn main() i32 { return 0; }
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.UNCONSTRAINED_IMPL_PARAMETER,)
 
-    msg = str(exc_info.value.diags[0])
-    assert 'Impl parameter "U"' in msg
-    assert "not constrained by the impl self type" in msg
+    assert '"U"' in str(exc_info.value.diags[0])
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "U]")

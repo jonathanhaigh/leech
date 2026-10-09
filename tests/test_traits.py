@@ -10,7 +10,6 @@ from leech import (
     compilation,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     ir_module,
     ir_traits,
@@ -677,7 +676,9 @@ def test_ambiguous_method_call_between_two_traits(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.AMBIGUOUS_METHOD_CALL,)
-    assert '"f"' in str(exc_info.value.diags[0])
+    err = exc_info.value.diags[0]
+    assert '"f"' in str(err)
+    harness.assert_span_at(err.span, src, "f();")
 
 
 def test_ambiguous_method_call_on_bound_typ_param(compiler):
@@ -839,8 +840,10 @@ def test_trait_missing_method_not_implemented(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.MISSING_TRAIT_METHOD,)
-    assert '"show"' in str(exc_info.value.diags[0])
-    assert '"Show"' in str(exc_info.value.diags[0])
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert (err.msg.args["method"], err.msg.args["trait"]) == ("show", "Show")
+    harness.assert_span_at(err.span, src, "impl Show")
 
 
 def test_trait_impl_extra_method(compiler):
@@ -855,7 +858,9 @@ def test_trait_impl_extra_method(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.UNKNOWN_TRAIT_METHOD,)
-    assert '"other"' in str(exc_info.value.diags[0])
+    err = exc_info.value.diags[0]
+    assert '"other"' in str(err)
+    harness.assert_span_at(err.span, src, "fn other")
 
 
 def test_trait_impl_duplicate_method(compiler):
@@ -893,8 +898,9 @@ def test_trait_impl_duplicate_extra_method_is_rejected_atomically(compiler):
 
     for fn_ast in impl_ast.fn_defns:
         fn = ir_module.SrcFnSymbol(fn_ast, trait_impl.env, "main", recv_typ=typs.I32)
-        with pytest.raises(errors.ExtraMethodInImplError):
+        with pytest.raises(diag.ReportedError) as exc_info:
             trait_impl.add_fn_symbol(fn)
+        assert exc_info.value.reported.diag.kind is diag_kinds.UNKNOWN_TRAIT_METHOD
         assert not trait_impl.fn_symbols
 
 
@@ -909,7 +915,13 @@ def test_trait_impl_method_signature_mismatch(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.TRAIT_METHOD_TYPE_MISMATCH,)
-    assert '"show"' in str(exc_info.value.diags[0])
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert err.msg.args["method"] == "show"
+    given, expected = err.msg.args["given_typ"], err.msg.args["expected_typ"]
+    assert isinstance(given, typs.FnTyp) and given.ret_typ is typs.BOOL
+    assert isinstance(expected, typs.FnTyp) and expected.ret_typ is typs.I32
+    harness.assert_span_at(err.span, src, "fn show(*self) bool")
 
 
 def test_trait_impl_method_wrong_receiver_mutability(compiler):
@@ -948,6 +960,12 @@ def test_partially_overlapping_generic_trait_impls_conflict(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_IMPLS,)
+
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    harness.assert_span_at(err.span, src, "impl[U]")
+    assert [label.msg.kind for label in err.labels] == [diag_kinds.PREVIOUS_IMPL_HERE]
+    harness.assert_span_at(err.labels[0].span, src, "impl[T]")
 
 
 @pytest.mark.parametrize(
@@ -1028,6 +1046,10 @@ def test_orphan_impl_neither_trait_nor_typ_local(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert exc_info.value.kinds == (diag_kinds.ORPHAN_IMPL,)
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert (err.msg.args["trait"], err.msg.args["typ"]) == ("Show", typs.I32)
+    harness.assert_span_at(err.span, main_src, "impl a::Show")
 
 
 def test_impl_local_trait_for_foreign_typ_not_orphan(compiler):
@@ -1116,6 +1138,9 @@ def test_trait_method_missing_receiver(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.MISSING_SELF_PARAMETER,)
+    err = exc_info.value.diags[0]
+    assert '"show"' in str(err)
+    harness.assert_span_at(err.span, src, "fn show()")
 
 
 def test_trait_method_call_span(compiler):
@@ -1529,15 +1554,13 @@ def test_growing_mutually_recursive_trait_bounds(compiler):
 
 
 def _assert_recursive_impl_selection_error(
-    err, trait_name: str, typ_name: str, impl_names: list[str]
+    err, trait_name: str, typ: typs.Typ, impl_names: list[str]
 ) -> None:
-    assert (
-        err.message.message
-        == f'Selecting an implementation of trait "{trait_name}" for type "{typ_name}" is recursive'
-    )
-    assert [note.message for note in err.extra] == [
-        f'Implementation "{name}" participates in this cycle' for name in impl_names
-    ]
+    assert isinstance(err, diag.Diag)
+    assert (err.msg.args["trait"], err.msg.args["typ"]) == (trait_name, typ)
+    assert [note.msg.kind for note in err.notes] == [diag_kinds.IMPL_IN_CYCLE] * len(impl_names)
+    for note, name in zip(err.notes, impl_names, strict=True):
+        assert f'"{name}"' in note.msg.text()
 
 
 def test_direct_recursive_impl_selection(compiler):
@@ -1549,7 +1572,9 @@ def test_direct_recursive_impl_selection(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
-    _assert_recursive_impl_selection_error(exc_info.value.diags[0], "Show", "i32", ["<T as Show>"])
+    _assert_recursive_impl_selection_error(
+        exc_info.value.diags[0], "Show", typs.I32, ["<T as Show>"]
+    )
 
 
 def test_mutual_recursive_impl_selection(compiler):
@@ -1566,7 +1591,7 @@ def test_mutual_recursive_impl_selection(compiler):
     _assert_recursive_impl_selection_error(
         exc_info.value.diags[0],
         "A",
-        "i32",
+        typs.I32,
         ["<T as A>", "<T as B>"],
     )
 
@@ -1589,7 +1614,7 @@ def test_recursive_impl_selection_excludes_path_into_cycle(compiler):
     _assert_recursive_impl_selection_error(
         exc_info.value.diags[0],
         "A",
-        "i32",
+        typs.I32,
         ["<T as A>", "<T as B>", "<T as C>"],
     )
 
@@ -1604,7 +1629,7 @@ def test_recursive_impl_selection_through_trait_owned_bound(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
-    _assert_recursive_impl_selection_error(exc_info.value.diags[0], "S", "i32", ["<T as S>"])
+    _assert_recursive_impl_selection_error(exc_info.value.diags[0], "S", typs.I32, ["<T as S>"])
 
 
 def test_calling_method_through_bound_with_generic_args_not_supported_yet(compiler):
@@ -1881,6 +1906,7 @@ def test_registering_checks_again_if_another_impl_was_registered(compiler):
         with registry.registering(impl):
             pass
 
-    with pytest.raises(errors.ConflictingImplsError), registry.registering(impl):
+    with pytest.raises(diag.ReportedError) as exc_info, registry.registering(impl):
         # Registered while the outer registration is in progress, so it conflicts.
         register_meanwhile()
+    assert exc_info.value.reported.diag.kind is diag_kinds.CONFLICTING_IMPLS

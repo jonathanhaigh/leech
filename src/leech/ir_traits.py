@@ -16,7 +16,6 @@ from leech import (
     compilation,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     ir_module,
     opt_util,
@@ -59,7 +58,9 @@ class TraitMethod:
 
     def __init__(self, fn_ast: ast.TraitFnDecl, trait: Trait) -> None:
         if fn_ast.receiver is None:
-            raise errors.TraitMethodMissingReceiverError(fn_ast.name.name, fn_ast.span)
+            trait.ctx.diags.raise_error(
+                diag_kinds.MISSING_SELF_PARAMETER, fn_ast.span, method=fn_ast.name.name
+            )
         reserved.check_fn_params(fn_ast, trait.ctx.diags)
         self.ast = fn_ast
         self._trait = trait
@@ -267,7 +268,9 @@ class Impl:
         if not _is_local(self.trait, self._mod_name) and not _is_local(
             self.self_typ, self._mod_name
         ):
-            raise errors.OrphanImplError(self.trait.name, self.self_typ.name, self.span)
+            self.env.ctx.diags.raise_error(
+                diag_kinds.ORPHAN_IMPL, self.span, trait=self.trait.name, typ=self.self_typ
+            )
 
     def check_comptime_params_constrained(self) -> None:
         """Raise if the self type does not determine every impl comptime parameter."""
@@ -275,8 +278,8 @@ class Impl:
             self.comptime_params, self.ast.comptime_params, strict=True
         ):
             if not typs.contains_typ(self.self_typ, typ_param):
-                raise errors.UnconstrainedImplComptimeParamError(
-                    typ_param.name, param_ast.ident.span
+                self.env.ctx.diags.raise_error(
+                    diag_kinds.UNCONSTRAINED_IMPL_PARAMETER, param_ast.ident.span, param=typ_param
                 )
 
     def instantiation_args(self, concrete_self_typ: typs.Typ) -> tuple[typs.Typ, ...]:
@@ -296,7 +299,9 @@ class Impl:
         if trait is not None:
             trait_method = trait.get_trait_method(fn.name)
             if trait_method is None:
-                raise errors.ExtraMethodInImplError(trait.name, fn.name, fn.span)
+                self.env.ctx.diags.raise_error(
+                    diag_kinds.UNKNOWN_TRAIT_METHOD, fn.span, method=fn.name, trait=trait.name
+                )
         elif reserved.is_reserved(fn.name):
             assert fn.ast is not None
             self.env.ctx.diags.raise_error(diag_kinds.RESERVED_NAME, fn.ast.name.span, name=fn.name)
@@ -312,8 +317,13 @@ class Impl:
             assert trait is not None
             expected_typ = trait_method.fn_typ_for_self(self.self_typ, self.trait_args)
             if fn.fn_typ is not expected_typ:
-                raise errors.TraitMethodSignatureMismatchError(
-                    trait.name, fn.name, fn.fn_typ.name, expected_typ.name, fn.span
+                self.env.ctx.diags.raise_error(
+                    diag_kinds.TRAIT_METHOD_TYPE_MISMATCH,
+                    fn.span,
+                    method=fn.name,
+                    trait=trait.name,
+                    given_typ=fn.fn_typ,
+                    expected_typ=expected_typ,
                 )
         self._fn_symbols[fn.name] = fn
         if trait_method is not None:
@@ -332,8 +342,12 @@ class Impl:
             return
         for trait_method in self.trait.trait_methods:
             if trait_method not in self._trait_methods:
-                raise errors.TraitMethodNotImplementedError(
-                    self.trait.name, trait_method.name, self.self_typ.name, self.span
+                self.env.ctx.diags.raise_error(
+                    diag_kinds.MISSING_TRAIT_METHOD,
+                    self.span,
+                    method=trait_method.name,
+                    trait=self.trait.name,
+                    typ=self.self_typ,
                 )
 
 
@@ -437,12 +451,15 @@ class ImplRegistry:
         assert trait is not None
         for existing_trait_impl in self._iter_trait_impl_conflict_candidates(trait_impl):
             if typs.typs_overlap(trait_impl.self_typ, existing_trait_impl.self_typ):
-                raise errors.ConflictingImplsError(
-                    trait.name,
-                    trait_impl.self_typ.name,
+                d = diag.Diag.new(
+                    diag_kinds.CONFLICTING_IMPLS,
                     trait_impl.span,
-                    existing_trait_impl.span,
+                    trait=trait.name,
+                    typ=trait_impl.self_typ,
                 )
+                if existing_trait_impl.span is not None:
+                    d = d.with_label(diag_kinds.PREVIOUS_IMPL_HERE, existing_trait_impl.span)
+                self.ctx.diags.raise_error(d)
 
     def _check_inherent_impl_conflicts(
         self, inherent_impl: Impl, existing_inherent_impls: Collection[Impl]
@@ -522,9 +539,8 @@ class ImplRegistry:
         ``Box[T]`` binds ``T`` to itself, and the impl's ``T: Show`` is
         exactly the assumption that discharges it.
 
-        Raises ``errors.RecursiveImplSelectionError`` if
-        checking the bounds repeats the same concrete implementation
-        obligation.
+        Reports ``recursive-impl-selection`` if checking the bounds
+        repeats the same concrete implementation obligation.
         """
         with self.ctx.detect_cycle(
             compilation.CycleDomain.IMPL_SELECTION,
@@ -535,22 +551,15 @@ class ImplRegistry:
                 repeated_impl, repeated_self_typ = cycle.details[0]
                 trait = repeated_impl.trait
                 assert trait is not None, "recursive selection must repeat a trait impl"
-                hops = [
-                    errors.ImplSelectionHop(
-                        cycle_impl.name,
-                        cycle_impl.span,
-                    )
-                    for cycle_impl, _ in cycle.details[:-1]
-                ]
-                self.ctx.fail_cycle(
-                    cycle,
-                    errors.RecursiveImplSelectionError(
-                        trait.name,
-                        repeated_self_typ.name,
-                        repeated_impl.span,
-                        hops,
-                    ),
+                d = diag.Diag.new(
+                    diag_kinds.RECURSIVE_IMPL_SELECTION,
+                    repeated_impl.span,
+                    trait=trait.name,
+                    typ=repeated_self_typ,
                 )
+                for cycle_impl, _ in cycle.details[:-1]:
+                    d = d.with_note(diag_kinds.IMPL_IN_CYCLE, cycle_impl.span, impl=cycle_impl.name)
+                self.ctx.fail_cycle(cycle, d)
             return typs.unsatisfied_bound(bindings, impl.env) is None
 
     def _find_trait_impls_for_typ(self, typ: typs.Typ) -> list[Impl]:
@@ -596,7 +605,7 @@ class ImplRegistry:
         unsubstituted type parameter resolves differently, against the
         parameter's own declared bounds rather than the registry.
 
-        ``span`` is where to point an ``errors.AmbiguousMethodError`` at,
+        ``span`` is where to point an ``ambiguous-method-call`` error at,
         if one applies.
         """
         inherent_fn = self.lookup_assoc_fn(typ, name)
@@ -611,7 +620,7 @@ class ImplRegistry:
             method = trait_impl.get_trait_method(trait_method)
             if method is not None:
                 matches.append(method)
-        method = disambiguate(matches, name, typ.name, span)
+        method = disambiguate(matches, name, typ, span, self.ctx.diags)
         if method is None:
             return None
 
@@ -623,15 +632,19 @@ class ImplRegistry:
 
 
 def disambiguate[T](
-    matches: list[T], name: str, typ_name: str, span: Optional[src.SrcSpan]
+    matches: list[T],
+    name: str,
+    typ: typs.Typ,
+    span: Optional[src.SrcSpan],
+    diags: diag.Diags,
 ) -> Optional[T]:
     """Return the sole candidate, rejecting ambiguous matches.
 
-    ``span`` is where to point an ``errors.AmbiguousMethodError`` at, if
+    ``span`` is where to point an ``ambiguous-method-call`` error at, if
     one applies.
     """
     if len(matches) > 1:
-        raise errors.AmbiguousMethodError(name, typ_name, span)
+        diags.raise_error(diag_kinds.AMBIGUOUS_METHOD_CALL, span, method=name, typ=typ)
     return matches[0] if matches else None
 
 
