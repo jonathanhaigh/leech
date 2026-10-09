@@ -330,3 +330,48 @@ def test_text_renderer_shows_a_diags_message_and_notes(tmp_path, capsys):
         "1| fn f() {}\n"
         "---^\n"
     )
+
+
+def test_error_and_warn_can_build_the_diagnostic(tmp_path):
+    span = _span(tmp_path / "a.leech")
+    diags = diag.Diags()
+
+    reported = diags.error(_ARG_KIND, span, name="x", typ=typs.BOOL)
+    diags.warn(diag_kinds.UNREACHABLE_CODE, span, code="statement")
+
+    error, warning = diags.all()
+    assert isinstance(error, diag.Diag) and isinstance(warning, diag.Diag)
+    assert reported.diag is error
+    assert (error.kind, error.span, str(error)) == (
+        _ARG_KIND,
+        span,
+        'cannot use "x" of type "bool"',
+    )
+    assert (warning.kind, warning.span) == (diag_kinds.UNREACHABLE_CODE, span)
+
+
+@pytest.mark.parametrize("built", [False, True])
+def test_raise_error_records_the_error_and_raises_its_proof(built):
+    diags = diag.Diags()
+    d = diag.Diag.new(_ARG_KIND, None, name="x", typ="i32")
+
+    with pytest.raises(diag.ReportedError) as exc_info:
+        if built:
+            diags.raise_error(d)
+        else:
+            diags.raise_error(_ARG_KIND, None, name="x", typ="i32")
+
+    assert exc_info.value.reported is diags.any_error()
+    (recorded,) = diags.all()
+    assert exc_info.value.reported.diag is recorded
+    assert str(recorded) == str(d)
+
+
+def test_a_built_diagnostic_takes_no_other_arguments(tmp_path):
+    d = diag.Diag.new(_ARG_KIND, None, name="x", typ="i32")
+    diags = diag.Diags()
+
+    with pytest.raises(AssertionError):
+        diags.error(d, _span(tmp_path / "a.leech"))  # pyright: ignore[reportArgumentType]
+    with pytest.raises(AssertionError):
+        diags.error(d, name="y")  # pyright: ignore[reportCallIssue]

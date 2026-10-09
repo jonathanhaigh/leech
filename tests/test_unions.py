@@ -380,8 +380,9 @@ def test_variant_resolves_through_a_module_path(compiler):
 
 def test_unknown_variant_name_is_not_found(compiler):
     mod = compiler.build("union Option[T] { None, Some(T) }")
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.ReportedError) as exc_info:
         _resolve_variant(mod, compiler, "Option::Nope")
+    assert exc_info.value.reported.diag.kind == diag_kinds.UNKNOWN_NAME
 
 
 def test_private_unions_variant_is_inaccessible(compiler):
@@ -390,8 +391,9 @@ def test_private_unions_variant_is_inaccessible(compiler):
         "import a;\npub fn main() i32 { return 0; }",
         harness.ModSrc("a", "union Option[T] { None, Some(T) }"),
     )
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.ReportedError) as exc_info:
         _resolve_variant(mod, compiler, "a::Option::Some")
+    assert exc_info.value.reported.diag.kind == diag_kinds.PRIVATE_ITEM_ACCESS
 
 
 @pytest.mark.parametrize("expr", ["Option::Some[i32]", "Option[i32]::Some[i32]"])
@@ -399,8 +401,9 @@ def test_comptime_args_on_a_variant_segment_are_rejected(compiler, expr):
     # The arguments belong to the union: `Option[i32]::Some` is how to
     # say what these are trying to say.
     mod = compiler.build("union Option[T] { None, Some(T) }")
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
+    with pytest.raises(diag.ReportedError) as exc_info:
         _resolve_variant(mod, compiler, expr)
+    assert exc_info.value.reported.diag.kind == diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT
 
 
 def test_a_variant_cannot_qualify_a_further_path_segment(compiler):
@@ -408,14 +411,16 @@ def test_a_variant_cannot_qualify_a_further_path_segment(compiler):
     # variant is invisible, so this fails the same way `Color::Red::x`
     # does for an enum rather than reaching a variant-specific check.
     mod = compiler.build("union Option[T] { None, Some(T) }")
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.ReportedError) as exc_info:
         _resolve_variant(mod, compiler, "Option::Some::x")
+    assert exc_info.value.reported.diag.kind == diag_kinds.UNKNOWN_NAME
 
 
 def test_a_variant_is_not_reachable_in_the_container_namespace(compiler):
     mod = compiler.build("union Option[T] { None, Some(T) }")
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.ReportedError) as exc_info:
         mod.env.resolve_typ(_path_of(compiler, "Option::Some"))
+    assert exc_info.value.reported.diag.kind == diag_kinds.UNKNOWN_NAME
 
 
 def test_variant_comptime_args_come_from_the_payload_argument(compiler):

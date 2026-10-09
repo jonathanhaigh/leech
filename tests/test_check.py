@@ -150,12 +150,12 @@ def test_discovery_reports_each_failing_instance_and_continues(compiler):
     result = mono.discover(mod.ctx)
 
     found = mod.ctx.diags.sorted()
-    assert [type(d) for d in found] == [
-        errors.ItemNotFoundError,
-        errors.ItemNotFoundError,
-        errors.InvalidRetTypError,
+    assert [d.kind for d in found] == [
+        diag_kinds.UNKNOWN_NAME,
+        diag_kinds.UNKNOWN_NAME,
+        diag_kinds.RETURN_TYPE_MISMATCH,
     ]
-    assert ["MissingA" in d.message.message for d in found[:2]] == [True, False]
+    assert ["MissingA" in str(d) for d in found[:2]] == [True, False]
     assert result.struct_instances == ()
     assert _main_instance_names(result) == ["main::f", "main::g"]
 
@@ -210,7 +210,7 @@ def test_check_reports_unused_extern_signature_error(tmp_path):
         tmp_path / "main.leech", "extern fn f() Missing;\npub fn main() i32 { return 0; }\n"
     )
 
-    assert [type(d) for d in harness.check_program(root)] == [errors.ItemNotFoundError]
+    assert [d.kind for d in harness.check_program(root)] == [diag_kinds.UNKNOWN_NAME]
 
 
 def test_discovery_continues_past_a_failing_signature(compiler):
@@ -218,7 +218,7 @@ def test_discovery_continues_past_a_failing_signature(compiler):
 
     result = mono.discover(mod.ctx)
 
-    assert [type(d) for d in mod.ctx.diags.all()] == [errors.ItemNotFoundError]
+    assert [d.kind for d in mod.ctx.diags.all()] == [diag_kinds.UNKNOWN_NAME]
     assert _main_instance_names(result) == ["main::good"]
 
 

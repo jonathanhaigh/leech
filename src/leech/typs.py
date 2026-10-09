@@ -20,6 +20,7 @@ from leech import (
     ast,
     compilation,
     diag,
+    diag_kinds,
     errors,
     ir_env,
     opt_util,
@@ -257,10 +258,10 @@ def resolve_explicit_comptime_args(
     """Resolve and bounds-check an item's explicitly supplied comptime arguments."""
     if not comptime_params:
         if args_ast:
-            raise errors.ComptimeArgsOnNonGenericItemError(item_name, span)
+            e.ctx.diags.raise_error(diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT, span, item=item_name)
         return ()
     if not args_ast:
-        raise errors.MissingComptimeArgsError(item_name, span)
+        e.ctx.diags.raise_error(diag_kinds.MISSING_COMPTIME_ARGUMENT, span, item=item_name)
     if len(args_ast) != len(comptime_params):
         raise errors.WrongNumberOfComptimeArgsError(
             item_name, len(args_ast), len(comptime_params), span

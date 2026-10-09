@@ -69,8 +69,7 @@ def parse_mod_ast(file: src.SrcFile, diags: diag.Diags) -> ast.Mod:
         tree = parser.parse(file.src)
     except lark.UnexpectedCharacters as err:
         span = src.SrcSpan.single_char(file, err.pos_in_stream, err.line, err.column)
-        d = diag.Diag.new(diag_kinds.UNEXPECTED_CHARACTER, span, char=err.char)
-        raise diag.ReportedError(diags.error(d)) from err
+        diags.raise_error(diag_kinds.UNEXPECTED_CHARACTER, span, char=err.char)
     except lark.UnexpectedToken as err:
         span = src.SrcSpan.from_lark_meta(file, err.token)
         found = "end of input" if err.token.type == "$END" else f'token "{err.token}"'
@@ -78,5 +77,5 @@ def parse_mod_ast(file: src.SrcFile, diags: diag.Diags) -> ast.Mod:
         expected = _describe_expected_tokens(parser, err.accepts or err.expected)
         if expected:
             d = d.with_note(diag_kinds.EXPECTED_ONE_OF, expected=", ".join(expected))
-        raise diag.ReportedError(diags.error(d)) from err
+        diags.raise_error(d)
     return ast.Mod(file, tree)

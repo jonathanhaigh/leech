@@ -63,7 +63,9 @@ Use comments sparingly to explain non-obvious reasons and constraints, not visib
 Use assertions liberally—prefer helpers from the `asserts` module—and use
 `opt_util.py` helpers where applicable. Avoid multi-line conditional
 (`if`/`else`) *expressions*; use an `if` statement instead, or a `match` statement when
-dispatching on a small closed set of cases.
+dispatching on a small closed set of cases. Give an empty body, such as an `@overload` stub or
+an abstract method, a `pass` statement on its own line rather than `...`. The exception is a
+`Protocol` member that returns a value, which the type checker accepts only with `...`.
 
 ## Testing Guidelines
 
@@ -72,7 +74,10 @@ tests `test_<behavior>`. Add focused unit tests beside the closest feature cover
 use the `compiler` fixture from `conftest.py` for compile/run assertions; its implementation
 is in `tests/harness.py`. Run the full suite, lint, and type checks before submitting. No
 numeric coverage threshold is configured; new behavior and regressions should be covered
-explicitly.
+explicitly. Identify a diagnostic by its kind (`diag_kinds.X`) and location, not its message
+text, so that rewording a message doesn't break tests. Check the text only for a term that
+matters, such as the name of the item the diagnostic is about, and with `in` rather than
+comparing the whole message.
 
 ## Review Guidelines
 

@@ -1119,7 +1119,7 @@ class Mod:
         impl.check_comptime_params_constrained()
         # Checked before building any method: two impls of the same trait
         # for the same (or overlapping) self type would otherwise collide
-        # on method naming first (DuplicateItemDefnError), a less specific
+        # on method naming first (duplicate-definition), a less specific
         # diagnostic than the coherence violation it actually is. This is
         # also what checks the orphan rule (see
         # `ir_traits.Impl.check_orphan_rule`). The impl is registered only

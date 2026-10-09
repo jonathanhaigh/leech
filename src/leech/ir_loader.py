@@ -16,7 +16,7 @@ import pathlib
 from collections.abc import Collection
 from typing import Final, Optional
 
-from leech import asserts, ast, compilation, diag, errors, ir_module, parse, src, typs
+from leech import asserts, ast, compilation, diag, diag_kinds, errors, ir_module, parse, src, typs
 
 #: Resolved package directory containing the bundled standard library.
 _BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
@@ -156,8 +156,10 @@ class ModLoader:
         """Resolve an import path to the module it names."""
         seg_with_args = next((seg for seg in path.segs if seg.comptime_args), None)
         if seg_with_args is not None:
-            raise errors.ComptimeArgsOnNonGenericItemError(
-                seg_with_args.ident.name, seg_with_args.span
+            self.ctx.diags.raise_error(
+                diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,
+                seg_with_args.span,
+                item=seg_with_args.ident.name,
             )
 
         idents = tuple(seg.ident.name for seg in path.segs)

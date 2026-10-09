@@ -6,7 +6,18 @@ import pathlib
 
 import pytest
 
-from leech import asserts, compilation, diag, errors, ir_env, ir_loader, ir_module, src, typs
+from leech import (
+    asserts,
+    compilation,
+    diag,
+    diag_kinds,
+    errors,
+    ir_env,
+    ir_loader,
+    ir_module,
+    src,
+    typs,
+)
 from tests import harness
 
 
@@ -251,9 +262,10 @@ def test_env_binding_checks_the_name_before_the_block(compiler):
     ran = False
 
     with (
-        pytest.raises(errors.DuplicateItemDefnError),
+        pytest.raises(diag.ReportedError) as exc_info,
         env.binding(ir_env.Env.Namespace.CONTAINERS, "t", _span(compiler)),
     ):
         ran = True
 
     assert not ran
+    assert exc_info.value.reported.diag.kind == diag_kinds.DUPLICATE_DEFINITION

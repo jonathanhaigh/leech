@@ -65,56 +65,6 @@ class UserError(Exception):
         return self.message.span
 
 
-class ItemNotFoundError(UserError):
-    """Raised when a name cannot be resolved in scope."""
-
-    kind = diag_kinds.UNKNOWN_NAME
-
-    def __init__(self, item_kind: str, name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'{_sentence_case(item_kind)} "{name}" not found.', span)
-
-
-class PathTargetKindError(UserError):
-    """Raised when a resolved path names a different kind of item than required."""
-
-    kind = diag_kinds.PATH_KIND_MISMATCH
-
-    def __init__(
-        self,
-        path: str,
-        actual_kind: str,
-        expected_kind: str,
-        span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(
-            ERROR,
-            f'Path "{path}" names a {actual_kind}, not a {expected_kind}',
-            span,
-        )
-
-
-class ItemCannotQualifyPathError(UserError):
-    """Raised when a resolved item appears before the end of a path but is not a scope."""
-
-    kind = diag_kinds.PATH_QUALIFIER_KIND_MISMATCH
-
-    def __init__(self, item_kind: str, name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'{_sentence_case(item_kind)} "{name}" cannot qualify a path', span)
-
-
-class MissingComptimeArgsError(UserError):
-    """Raised when a generic item is used as a value without required comptime arguments."""
-
-    kind = diag_kinds.MISSING_COMPTIME_ARGUMENT
-
-    def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'Generic item "{item_name}" used without required comptime arguments',
-            span,
-        )
-
-
 class CannotInferComptimeArgError(UserError):
     """Raised when a generic item's use can't determine one of its
     comptime parameters from the types around it, and no explicit
@@ -159,19 +109,6 @@ class WrongNumberOfComptimeArgsError(UserError):
         )
 
 
-class ComptimeArgsOnNonGenericItemError(UserError):
-    """Raised when comptime arguments are given for an item that isn't generic."""
-
-    kind = diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT
-
-    def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(
-            ERROR,
-            f'"{item_name}" is not generic and cannot take arguments',
-            span,
-        )
-
-
 class WrongKindOfComptimeArgError(UserError):
     """Raised when a type argument is given for a value parameter, or a
     value argument is given for a type parameter."""
@@ -198,26 +135,6 @@ class WrongComptimeValueTypError(UserError):
             f'Value "{arg_name}" does not have the expected type "{expected_typ_name}"',
             span,
         )
-
-
-class PrivateItemAccessError(UserError):
-    """Raised when accessing a private module-level item (function,
-    variable, or type) from outside the module it's defined in (or, for an
-    associated function, from outside the module its struct is defined
-    in)."""
-
-    kind = diag_kinds.PRIVATE_ITEM_ACCESS
-
-    def __init__(
-        self,
-        item_kind: str,
-        name: str,
-        access_span: Optional[src.SrcSpan],
-        defn_span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(ERROR, f'{_sentence_case(item_kind)} "{name}" is private', access_span)
-        if defn_span is not None:
-            self._add_extra(NOTE, f'{_sentence_case(item_kind)} "{name}" defined here', defn_span)
 
 
 class AssignToConstError(UserError):
@@ -274,23 +191,6 @@ class IncompatibleLetTypError(UserError):
         )
         if declared_span is not None:
             self._add_extra(NOTE, f'Declared with type "{declared_typ}" here', declared_span)
-
-
-class DuplicateItemDefnError(UserError):
-    """Raised when a name is defined more than once in the same scope."""
-
-    kind = diag_kinds.DUPLICATE_DEFINITION
-
-    def __init__(
-        self,
-        item_kind: str,
-        name: str,
-        span: Optional[src.SrcSpan],
-        existing_span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(ERROR, f'Duplicate definition of {item_kind} "{name}"', span)
-        if existing_span is not None:
-            self._add_extra(NOTE, "Previous definition here", existing_span)
 
 
 class ConflictingExternDeclError(UserError):
@@ -659,51 +559,6 @@ class ArrayLitLengthNotConcreteError(UserError):
             "Array literal's length must be a concrete value, not a generic value parameter",
             span,
         )
-
-
-class ModUsedAsTypError(UserError):
-    """Raised when a module name is used where a type is required.
-
-    Modules share a namespace with types (so the two can't share a name),
-    but a module isn't a type: it can only qualify a path.
-    """
-
-    kind = diag_kinds.MODULE_USED_AS_TYPE
-
-    def __init__(self, mod_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'Module "{mod_name}" cannot be used as a type', span)
-        self._add_extra(
-            NOTE,
-            f'A module name can only qualify a path, e.g. "{mod_name}::SomeTyp"',
-            None,
-        )
-
-
-class TraitUsedAsTypError(UserError):
-    """Raised when a trait name is used where a type is required.
-
-    Traits share the ``CONTAINERS`` namespace with types and modules (so
-    none of the three can share a name), but a trait isn't itself a type -
-    only a bound on one, or the target of an ``impl ... for ...`` block.
-    """
-
-    kind = diag_kinds.TRAIT_USED_AS_TYPE
-
-    def __init__(self, trait_name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'Trait "{trait_name}" cannot be used as a type', span)
-
-
-class ValueUsedAsTypError(UserError):
-    """Raised when a comptime value or value parameter is used where a type is required.
-
-    A value parameter's type constrains it, but the parameter itself - or
-    a concrete value substituted for it - is never itself a type.
-    """
-
-    kind = diag_kinds.VALUE_USED_AS_TYPE
-
-    def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, f'Value "{name}" cannot be used as a type', span)
 
 
 class TraitMethodMissingReceiverError(UserError):

@@ -47,7 +47,8 @@ class OptionGroup(abc.ABC):
     """Options several commands share, and how they configure a session."""
 
     @abc.abstractmethod
-    def add_arguments(self, parser: argparse.ArgumentParser) -> None: ...
+    def add_arguments(self, parser: argparse.ArgumentParser) -> None:
+        pass
 
     def validate(  # noqa: B027 - intentionally empty default, not abstract
         self, parser: argparse.ArgumentParser, args: argparse.Namespace

@@ -365,8 +365,14 @@ covers `ir_builder.CfgBuilder`, which takes the `Ctx` and reports the unreachabl
 
 ```python
 class Diags:
-    def error(self, d: Diag) -> ReportProof: ...  # d's kind must be an error kind
-    def warn(self, d: Diag) -> None: ...  # d's kind must be a warning kind
+    # Each reporting method takes a built Diag, or a kind, a primary span and the kind's
+    # message arguments to build one from, as Diag.new does.
+    @overload
+    def error(self, d: Diag, /) -> ReportProof: ...  # d's kind must be an error kind
+    @overload
+    def error(self, kind: DiagKind, span: Optional[SrcSpan], /, **args: DiagArgValue) -> ReportProof: ...
+    def raise_error(self, ...) -> NoReturn: ...  # error(...), then raise ReportedError
+    def warn(self, ...) -> None: ...  # the kind must be a warning kind
     @contextlib.contextmanager
     def transaction(self) -> Iterator[Transaction]: ...
     @property
@@ -378,8 +384,11 @@ class Diags:
 There is no severity-agnostic public `emit`: callers know whether they are reporting an
 error or a warning, and each method has the signature that suits it. `error` and `warn`
 assert that the diagnostic's kind has the matching default level, so a mismatch is caught
-where it is made. A call site builds the diagnostic with `diag.Diag.new(kinds.X, span, ...)`;
-`TypCheck._error` wraps that for the type checker. `error` and `warn` both record a
+where it is made. A diagnostic without labels or notes is reported in one call, as in
+`ctx.diags.raise_error(kinds.UNKNOWN_NAME, span, item_kind=..., name=...)`. One with labels
+or notes is built with `diag.Diag.new(kinds.X, span, ...)` and its `with_*` methods, and then
+passed in. `raise_error` is the usual way to report an error that ends the current
+computation. `TypCheck._error` wraps `error` for the type checker. `error` and `warn` both record a
 diagnostic as follows. The sink:
 
 1. Applies the `WarningPolicy` (`-w`, `-Werror`, `-Wno-<name>`, ...) to get the effective
@@ -929,7 +938,9 @@ stderr afterwards, so consumers should use `leech build` when they need the log 
 ### Testing model
 
 Compiling a program with errors raises `CompilationError`. Tests assert the **full ordered
-list** of kinds, and keep their existing span and note assertions:
+list** of kinds, and keep their existing span and note assertions. They do not compare whole
+messages, so rewording a template breaks no test: a test checks only that a message contains
+a term that matters, such as the item's name, and identifies a note by its `MsgKind`:
 
 ```python
 with pytest.raises(diag.CompilationError) as exc_info:

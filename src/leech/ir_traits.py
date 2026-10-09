@@ -8,12 +8,14 @@ import contextlib
 import dataclasses
 import functools
 from collections.abc import Collection, Hashable, Iterator, Mapping
-from typing import Final, Optional
+from typing import Final, NoReturn, Optional
 
 from leech import (
     asserts,
     ast,
     compilation,
+    diag,
+    diag_kinds,
     errors,
     ir_env,
     ir_module,
@@ -128,8 +130,8 @@ class Trait:
                 raise errors.ReservedNameError(method.name, method_ast.name.span)
             existing = self._methods.get(method.name)
             if existing is not None:
-                raise errors.DuplicateItemDefnError(
-                    "trait method", method.name, method.span, existing.span
+                _raise_duplicate_definition(
+                    self.ctx, "trait method", method.name, method.span, existing.span
                 )
             self._methods[method.name] = method
 
@@ -301,8 +303,8 @@ class Impl:
             kind = "associated function" if trait is None else "method"
             assert fn.ast is not None
             assert existing.ast is not None
-            raise errors.DuplicateItemDefnError(
-                kind, fn.name, fn.ast.name.span, existing.ast.name.span
+            _raise_duplicate_definition(
+                self.env.ctx, kind, fn.name, fn.ast.name.span, existing.ast.name.span
             )
         if trait_method is not None:
             assert trait is not None
@@ -453,7 +455,8 @@ class ImplRegistry:
             for fn_ast in inherent_impl.ast.fn_defns:
                 existing_span = existing_name_spans.get(fn_ast.name.name)
                 if existing_span is not None:
-                    raise errors.DuplicateItemDefnError(
+                    _raise_duplicate_definition(
+                        self.ctx,
                         "associated function",
                         fn_ast.name.name,
                         fn_ast.name.span,
@@ -628,3 +631,16 @@ def disambiguate[T](
     if len(matches) > 1:
         raise errors.AmbiguousMethodError(name, typ_name, span)
     return matches[0] if matches else None
+
+
+def _raise_duplicate_definition(
+    ctx: compilation.Ctx,
+    item_kind: str,
+    name: str,
+    span: Optional[src.SrcSpan],
+    previous_span: Optional[src.SrcSpan],
+) -> NoReturn:
+    d = diag.Diag.new(diag_kinds.DUPLICATE_DEFINITION, span, item_kind=item_kind, name=name)
+    if previous_span is not None:
+        d = d.with_note(diag_kinds.PREVIOUS_DEFN_HERE, previous_span)
+    ctx.diags.raise_error(d)

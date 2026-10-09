@@ -9,14 +9,14 @@ import contextlib
 import dataclasses
 import enum
 from collections.abc import Iterator
-from typing import Final, Optional, cast
+from typing import Final, NoReturn, Optional, cast
 
 from leech import (
     asserts,
     ast,
     compilation,
     diag,
-    errors,
+    diag_kinds,
     ir_module,
     ir_traits,
     ir_values,
@@ -185,7 +185,12 @@ class Env:
             existing_span = opt_util.opt_or_default(
                 self._spans.get(key), ast.opt_span(self.items[key])
             )
-            raise errors.DuplicateItemDefnError(ns.item_kind(), name, span, existing_span)
+            d = diag.Diag.new(
+                diag_kinds.DUPLICATE_DEFINITION, span, item_kind=ns.item_kind(), name=name
+            )
+            if existing_span is not None:
+                d = d.with_note(diag_kinds.PREVIOUS_DEFN_HERE, existing_span)
+            self.ctx.diags.raise_error(d)
 
     def poison(
         self, ns: Env.Namespace, name: str, reported: diag.ReportProof, span: src.SrcSpan
@@ -257,7 +262,7 @@ class Env:
                         res = None
                     else:
                         item_kind, defn_span = diag_info
-                        raise errors.PrivateItemAccessError(
+                        self._raise_private_item_access(
                             item_kind, ident.name, ident.span, defn_span
                         )
             case typs.StructTyp():
@@ -266,7 +271,7 @@ class Env:
                 res = self._lookup_assoc_fn(ns, scope, ident)
             case typs.UnionTypTemplate():
                 # The one place a union template behaves unlike a struct
-                # template, which raises MissingComptimeArgsError here: a
+                # template, which reports missing-comptime-argument here: a
                 # variant's comptime arguments are inferable from its
                 # payload or its expected type, so naming one without them
                 # is how `Option::Some(x)` is meant to be written.
@@ -285,8 +290,24 @@ class Env:
                 )
 
         if res is None:
-            raise errors.ItemNotFoundError(ns.item_kind(), ident.name, ident.span)
+            self.ctx.diags.raise_error(
+                diag_kinds.UNKNOWN_NAME, ident.span, item_kind=ns.item_kind(), name=ident.name
+            )
         return res
+
+    def _raise_private_item_access(
+        self,
+        item_kind: str,
+        name: str,
+        access_span: src.SrcSpan,
+        defn_span: Optional[src.SrcSpan],
+    ) -> NoReturn:
+        d = diag.Diag.new(
+            diag_kinds.PRIVATE_ITEM_ACCESS, access_span, item_kind=item_kind, name=name
+        )
+        if defn_span is not None:
+            d = d.with_note(diag_kinds.DEFINED_HERE, defn_span, name=name)
+        self.ctx.diags.raise_error(d)
 
     def _lookup_assoc_fn(
         self,
@@ -301,9 +322,7 @@ class Env:
         # Private associated functions are invisible outside the type's own
         # module, same as private Mod items above.
         if selected_fn is not None and not selected_fn.is_accessible_from(ident.span.file):
-            raise errors.PrivateItemAccessError(
-                "function", ident.name, ident.span, selected_fn.span
-            )
+            self._raise_private_item_access("function", ident.name, ident.span, selected_fn.span)
         return res
 
     @staticmethod
@@ -333,7 +352,9 @@ class Env:
     ) -> ir_module.FnCandidate:
         if not fn.comptime_params:
             if seg.comptime_args:
-                raise errors.ComptimeArgsOnNonGenericItemError(fn.name, seg.span)
+                self.ctx.diags.raise_error(
+                    diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT, seg.span, item=fn.name
+                )
             explicit_fn_args: Optional[tuple[typs.Typ, ...]] = ()
         elif seg.comptime_args:
             explicit_fn_args = typs.resolve_explicit_comptime_args(
@@ -364,9 +385,11 @@ class Env:
                 impl_args = item.impl.comptime_params
             return self._apply_fn_path_seg(item, impl_args, seg)
 
-        if not seg.comptime_args:
-            return item
-        raise errors.ComptimeArgsOnNonGenericItemError(seg.ident.name, seg.span)
+        if seg.comptime_args:
+            self.ctx.diags.raise_error(
+                diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT, seg.span, item=seg.ident.name
+            )
+        return item
 
     def _resolve_path_seg(
         self,
@@ -405,18 +428,19 @@ class Env:
             ):
                 return "variable"
 
-    @staticmethod
-    def _require_path_scope(target: PathResult, seg: ast.PathSeg) -> PathScope:
+    def _require_path_scope(self, target: PathResult, seg: ast.PathSeg) -> PathScope:
         match target:
             case ir_module.Mod() | typs.StructTyp() | typs.EnumTyp() | typs.UnionTyp():
-                return target
+                pass
             case typs.UnionTypTemplate():
                 # A union template qualifies a path even unapplied, so that
                 # `Option::Some` can name a variant whose comptime
                 # arguments are still to be inferred.
-                return target
+                pass
             case typs.GenericTypTemplate():
-                raise errors.MissingComptimeArgsError(target.name, seg.span)
+                self.ctx.diags.raise_error(
+                    diag_kinds.MISSING_COMPTIME_ARGUMENT, seg.span, item=target.name
+                )
             case (
                 typs.Typ()
                 | typs.UnionVariantRef()
@@ -428,26 +452,40 @@ class Env:
                 | ast.LetStmt()
                 | ast.BindingPattern()
             ):
-                raise errors.ItemCannotQualifyPathError(
-                    Env._path_target_kind(target),
-                    target.name if isinstance(target, typs.Typ) else seg.ident.name,
+                name: diag.DiagArgValue = seg.ident.name
+                if isinstance(target, typs.Typ):
+                    name = target
+                self.ctx.diags.raise_error(
+                    diag_kinds.PATH_QUALIFIER_KIND_MISMATCH,
                     seg.span,
+                    item_kind=Env._path_target_kind(target),
+                    name=name,
                 )
+        return target
 
     def resolve_typ(self, path: ast.Path) -> typs.TypKind:
         """Resolve a qualified path whose final segment must be a type."""
         lookup, final_seg = self._lookup_final_path_seg(Env.Namespace.CONTAINERS, path)
         if isinstance(lookup, ir_traits.Trait):
             if final_seg.comptime_args and not lookup.comptime_params:
-                raise errors.ComptimeArgsOnNonGenericItemError(lookup.name, final_seg.span)
-            raise errors.TraitUsedAsTypError(lookup.name, final_seg.span)
+                self.ctx.diags.raise_error(
+                    diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT, final_seg.span, item=lookup.name
+                )
+            self.ctx.diags.raise_error(
+                diag_kinds.TRAIT_USED_AS_TYPE, final_seg.span, trait=lookup.name
+            )
         item = self._apply_path_seg(lookup, final_seg)
         if isinstance(item, ir_module.Mod):
-            raise errors.ModUsedAsTypError(item.name, final_seg.span)
+            d = diag.Diag.new(
+                diag_kinds.MODULE_USED_AS_TYPE, final_seg.span, mod=item.name
+            ).with_note(diag_kinds.MOD_QUALIFIES_PATHS, mod=item.name)
+            self.ctx.diags.raise_error(d)
         if isinstance(item, typs.ValueParamTyp | typs.ComptimeValueTyp):
-            raise errors.ValueUsedAsTypError(item.name, final_seg.span)
+            self.ctx.diags.raise_error(diag_kinds.VALUE_USED_AS_TYPE, final_seg.span, name=item)
         if isinstance(item, typs.GenericTypTemplate):
-            raise errors.MissingComptimeArgsError(item.name, final_seg.span)
+            self.ctx.diags.raise_error(
+                diag_kinds.MISSING_COMPTIME_ARGUMENT, final_seg.span, item=item.name
+            )
         assert isinstance(item, typs.Typ)
         return cast(typs.TypKind, item)
 
@@ -482,19 +520,26 @@ class Env:
         """Resolve a trait application and reject any other container kind."""
         target = self._resolve_container(path)
         if not isinstance(target, ir_traits.TraitApplication):
-            raise errors.PathTargetKindError(
-                path.str(), self._path_target_kind(target), "trait", path.span
-            )
+            self._raise_path_kind_mismatch(path, target, "trait")
         return target
 
     def resolve_comptime_value(self, path: ast.Path) -> typs.ValueParamTyp | typs.ComptimeValueTyp:
         """Resolve a comptime value and reject any other container kind."""
         target = self._resolve_container(path)
         if not isinstance(target, typs.ValueParamTyp | typs.ComptimeValueTyp):
-            raise errors.PathTargetKindError(
-                path.str(), self._path_target_kind(target), "comptime value", path.span
-            )
+            self._raise_path_kind_mismatch(path, target, "comptime value")
         return target
+
+    def _raise_path_kind_mismatch(
+        self, path: ast.Path, target: PathResult, expected_kind: str
+    ) -> NoReturn:
+        self.ctx.diags.raise_error(
+            diag_kinds.PATH_KIND_MISMATCH,
+            path.span,
+            path=path.str(),
+            actual_kind=self._path_target_kind(target),
+            expected_kind=expected_kind,
+        )
 
     def resolve_var(self, path: ast.Path) -> resolve.VarTarget:
         """Resolve a variable path and verify its namespace's result invariant."""

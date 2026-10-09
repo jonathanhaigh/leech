@@ -18,7 +18,7 @@ def test_unexpected_character_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_CHARACTER,)
 
     err = exc_info.value.diags[0]
-    assert str(err) == 'unexpected character "@"'
+    assert '"@"' in str(err)
     harness.assert_span_at(err.span, src, "@")
 
     # Unlike an unexpected token, there's no "expected" note: the lexer
@@ -37,12 +37,13 @@ def test_unexpected_token_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_TOKEN,)
 
     err = exc_info.value.diags[0]
-    assert str(err) == 'unexpected token "}"'
+    assert '"}"' in str(err)
     harness.assert_span_at(err.span, src, "}")
 
     assert isinstance(err, diag.Diag)
     (note,) = err.notes
-    assert note.msg.text() == 'expected one of: ";"'
+    assert note.msg.kind is diag_kinds.EXPECTED_ONE_OF
+    assert '";"' in note.msg.text()
     assert note.span is None
 
 
@@ -55,7 +56,7 @@ def test_unexpected_end_of_input_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_TOKEN,)
 
     err = exc_info.value.diags[0]
-    assert str(err) == "unexpected end of input"
+    assert "end of input" in str(err)
 
     span = err.span
     assert span is not None
@@ -126,16 +127,15 @@ def test_private_fn_access_message(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"f"' in msg
-    assert "private" in msg
+    err = exc_info.value.diags[0]
+    assert '"f"' in str(err)
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "f()")
 
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
-    note = harness.user_error(exc_info.value.diags[0]).extra[0]
-    assert note.message == 'Function "f" defined here'
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
+    assert note.msg.kind is diag_kinds.DEFINED_HERE
     harness.assert_span_at(note.span, a_src, "fn f()")
 
 
@@ -153,16 +153,15 @@ def test_private_var_access_message(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"x"' in msg
-    assert "private" in msg
+    err = exc_info.value.diags[0]
+    assert '"x"' in str(err)
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "x")
 
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
-    note = harness.user_error(exc_info.value.diags[0]).extra[0]
-    assert note.message == 'Variable "x" defined here'
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
+    assert note.msg.kind is diag_kinds.DEFINED_HERE
     harness.assert_span_at(note.span, a_src, "let x")
 
 
@@ -183,16 +182,15 @@ def test_private_typ_access_message(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"T"' in msg
-    assert "private" in msg
+    err = exc_info.value.diags[0]
+    assert '"T"' in str(err)
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "T{")
 
-    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
-    note = harness.user_error(exc_info.value.diags[0]).extra[0]
-    assert note.message == 'Type "T" defined here'
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
+    assert note.msg.kind is diag_kinds.DEFINED_HERE
     harness.assert_span_at(note.span, a_src, "struct T")
 
 
@@ -251,9 +249,8 @@ def test_mod_used_as_typ_message(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert exc_info.value.kinds == (diag_kinds.MODULE_USED_AS_TYPE,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"a"' in msg
-    assert "cannot be used as a type" in msg
+    err = exc_info.value.diags[0]
+    assert '"a"' in str(err)
 
     # The caret points at the path segment naming the module, not at the
     # import that bound it.
@@ -262,8 +259,10 @@ def test_mod_used_as_typ_message(compiler):
 
     # The note has no span of its own - a module's AST node covers its
     # whole file, so there's nothing useful to point at.
-    (note,) = harness.user_error(exc_info.value.diags[0]).extra
-    assert 'e.g. "a::SomeTyp"' in note.message
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
+    assert note.msg.kind is diag_kinds.MOD_QUALIFIES_PATHS
+    assert '"a::' in note.msg.text()
     assert note.span is None
 
 
@@ -286,7 +285,7 @@ def test_mod_and_typ_name_clash_message(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
-    assert str(exc_info.value.diags[0]) == 'Duplicate definition of type or module "a"'
+    assert "type or module" in str(exc_info.value.diags[0])
 
 
 def test_conflicting_extern_decl_message(compiler):
@@ -315,7 +314,10 @@ pub fn main() i32 { 0 }
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "fn id[U]")
-    (note,) = harness.user_error(exc_info.value.diags[0]).extra
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
+    assert note.msg.kind is diag_kinds.PREVIOUS_DEFN_HERE
     harness.assert_span_at(note.span, src, "fn id[T]")
 
 
@@ -336,15 +338,16 @@ def test_overlapping_inherent_impl_assoc_fn_name_clash_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"get"' in msg
-    assert "associated function" in msg
+    err = exc_info.value.diags[0]
+    assert '"get"' in str(err)
+    assert "associated function" in str(err)
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "get(*self) i32 { 1 }")
 
-    (note,) = harness.user_error(exc_info.value.diags[0]).extra
-    assert note.message == "Previous definition here"
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
+    assert note.msg.kind is diag_kinds.PREVIOUS_DEFN_HERE
     harness.assert_span_at(note.span, src, "get(*self) i32 { 0 }")
 
 
@@ -714,9 +717,7 @@ pub fn main() i32 {
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.MISSING_COMPTIME_ARGUMENT,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"id"' in msg
-    assert "without required comptime arguments" in msg
+    assert '"id"' in str(exc_info.value.diags[0])
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "id;")
@@ -777,9 +778,7 @@ pub fn main() i32 {
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"f"' in msg
-    assert "not generic" in msg
+    assert '"f"' in str(exc_info.value.diags[0])
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "f[i32](5)")
@@ -788,29 +787,29 @@ pub fn main() i32 {
 @pytest.mark.parametrize(
     ("src", "qualifier", "item_kind", "item_name"),
     [
-        ("pub fn main() i32 { return i32::x; }", "i32::x", "Type", "i32"),
+        ("pub fn main() i32 { return i32::x; }", "i32::x", "type", "i32"),
         (
             "pub fn main() i32 { return array[i32, 3]::x; }",
             "array[i32, 3]::x",
-            "Type",
+            "type",
             "array[i32, 3]",
         ),
         (
             "trait Show { fn show(*self) i32; } pub fn main() i32 { return Show::x; }",
             "Show::x",
-            "Trait",
+            "trait",
             "Show",
         ),
         (
             "fn f[T]() i32 { return T::x; } pub fn main() i32 { return 0; }",
             "T::x",
-            "Type parameter",
+            "type parameter",
             "T",
         ),
         (
             "fn f[value N: usize]() i32 { return N::x; } pub fn main() i32 { return 0; }",
             "N::x",
-            "Value",
+            "value",
             "N",
         ),
     ],
@@ -820,7 +819,7 @@ def test_non_scope_item_cannot_qualify_path(compiler, src, qualifier, item_kind,
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PATH_QUALIFIER_KIND_MISMATCH,)
 
-    assert str(exc_info.value.diags[0]) == f'{item_kind} "{item_name}" cannot qualify a path'
+    assert f'{item_kind} "{item_name}"' in str(exc_info.value.diags[0])
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, qualifier)
 
@@ -916,3 +915,47 @@ def test_infinite_size_union_message(compiler):
     (hop,) = harness.user_error(exc_info.value.diags[0]).extra
     assert hop.message == 'Payload 1 of variant "Node" of union "Tree" contains "Tree" by value'
     harness.assert_span_at(hop.span, src, "Tree),")
+
+
+@pytest.mark.parametrize(
+    ("src", "kind", "name", "at"),
+    [
+        (
+            "pub fn main() i32 { return missing; }",
+            diag_kinds.UNKNOWN_NAME,
+            '"missing"',
+            "missing;",
+        ),
+        (
+            "fn f(x: Missing) {}\npub fn main() i32 { return 0; }",
+            diag_kinds.UNKNOWN_NAME,
+            '"Missing"',
+            "Missing)",
+        ),
+        (
+            "trait Show { fn show(*self) i32; }\nfn f(x: Show) {}\npub fn main() i32 { return 0; }",
+            diag_kinds.TRAIT_USED_AS_TYPE,
+            '"Show"',
+            "Show) {}",
+        ),
+        (
+            "fn f[value N: usize](x: N) {}\npub fn main() i32 { return 0; }",
+            diag_kinds.VALUE_USED_AS_TYPE,
+            '"N"',
+            "N) {}",
+        ),
+        (
+            "struct S {}\nfn f[T: S]() {}\npub fn main() i32 { return 0; }",
+            diag_kinds.PATH_KIND_MISMATCH,
+            '"S"',
+            "S]",
+        ),
+    ],
+)
+def test_name_resolution_diags_name_the_item_where_it_is_used(compiler, src, kind, name, at):
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (kind,)
+
+    assert name in str(exc_info.value.diags[0])
+    harness.assert_span_at(exc_info.value.diags[0].span, src, at)

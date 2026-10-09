@@ -412,7 +412,7 @@ def test_execute_valid_case(tmp_path, markdown):
 pub fn main() i32 { return 0 }
 ```
 """,
-            'unexpected-token: unexpected token "}"',
+            "unexpected-token: ",
         ),
         (
             """```leech test=warning file=main.leech mode=compile

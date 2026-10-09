@@ -11,7 +11,7 @@ import pathlib
 import string
 import types
 from collections.abc import Hashable, Mapping, Sequence
-from typing import TYPE_CHECKING, Final, Optional, Protocol, Self
+from typing import TYPE_CHECKING, Final, NoReturn, Optional, Protocol, Self, overload
 
 from leech import src
 
@@ -286,18 +286,73 @@ class Diags:
         """
         self._file_ranks.setdefault(path.resolve(), len(self._file_ranks))
 
-    def error(self, err: AnyDiag) -> ReportProof:
-        """Record the error ``err`` unless it duplicates an earlier diagnostic.
+    @overload
+    def error(self, err: AnyDiag, /) -> ReportProof:
+        pass
 
-        Returns the proof of ``err``, or of the earlier diagnostic it duplicates.
+    @overload
+    def error(
+        self, kind: DiagKind, span: Optional[src.SrcSpan], /, **args: DiagArgValue
+    ) -> ReportProof:
+        pass
+
+    def error(
+        self,
+        err: AnyDiag | DiagKind,
+        span: Optional[src.SrcSpan] = None,
+        /,
+        **args: DiagArgValue,
+    ) -> ReportProof:
+        """Record an error unless it duplicates an earlier diagnostic.
+
+        The error is a diagnostic, or is built from a kind, a primary span and the kind's
+        message arguments, as ``Diag.new`` builds one. Returns its proof, or the proof of the
+        earlier diagnostic it duplicates.
         """
+        err = _built(err, span, args)
         assert err.level == ERROR, f"not an error: {err!r}"
         reported = self._record(err)
         assert reported is not None
         return reported
 
-    def warn(self, err: AnyDiag) -> None:
-        """Record the warning ``err`` unless it duplicates an earlier diagnostic."""
+    @overload
+    def raise_error(self, err: AnyDiag, /) -> NoReturn:
+        pass
+
+    @overload
+    def raise_error(
+        self, kind: DiagKind, span: Optional[src.SrcSpan], /, **args: DiagArgValue
+    ) -> NoReturn:
+        pass
+
+    def raise_error(
+        self,
+        err: AnyDiag | DiagKind,
+        span: Optional[src.SrcSpan] = None,
+        /,
+        **args: DiagArgValue,
+    ) -> NoReturn:
+        """Record an error as ``error`` does, then raise ``ReportedError`` with its proof."""
+        raise ReportedError(self.error(_built(err, span, args)))
+
+    @overload
+    def warn(self, err: AnyDiag, /) -> None:
+        pass
+
+    @overload
+    def warn(self, kind: DiagKind, span: Optional[src.SrcSpan], /, **args: DiagArgValue) -> None:
+        pass
+
+    def warn(
+        self,
+        err: AnyDiag | DiagKind,
+        span: Optional[src.SrcSpan] = None,
+        /,
+        **args: DiagArgValue,
+    ) -> None:
+        """Record a warning, given as ``error`` takes an error, unless it duplicates an earlier
+        diagnostic."""
+        err = _built(err, span, args)
         assert err.level == WARNING, f"not a warning: {err!r}"
         self._record(err)
 
@@ -350,6 +405,15 @@ class Diags:
     def any_error(self) -> Optional[ReportProof]:
         """The proof of the first error reported, if any."""
         return self._first_error
+
+
+def _built(
+    err: AnyDiag | DiagKind, span: Optional[src.SrcSpan], args: Mapping[str, DiagArgValue]
+) -> AnyDiag:
+    if isinstance(err, DiagKind):
+        return Diag.new(err, span, **args)
+    assert span is None and not args, "a built diagnostic takes no other arguments"
+    return err
 
 
 def _key(err: AnyDiag) -> Hashable:

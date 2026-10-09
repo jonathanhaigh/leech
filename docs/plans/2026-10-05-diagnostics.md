@@ -357,26 +357,28 @@ Sites without `as exc_info` gain one. Tests whose programs report more than one 
 are fixed by hand. `tests/doc.py` accepts `error=<name>`/`warning=<name>` (rejecting unknown names at
 collection), and any fences in `README.md`/`docs/guide/` and the `tests/test_doc.py` fixtures
 are rewritten. The raised diagnostics are still `UserError`s, with their existing message
-text, so message-text assertions are updated to the normalized wording as each module's raise
-sites move to the catalogue in Commit C. Only sites that compile through
+text, so message-text assertions are revisited as each module's raise sites move to the
+catalogue in Commit C: an assertion on a whole message becomes a check that the message
+contains its key terms, such as the item's name, and a note is identified by its `MsgKind`. Only sites that compile through
 `program.Program.check` are rewritten; tests that call the parser, loader or registry directly
 still expect the `UserError` class until their module is migrated.
 
 **Commit C… — migrate raise sites, one module per commit** (`parse`, `ir_env`, `typs`,
 `ir_traits`, `ir_module`, `ir_loader`, `comptime`, `typcheck`, `toolchain`/`program`/`cli`):
-`raise errors.X(...)` becomes
-`raise diag.ReportedError(e.ctx.diags.error(diag.Diag.new(kinds.X, span, ...)))` (or just
-`error`/`warn` where control continues), constructing labels and notes explicitly. Decide per
-diagnostic whether a spanned note becomes a `Label` or stays a `Note` (design rule), and
-give every diagnostic that has any source location a primary span (for example
+`raise errors.X(...)` becomes `e.ctx.diags.raise_error(kinds.X, span, ...)` (or `error`/`warn`
+where control continues), building a `Diag` explicitly when it has labels or notes. Decide per
+diagnostic whether a spanned note becomes a `Label` or stays a `Note` (design rule), and give
+every diagnostic that has any source location a primary span (for example
 `conflicting-branch-types` and `conflicting-match-arm-types` take the whole `if`/`match`
-expression, with the branches as labels). Delete each class once unused. `Diags.error`/`warn`
-accepts only `Diag` when the last class is gone. The first of these commits (`parse`) makes the
-sink, `ReportProof`, `CompilationError` and the text renderer accept a `Diag` beside a
-`UserError`. The renderer shows a `Diag`'s message and notes in the
-existing layout; the first module whose diagnostics have labels decides how that layout shows
-them. Tests read a not-yet-migrated diagnostic's `message` and `extra` through
-`harness.user_error`, which goes away with the last class.
+expression, with the branches as labels). A commit migrates every raise site of each class its
+module raises, in whichever module, and deletes the class, so a kind is never reported in both
+forms or with two wordings. `Diags.error`/`warn` accepts only `Diag` when the last class is
+gone. The first of these commits (`parse`) makes the sink, `ReportProof`, `CompilationError`
+and the text renderer accept a `Diag` beside a `UserError`; the next adds `Diags.raise_error`
+and lets the reporting methods build the `Diag`. The renderer shows a `Diag`'s
+message and notes in the existing layout; the first module whose diagnostics have labels
+decides how that layout shows them. Tests read a not-yet-migrated diagnostic's `message` and
+`extra` through `harness.user_error`, which goes away with the last class.
 
 **Final commit.** Delete `errors.py` and `TextErrorRenderer`'s dependence on it (the
 existing renderer moves to `diag_text.py` unchanged in layout, using catalogue messages);

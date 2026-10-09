@@ -18,6 +18,8 @@ from leech import (
     asserts,
     ast,
     check_results,
+    diag,
+    diag_kinds,
     errors,
     ir_env,
     ir_values,
@@ -656,12 +658,16 @@ class TypCheck:
             if method is not None:
                 selected_fn = method.fn
                 if not selected_fn.is_accessible_from(callee_ast.span.file):
-                    raise errors.PrivateItemAccessError(
-                        "function",
-                        callee_ast.field.name,
+                    name = callee_ast.field.name
+                    d = diag.Diag.new(
+                        diag_kinds.PRIVATE_ITEM_ACCESS,
                         callee_ast.field.span,
-                        selected_fn.span,
+                        item_kind="function",
+                        name=name,
                     )
+                    if selected_fn.span is not None:
+                        d = d.with_note(diag_kinds.DEFINED_HERE, selected_fn.span, name=name)
+                    e.ctx.diags.raise_error(d)
                 assert selected_fn.ast is not None
                 if selected_fn.ast.receiver is None:
                     raise errors.NotAMethodError(
@@ -907,7 +913,7 @@ class TypCheck:
 
         var = self._resolve_var(var_ast, e)
         if isinstance(var, ir_module.FnCandidate):
-            return self._fn_candidate_ptr_typ(var_ast, var)
+            return self._fn_candidate_ptr_typ(var_ast, var, e)
         if isinstance(var, ir_values.ComptimeEnum):
             # An enum variant is an immediate value with no address.
             return var.typ
@@ -1012,11 +1018,13 @@ class TypCheck:
         return template.instantiate(comptime_args)
 
     def _fn_candidate_ptr_typ(
-        self, var_ast: ast.VarExpr, candidate: ir_module.FnCandidate
+        self, var_ast: ast.VarExpr, candidate: ir_module.FnCandidate, e: ir_env.Env
     ) -> typs.PtrTyp:
         """Complete and record a function used without call inference context."""
         if candidate.explicit_fn_args is None:
-            raise errors.MissingComptimeArgsError(candidate.fn.name, var_ast.span)
+            e.ctx.diags.raise_error(
+                diag_kinds.MISSING_COMPTIME_ARGUMENT, var_ast.span, item=candidate.fn.name
+            )
         applied = candidate.apply(candidate.explicit_fn_args)
         self.results._set_applied_fn(var_ast, applied)
         return applied.ptr_typ
@@ -1162,7 +1170,7 @@ class TypCheck:
             # taking their address is a no-op rather than another indirection.
             var = self._resolve_var(expr_ast, e)
             if isinstance(var, ir_module.FnCandidate):
-                return self._fn_candidate_ptr_typ(expr_ast, var)
+                return self._fn_candidate_ptr_typ(expr_ast, var, e)
             if isinstance(var, ast.Param | ast.Receiver | ast.LetStmt | ast.BindingPattern):
                 return self.results.local_typ(var)
             # Immediate values fall through to a const temporary.

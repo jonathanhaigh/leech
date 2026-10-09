@@ -14,7 +14,6 @@ from leech import (
     compilation,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     ir_module,
     opt_util,
@@ -379,7 +378,7 @@ def test_a_failing_comptime_param_check_is_reported_once(compiler):
         proofs.append(exc_info.value.reported)
 
     assert proofs[0] is proofs[1]
-    assert [type(d) for d in ctx.diags.all()] == [errors.ItemNotFoundError]
+    assert [d.kind for d in ctx.diags.all()] == [diag_kinds.UNKNOWN_NAME]
 
 
 def test_struct_templates_and_instances_are_isolated_by_compilation_ctx(compiler):

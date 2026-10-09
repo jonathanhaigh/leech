@@ -265,9 +265,10 @@ def test_unexpected_character_error(tmp_path):
 
     assert proc.returncode == 1
     assert proc.stdout == ""
-    assert proc.stderr == (
-        'ERROR: unexpected character "@"\n2|     return 0 @ 1;\n----------------^\n'
-    )
+    lines = proc.stderr.splitlines()
+    assert lines[0].startswith("ERROR: ")
+    assert '"@"' in lines[0]
+    assert lines[1:] == ["2|     return 0 @ 1;", "----------------^"]
     assert listing(tmp_path) == {"main.leech"}
 
 
@@ -278,7 +279,13 @@ def test_unexpected_token_error(tmp_path):
 
     assert proc.returncode == 1
     assert proc.stdout == ""
-    assert proc.stderr == ('ERROR: unexpected token "}"\n3| }\n---^\nNOTE: expected one of: ";"\n')
+    lines = proc.stderr.splitlines()
+    assert lines[0].startswith("ERROR: ")
+    assert '"}"' in lines[0]
+    assert lines[1:3] == ["3| }", "---^"]
+    assert lines[3].startswith("NOTE: ")
+    assert '";"' in lines[3]
+    assert len(lines) == 4
     assert listing(tmp_path) == {"main.leech"}
 
 
@@ -291,13 +298,13 @@ def test_unexpected_end_of_input_error(tmp_path):
     assert proc.stdout == ""
     # The exact set of expected tokens is an implementation detail of the
     # grammar (e.g. it grows whenever a new prefix operator is added), so
-    # only the diagnostic's kind and source position are asserted exactly.
-    assert proc.stderr.startswith(
-        "ERROR: unexpected end of input\n"
-        "2|     return 0;\n"
-        "---------------^\n"
-        "NOTE: expected one of: "
-    )
+    # only the source position is asserted exactly.
+    lines = proc.stderr.splitlines()
+    assert lines[0].startswith("ERROR: ")
+    assert "end of input" in lines[0]
+    assert lines[1:3] == ["2|     return 0;", "---------------^"]
+    assert lines[3].startswith("NOTE: ")
+    assert len(lines) == 4
     assert listing(tmp_path) == {"main.leech"}
 
 

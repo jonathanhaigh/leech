@@ -10,7 +10,6 @@ from leech import (
     compilation,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     ir_module,
     ir_traits,
@@ -400,10 +399,11 @@ def test_same_block_duplicate_assoc_fn_reports_second_identifier_span(compiler):
         for fn_ast in impl_ast.fn_defns
     )
     impl.add_fn_symbol(first)
-    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+    with pytest.raises(diag.ReportedError) as exc_info:
         impl.add_fn_symbol(second)
 
-    span = exc_info.value.message.span
+    assert exc_info.value.reported.diag.kind == diag_kinds.DUPLICATE_DEFINITION
+    span = exc_info.value.reported.diag.span
     harness.assert_span_at(span, src, "duplicate() i32 { 2 }")
 
 
