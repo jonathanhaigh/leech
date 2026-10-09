@@ -172,7 +172,7 @@ class Command(abc.ABC):
         """Render the session's diagnostics that haven't been rendered yet, in source order."""
         errors.TextErrorRenderer().display_errors(self._take_unrendered(session))
 
-    def _take_unrendered(self, session: session_mod.Session) -> list[errors.UserError]:
+    def _take_unrendered(self, session: session_mod.Session) -> list[diag.AnyDiag]:
         unrendered = [err for err in session.diags.sorted() if id(err) not in self._rendered]
         self._rendered.update(id(err) for err in unrendered)
         return unrendered

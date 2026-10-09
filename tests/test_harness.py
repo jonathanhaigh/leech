@@ -192,9 +192,10 @@ def test_parse_records_explicit_mod_path(compiler: harness.CompilerHarness):
     assert parsed.span.file.path == compiler.workspace / "pkg/helper.leech"
 
 
-def test_parse_propagates_user_error(compiler: harness.CompilerHarness):
-    with pytest.raises(errors.UnexpectedTokenError):
+def test_parse_raises_a_reported_syntax_error(compiler: harness.CompilerHarness):
+    with pytest.raises(diag.ReportedError) as exc_info:
         compiler.parse("fn broken(")
+    assert exc_info.value.reported.diag.kind == diag_kinds.UNEXPECTED_TOKEN
 
 
 def test_build_materializes_imports(compiler: harness.CompilerHarness):

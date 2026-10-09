@@ -17,15 +17,14 @@ def test_unexpected_character_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_CHARACTER,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"@"' in msg
+    err = exc_info.value.diags[0]
+    assert str(err) == 'unexpected character "@"'
+    harness.assert_span_at(err.span, src, "@")
 
-    span = exc_info.value.diags[0].span
-    harness.assert_span_at(span, src, "@")
-
-    # Unlike UnexpectedTokenError, there's no "expected" note: the lexer
+    # Unlike an unexpected token, there's no "expected" note: the lexer
     # couldn't form a token at all, so there's nothing to enumerate.
-    assert exc_info.value.diags[0].extra == []
+    assert isinstance(err, diag.Diag)
+    assert err.notes == ()
 
 
 def test_unexpected_token_message(compiler):
@@ -37,15 +36,13 @@ def test_unexpected_token_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_TOKEN,)
 
-    msg = str(exc_info.value.diags[0])
-    assert '"}"' in msg
+    err = exc_info.value.diags[0]
+    assert str(err) == 'unexpected token "}"'
+    harness.assert_span_at(err.span, src, "}")
 
-    span = exc_info.value.diags[0].span
-    harness.assert_span_at(span, src, "}")
-
-    assert len(exc_info.value.diags[0].extra) == 1
-    note = exc_info.value.diags[0].extra[0]
-    assert note.message == 'Expected one of: ";"'
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
+    assert note.msg.text() == 'expected one of: ";"'
     assert note.span is None
 
 
@@ -57,24 +54,25 @@ def test_unexpected_end_of_input_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_TOKEN,)
 
-    msg = str(exc_info.value.diags[0])
-    assert "Unexpected end of input" in msg
+    err = exc_info.value.diags[0]
+    assert str(err) == "unexpected end of input"
 
-    span = exc_info.value.diags[0].span
+    span = err.span
     assert span is not None
     # Positioned right after the last real token, since there's nothing
     # left in the source for the span to point at directly.
     assert span.start_line == 2
 
-    assert len(exc_info.value.diags[0].extra) == 1
-    note = exc_info.value.diags[0].extra[0]
+    assert isinstance(err, diag.Diag)
+    (note,) = err.notes
     assert note.span is None
     # Many different statement/expression-starting tokens are valid here;
     # spot-check a representative few rather than the whole list (which
     # is checked exactly in test_cli.py's equivalent scenario).
-    assert '"return"' in note.message
-    assert '"}"' in note.message
-    assert "IDENT" in note.message
+    note_text = note.msg.text()
+    assert '"return"' in note_text
+    assert '"}"' in note_text
+    assert "IDENT" in note_text
 
 
 def test_private_struct_field_access_message(compiler):
@@ -106,8 +104,8 @@ def test_private_struct_field_access_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "val")
 
-    assert len(exc_info.value.diags[0].extra) == 1
-    note = exc_info.value.diags[0].extra[0]
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
+    note = harness.user_error(exc_info.value.diags[0]).extra[0]
     assert note.message == 'Field "val" defined here'
     harness.assert_span_at(note.span, a_src, "val")
 
@@ -135,8 +133,8 @@ def test_private_fn_access_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "f()")
 
-    assert len(exc_info.value.diags[0].extra) == 1
-    note = exc_info.value.diags[0].extra[0]
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
+    note = harness.user_error(exc_info.value.diags[0]).extra[0]
     assert note.message == 'Function "f" defined here'
     harness.assert_span_at(note.span, a_src, "fn f()")
 
@@ -162,8 +160,8 @@ def test_private_var_access_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "x")
 
-    assert len(exc_info.value.diags[0].extra) == 1
-    note = exc_info.value.diags[0].extra[0]
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
+    note = harness.user_error(exc_info.value.diags[0]).extra[0]
     assert note.message == 'Variable "x" defined here'
     harness.assert_span_at(note.span, a_src, "let x")
 
@@ -192,8 +190,8 @@ def test_private_typ_access_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "T{")
 
-    assert len(exc_info.value.diags[0].extra) == 1
-    note = exc_info.value.diags[0].extra[0]
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
+    note = harness.user_error(exc_info.value.diags[0]).extra[0]
     assert note.message == 'Type "T" defined here'
     harness.assert_span_at(note.span, a_src, "struct T")
 
@@ -264,7 +262,7 @@ def test_mod_used_as_typ_message(compiler):
 
     # The note has no span of its own - a module's AST node covers its
     # whole file, so there's nothing useful to point at.
-    (note,) = exc_info.value.diags[0].extra
+    (note,) = harness.user_error(exc_info.value.diags[0]).extra
     assert 'e.g. "a::SomeTyp"' in note.message
     assert note.span is None
 
@@ -302,7 +300,7 @@ def test_conflicting_extern_decl_message(compiler):
         'Extern function "write" is declared with type "fn(i32, *u8, u64) i32", but was '
         'declared with type "fn(i32, *u8, u64) i64"'
     )
-    (note,) = exc_info.value.diags[0].extra
+    (note,) = harness.user_error(exc_info.value.diags[0]).extra
     assert note.message == "Earlier declaration here"
 
 
@@ -317,7 +315,7 @@ pub fn main() i32 { 0 }
 
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "fn id[U]")
-    (note,) = exc_info.value.diags[0].extra
+    (note,) = harness.user_error(exc_info.value.diags[0]).extra
     harness.assert_span_at(note.span, src, "fn id[T]")
 
 
@@ -345,7 +343,7 @@ def test_overlapping_inherent_impl_assoc_fn_name_clash_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "get(*self) i32 { 1 }")
 
-    (note,) = exc_info.value.diags[0].extra
+    (note,) = harness.user_error(exc_info.value.diags[0]).extra
     assert note.message == "Previous definition here"
     harness.assert_span_at(note.span, src, "get(*self) i32 { 0 }")
 
@@ -373,8 +371,8 @@ def test_infinite_size_struct_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "struct A")
 
-    assert len(exc_info.value.diags[0].extra) == 2
-    first, second = exc_info.value.diags[0].extra
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 2
+    first, second = harness.user_error(exc_info.value.diags[0]).extra
     assert first.message == 'Field "b" of struct "A" contains "B" by value'
     harness.assert_span_at(first.span, src, "b: B")
     assert second.message == 'Field "a" of struct "B" contains "A" by value'
@@ -396,7 +394,7 @@ def test_wrong_number_of_payload_patterns_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
-    assert exc_info.value.diags[0].message.message == (
+    assert harness.user_error(exc_info.value.diags[0]).message.message == (
         'Wrong number of payload patterns for variant "Color::Red": got 1, expected 0'
     )
     span = exc_info.value.diags[0].span
@@ -422,8 +420,8 @@ def test_circular_var_initializer_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "let b")
 
-    assert len(exc_info.value.diags[0].extra) == 2
-    first, second = exc_info.value.diags[0].extra
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 2
+    first, second = harness.user_error(exc_info.value.diags[0]).extra
     assert first.message == 'Variable "b" defined here'
     harness.assert_span_at(first.span, src, "let b")
     assert second.message == 'Variable "a" defined here'
@@ -447,13 +445,13 @@ def test_recursive_trait_bound_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_TRAIT_BOUND,)
 
     assert (
-        exc_info.value.diags[0].message.message
+        harness.user_error(exc_info.value.diags[0]).message.message
         == 'Trait bound "Y[T]" is part of a recursive bound cycle'
     )
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "Y[T]] { fn x")
 
-    assert [note.message for note in exc_info.value.diags[0].extra] == [
+    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
         'Trait bound "Y[T]" participates in this cycle',
         'Trait bound "Z[T]" participates in this cycle',
         'Trait bound "X[T]" participates in this cycle',
@@ -462,7 +460,7 @@ def test_recursive_trait_bound_message(compiler):
         harness.src_position(src, text) for text in ("Y[T]] { fn x", "Z[T]] { fn y", "X[T]] { fn z")
     ]
     actual_spans = []
-    for note in exc_info.value.diags[0].extra:
+    for note in harness.user_error(exc_info.value.diags[0]).extra:
         assert note.span is not None
         actual_spans.append((note.span.start_line, note.span.start_col))
     assert actual_spans == expected_spans
@@ -481,19 +479,19 @@ def test_recursive_impl_selection_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
 
     assert (
-        exc_info.value.diags[0].message.message
+        harness.user_error(exc_info.value.diags[0]).message.message
         == 'Selecting an implementation of trait "A" for type "i32" is recursive'
     )
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "impl[T: B]")
 
-    assert [note.message for note in exc_info.value.diags[0].extra] == [
+    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
         'Implementation "<T as A>" participates in this cycle',
         'Implementation "<T as B>" participates in this cycle',
     ]
     expected_spans = [harness.src_position(src, text) for text in ("impl[T: B]", "impl[T: A]")]
     actual_spans = []
-    for note in exc_info.value.diags[0].extra:
+    for note in harness.user_error(exc_info.value.diags[0]).extra:
         assert note.span is not None
         actual_spans.append((note.span.start_line, note.span.start_col))
     assert actual_spans == expected_spans
@@ -622,8 +620,8 @@ def test_invalid_bin_op_arg_typ_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "true + 1")
 
-    assert len(exc_info.value.diags[0].extra) == 1
-    note = exc_info.value.diags[0].extra[0]
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
+    note = harness.user_error(exc_info.value.diags[0]).extra[0]
     assert '"+"' in note.message
     harness.assert_span_at(note.span, src, "+ 1")
 
@@ -645,8 +643,8 @@ def test_if_els_typ_mismatch_message(compiler):
     # Guards against a stray/missing quote in the hand-formatted message.
     assert '""' not in msg
 
-    assert len(exc_info.value.diags[0].extra) == 2
-    then_note, els_note = exc_info.value.diags[0].extra
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 2
+    then_note, els_note = harness.user_error(exc_info.value.diags[0]).extra
     assert '"i32"' in then_note.message
     harness.assert_span_at(then_note.span, src, "{ 1 }")
     assert '"*u8"' in els_note.message
@@ -672,11 +670,11 @@ def test_non_exhaustive_match_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "match (c)")
 
-    assert [note.message for note in exc_info.value.diags[0].extra] == [
+    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
         'Uncovered pattern "Color::Green"',
         'Uncovered pattern "Color::Blue"',
     ]
-    assert all(note.span is None for note in exc_info.value.diags[0].extra)
+    assert all(note.span is None for note in harness.user_error(exc_info.value.diags[0]).extra)
 
 
 def test_match_arm_typ_mismatch_message(compiler):
@@ -697,8 +695,8 @@ def test_match_arm_typ_mismatch_message(compiler):
     assert "mismatching types" in msg
     harness.assert_span_at(exc_info.value.diags[0].span, src, "match (true)")
 
-    assert len(exc_info.value.diags[0].extra) == 2
-    first_note, second_note = exc_info.value.diags[0].extra
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 2
+    first_note, second_note = harness.user_error(exc_info.value.diags[0]).extra
     assert '"i32"' in first_note.message
     harness.assert_span_at(first_note.span, src, "0i32")
     assert '"*u8"' in second_note.message
@@ -743,8 +741,8 @@ pub fn main() i32 {
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "id(5)")
 
-    assert len(exc_info.value.diags[0].extra) == 1
-    note = exc_info.value.diags[0].extra[0]
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
+    note = harness.user_error(exc_info.value.diags[0]).extra[0]
     assert '"id[' in note.message
 
 
@@ -866,10 +864,10 @@ def test_non_exhaustive_match_over_a_union_message(compiler):
     harness.assert_span_at(span, src, "match (o)")
 
     # The witness carries a payload column, which a wildcard stands for.
-    assert [note.message for note in exc_info.value.diags[0].extra] == [
+    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
         'Uncovered pattern "Option::Some(_)"',
     ]
-    assert all(note.span is None for note in exc_info.value.diags[0].extra)
+    assert all(note.span is None for note in harness.user_error(exc_info.value.diags[0]).extra)
 
 
 def test_wrong_number_of_payload_patterns_over_a_union_message(compiler):
@@ -886,7 +884,7 @@ def test_wrong_number_of_payload_patterns_over_a_union_message(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
-    assert exc_info.value.diags[0].message.message == (
+    assert harness.user_error(exc_info.value.diags[0]).message.message == (
         'Wrong number of payload patterns for variant "Pair::Both": got 1, expected 2'
     )
     span = exc_info.value.diags[0].span
@@ -914,7 +912,7 @@ def test_infinite_size_union_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "union Tree")
 
-    assert len(exc_info.value.diags[0].extra) == 1
-    (hop,) = exc_info.value.diags[0].extra
+    assert len(harness.user_error(exc_info.value.diags[0]).extra) == 1
+    (hop,) = harness.user_error(exc_info.value.diags[0]).extra
     assert hop.message == 'Payload 1 of variant "Node" of union "Tree" contains "Tree" by value'
     harness.assert_span_at(hop.span, src, "Tree),")

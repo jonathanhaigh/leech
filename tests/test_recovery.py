@@ -25,8 +25,8 @@ def test_errors_in_separate_bodies_are_all_reported_in_source_order(compiler):
     assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH, diag_kinds.UNKNOWN_NAME)
 
     found = exc_info.value.diags
-    harness.assert_span_at(found[0].message.span, src, "true")
-    harness.assert_span_at(found[1].message.span, src, "Missing")
+    harness.assert_span_at(found[0].span, src, "true")
+    harness.assert_span_at(found[1].span, src, "Missing")
 
 
 def test_broken_struct_used_by_several_functions_is_reported_once(compiler):
@@ -76,8 +76,8 @@ def test_errors_in_root_and_imported_modules_follow_load_order(compiler):
     assert paths == [compiler.workspace / "main.leech", compiler.workspace / "a.leech"]
 
 
-def opt_path(err: errors.UserError) -> pathlib.Path:
-    span = err.message.span
+def opt_path(err: diag.AnyDiag) -> pathlib.Path:
+    span = err.span
     assert span is not None
     return span.file.path
 
@@ -186,7 +186,7 @@ def test_build_reports_later_compilations_diagnostics_in_load_order(tmp_path):
     result = harness.build_exe(root)
 
     assert result.exe is not None
-    spans = [opt_util.opt_unwrap(d.message.span) for d in result.diags]
+    spans = [opt_util.opt_unwrap(d.span) for d in result.diags]
     assert [type(d) for d in result.diags] == [errors.UnreachableCodeWarning] * 2
     assert [span.file.path.name for span in spans] == ["app.leech", "a.leech"]
 

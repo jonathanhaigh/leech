@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MPL-2.0
 
+import dataclasses
 import pathlib
 
 import pytest
@@ -259,3 +260,73 @@ def test_compilation_error_lists_kinds_in_order():
 def test_compilation_error_needs_an_error():
     with pytest.raises(AssertionError):
         diag.CompilationError([errors.UnreachableCodeWarning("statement", None)])
+
+
+def test_diag_str_is_its_message(tmp_path):
+    d = diag.Diag.new(_ARG_KIND, _span(tmp_path / "a.leech"), name="x", typ=typs.BOOL)
+
+    assert str(d) == 'cannot use "x" of type "bool"'
+
+
+def test_diags_with_the_same_kind_messages_and_spans_are_duplicates(tmp_path):
+    span = _span(tmp_path / "a.leech")
+    other = _span(tmp_path / "b.leech")
+
+    def make(name: str, note_span: leech_src.SrcSpan) -> diag.Diag:
+        return (
+            diag.Diag.new(_ARG_KIND, span, name=name, typ=typs.BOOL)
+            .with_label(other, _NOTE_KIND, name=name)
+            .with_note(_NOTE_KIND, note_span, name=name)
+        )
+
+    diags = diag.Diags()
+    reported = diags.error(make("x", other))
+
+    # Arguments are compared as rendered, and source files by resolved path.
+    duplicate = make("x", _span(tmp_path / "." / "b.leech"))
+    duplicate = dataclasses.replace(
+        duplicate, msg=diag.Msg(_ARG_KIND, {"name": "x", "typ": "bool"})
+    )
+    assert diags.error(duplicate) is reported
+    assert diags.error(make("y", other)) is not reported
+    assert diags.error(make("x", span)) is not reported
+    assert len(diags.all()) == 3
+
+
+def test_diags_and_user_errors_are_sorted_together(tmp_path):
+    path = tmp_path / "a.leech"
+    file = leech_src.SrcFile(path)
+    late = errors.CcNotFoundError("cc")
+    later_span = leech_src.SrcSpan(file, 5, 6, 2, 2, 1, 2)
+    later = errors.UnreachableCodeWarning("statement", later_span)
+    early = diag.Diag.new(_ARG_KIND, _span(path), name="x", typ="i32")
+    diags = diag.Diags()
+
+    diags.error(late)
+    diags.warn(later)
+    diags.error(early)
+
+    assert diags.sorted() == (early, later, late)
+
+
+def test_text_renderer_shows_a_diags_message_and_notes(tmp_path, capsys):
+    path = tmp_path / "a.leech"
+    path.write_text("fn f() {}\n")
+    file = leech_src.SrcFile(path)
+    d = (
+        diag.Diag.new(_ARG_KIND, leech_src.SrcSpan(file, 3, 4, 1, 1, 4, 5), name="f", typ="i32")
+        .with_note(_NOTE_KIND, name="f")
+        .with_note(_NOTE_KIND, leech_src.SrcSpan(file, 0, 2, 1, 1, 1, 3), name="g")
+    )
+
+    errors.TextErrorRenderer().display_errors([d])
+
+    assert capsys.readouterr().err == (
+        'ERROR: cannot use "f" of type "i32"\n'
+        "1| fn f() {}\n"
+        "------^\n"
+        'NOTE: "f" defined here\n'
+        'NOTE: "g" defined here\n'
+        "1| fn f() {}\n"
+        "---^\n"
+    )

@@ -42,7 +42,7 @@ class BuildResult:
 
     #: The absolute path of the built executable, or ``None`` if the build failed.
     exe: Optional[pathlib.Path]
-    diags: tuple[errors.UserError, ...]
+    diags: tuple[diag.AnyDiag, ...]
 
 
 def build_exe(root: pathlib.Path) -> BuildResult:
@@ -57,12 +57,19 @@ def build_exe(root: pathlib.Path) -> BuildResult:
     return BuildResult(built, session.diags.sorted())
 
 
-def check_program(root: pathlib.Path) -> tuple[errors.UserError, ...]:
+def check_program(root: pathlib.Path) -> tuple[diag.AnyDiag, ...]:
     """Check a program as ``leech check`` does, returning its diagnostics in source order."""
     session = session_mod.Session()
     with common.reporting_user_errors(session):
         leech_program.Program(root, entry=True).check(session)
     return session.diags.sorted()
+
+
+def user_error(d: diag.AnyDiag) -> errors.UserError:
+    """Return ``d``, asserting that it is still reported as a ``UserError``, for assertions on
+    its ``message`` and ``extra``."""
+    assert isinstance(d, errors.UserError), f"{d!r} is a diag.Diag"
+    return d
 
 
 def emit_error_while_checking(monkeypatch) -> None:
@@ -213,10 +220,13 @@ class CompilerHarness:
         return paths
 
     def parse(self, src_or_mod: str | ModSrc) -> ast.Mod:
-        """Materialize and parse one module through the production parser boundary."""
+        """Materialize and parse one module through the production parser boundary.
+
+        A syntax error raises ``diag.ReportedError``, whose proof holds the diagnostic.
+        """
         mod = self._coerce_mod(src_or_mod)
         path = self.write_mod(mod)
-        return parse.parse_mod_ast(leech_src.SrcFile(path))
+        return parse.parse_mod_ast(leech_src.SrcFile(path), diag.Diags())
 
     def load(self, program: str | TestProgram) -> ir_module.Mod:
         """Load the root and its imports without checking anything, for inspecting IR lazily."""

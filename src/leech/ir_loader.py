@@ -16,7 +16,7 @@ import pathlib
 from collections.abc import Collection
 from typing import Final, Optional
 
-from leech import asserts, ast, compilation, errors, ir_module, parse, src, typs
+from leech import asserts, ast, compilation, diag, errors, ir_module, parse, src, typs
 
 #: Resolved package directory containing the bundled standard library.
 _BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
@@ -78,8 +78,17 @@ def root_package_dir(path: pathlib.Path, qualified_name: str) -> Optional[pathli
 
 @functools.cache
 def _parse_bundled_mod_ast(path: pathlib.Path) -> ast.Mod:
-    """Parse and process-cache a bundled source file's immutable AST."""
-    return parse.parse_mod_ast(src.SrcFile(path))
+    """Parse and process-cache a bundled source file's immutable AST.
+
+    A syntax error in the bundled library is a compiler bug, raised as
+    ``diag.InternalError``.
+    """
+    try:
+        return parse.parse_mod_ast(src.SrcFile(path), diag.Diags())
+    except diag.ReportedError as err:
+        raise diag.InternalError(
+            f"bundled module {path} has a syntax error: {err.reported.diag}"
+        ) from err
 
 
 class ModLoader:
@@ -185,7 +194,7 @@ class ModLoader:
         if mod_id.package == _STD_PACKAGE:
             mod_ast = _parse_bundled_mod_ast(key)
         else:
-            mod_ast = parse.parse_mod_ast(src.SrcFile(mod_id.file))
+            mod_ast = parse.parse_mod_ast(src.SrcFile(mod_id.file), self.ctx.diags)
         mod = ir_module.Mod(name, mod_ast, self.ctx)
         # Registered *before* building, so a module reached again while
         # it's still being built - i.e. an import cycle - gets this same

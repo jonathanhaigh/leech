@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 
-from leech import asserts, compilation, errors, ir_env, ir_loader, ir_module, src, typs
+from leech import asserts, compilation, diag, errors, ir_env, ir_loader, ir_module, src, typs
 from tests import harness
 
 
@@ -198,6 +198,14 @@ def test_bundled_module_root_is_named_in_the_std_package():
     assert loader.load_root(path, "std::io").name == "std::io"
     with pytest.raises(errors.ModNameLocationMismatchError):
         compilation.Ctx().loader.load_root(path, "io")
+
+
+def test_syntax_error_in_a_bundled_module_is_an_internal_error(tmp_path):
+    path = tmp_path / "broken.leech"
+    path.write_text("fn broken(")
+
+    with pytest.raises(diag.InternalError, match="has a syntax error: unexpected end of input"):
+        ir_loader._parse_bundled_mod_ast(path)
 
 
 def test_root_may_share_a_name_with_a_bundled_module(tmp_path):

@@ -367,7 +367,6 @@ covers `ir_builder.CfgBuilder`, which takes the `Ctx` and reports the unreachabl
 class Diags:
     def error(self, d: Diag) -> ReportProof: ...  # d's kind must be an error kind
     def warn(self, d: Diag) -> None: ...  # d's kind must be a warning kind
-    def fail(self, d: Diag) -> NoReturn: ...  # error(d), then raise ReportedError
     @contextlib.contextmanager
     def transaction(self) -> Iterator[Transaction]: ...
     @property

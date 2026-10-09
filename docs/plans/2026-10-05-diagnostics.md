@@ -364,13 +364,19 @@ still expect the `UserError` class until their module is migrated.
 
 **Commit C… — migrate raise sites, one module per commit** (`parse`, `ir_env`, `typs`,
 `ir_traits`, `ir_module`, `ir_loader`, `comptime`, `typcheck`, `toolchain`/`program`/`cli`):
-`raise errors.X(...)` becomes `e.ctx.diags.fail(diag.Diag.new(kinds.X, span, ...))` (or `error`/
-`warn` where control continues), constructing labels and notes explicitly. Decide per
+`raise errors.X(...)` becomes
+`raise diag.ReportedError(e.ctx.diags.error(diag.Diag.new(kinds.X, span, ...)))` (or just
+`error`/`warn` where control continues), constructing labels and notes explicitly. Decide per
 diagnostic whether a spanned note becomes a `Label` or stays a `Note` (design rule), and
 give every diagnostic that has any source location a primary span (for example
 `conflicting-branch-types` and `conflicting-match-arm-types` take the whole `if`/`match`
 expression, with the branches as labels). Delete each class once unused. `Diags.error`/`warn`
-accepts only `Diag` when the last class is gone.
+accepts only `Diag` when the last class is gone. The first of these commits (`parse`) makes the
+sink, `ReportProof`, `CompilationError` and the text renderer accept a `Diag` beside a
+`UserError`. The renderer shows a `Diag`'s message and notes in the
+existing layout; the first module whose diagnostics have labels decides how that layout shows
+them. Tests read a not-yet-migrated diagnostic's `message` and `extra` through
+`harness.user_error`, which goes away with the last class.
 
 **Final commit.** Delete `errors.py` and `TextErrorRenderer`'s dependence on it (the
 existing renderer moves to `diag_text.py` unchanged in layout, using catalogue messages);

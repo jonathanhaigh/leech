@@ -11,7 +11,7 @@ from typing import Optional
 
 import lark
 
-from leech import ast, errors, src
+from leech import ast, diag, diag_kinds, src
 
 _GRAMMAR_PATH = pathlib.Path(__file__).parent / "leech.lark"
 
@@ -59,17 +59,24 @@ def parse_qualified_name(value: str) -> Optional[tuple[str, ...]]:
     return segments
 
 
-def parse_mod_ast(file: src.SrcFile) -> ast.Mod:
-    """Parse a source file into a module AST with user-facing syntax errors."""
+def parse_mod_ast(file: src.SrcFile, diags: diag.Diags) -> ast.Mod:
+    """Parse a source file into a module AST.
+
+    A syntax error is reported to ``diags`` and raised as ``diag.ReportedError``.
+    """
     parser = build_parser("mod")
     try:
         tree = parser.parse(file.src)
     except lark.UnexpectedCharacters as err:
         span = src.SrcSpan.single_char(file, err.pos_in_stream, err.line, err.column)
-        raise errors.UnexpectedCharacterError(err.char, span) from err
+        d = diag.Diag.new(diag_kinds.UNEXPECTED_CHARACTER, span, char=err.char)
+        raise diag.ReportedError(diags.error(d)) from err
     except lark.UnexpectedToken as err:
         span = src.SrcSpan.from_lark_meta(file, err.token)
         found = "end of input" if err.token.type == "$END" else f'token "{err.token}"'
+        d = diag.Diag.new(diag_kinds.UNEXPECTED_TOKEN, span, found=found)
         expected = _describe_expected_tokens(parser, err.accepts or err.expected)
-        raise errors.UnexpectedTokenError(found, span, expected) from err
+        if expected:
+            d = d.with_note(diag_kinds.EXPECTED_ONE_OF, expected=", ".join(expected))
+        raise diag.ReportedError(diags.error(d)) from err
     return ast.Mod(file, tree)

@@ -266,7 +266,7 @@ def test_unexpected_character_error(tmp_path):
     assert proc.returncode == 1
     assert proc.stdout == ""
     assert proc.stderr == (
-        'ERROR: Unexpected character "@"\n2|     return 0 @ 1;\n----------------^\n'
+        'ERROR: unexpected character "@"\n2|     return 0 @ 1;\n----------------^\n'
     )
     assert listing(tmp_path) == {"main.leech"}
 
@@ -278,7 +278,7 @@ def test_unexpected_token_error(tmp_path):
 
     assert proc.returncode == 1
     assert proc.stdout == ""
-    assert proc.stderr == ('ERROR: Unexpected token "}"\n3| }\n---^\nNOTE: Expected one of: ";"\n')
+    assert proc.stderr == ('ERROR: unexpected token "}"\n3| }\n---^\nNOTE: expected one of: ";"\n')
     assert listing(tmp_path) == {"main.leech"}
 
 
@@ -293,10 +293,10 @@ def test_unexpected_end_of_input_error(tmp_path):
     # grammar (e.g. it grows whenever a new prefix operator is added), so
     # only the diagnostic's kind and source position are asserted exactly.
     assert proc.stderr.startswith(
-        "ERROR: Unexpected end of input\n"
+        "ERROR: unexpected end of input\n"
         "2|     return 0;\n"
         "---------------^\n"
-        "NOTE: Expected one of: "
+        "NOTE: expected one of: "
     )
     assert listing(tmp_path) == {"main.leech"}
 

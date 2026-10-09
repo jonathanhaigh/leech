@@ -103,5 +103,5 @@ class CheckedProgram:
         return module
 
 
-def _user_error_while_generating_ir(err: errors.UserError) -> diag.InternalError:
+def _user_error_while_generating_ir(err: diag.AnyDiag) -> diag.InternalError:
     return diag.InternalError(f"a user error was found while generating IR: {err}")

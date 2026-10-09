@@ -191,6 +191,14 @@ class Diag:
         """Return this diagnostic with a note following it."""
         return dataclasses.replace(self, notes=(*self.notes, Note(Msg(kind, args), span)))
 
+    def __str__(self) -> str:
+        """The rendered message."""
+        return self.msg.text()
+
+
+type AnyDiag = Diag | errors.UserError
+"""A diagnostic, as a catalogue ``Diag`` or as a ``UserError`` not yet moved to the catalogue."""
+
 
 _KEY: Final = object()
 """Guards ``ReportProof``'s constructor, so only ``Diags`` creates proofs."""
@@ -206,9 +214,9 @@ class ReportProof:
 
     __slots__ = ("diag",)
 
-    diag: Final[errors.UserError]
+    diag: Final[AnyDiag]
 
-    def __init__(self, key: object, diag: errors.UserError) -> None:
+    def __init__(self, key: object, diag: AnyDiag) -> None:
         assert key is _KEY, "only Diags can create a ReportProof"
         self.diag = diag
 
@@ -230,9 +238,9 @@ class CompilationError(Exception):
     order.
     """
 
-    diags: Final[tuple[errors.UserError, ...]]
+    diags: Final[tuple[AnyDiag, ...]]
 
-    def __init__(self, diags: Sequence[errors.UserError]) -> None:
+    def __init__(self, diags: Sequence[AnyDiag]) -> None:
         assert any(d.level == ERROR for d in diags), "a failed compilation has an error"
         super().__init__("compilation failed")
         self.diags = tuple(diags)
@@ -253,12 +261,12 @@ class InternalError(Exception):
 class Diags:
     """The diagnostics of one compilation, in emission order, without duplicates.
 
-    A diagnostic duplicates an earlier one when it has the same type, levels, messages and
+    A diagnostic duplicates an earlier one when it has the same kind, levels, messages and
     source locations. Source files are compared by resolved path, so diagnostics from
     separately loaded copies of a file are duplicates too.
     """
 
-    _diags: Final[list[errors.UserError]]
+    _diags: Final[list[AnyDiag]]
     #: Each distinct diagnostic's key, mapped to its proof if it is an error.
     _seen: Final[dict[Hashable, Optional[ReportProof]]]
     _first_error: Optional[ReportProof]
@@ -278,7 +286,7 @@ class Diags:
         """
         self._file_ranks.setdefault(path.resolve(), len(self._file_ranks))
 
-    def error(self, err: errors.UserError) -> ReportProof:
+    def error(self, err: AnyDiag) -> ReportProof:
         """Record the error ``err`` unless it duplicates an earlier diagnostic.
 
         Returns the proof of ``err``, or of the earlier diagnostic it duplicates.
@@ -288,12 +296,12 @@ class Diags:
         assert reported is not None
         return reported
 
-    def warn(self, err: errors.UserError) -> None:
+    def warn(self, err: AnyDiag) -> None:
         """Record the warning ``err`` unless it duplicates an earlier diagnostic."""
         assert err.level == WARNING, f"not a warning: {err!r}"
         self._record(err)
 
-    def _record(self, err: errors.UserError) -> Optional[ReportProof]:
+    def _record(self, err: AnyDiag) -> Optional[ReportProof]:
         """Record ``err`` unless it duplicates an earlier diagnostic, returning the proof of
         ``err`` or of the earlier diagnostic if it is an error."""
         key = _key(err)
@@ -308,11 +316,11 @@ class Diags:
         self._diags.append(err)
         return reported
 
-    def all(self) -> tuple[errors.UserError, ...]:
+    def all(self) -> tuple[AnyDiag, ...]:
         """Every distinct diagnostic, in emission order."""
         return tuple(self._diags)
 
-    def sorted(self) -> tuple[errors.UserError, ...]:
+    def sorted(self) -> tuple[AnyDiag, ...]:
         """Every distinct diagnostic, in source order.
 
         Diagnostics are ordered by their primary span's file in file order, then by its
@@ -322,8 +330,8 @@ class Diags:
         """
         return tuple(sorted(self._diags, key=self._source_order_key))
 
-    def _source_order_key(self, err: errors.UserError) -> tuple[int, int, str, int]:
-        span = err.message.span
+    def _source_order_key(self, err: AnyDiag) -> tuple[int, int, str, int]:
+        span = err.span
         if span is None:
             return (1, 0, "", 0)
         path = span.file.path.resolve()
@@ -344,19 +352,33 @@ class Diags:
         return self._first_error
 
 
-def _key(err: errors.UserError) -> Hashable:
-    return (type(err), *(_message_key(m) for m in (err.message, *err.extra)))
+def _key(err: AnyDiag) -> Hashable:
+    match err:
+        case Diag():
+            return (
+                err.kind,
+                err.level,
+                err.msg.text(),
+                _location(err.span),
+                _opt_text(err.primary_label),
+                *((_location(label.span), _opt_text(label.msg)) for label in err.labels),
+                *((note.msg.text(), _location(note.span)) for note in err.notes),
+            )
+        case _:
+            return (type(err), *(_message_key(m) for m in (err.message, *err.extra)))
 
 
 def _message_key(message: errors.Message) -> Hashable:
-    span = message.span
-    location = None
-    if span is not None:
-        location = (
-            span.file.path.resolve(),
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
-        )
-    return (message.level, message.message, location)
+    return (message.level, message.message, _location(message.span))
+
+
+def _opt_text(msg: Optional[Msg]) -> Optional[str]:
+    if msg is None:
+        return None
+    return msg.text()
+
+
+def _location(span: Optional[src.SrcSpan]) -> Hashable:
+    if span is None:
+        return None
+    return (span.file.path.resolve(), span.start_line, span.start_col, span.end_line, span.end_col)

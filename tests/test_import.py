@@ -823,9 +823,9 @@ def test_program_is_parsed_and_checked_once(compiler, monkeypatch):
     parsed = collections.Counter[str]()
     parse_mod_ast = parse.parse_mod_ast
 
-    def counting_parse(file: leech_src.SrcFile) -> ast.Mod:
+    def counting_parse(file: leech_src.SrcFile, diags: diag.Diags) -> ast.Mod:
         parsed[file.path.name] += 1
-        return parse_mod_ast(file)
+        return parse_mod_ast(file, diags)
 
     checked = collections.Counter[tuple[str, str]]()
     check_fn = typcheck.TypCheck.check_fn
@@ -934,7 +934,7 @@ def test_conflicting_extern_declarations_are_reported_at_the_later_one(compiler)
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)
 
     harness.assert_span_at(exc_info.value.diags[0].span, b_src, "extern fn puts")
-    (note,) = exc_info.value.diags[0].extra
+    (note,) = harness.user_error(exc_info.value.diags[0]).extra
     harness.assert_span_at(note.span, a_src, "extern fn puts")
 
 
@@ -946,7 +946,7 @@ def test_extern_conflicting_with_the_preludes_is_reported_at_the_programs(compil
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)
 
     harness.assert_span_at(exc_info.value.diags[0].span, src, "extern fn write")
-    (note,) = exc_info.value.diags[0].extra
+    (note,) = harness.user_error(exc_info.value.diags[0]).extra
     assert note.span is not None
     assert note.span.file.path.name == "prelude.leech"
 

@@ -7,7 +7,7 @@
 import dataclasses
 import pathlib
 import sys
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from typing import ClassVar, Final, Optional
 
 from leech import asserts, diag, diag_kinds, patterns, src
@@ -63,27 +63,6 @@ class UserError(Exception):
     def span(self) -> Optional[src.SrcSpan]:
         """The primary message's location."""
         return self.message.span
-
-
-class UnexpectedCharacterError(UserError):
-    """Raised when the lexer encounters a character that can't start any
-    valid token, given where it appears in the source."""
-
-    kind = diag_kinds.UNEXPECTED_CHARACTER
-
-    def __init__(self, char: str, span: src.SrcSpan) -> None:
-        super().__init__(ERROR, f'Unexpected character "{char}"', span)
-
-
-class UnexpectedTokenError(UserError):
-    """Raised for an unexpected token or premature end of input."""
-
-    kind = diag_kinds.UNEXPECTED_TOKEN
-
-    def __init__(self, found: str, span: src.SrcSpan, expected: Collection[str]) -> None:
-        super().__init__(ERROR, f"Unexpected {found}", span)
-        if expected:
-            self._add_extra(NOTE, f"Expected one of: {', '.join(expected)}", None)
 
 
 class ItemNotFoundError(UserError):
@@ -1944,15 +1923,17 @@ class DoctorFixNote(UserError):  # noqa: N818 - a note, not an error
 class TextErrorRenderer:
     """Renders diagnostics as plain text, with a source excerpt, to stderr."""
 
-    def display_errors(self, errs: list[UserError]) -> None:
+    def display_errors(self, errs: Sequence[diag.AnyDiag]) -> None:
         """Render each error in order."""
         for err in errs:
             self._display_error(err)
 
-    def display_internal_error(self, errs: Sequence[UserError], err: Exception, tool: str) -> None:
+    def display_internal_error(
+        self, errs: Sequence[diag.AnyDiag], err: Exception, tool: str
+    ) -> None:
         """Render the diagnostics found before ``tool`` crashed with ``err``, then report the
         crash as a bug in ``tool``."""
-        self.display_errors(list(errs))
+        self.display_errors(errs)
         self._display_message(
             Message(ERROR, f"internal compiler error: {type(err).__name__}: {err}", None)
         )
@@ -1964,10 +1945,17 @@ class TextErrorRenderer:
             )
         )
 
-    def _display_error(self, err: UserError) -> None:
-        self._display_message(err.message)
-        for message in err.extra:
-            self._display_message(message)
+    def _display_error(self, err: diag.AnyDiag) -> None:
+        match err:
+            case diag.Diag():
+                assert err.primary_label is None and not err.labels, "labels aren't shown yet"
+                self._display_message(Message(err.level, err.msg.text(), err.span))
+                for note in err.notes:
+                    self._display_message(Message(NOTE, note.msg.text(), note.span))
+            case UserError():
+                self._display_message(err.message)
+                for message in err.extra:
+                    self._display_message(message)
 
     def _display_message(self, message: Message) -> None:
         print(f"{message.level.name}: {message.message}", file=sys.stderr)

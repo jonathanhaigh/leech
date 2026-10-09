@@ -162,13 +162,13 @@ class DocCase:
             f"{self.loc.page}:{self.loc.line}: test={self.test_id}{mod_text}: {detail}"
         )
 
-    def _check_emitted_diags(self, emitted: tuple[errors.UserError, ...]) -> None:
+    def _check_emitted_diags(self, emitted: tuple[diag.AnyDiag, ...]) -> None:
         if self.expects_warning:
             self._check_emitted_warning(emitted)
         elif emitted:
             raise AssertionError(f"unexpected emitted diagnostics: {emitted!r}")
 
-    def _check_emitted_warning(self, emitted: tuple[errors.UserError, ...]) -> None:
+    def _check_emitted_warning(self, emitted: tuple[diag.AnyDiag, ...]) -> None:
         assert self.diag_kind is not None
         assert self.diag_excerpt is not None
         if len(emitted) != 1:
@@ -176,10 +176,9 @@ class DocCase:
         warning = emitted[0]
         if warning.kind is not self.diag_kind:
             raise AssertionError(f"expected warning {self.diag_kind.name}, got {warning.kind.name}")
-        if self.diag_excerpt not in warning.message.message:
+        if self.diag_excerpt not in str(warning):
             raise AssertionError(
-                f"warning message does not contain {self.diag_excerpt!r}: "
-                f"{warning.message.message!r}"
+                f"warning message does not contain {self.diag_excerpt!r}: {str(warning)!r}"
             )
 
     def _execute_expected_error(self, compiler: harness.CompilerHarness, diags: diag.Diags) -> None:
@@ -198,10 +197,9 @@ class DocCase:
             names = ", ".join(kind.name for kind in failed.kinds)
             raise AssertionError(f"expected only {self.diag_kind.name}, got {names}") from failed
         (err,) = failed.diags
-        assert isinstance(err, errors.UserError)
-        if self.diag_excerpt not in err.message.message:
+        if self.diag_excerpt not in str(err):
             raise AssertionError(
-                f"error message does not contain {self.diag_excerpt!r}: {err.message.message!r}"
+                f"error message does not contain {self.diag_excerpt!r}: {str(err)!r}"
             ) from failed
 
 
@@ -556,18 +554,22 @@ def parse_doc_page(page: pathlib.Path, markdown: str) -> list[DocCase]:
     return _DocPageParser(page).parse(markdown)
 
 
-def _describe_diag(d: errors.UserError) -> str:
-    return f"{d.kind.name}: {d.message.message}"
+def _describe_diag(d: diag.AnyDiag) -> str:
+    return f"{d.kind.name}: {d}"
 
 
 def _relative_mod_path_from_error(err: BaseException, tmp_path: pathlib.Path) -> Optional[str]:
-    reported: object = err
-    if isinstance(err, diag.CompilationError):
-        reported = err.diags[0]
-    if not isinstance(reported, errors.UserError) or reported.message.span is None:
+    match err:
+        case diag.CompilationError():
+            span = err.diags[0].span
+        case errors.UserError():
+            span = err.span
+        case _:
+            return None
+    if span is None:
         return None
     try:
-        return str(reported.message.span.file.path.resolve().relative_to(tmp_path.resolve()))
+        return str(span.file.path.resolve().relative_to(tmp_path.resolve()))
     except ValueError:
         return None
 

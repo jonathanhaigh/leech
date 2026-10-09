@@ -369,9 +369,12 @@ def test_mod_var_self_cycle(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
     assert (
-        exc_info.value.diags[0].message.message == 'Initializer of variable "a" depends on itself'
+        harness.user_error(exc_info.value.diags[0]).message.message
+        == 'Initializer of variable "a" depends on itself'
     )
-    assert [note.message for note in exc_info.value.diags[0].extra] == ['Variable "a" defined here']
+    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
+        'Variable "a" defined here'
+    ]
 
 
 def test_mod_var_cycle(compiler):
@@ -401,9 +404,10 @@ def test_mod_var_three_way_cycle(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
     assert (
-        exc_info.value.diags[0].message.message == 'Initializer of variable "a" depends on itself'
+        harness.user_error(exc_info.value.diags[0]).message.message
+        == 'Initializer of variable "a" depends on itself'
     )
-    assert [note.message for note in exc_info.value.diags[0].extra] == [
+    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
         'Variable "a" defined here',
         'Variable "b" defined here',
         'Variable "c" defined here',
@@ -430,9 +434,10 @@ def test_cross_module_var_cycle(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
     assert (
-        exc_info.value.diags[0].message.message == 'Initializer of variable "x" depends on itself'
+        harness.user_error(exc_info.value.diags[0]).message.message
+        == 'Initializer of variable "x" depends on itself'
     )
-    assert [note.message for note in exc_info.value.diags[0].extra] == [
+    assert [note.message for note in harness.user_error(exc_info.value.diags[0]).extra] == [
         'Variable "x" defined here',
         'Variable "y" defined here',
     ]
