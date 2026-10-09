@@ -8,9 +8,9 @@ import dataclasses
 import pathlib
 import sys
 from collections.abc import Collection, Sequence
-from typing import Final, Optional
+from typing import ClassVar, Final, Optional
 
-from leech import asserts, diag, patterns, src
+from leech import asserts, diag, diag_kinds, patterns, src
 
 Level = diag.Level
 NOTE = diag.NOTE
@@ -37,8 +37,12 @@ class Message:
 
 
 class UserError(Exception):
-    """A diagnostic with a primary message and optional accompanying messages."""
+    """A diagnostic with a primary message and optional accompanying messages.
 
+    ``kind`` is the diagnostic's entry in the catalogue.
+    """
+
+    kind: ClassVar[diag.DiagKind]
     message: Final[Message]
     extra: Final[list[Message]]
 
@@ -60,12 +64,16 @@ class UnexpectedCharacterError(UserError):
     """Raised when the lexer encounters a character that can't start any
     valid token, given where it appears in the source."""
 
+    kind = diag_kinds.UNEXPECTED_CHARACTER
+
     def __init__(self, char: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Unexpected character "{char}"', span)
 
 
 class UnexpectedTokenError(UserError):
     """Raised for an unexpected token or premature end of input."""
+
+    kind = diag_kinds.UNEXPECTED_TOKEN
 
     def __init__(self, found: str, span: src.SrcSpan, expected: Collection[str]) -> None:
         super().__init__(ERROR, f"Unexpected {found}", span)
@@ -76,12 +84,16 @@ class UnexpectedTokenError(UserError):
 class ItemNotFoundError(UserError):
     """Raised when a name cannot be resolved in scope."""
 
+    kind = diag_kinds.UNKNOWN_NAME
+
     def __init__(self, item_kind: str, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'{_sentence_case(item_kind)} "{name}" not found.', span)
 
 
 class PathTargetKindError(UserError):
     """Raised when a resolved path names a different kind of item than required."""
+
+    kind = diag_kinds.PATH_KIND_MISMATCH
 
     def __init__(
         self,
@@ -100,12 +112,16 @@ class PathTargetKindError(UserError):
 class ItemCannotQualifyPathError(UserError):
     """Raised when a resolved item appears before the end of a path but is not a scope."""
 
+    kind = diag_kinds.PATH_QUALIFIER_KIND_MISMATCH
+
     def __init__(self, item_kind: str, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'{_sentence_case(item_kind)} "{name}" cannot qualify a path', span)
 
 
 class MissingComptimeArgsError(UserError):
     """Raised when a generic item is used as a value without required comptime arguments."""
+
+    kind = diag_kinds.MISSING_COMPTIME_ARGUMENT
 
     def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -119,6 +135,8 @@ class CannotInferComptimeArgError(UserError):
     """Raised when a generic item's use can't determine one of its
     comptime parameters from the types around it, and no explicit
     comptime argument was given for it either."""
+
+    kind = diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT
 
     def __init__(
         self,
@@ -142,6 +160,8 @@ class WrongNumberOfComptimeArgsError(UserError):
     """Raised when a generic item is given the wrong number of explicit
     comptime arguments."""
 
+    kind = diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH
+
     def __init__(
         self, item_name: str, given: int, expected: int, span: Optional[src.SrcSpan]
     ) -> None:
@@ -158,6 +178,8 @@ class WrongNumberOfComptimeArgsError(UserError):
 class ComptimeArgsOnNonGenericItemError(UserError):
     """Raised when comptime arguments are given for an item that isn't generic."""
 
+    kind = diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT
+
     def __init__(self, item_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -170,6 +192,8 @@ class WrongKindOfComptimeArgError(UserError):
     """Raised when a type argument is given for a value parameter, or a
     value argument is given for a type parameter."""
 
+    kind = diag_kinds.COMPTIME_ARGUMENT_KIND_MISMATCH
+
     def __init__(self, param_name: str, arg_desc: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -181,6 +205,8 @@ class WrongKindOfComptimeArgError(UserError):
 class WrongComptimeValueTypError(UserError):
     """Raised when a value argument's type doesn't match its parameter's
     declared type."""
+
+    kind = diag_kinds.COMPTIME_ARGUMENT_TYPE_MISMATCH
 
     def __init__(self, arg_name: str, expected_typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -195,6 +221,8 @@ class PrivateItemAccessError(UserError):
     variable, or type) from outside the module it's defined in (or, for an
     associated function, from outside the module its struct is defined
     in)."""
+
+    kind = diag_kinds.PRIVATE_ITEM_ACCESS
 
     def __init__(
         self,
@@ -211,12 +239,16 @@ class PrivateItemAccessError(UserError):
 class AssignToConstError(UserError):
     """Raised when assigning through a const pointer or to a const place."""
 
+    kind = diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot assign to const place expression", span)
 
 
 class IncompatibleAssignmentTypError(UserError):
     """Raised when an assigned value's type doesn't match the place's."""
+
+    kind = diag_kinds.ASSIGNMENT_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -237,6 +269,8 @@ class IncompatibleAssignmentTypError(UserError):
 class IncompatibleLetTypError(UserError):
     """Raised when a ``let`` initializer's type doesn't match, and doesn't
     coerce to, its declared type."""
+
+    kind = diag_kinds.LET_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -261,6 +295,8 @@ class IncompatibleLetTypError(UserError):
 class DuplicateItemDefnError(UserError):
     """Raised when a name is defined more than once in the same scope."""
 
+    kind = diag_kinds.DUPLICATE_DEFINITION
+
     def __init__(
         self,
         item_kind: str,
@@ -276,6 +312,8 @@ class DuplicateItemDefnError(UserError):
 class ConflictingExternDeclError(UserError):
     """Raised when an extern function is declared with a different type from an earlier
     declaration of the same symbol."""
+
+    kind = diag_kinds.CONFLICTING_EXTERN_DECLARATIONS
 
     def __init__(
         self,
@@ -297,12 +335,16 @@ class ConflictingExternDeclError(UserError):
 class NotCallableError(UserError):
     """Raised when calling a value whose type isn't a function pointer."""
 
+    kind = diag_kinds.NON_FUNCTION_CALL
+
     def __init__(self, callee_diag: str, given_typ: str, span: Optional[src.SrcSpan]):
         super().__init__(ERROR, f'{callee_diag} of type "{given_typ}" is not callable', span)
 
 
 class InvalidArgTypError(UserError):
     """Raised when a call argument's type doesn't match the parameter's type."""
+
+    kind = diag_kinds.ARGUMENT_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -325,6 +367,8 @@ class InvalidArgTypError(UserError):
 
 class InvalidBinOpArgTypError(UserError):
     """Raised when a binary operator's operand has an unsupported type."""
+
+    kind = diag_kinds.BINARY_OPERAND_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -351,6 +395,8 @@ class InvalidBinOpArgTypError(UserError):
 class InvalidUnaryOpArgTypError(UserError):
     """Raised when a unary operator's operand has an unsupported type."""
 
+    kind = diag_kinds.UNARY_OPERAND_TYPE_MISMATCH
+
     def __init__(
         self,
         op: str,
@@ -375,6 +421,8 @@ class InvalidUnaryOpArgTypError(UserError):
 class IncompatibleBinOpArgTypsError(UserError):
     """Raised when a binary operator's operands have differing types."""
 
+    kind = diag_kinds.CONFLICTING_OPERAND_TYPES
+
     def __init__(
         self,
         op: str,
@@ -396,6 +444,8 @@ class IncompatibleBinOpArgTypsError(UserError):
 class TooManyArgsError(UserError):
     """Raised when a call passes more arguments than the callee takes."""
 
+    kind = diag_kinds.ARGUMENT_COUNT_MISMATCH
+
     def __init__(
         self,
         callee_diag: str,
@@ -412,6 +462,8 @@ class TooManyArgsError(UserError):
 
 class NotEnoughArgsError(UserError):
     """Raised when a call passes fewer arguments than the callee takes."""
+
+    kind = diag_kinds.ARGUMENT_COUNT_MISMATCH
 
     def __init__(
         self,
@@ -433,6 +485,8 @@ class NotEnoughArgsError(UserError):
 class InvalidRetTypError(UserError):
     """Raised when a ``return`` expression's type doesn't match the
     function's return type."""
+
+    kind = diag_kinds.RETURN_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -461,6 +515,8 @@ class InvalidRetTypError(UserError):
 class InvalidVoidRetError(UserError):
     """Raised when a value-less ``return`` appears in a non-void function."""
 
+    kind = diag_kinds.MISSING_RETURN_VALUE
+
     def __init__(
         self,
         fn_name: str,
@@ -484,12 +540,16 @@ class InvalidVoidRetError(UserError):
 class RetNotInFnError(UserError):
     """Raised when a ``return`` statement appears outside a function body."""
 
+    kind = diag_kinds.RETURN_OUTSIDE_FUNCTION
+
     def __init__(self, ret_span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Return statement not in function", ret_span)
 
 
 class BreakNotInLoopError(UserError):
     """Raised when a ``break`` statement appears outside any loop."""
+
+    kind = diag_kinds.BREAK_OUTSIDE_LOOP
 
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Break statement not in a loop", span)
@@ -498,12 +558,16 @@ class BreakNotInLoopError(UserError):
 class ContinueNotInLoopError(UserError):
     """Raised when a ``continue`` statement appears outside any loop."""
 
+    kind = diag_kinds.CONTINUE_OUTSIDE_LOOP
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Continue statement not in a loop", span)
 
 
 class LoopLabelNotFoundError(UserError):
     """Raised when a ``break``/``continue`` names a label no enclosing loop has."""
+
+    kind = diag_kinds.UNKNOWN_LOOP_LABEL
 
     def __init__(self, label_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Loop label "{label_name}" not found', span)
@@ -512,12 +576,16 @@ class LoopLabelNotFoundError(UserError):
 class UnreachableCodeWarning(UserError):  # noqa: N818 - a warning, not an error
     """Warns about code that can never be executed."""
 
+    kind = diag_kinds.UNREACHABLE_CODE
+
     def __init__(self, code_typ: str, code_span: Optional[src.SrcSpan]) -> None:
         super().__init__(WARNING, f"{code_typ} is unreachable", code_span)
 
 
 class MissingRetError(UserError):
     """Raised when a non-void function's body doesn't return or diverge."""
+
+    kind = diag_kinds.MISSING_RETURN
 
     def __init__(
         self,
@@ -542,6 +610,8 @@ class MissingRetError(UserError):
 class IncompatibleTypInArrayExprError(UserError):
     """Raised when an array literal's elements don't all have the same type."""
 
+    kind = diag_kinds.ARRAY_ELEMENT_TYPE_MISMATCH
+
     def __init__(
         self,
         element_typ: str,
@@ -562,6 +632,8 @@ class IncompatibleTypInArrayExprError(UserError):
 class WrongNumberOfArrayLitElementsError(UserError):
     """Raised when an array literal's element count doesn't match its declared length."""
 
+    kind = diag_kinds.ARRAY_ELEMENT_COUNT_MISMATCH
+
     def __init__(
         self, array_typ: str, given: int, expected: int, span: Optional[src.SrcSpan]
     ) -> None:
@@ -578,6 +650,8 @@ class WrongNumberOfArrayLitElementsError(UserError):
 class NamedFieldInArrayLitError(UserError):
     """Raised when an array literal's brace list contains a named ``field: value`` entry."""
 
+    kind = diag_kinds.NAMED_FIELD_IN_ARRAY_LITERAL
+
     def __init__(self, field_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Array literal cannot contain named field "{field_name}"', span)
 
@@ -593,6 +667,8 @@ class ArrayLitLengthNotConcreteError(UserError):
     generic declaration is instantiated with a concrete argument for ``N``.
     """
 
+    kind = diag_kinds.GENERIC_ARRAY_LITERAL_LENGTH
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -607,6 +683,8 @@ class ModUsedAsTypError(UserError):
     Modules share a namespace with types (so the two can't share a name),
     but a module isn't a type: it can only qualify a path.
     """
+
+    kind = diag_kinds.MODULE_USED_AS_TYPE
 
     def __init__(self, mod_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Module "{mod_name}" cannot be used as a type', span)
@@ -625,6 +703,8 @@ class TraitUsedAsTypError(UserError):
     only a bound on one, or the target of an ``impl ... for ...`` block.
     """
 
+    kind = diag_kinds.TRAIT_USED_AS_TYPE
+
     def __init__(self, trait_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Trait "{trait_name}" cannot be used as a type', span)
 
@@ -636,6 +716,8 @@ class ValueUsedAsTypError(UserError):
     a concrete value substituted for it - is never itself a type.
     """
 
+    kind = diag_kinds.VALUE_USED_AS_TYPE
+
     def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Value "{name}" cannot be used as a type', span)
 
@@ -644,6 +726,8 @@ class TraitMethodMissingReceiverError(UserError):
     """Raised when a trait method prototype has no ``self``/``mut self``
     receiver. Every trait method dispatches on its receiver's type, so an
     associated-function-style prototype with none isn't supported yet."""
+
+    kind = diag_kinds.MISSING_SELF_PARAMETER
 
     def __init__(self, method_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -659,6 +743,8 @@ class OrphanImplError(UserError):
     Rust's), which keeps any two modules from being able to write
     conflicting impls of the same trait for the same type."""
 
+    kind = diag_kinds.ORPHAN_IMPL
+
     def __init__(self, trait_name: str, typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -673,6 +759,8 @@ class OrphanImplError(UserError):
 class UnconstrainedImplComptimeParamError(UserError):
     """Raised when impl selection cannot determine one of its comptime parameters."""
 
+    kind = diag_kinds.UNCONSTRAINED_IMPL_PARAMETER
+
     def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -684,6 +772,8 @@ class UnconstrainedImplComptimeParamError(UserError):
 class ConflictingImplsError(UserError):
     """Raised when two impls of the same trait could apply to overlapping
     self types."""
+
+    kind = diag_kinds.CONFLICTING_IMPLS
 
     def __init__(
         self,
@@ -704,6 +794,8 @@ class ConflictingImplsError(UserError):
 class TraitMethodNotImplementedError(UserError):
     """Raised when an ``impl Trait for ...`` block omits a method the
     trait declares."""
+
+    kind = diag_kinds.MISSING_TRAIT_METHOD
 
     def __init__(
         self,
@@ -726,6 +818,8 @@ class ExtraMethodInImplError(UserError):
     """Raised when an ``impl Trait for ...`` block defines a method the
     trait doesn't declare."""
 
+    kind = diag_kinds.UNKNOWN_TRAIT_METHOD
+
     def __init__(self, trait_name: str, method_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -737,6 +831,8 @@ class ExtraMethodInImplError(UserError):
 class TraitMethodSignatureMismatchError(UserError):
     """Raised when an ``impl Trait for ...`` block's method doesn't match
     the signature the trait declares for it."""
+
+    kind = diag_kinds.TRAIT_METHOD_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -760,6 +856,8 @@ class AmbiguousMethodError(UserError):
     """Raised when a method call could resolve to more than one trait's
     method of the same name for the receiver's type."""
 
+    kind = diag_kinds.AMBIGUOUS_METHOD_CALL
+
     def __init__(self, method_name: str, typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -771,6 +869,8 @@ class AmbiguousMethodError(UserError):
 class ReservedNameError(UserError):
     """Raised when a declaration takes a name the language reserves."""
 
+    kind = diag_kinds.RESERVED_NAME
+
     def __init__(self, name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'"{name}" is reserved and cannot be used as a name', span)
 
@@ -778,6 +878,8 @@ class ReservedNameError(UserError):
 class InvalidValueParamTypError(UserError):
     """Raised when a ``value`` comptime parameter's declared type is one no
     compile-time value can have."""
+
+    kind = diag_kinds.UNSUPPORTED_VALUE_PARAMETER_TYPE
 
     def __init__(self, typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -789,6 +891,8 @@ class InvalidValueParamTypError(UserError):
 
 class RecursiveTraitBoundError(UserError):
     """Raised because recursive trait bounds are not supported."""
+
+    kind = diag_kinds.RECURSIVE_TRAIT_BOUND
 
     def __init__(
         self,
@@ -816,6 +920,8 @@ class ImplSelectionHop:
 class RecursiveImplSelectionError(UserError):
     """Raised because recursively conditional implementations are unsupported."""
 
+    kind = diag_kinds.RECURSIVE_IMPL_SELECTION
+
     def __init__(
         self,
         trait_name: str,
@@ -841,6 +947,8 @@ class UnsatisfiedBoundError(UserError):
     """Raised when a generic instantiation's type argument doesn't
     implement a bound its type parameter declares."""
 
+    kind = diag_kinds.UNSATISFIED_TRAIT_BOUND
+
     def __init__(
         self,
         typ_arg_name: str,
@@ -862,6 +970,8 @@ class TypeOfBraceExprInvalidError(UserError):
     """Raised when a struct or array literal's named type isn't actually a
     struct or array type."""
 
+    kind = diag_kinds.NON_STRUCT_OR_ARRAY_LITERAL
+
     def __init__(self, typ: str, span: Optional[src.SrcSpan]):
         super().__init__(
             ERROR,
@@ -872,6 +982,8 @@ class TypeOfBraceExprInvalidError(UserError):
 
 class PositionalElementInStructExprError(UserError):
     """Raised when a struct literal's brace list contains a bare positional value."""
+
+    kind = diag_kinds.POSITIONAL_VALUE_IN_STRUCT_EXPRESSION
 
     def __init__(self, struct_typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -887,6 +999,8 @@ class PositionalElementInStructExprError(UserError):
 class ImplForNonNominalTypError(UserError):
     """Raised when an ``impl`` block targets a type other than a struct or union."""
 
+    kind = diag_kinds.UNSUPPORTED_IMPL_TYPE
+
     def __init__(self, typ_diag: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -897,6 +1011,8 @@ class ImplForNonNominalTypError(UserError):
 
 class ImplForNonLocalTypError(UserError):
     """Raised when an ``impl`` block targets a type defined in another module."""
+
+    kind = diag_kinds.IMPL_OUTSIDE_TYPE_MODULE
 
     def __init__(self, typ_diag: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -911,6 +1027,8 @@ class ImplForNonLocalTypError(UserError):
 
 class FnNameClashesWithUnionVariantError(UserError):
     """Raised when an inherent function takes the name of one of the union's variants."""
+
+    kind = diag_kinds.CONFLICTING_VARIANT_AND_FUNCTION_NAMES
 
     def __init__(
         self,
@@ -938,6 +1056,8 @@ class FnNameClashesWithUnionVariantError(UserError):
 class ImplForNonTraitError(UserError):
     """Raised when an ``impl ... for ...`` block's head doesn't name a trait."""
 
+    kind = diag_kinds.NON_TRAIT_IMPL
+
     def __init__(self, name_diag: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -951,6 +1071,8 @@ class SelfParamOutsideImplError(UserError):
     ``extern`` declaration, which can never be an associated function -
     declares a ``*self``/``*mut self`` receiver."""
 
+    kind = diag_kinds.SELF_PARAMETER_OUTSIDE_IMPL
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -963,6 +1085,8 @@ class NotAMethodError(UserError):
     """Raised when calling ``x.name(...)`` where ``name`` is an associated
     function of ``x``'s struct type, but that function has no ``self``
     receiver, so it can't be called via dot syntax."""
+
+    kind = diag_kinds.ASSOCIATED_FUNCTION_USED_AS_METHOD
 
     def __init__(
         self,
@@ -986,6 +1110,8 @@ class NotAMethodError(UserError):
 class InvalidStructFieldError(UserError):
     """Raised when referring to a field a struct type doesn't have."""
 
+    kind = diag_kinds.UNKNOWN_STRUCT_FIELD
+
     def __init__(
         self,
         field_name: str,
@@ -1006,6 +1132,8 @@ class PrivateStructFieldAccessError(UserError):
     """Raised when reading, writing, or initializing a private struct
     field from outside the module the struct is defined in."""
 
+    kind = diag_kinds.PRIVATE_FIELD_ACCESS
+
     def __init__(
         self,
         field_name: str,
@@ -1024,6 +1152,8 @@ class PrivateStructFieldAccessError(UserError):
 
 class IncompatibleStructFieldTypError(UserError):
     """Raised when a struct literal field's value has the wrong type."""
+
+    kind = diag_kinds.STRUCT_FIELD_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -1049,6 +1179,8 @@ class IncompatibleStructFieldTypError(UserError):
 class MissingFieldInStructExprError(UserError):
     """Raised when a struct literal omits a required field."""
 
+    kind = diag_kinds.MISSING_STRUCT_FIELD
+
     def __init__(
         self,
         field_name: str,
@@ -1067,6 +1199,8 @@ class MissingFieldInStructExprError(UserError):
 
 class DuplicateFieldInStructExprError(UserError):
     """Raised when a struct literal gives a value for the same field twice."""
+
+    kind = diag_kinds.DUPLICATE_STRUCT_FIELD_VALUE
 
     def __init__(
         self,
@@ -1090,6 +1224,8 @@ class DuplicateFieldInStructExprError(UserError):
 class DuplicateFieldInStructDefnError(UserError):
     """Raised when a struct declaration defines the same field name twice."""
 
+    kind = diag_kinds.DUPLICATE_STRUCT_FIELD
+
     def __init__(
         self,
         field_name: str,
@@ -1111,6 +1247,8 @@ class DuplicateFieldInStructDefnError(UserError):
 
 class DuplicateVariantInUnionDefnError(UserError):
     """Raised when a union declaration defines the same variant name twice."""
+
+    kind = diag_kinds.DUPLICATE_UNION_VARIANT
 
     def __init__(
         self,
@@ -1134,6 +1272,8 @@ class DuplicateVariantInUnionDefnError(UserError):
 class DuplicateVariantInEnumDefnError(UserError):
     """Raised when an enum declaration defines the same variant name twice."""
 
+    kind = diag_kinds.DUPLICATE_ENUM_VARIANT
+
     def __init__(
         self,
         variant_name: str,
@@ -1156,6 +1296,8 @@ class DuplicateVariantInEnumDefnError(UserError):
 class EnumBackingTypNotIntError(UserError):
     """Raised when an enum's explicit backing type isn't an integer type."""
 
+    kind = diag_kinds.NON_INTEGER_ENUM_BACKING_TYPE
+
     def __init__(self, typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Enum backing type "{typ_name}" is not an integer type', span)
 
@@ -1163,6 +1305,8 @@ class EnumBackingTypNotIntError(UserError):
 class EnumVariantValueTypMismatchError(UserError):
     """Raised when a variant's explicitly-suffixed discriminant literal
     doesn't match its enum's explicit backing type."""
+
+    kind = diag_kinds.ENUM_DISCRIMINANT_TYPE_MISMATCH
 
     def __init__(self, value_typ: str, backing_typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -1177,6 +1321,8 @@ class EnumDiscriminantOverflowError(UserError):
     """Raised when an enum has no explicit backing type and one of its
     discriminants doesn't fit any builtin integer type, so no backing type
     can be inferred."""
+
+    kind = diag_kinds.ENUM_DISCRIMINANT_OVERFLOW
 
     def __init__(self, value: int, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -1241,6 +1387,8 @@ class InfiniteSizeTypError(UserError):
     identified struct layouts even when an intervening array has no elements.
     """
 
+    kind = diag_kinds.INFINITELY_SIZED_TYPE
+
     def __init__(
         self,
         typ_kind: str,
@@ -1258,12 +1406,16 @@ class InfiniteSizeTypError(UserError):
 class FieldAccessIntoInvalidTypError(UserError):
     """Raised when using ``.`` field access on a non-struct type."""
 
+    kind = diag_kinds.NON_STRUCT_FIELD_ACCESS
+
     def __init__(self, typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Field access into invalid type "{typ}"', span)
 
 
 class IfElsTypMismatchError(UserError):
     """Raised when an ``if`` expression's two branches have differing types."""
+
+    kind = diag_kinds.CONFLICTING_BRANCH_TYPES
 
     def __init__(
         self,
@@ -1281,6 +1433,8 @@ class IfElsTypMismatchError(UserError):
 class NonExhaustiveMatchError(UserError):
     """Raised when a ``match`` expression doesn't cover every scrutinee value."""
 
+    kind = diag_kinds.NON_EXHAUSTIVE_MATCH
+
     def __init__(
         self,
         match_span: Optional[src.SrcSpan],
@@ -1294,12 +1448,16 @@ class NonExhaustiveMatchError(UserError):
 class UnreachableMatchArmWarning(UserError):  # noqa: N818 - a warning, not an error
     """Warns about a match arm an earlier arm already covers."""
 
+    kind = diag_kinds.UNREACHABLE_MATCH_ARM
+
     def __init__(self, arm_span: Optional[src.SrcSpan]) -> None:
         super().__init__(WARNING, "match arm is unreachable", arm_span)
 
 
 class MatchArmTypMismatchError(UserError):
     """Raised when two non-diverging match arms have differing types."""
+
+    kind = diag_kinds.CONFLICTING_MATCH_ARM_TYPES
 
     def __init__(
         self,
@@ -1316,6 +1474,8 @@ class MatchArmTypMismatchError(UserError):
 
 class PatternTypMismatchError(UserError):
     """Raised when a literal pattern's type cannot match the scrutinee type."""
+
+    kind = diag_kinds.PATTERN_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -1340,6 +1500,8 @@ class PatternTypMismatchError(UserError):
 class BindingInOrPatternError(UserError):
     """Raised when an or-pattern alternative contains a ``let`` binding."""
 
+    kind = diag_kinds.BINDING_IN_OR_PATTERN
+
     def __init__(self, binding_span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -1350,6 +1512,8 @@ class BindingInOrPatternError(UserError):
 
 class VariantConstructorNotAValueError(UserError):
     """Raised when a union variant that carries a payload is named outside a call."""
+
+    kind = diag_kinds.MISSING_VARIANT_PAYLOAD
 
     def __init__(self, variant: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -1362,6 +1526,8 @@ class VariantConstructorNotAValueError(UserError):
 class UnitVariantCalledError(UserError):
     """Raised when a union variant that carries no payload is called."""
 
+    kind = diag_kinds.UNEXPECTED_VARIANT_PAYLOAD
+
     def __init__(self, variant: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -1373,6 +1539,8 @@ class UnitVariantCalledError(UserError):
 class NotAPatternError(UserError):
     """Raised when a path resolves to something that can't be used as a pattern."""
 
+    kind = diag_kinds.NON_PATTERN_PATH
+
     def __init__(self, path: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Path "{path}" is not a pattern', span)
 
@@ -1383,6 +1551,8 @@ class WrongNumberOfPayloadPatternsError(UserError):
     A variant carrying no payload expects zero, so writing any payload list
     for one is this error rather than a separate diagnostic.
     """
+
+    kind = diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH
 
     def __init__(
         self,
@@ -1404,6 +1574,8 @@ class WrongNumberOfPayloadPatternsError(UserError):
 class IfTypNotVoidError(UserError):
     """Raised when an ``if`` without ``else`` has a non-void ``then`` type."""
 
+    kind = diag_kinds.IF_WITHOUT_ELSE_TYPE_MISMATCH
+
     def __init__(
         self,
         then_typ: str,
@@ -1419,6 +1591,8 @@ class IfTypNotVoidError(UserError):
 class IfCondNotBoolError(UserError):
     """Raised when an ``if`` condition's type isn't ``bool``."""
 
+    kind = diag_kinds.IF_CONDITION_TYPE_MISMATCH
+
     def __init__(self, expr_diag: str, expr_typ: str, expr_span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -1429,6 +1603,8 @@ class IfCondNotBoolError(UserError):
 
 class WhileTypNotVoidError(UserError):
     """Raised when a ``while`` loop's body has a non-void type."""
+
+    kind = diag_kinds.WHILE_BODY_TYPE_MISMATCH
 
     def __init__(
         self,
@@ -1445,6 +1621,8 @@ class WhileTypNotVoidError(UserError):
 class WhileCondNotBoolError(UserError):
     """Raised when a ``while`` loop's condition's type isn't ``bool``."""
 
+    kind = diag_kinds.WHILE_CONDITION_TYPE_MISMATCH
+
     def __init__(self, expr_diag: str, expr_typ: str, expr_span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -1456,12 +1634,16 @@ class WhileCondNotBoolError(UserError):
 class IndexIntoInvalidTypError(UserError):
     """Raised when using ``[]`` indexing on a non-array type."""
 
+    kind = diag_kinds.NON_ARRAY_INDEX
+
     def __init__(self, typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Index into invalid type "{typ}"', span)
 
 
 class InvalidIndexTypError(UserError):
     """Raised when an array index expression's type isn't ``usize``."""
+
+    kind = diag_kinds.INDEX_TYPE_MISMATCH
 
     def __init__(self, typ: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Invalid index typ "{typ}"', span)
@@ -1470,12 +1652,16 @@ class InvalidIndexTypError(UserError):
 class IntLitOverflowError(UserError):
     """Raised when an integer literal doesn't fit in its type's width."""
 
+    kind = diag_kinds.INTEGER_LITERAL_OVERFLOW
+
     def __init__(self, value: int, typ: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, f'Integer literal {value} does not fit in type "{typ}"', span)
 
 
 class DerefInvalidTypError(UserError):
     """Raised when dereferencing a value whose type isn't a data pointer."""
+
+    kind = diag_kinds.NON_POINTER_DEREFERENCE
 
     def __init__(self, typ: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot dereference value of type "{typ}"', span)
@@ -1485,6 +1671,8 @@ class VoidVarInitializerError(UserError):
     """Raised when a ``let`` initializer (module-level or local) has type
     ``void``."""
 
+    kind = diag_kinds.VOID_INITIALIZER
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Variable initializer cannot be void", span)
 
@@ -1492,6 +1680,8 @@ class VoidVarInitializerError(UserError):
 class CircularVarInitializerError(UserError):
     """Raised when a module variable's initializer depends on itself,
     directly or transitively through other module variables."""
+
+    kind = diag_kinds.RECURSIVE_INITIALIZER
 
     def __init__(
         self,
@@ -1508,12 +1698,16 @@ class CannotTakeAddressOfComptimeValueError(UserError):
     """Raised when a compile-time-evaluated expression's result would need
     the address of a temporary that has no address at runtime."""
 
+    kind = diag_kinds.COMPTIME_ADDRESS_OF_TEMPORARY
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot take address of comptime value", span)
 
 
 class CallExternFnAtComptimeError(UserError):
     """Raised when compile-time evaluation needs to call a function with no body."""
+
+    kind = diag_kinds.COMPTIME_EXTERN_CALL
 
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot call extern function at comptime", span)
@@ -1522,6 +1716,8 @@ class CallExternFnAtComptimeError(UserError):
 class SetNonLocalVarAtComptimeError(UserError):
     """Raised when compile-time evaluation needs to write through a pointer
     to a variable outside the expression being evaluated."""
+
+    kind = diag_kinds.COMPTIME_NON_LOCAL_WRITE
 
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot set non-local variable at comptime", span)
@@ -1532,6 +1728,8 @@ class PanicAtComptimeError(UserError):
     or via a compiler-synthesized runtime check (array bounds, integer
     overflow, division by zero) evaluated at compile time.
     """
+
+    kind = diag_kinds.COMPTIME_PANIC
 
     def __init__(self, message: Optional[str], span: Optional[src.SrcSpan]) -> None:
         text = "Compile-time evaluation panicked"
@@ -1547,6 +1745,8 @@ class PtrCastNotComptimeEvaluableError(UserError):
     it has no sound way to reinterpret one as a different pointer type,
     not even a mutability-only change."""
 
+    kind = diag_kinds.COMPTIME_POINTER_CAST
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot cast pointer at comptime", span)
 
@@ -1554,12 +1754,16 @@ class PtrCastNotComptimeEvaluableError(UserError):
 class ModDoesNotExistError(UserError):
     """Raised when an ``import`` names a module file that doesn't exist."""
 
+    kind = diag_kinds.UNKNOWN_MODULE
+
     def __init__(self, name: str, span: src.SrcSpan) -> None:
         super().__init__(ERROR, f'Cannot find module "{name}"', span)
 
 
 class ModNameLocationMismatchError(UserError):
     """Raised when a module's qualified name doesn't match its file's location."""
+
+    kind = diag_kinds.MODULE_LOCATION_MISMATCH
 
     def __init__(self, name: str, path: pathlib.Path) -> None:
         super().__init__(
@@ -1573,6 +1777,8 @@ class ModNameLocationMismatchError(UserError):
 class ModOutsidePackagesError(UserError):
     """Raised when an imported module file is a link to a file outside every package."""
 
+    kind = diag_kinds.MODULE_OUTSIDE_PACKAGES
+
     def __init__(self, name: str, path: pathlib.Path, span: src.SrcSpan) -> None:
         super().__init__(
             ERROR,
@@ -1584,6 +1790,8 @@ class ModOutsidePackagesError(UserError):
 
 class StdModNameReservedError(UserError):
     """Raised when a module outside the bundled standard library is given a ``std`` name."""
+
+    kind = diag_kinds.RESERVED_MODULE_NAME
 
     def __init__(self, name: str, path: pathlib.Path) -> None:
         super().__init__(
@@ -1597,6 +1805,8 @@ class StdModNameReservedError(UserError):
 class EntryMainMissingError(UserError):
     """Raised when the program entry module declares no ``main``."""
 
+    kind = diag_kinds.MISSING_MAIN_FUNCTION
+
     def __init__(self, mod_name: str, path: pathlib.Path) -> None:
         super().__init__(
             ERROR,
@@ -1609,6 +1819,8 @@ class EntryMainNotDefinedFnError(UserError):
     """Raised when the entry module's ``main`` is a module variable or an ``extern``
     declaration rather than a function with a body."""
 
+    kind = diag_kinds.NON_FUNCTION_MAIN
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -1620,12 +1832,16 @@ class EntryMainNotDefinedFnError(UserError):
 class EntryMainGenericError(UserError):
     """Raised when the entry module's ``main`` has comptime parameters."""
 
+    kind = diag_kinds.GENERIC_MAIN
+
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, 'The program entry point "main" cannot be generic', span)
 
 
 class EntryMainSignatureError(UserError):
     """Raised when the entry module's ``main`` is not ``fn main() i32``."""
+
+    kind = diag_kinds.MAIN_TYPE_MISMATCH
 
     def __init__(self, fn_typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
@@ -1639,6 +1855,8 @@ class EntryMainExternConflictError(UserError):
     """Raised when an ``extern fn main`` declares the C ``main`` symbol with a type other
     than the program entry point's."""
 
+    kind = diag_kinds.CONFLICTING_MAIN_DECLARATIONS
+
     def __init__(self, fn_typ_name: str, span: Optional[src.SrcSpan]) -> None:
         super().__init__(
             ERROR,
@@ -1651,12 +1869,16 @@ class EntryMainExternConflictError(UserError):
 class CcInvalidError(UserError):
     """Raised when the ``CC`` environment variable can't be split into a command."""
 
+    kind = diag_kinds.MALFORMED_C_COMPILER_COMMAND
+
     def __init__(self, value: str, reason: str) -> None:
         super().__init__(ERROR, f"The C compiler command CC={value!r} is invalid: {reason}", None)
 
 
 class CcNotFoundError(UserError):
     """Raised when the C compiler used for linking isn't on ``PATH``."""
+
+    kind = diag_kinds.MISSING_C_COMPILER
 
     def __init__(self, program: str) -> None:
         super().__init__(
@@ -1669,6 +1891,8 @@ class CcNotFoundError(UserError):
 class LinkFailedError(UserError):
     """Raised when the C compiler fails to link an executable; notes carry its output."""
 
+    kind = diag_kinds.LINK_FAILURE
+
     def __init__(self, command: str, problem: str, output: str) -> None:
         super().__init__(ERROR, f"Linking failed: `{command}` {problem}", None)
         if output.strip():
@@ -1678,12 +1902,16 @@ class LinkFailedError(UserError):
 class BuildOutputError(UserError):
     """Raised when a build's output files can't be written."""
 
+    kind = diag_kinds.UNWRITABLE_OUTPUT
+
     def __init__(self, reason: str) -> None:
         super().__init__(ERROR, f"Cannot write build output: {reason}", None)
 
 
 class RunFailedError(UserError):
     """Raised when a built program can't be started."""
+
+    kind = diag_kinds.RUN_FAILURE
 
     def __init__(self, exe: pathlib.Path, reason: str) -> None:
         super().__init__(ERROR, f"Cannot run {exe}: {reason}", None)
@@ -1692,6 +1920,8 @@ class RunFailedError(UserError):
 class DoctorCheckError(UserError):
     """Raised when a ``leech doctor`` toolchain check fails; a note suggests a fix."""
 
+    kind = diag_kinds.TOOLCHAIN_CHECK_FAILURE
+
     def __init__(self, problem: str, fix: str) -> None:
         super().__init__(ERROR, problem, None)
         self._add_extra(NOTE, fix, None)
@@ -1699,6 +1929,8 @@ class DoctorCheckError(UserError):
 
 class DoctorFixNote(UserError):  # noqa: N818 - a note, not an error
     """A note from ``leech doctor`` suggesting how to fix the problems reported before it."""
+
+    kind = diag_kinds.C_COMPILER_HINT
 
     def __init__(self, fix: str) -> None:
         super().__init__(NOTE, fix, None)

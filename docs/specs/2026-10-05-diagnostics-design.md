@@ -34,13 +34,13 @@ fn main() i32 {
 ```
 
 ```text
-error[item-not-found]: cannot find variable "undefined_one"
+error[unknown-name]: cannot find variable "undefined_one"
  --> main.leech:2:13
   |
 2 |     let a = undefined_one;
   |             ^^^^^^^^^^^^^
 
-error[item-not-found]: cannot find variable "undefined_two"
+error[unknown-name]: cannot find variable "undefined_two"
  --> main.leech:3:13
   |
 3 |     let b = undefined_two;
@@ -148,14 +148,14 @@ Non-goals:
 | Speculative checks | Sink transactions that discard the probe's diagnostics |
 | Output order | Sorted by file (module load order), then span start. Emission order breaks ties |
 | Error cap | `-fmax-errors=N` (gcc spelling), default 20, `0` for unlimited. Text output only |
-| Codes | Kebab-case names only (`error[item-not-found]`). No numeric codes |
+| Codes | Kebab-case names only (`error[unknown-name]`). No numeric codes |
 | Message style | Lowercase first word, no trailing period, names in double quotes |
 | Text rendering | rustc style, with colour controlled by `-fdiagnostics-color=auto\|always\|never` |
 | Explanations | One Markdown file per diagnostic, packaged and doc-tested, shown by `leech explain NAME` |
 | Warning control | `-w`, `-W<name>`, `-Wno-<name>`, `-Werror`, `-Werror=<name>`, `-Wno-error=<name>` |
 | Machine output | SARIF 2.1.0 via `-fdiagnostics-format=sarif` |
 | Internal compiler errors | Render the collected diagnostics, then report the crash as a compiler bug |
-| Test assertions | Compiling with errors raises `diag.CompilationFailed`. Tests assert the full ordered list of kinds |
+| Test assertions | Compiling with errors raises `diag.CompilationError`. Tests assert the full ordered list of kinds |
 
 ## Precedents
 
@@ -254,7 +254,7 @@ Leech combines families 2 and 3, and takes the core of family 4's bookkeeping:
 
 | Module | Contents |
 | --- | --- |
-| `diag.py` | `Level`, `DiagKind`, `MsgKind`, `Msg`, `Label`, `Note`, `Diag`, `ReportProof`, `ReportedError`, `CompilationFailed`, `Diags` (the sink), `WarningPolicy` |
+| `diag.py` | `Level`, `DiagKind`, `MsgKind`, `Msg`, `Label`, `Note`, `Diag`, `ReportProof`, `ReportedError`, `CompilationError`, `Diags` (the sink), `WarningPolicy` |
 | `diag_kinds.py` | The catalogue: every `DiagKind` and `MsgKind` constant |
 | `diag_text.py` | The rustc-style text renderer and its colour handling |
 | `diag_sarif.py` | The SARIF 2.1.0 renderer |
@@ -270,7 +270,7 @@ abbreviation already established by `driver.Compilation.diags`.
 class DiagKind:
     """One kind of diagnostic: a stable name, a default level and a message template."""
 
-    name: str  # "item-not-found"
+    name: str  # "unknown-name"
     level: Level  # the default level; a WarningPolicy may raise a warning to an error
     template: str  # 'cannot find {item_kind} "{name}"', formatted with str.format
     aliases: tuple[str, ...] = ()  # former names, still accepted by -W options and leech explain
@@ -285,9 +285,9 @@ class MsgKind:
 
 ```python
 # diag_kinds.py
-ITEM_NOT_FOUND: Final = diag.DiagKind("item-not-found", diag.ERROR, 'cannot find {item_kind} "{name}"')
-DEFINED_HERE: Final = diag.MsgKind('{item_kind} "{name}" defined here')
-UNREACHABLE_CODE: Final = diag.DiagKind("unreachable-code", diag.WARNING, "unreachable {what}")
+UNKNOWN_NAME: Final = diag.DiagKind("unknown-name", diag.ERROR, 'cannot find {item_kind} "{name}"')
+DEFINED_HERE: Final = diag.MsgKind('"{name}" defined here')
+UNREACHABLE_CODE: Final = diag.DiagKind("unreachable-code", diag.WARNING, "unreachable {code}")
 ```
 
 - A template's arguments are exactly its `str.format` replacement fields. Building a `Msg` or
@@ -299,9 +299,10 @@ UNREACHABLE_CODE: Final = diag.DiagKind("unreachable-code", diag.WARNING, "unrea
   `leech explain` use it. SARIF `ruleId` and the rendered header always use the current
   name. Documentation fences accept only current names, so stale docs fail their tests.
 - Argument values are `str`, `int`, or a `diag.DiagArg`: any object with
-  `diag_str() -> str` and `report_proof() -> Optional[ReportProof]`. `typs.Typ` and
-  AST nodes implement `DiagArg`, so a diagnostic keeps the *type object*, and the sink can
-  tell when the diagnostic is about poison. `Typ.diag_str()` is the type's unqualified
+  `diag_str() -> str` and `report_proof() -> Optional[ReportProof]`. `typs.Typ`
+  implements `DiagArg`, so a diagnostic keeps the *type object*, and the sink can tell when
+  the diagnostic is about poison. A syntax node is passed as its `diag_str()`, since no
+  error is ever recorded against a node. `Typ.diag_str()` is the type's unqualified
   `name`, as messages use today. A call site that needs `qualified_name` passes the string.
   Values are converted to strings only when a diagnostic is rendered.
 - Tool and driver failures (`cc` not found, link failure, a `leech doctor` check) are
@@ -342,7 +343,7 @@ class Diag:
 ```
 
 A `Diag` is built with a small fluent helper, for example
-`diag.Diag.new(kinds.ITEM_NOT_FOUND, span, item_kind=..., name=...).with_label(...)`, where
+`diag.Diag.new(kinds.UNKNOWN_NAME, span, item_kind=..., name=...).with_label(...)`, where
 each `with_*` returns a new frozen value. A diagnostic that today puts a spanned note in
 `extra` becomes a secondary `Label` when the span is in the same file and close to the
 primary span. Otherwise it stays a spanned `Note`. The migration decides this per diagnostic.
@@ -413,7 +414,7 @@ The sink keeps each error's proof, so there is exactly one proof per reported er
 `ReportedError(Exception)` carries a proof. It is the only exception that unwinds for a user
 error, and it is caught only at recovery boundaries ([analysis units](#analysis-units-and-memoized-failure),
 the [phase boundary](#phase-boundary-no-code-generation-with-errors), and the driver).
-`CompilationFailed(Exception)` is what library entry points raise when a compilation has
+`CompilationError(Exception)` is what library entry points raise when a compilation has
 errors. It carries every diagnostic of the compilation in render order, warnings included.
 
 ### Compilation state ownership
@@ -471,9 +472,9 @@ leaves the probe. Then:
 
 - If every comptime parameter is bound, the authoritative pass proceeds as today. It checks
   the arguments against the substituted parameter types and reports their real errors.
-- If a parameter is unbound and `probe_failed` is false, `cannot-infer-comptime-arg` is
+- If a parameter is unbound and `probe_failed` is false, `uninferable-comptime-argument` is
   reported as today.
-- If a parameter is unbound and `probe_failed` is true, `cannot-infer-comptime-arg` is
+- If a parameter is unbound and `probe_failed` is true, `uninferable-comptime-argument` is
   suppressed. The arguments are checked authoritatively without expected types, which
   reports their real errors. The call or constructor has poison type. Before poison exists
   (#116), the first failing argument's `ReportedError` propagates instead.
@@ -692,10 +693,10 @@ validation) fails its unit instead when a component is poison.
 `program.Program.check` loads, builds and checks every module. With #113, it also forces
 every declaration's units, designates the entry point (when asked), and runs
 monomorphization discovery, all inside the recovery loop. Then, if `diags.has_errors`, it
-raises `CompilationFailed`, so no `CheckedProgram` exists to generate code from. A parse
+raises `CompilationError`, so no `CheckedProgram` exists to generate code from. A parse
 error or other `ReportedError` that escapes loading is caught by `check` itself. A
 `UserError` that escapes before #115 is emitted into the sink first. Either way, it ends in
-`CompilationFailed`. Code generation therefore never runs on an invalid program.
+`CompilationError`. Code generation therefore never runs on an invalid program.
 Code generation does not force anything purely for validation, and a user diagnostic
 emitted during code generation is an internal error. `leech check` stops after checking,
 without generating IR.
@@ -761,10 +762,57 @@ reported.
 ### Codes and names
 
 Each `DiagKind` has a kebab-case `name`, unique across the catalogue and stable once
-released. It appears in the header (`error[item-not-found]`), in SARIF `ruleId`, in `-W`
-flags, in `leech explain`, and in documentation fences (`error=item-not-found`). There
+released. It appears in the header (`error[unknown-name]`), in SARIF `ruleId`, in `-W`
+flags, in `leech explain`, and in documentation fences (`error=unknown-name`). There
 are no numeric codes. Names describe themselves, and nobody has to maintain a numbering.
 A renamed diagnostic keeps its old name as an alias for `-W` flags and `leech explain`.
+Until the first release ([#109](https://github.com/jonathanhaigh/leech/issues/109)), a
+rename needs no alias.
+
+Names follow these rules, adapted from
+[Rust's lint naming conventions](https://rust-lang.github.io/rfcs/0344-conventions-galore.html#lints)
+(which Clippy and Ruff also follow), gcc and clang's warning options, and
+[ESLint's rule names](https://eslint.org/docs/latest/contribute/core-rules):
+
+- **Lowercase words joined by hyphens**, as in `-Wunused-variable` and `no-extra-semi`.
+- **Name the problem**, not the check that finds it or the fix. A warning's name should
+  read naturally after "allow", as Rust requires: `-Wno-unreachable-code` allows
+  unreachable code.
+- **Singular**, because a diagnostic reports one occurrence and gcc and clang name their
+  options that way (`-Wunused-variable`). This departs from Rust's plural lint names. The
+  `conflicting-` shape below is plural, because a conflict needs more than one thing.
+- **Whole words.** A Leech keyword appears only where it names that keyword's construct
+  (`impl`, `extern`, `comptime`, `self`, `let`, `if`, `else`, `while`, `match`, `return`,
+  `break`, `continue`). Otherwise the concept is spelled out: `function`, `type`,
+  `module`, `argument`, `parameter`, `definition`, `declaration`, `expression`, `literal`,
+  `pointer`. The compiler's own abbreviations (`typ`, `fn`, `defn`, `expr`, ...) never
+  appear.
+- **Specific words.** No `invalid`, `wrong`, `bad`, `error` or `warning`: say what is wrong.
+- **Common shapes**, used wherever one fits:
+
+  | Shape | Meaning | Example |
+  | --- | --- | --- |
+  | `unknown-X` | a name refers to nothing | `unknown-module` |
+  | `duplicate-X` | X is given twice | `duplicate-struct-field` |
+  | `missing-X` | a required X is absent | `missing-return` |
+  | `unexpected-X` | X is given where none is allowed | `unexpected-token` |
+  | `X-in-Y`, `X-outside-Y` | a construct in a context that forbids it, or outside the one it needs | `binding-in-or-pattern`, `break-outside-loop` |
+  | `non-Y-X` | operation X on something that is not a Y | `non-pointer-dereference` |
+  | `X-used-as-Y` | something named where a different kind of thing is needed | `module-used-as-type` |
+  | `X-type-mismatch` | X's type is not the one required | `argument-type-mismatch` |
+  | `X-kind-mismatch`, `X-count-mismatch` | the wrong kind or number of X | `array-element-count-mismatch` |
+  | `conflicting-Xs` | two things that must agree do not | `conflicting-impls` |
+  | `recursive-X` | X depends on itself | `recursive-trait-bound` |
+  | `private-X-access` | X is private to another module | `private-field-access` |
+  | `unsupported-X` | X is valid syntax that Leech does not support | `unsupported-impl-type` |
+  | `comptime-X` | compile-time evaluation cannot do X | `comptime-extern-call` |
+  | `unreachable-X` | X can never run | `unreachable-match-arm` |
+
+A count check has one kind, `X-count-mismatch`, whether the count is too high or too low,
+rather than separate too-many and too-few kinds.
+
+A catalogue test rejects names containing the compiler's abbreviations or the vague words
+above.
 
 ### Message style
 
@@ -784,7 +832,7 @@ mechanically. The migration rewrites every existing message once.
 ### Text rendering
 
 ```text
-error[incompatible-let-typ]: cannot initialize "x" of type "i32" with a value of type "bool"
+error[let-type-mismatch]: cannot initialize "x" of type "i32" with a value of type "bool"
  --> src/main.leech:5:18
   |
 5 |     let x: i32 = true;
@@ -813,7 +861,7 @@ error: aborting due to 1 previous error; 1 warning emitted
   collected diagnostic, including those withheld by the cap. When the cap withholds any, the
   withheld-count note comes first, then the summary.
 - When any shown diagnostic has an explanation, a final line points at it:
-  `for more information about an error, try "leech explain item-not-found"`.
+  `for more information about an error, try "leech explain unknown-name"`.
 - Colour follows `-fdiagnostics-color=auto|always|never` (gcc spelling). `auto` colours only
   when stderr is a TTY and `NO_COLOR` is unset or empty. Level words and underlines are
   coloured. Text is otherwise identical, so the tests compare uncoloured output.
@@ -872,22 +920,22 @@ stderr afterwards, so consumers should use `leech build` when they need the log 
 
 ### Library API and exit status
 
-- `program.Program.check` raises `diag.CompilationFailed` when the program has errors.
+- `program.Program.check` raises `diag.CompilationError` when the program has errors.
   Warnings alone don't make it raise. A caller that wants warnings from a successful
   compilation reads its session's `diags` afterwards. The test harness does this.
-- The command line's `Command` base catches `CompilationFailed`, as it catches the first
+- The command line's `Command` base catches `CompilationError`, as it catches the first
   `UserError` today, and renders every diagnostic in the session.
 - `leech` exits 1 on any error.
 
 ### Testing model
 
-Compiling a program with errors raises `CompilationFailed`. Tests assert the **full ordered
+Compiling a program with errors raises `CompilationError`. Tests assert the **full ordered
 list** of kinds, and keep their existing span and note assertions:
 
 ```python
-with pytest.raises(diag.CompilationFailed) as exc_info:
+with pytest.raises(diag.CompilationError) as exc_info:
     compiler.compile(src)
-assert exc_info.value.kinds == (kinds.ITEM_NOT_FOUND, kinds.ITEM_NOT_FOUND)
+assert exc_info.value.kinds == (kinds.UNKNOWN_NAME, kinds.UNKNOWN_NAME)
 harness.assert_span_at(exc_info.value.diags[0].span, src, "undefined_one")
 ```
 
@@ -903,14 +951,14 @@ the exact diagnostic identity.
   consumer depends on them yet, and nothing has been released
   ([#109](https://github.com/jonathanhaigh/leech/issues/109)).
 - Exit statuses do not change.
-- `program.Program.check` raises `CompilationFailed` instead of the first `UserError`. Every
+- `program.Program.check` raises `CompilationError` instead of the first `UserError`. Every
   in-repository caller is updated in the same change.
 - `UserError` classes and `Diag` values coexist only during the migration: the sink accepts
   both until the catalogue issue lands, and the unit decorator catches both.
 - Between unit recovery (#114) and the catalogue (#115), `program.Program.check` re-raises the
   first error in render order as its original `UserError`. The existing
   `pytest.raises(errors.SomeError)` tests keep working until #115 rewrites them to full-list
-  assertions on `CompilationFailed`.
+  assertions on `CompilationError`.
 
 ## Alternatives rejected
 
@@ -966,7 +1014,7 @@ Existing issues were rescoped, and #114–#122 filed, as follows.
 | #122 | Make `compilation.Ctx` the root of a compilation's state | `Ctx` owns `diags`, the `ModLoader`, the `ImplRegistry` and a `Builtins` group (intrinsics, `panic_ref`). `Env` keeps only `ctx`. Prelude loaded explicitly or lazily. No behaviour change | — (best after #93, before #114) |
 | #114 | Recover from errors at analysis-unit boundaries | `Ctx.unit` with a per-compilation memo, memoized `Failed`, staged `Mod.build` with poisoned items, cycle memoization, entry point in the recovery loop, sorted output with `note_file` and `Diags.merge`, ICE rendering. Until #115, `compile_to_ir` re-raises the first sorted error | #93 |
 | #113 | Report every user error before code generation | Force every declaration unit in checking. Discovery is part of checking, with per-request recovery. Phase boundary. `leech check` without codegen. `LlvmVerificationError` becomes `diag.InternalError` | #93 (best after #114) |
-| #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationFailed`, message-style normalization, `DiagArg` on types and AST, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
+| #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationError`, message-style normalization, `DiagArg` on types, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
 | #72 + #73 | Speculative-probe diagnostics | Sink transactions tied to unit frames. A shared probe helper for function calls and union-variant constructors. Probe failures contribute no inference | #93, #114 |
 | #116 | Poison type and expression-level error recovery | `typs.ErrorTyp`, `error_typ(reported)`, `TypCheck._error`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
 | #117 | Limit reported errors with `-fmax-errors` | Cap with withheld-count note, on `leech` | #114 |

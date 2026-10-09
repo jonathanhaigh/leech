@@ -267,7 +267,7 @@ class CheckedProgram:
 - **Failure (D7).** `check` raises when the program has an error. Until #115, it raises the
   first error in source order, which is what `driver.compile_to_ir` does today and what the
   test suite's `pytest.raises(errors.X)` expects; #115 changes this one place to raise
-  `CompilationFailed`. A `CheckedProgram` therefore only exists for a program without
+  `CompilationError`. A `CheckedProgram` therefore only exists for a program without
   errors, so `llvm_ir` needs no "no errors on entry" flag, and `leech check` is just
   `Program(root, entry=True).check(session)` with no `generate_ir` parameter anywhere.
 - **Generating code** finds no user errors (#113). A user error raised or reported while
@@ -298,7 +298,7 @@ the command's status. This is the boundary `driver.compile_module` and `build.bu
 today by catching these exceptions themselves.
 
 When #115 replaces the transitional rule, `Program.check` raises
-`diag.CompilationFailed`, whose diagnostics are all in `session.diags` already; the
+`diag.CompilationError`, whose diagnostics are all in `session.diags` already; the
 `Command` base catches it in place of the `UserError` it catches today, and nothing else in
 the command line changes.
 
@@ -569,7 +569,7 @@ deletes `leechc`, and update `leechc`'s tests twice. The plan therefore orders t
   reachability graph now, for a cache that does not exist yet.
 - **Keeping `leechc`** as a module compiler for external build systems: nothing uses it, and
   it doubles every option.
-- **`Optional` results or `CompilationFailed` now** (D7): the first burdens every caller
+- **`Optional` results or `CompilationError` now** (D7): the first burdens every caller
   with `None` checks; the second pulls #115's test migration into this work.
 - **Passing a `Diags` and nothing else** (D8): every other option would need its own
   parameter.

@@ -6,7 +6,7 @@ import pathlib
 
 import pytest
 
-from leech import compilation, diag, errors, program, session
+from leech import compilation, diag, diag_kinds, errors, program, session, typs
 from leech import src as leech_src
 
 
@@ -161,3 +161,102 @@ def test_raised_error_is_reported_after_earlier_warnings(tmp_path):
         errors.InvalidRetTypError,
     ]
     assert diags.has_errors
+
+
+_ARG_KIND = diag.DiagKind("test-arg", diag.ERROR, 'cannot use "{name}" of type "{typ}"')
+_NOTE_KIND = diag.MsgKind('"{name}" defined here')
+
+
+def test_template_fields_are_the_replacement_field_names():
+    assert diag.template_fields('cannot use "{name}" of type "{typ}"') == {"name", "typ"}
+    assert diag.template_fields("no fields") == frozenset()
+
+
+@pytest.mark.parametrize("template", ["{a.b}", "{a[0]}", "{a!r}", "{a:>4}", "{0}"])
+def test_template_fields_reject_formatting_and_non_names(template):
+    with pytest.raises(AssertionError):
+        diag.template_fields(template)
+
+
+def test_msg_arguments_must_match_the_template_fields():
+    with pytest.raises(AssertionError, match="do not match"):
+        diag.Msg(_ARG_KIND, {"name": "x"})
+    with pytest.raises(AssertionError, match="do not match"):
+        diag.Msg(_ARG_KIND, {"name": "x", "typ": "i32", "extra": 1})
+
+
+def test_msg_arguments_cannot_change_after_construction():
+    args: dict[str, diag.DiagArgValue] = {"name": "x", "typ": "i32"}
+    msg = diag.Msg(_ARG_KIND, args)
+
+    args["name"] = "y"
+    with pytest.raises(TypeError):
+        msg.args["name"] = "y"  # pyright: ignore[reportIndexIssue]
+
+    assert msg.text() == 'cannot use "x" of type "i32"'
+
+
+def test_msg_text_renders_types_with_diag_str():
+    assert diag.Msg(_ARG_KIND, {"name": "x", "typ": typs.I32}).text() == (
+        'cannot use "x" of type "i32"'
+    )
+    assert diag.Msg(diag.MsgKind("got {n}"), {"n": 3}).text() == "got 3"
+
+
+def test_types_have_no_report_proof():
+    assert typs.I32.report_proof() is None
+
+
+def test_diag_new_takes_the_kind_level_and_adds_labels_and_notes_in_order(tmp_path):
+    span = _span(tmp_path / "a.leech")
+    other = _span(tmp_path / "b.leech")
+
+    d = (
+        diag.Diag.new(_ARG_KIND, span, name="x", typ=typs.BOOL)
+        .with_primary_label(diag.MsgKind('has type "{typ}"'), typ=typs.BOOL)
+        .with_label(other)
+        .with_label(other, _NOTE_KIND, name="x")
+        .with_note(_NOTE_KIND, other, name="x")
+        .with_note(diag.MsgKind("a spanless note"))
+    )
+
+    assert d.kind is _ARG_KIND
+    assert d.level == diag.ERROR
+    assert d.span is span
+    assert d.promoted_by is None
+    assert d.msg.text() == 'cannot use "x" of type "bool"'
+    assert d.primary_label is not None and d.primary_label.text() == 'has type "bool"'
+    assert [(label.span, label.msg and label.msg.text()) for label in d.labels] == [
+        (other, None),
+        (other, '"x" defined here'),
+    ]
+    assert [(note.msg.text(), note.span) for note in d.notes] == [
+        ('"x" defined here', other),
+        ("a spanless note", None),
+    ]
+
+
+def test_diag_message_needs_a_diag_kind():
+    with pytest.raises(AssertionError):
+        diag.Diag(diag.Msg(_NOTE_KIND, {"name": "x"}), None, diag.ERROR)
+
+
+def test_unlabelled_span_takes_no_arguments(tmp_path):
+    d = diag.Diag.new(_ARG_KIND, None, name="x", typ="i32")
+    with pytest.raises(AssertionError):
+        d.with_label(_span(tmp_path / "a.leech"), None, name="x")
+
+
+def test_compilation_failed_lists_kinds_in_order():
+    error = diag.Diag.new(_ARG_KIND, None, name="x", typ="i32")
+    warning = errors.UnreachableCodeWarning("statement", None)
+
+    failed = diag.CompilationError([warning, error])
+
+    assert failed.diags == (warning, error)
+    assert failed.kinds == (diag_kinds.UNREACHABLE_CODE, _ARG_KIND)
+
+
+def test_compilation_failed_needs_an_error():
+    with pytest.raises(AssertionError):
+        diag.CompilationError([errors.UnreachableCodeWarning("statement", None)])

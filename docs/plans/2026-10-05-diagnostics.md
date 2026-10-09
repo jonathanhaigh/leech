@@ -337,19 +337,21 @@ Staged so every commit is green.
 message says "internal compiler error" joins it. New `diag_kinds.py` with `lookup(name)`
 (aliases); `diag.py` gains `DiagKind` (with `aliases`), `MsgKind`, `Msg`, `Label`, `Note`,
 `Diag` (with `new`/`with_label`/`with_note` helpers and `promoted_by`), the `DiagArg`
-protocol, and `CompilationFailed(diags)` with `.diags` and `.kinds`. Add one `DiagKind` per
-user-diagnostic class and one `MsgKind` per distinct note, with names and **normalized**
-templates. Give every legacy class a `kind` class attribute pointing at its entry.
-`typs.Typ` and `ast.Ast` implement `diag_str()` (`Typ.name`; AST `diag_str` as today) and
-`report_proof()` (always `None` until #116). Catalogue test: unique kebab-case names and
+protocol, and `CompilationError(diags)` with `.diags` and `.kinds`. Add one `DiagKind` per
+user-diagnostic class (except that the too-many and too-few argument classes share
+`argument-count-mismatch`) and one `MsgKind` per distinct note, with names following the
+design's naming rules and **normalized** templates. Give every legacy class a `kind` class
+attribute pointing at its entry. `typs.Typ` implements `diag_str()` (`Typ.name`) and
+`report_proof()` (always `None` until #116); a syntax node is passed to a message as its
+`diag_str()`. Catalogue test: unique kebab-case names and
 aliases, template fields parse, templates start with a literal lowercase word or `"`, no
 trailing `.`.
 
-**Commit B — `CompilationFailed` and test codemod.** `program.Program.check` raises
-`CompilationFailed` with all diagnostics in sorted order (replacing #114's transitional raise).
+**Commit B — `CompilationError` and test codemod.** `program.Program.check` raises
+`CompilationError` with all diagnostics in sorted order (replacing #114's transitional raise).
 A one-off codemod script (kept out of the repo, or under `scripts/` and deleted in the same
 commit) rewrites `with pytest.raises(errors.X) as exc_info:` blocks to
-`pytest.raises(diag.CompilationFailed)` plus `assert exc_info.value.kinds == (kinds.X_KIND,)`,
+`pytest.raises(diag.CompilationError)` plus `assert exc_info.value.kinds == (kinds.X_KIND,)`,
 and rewrites `exc_info.value.message.span`/`.extra` accesses to `exc_info.value.diags[0]...`.
 Sites without `as exc_info` gain one. Tests whose programs report more than one diagnostic
 are fixed by hand. `tests/doc.py` accepts `error=<name>`/`warning=<name>` (rejecting unknown names at
@@ -362,7 +364,7 @@ are rewritten. Message-text assertions are updated to the normalized wording.
 `warn` where control continues), constructing labels and notes explicitly. Decide per
 diagnostic whether a spanned note becomes a `Label` or stays a `Note` (design rule), and
 give every diagnostic that has any source location a primary span (for example
-`if-else-typ-mismatch` and `match-arm-typ-mismatch` take the whole `if`/`match`
+`conflicting-branch-types` and `conflicting-match-arm-types` take the whole `if`/`match`
 expression, with the branches as labels). Delete each class once unused. `Diags.error`/`warn`
 accepts only `Diag` when the last class is gone.
 
@@ -394,14 +396,14 @@ tests assert full ordered kind lists; documentation fences use names.
   failures contribute no bindings and set `probe_failed`. Use it from both
   `_infer_comptime_args` (function calls) and `_variant_union_typ` (generic union-variant
   constructors), removing the latter's comment about inheriting #72/#73. Unbound parameter
-  with `probe_failed`: suppress `cannot-infer-comptime-arg` and re-check the arguments
+  with `probe_failed`: suppress `uninferable-comptime-argument` and re-check the arguments
   authoritatively without expected types, letting the first failure's `ReportedError` propagate
   (#116 later turns this into a poisoned result).
 - Tests: #72's and #73's reproducers; variant-constructor analogues of both (a generic
   union variant `Some(3000000000 + 0)` with an `i64`-typed sibling argument, and a variant
   payload containing a `match` with an unreachable arm); a probe whose argument forces a
   broken struct declaration reports that struct's error exactly once; a call whose only
-  argument is undefined reports `item-not-found` once and nothing about inference.
+  argument is undefined reports `unknown-name` once and nothing about inference.
 
 **Acceptance:** #72 and #73's reproducers, and their union-variant analogues, behave
 correctly; a probe never loses or duplicates another unit's diagnostics.
@@ -441,7 +443,7 @@ correctly; a probe never loses or duplicates another unit's diagnostics.
   exist.
   **Poison-injection test:** for each expression position in a fixed corpus of valid
   programs, replace one expression with an undefined name and assert exactly one
-  diagnostic (`item-not-found`) is reported.
+  diagnostic (`unknown-name`) is reported.
 
 **Acceptance:** #20's acceptance criteria; the poison-injection test passes; no lowering or
 codegen path observes poison.

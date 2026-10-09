@@ -19,6 +19,7 @@ from leech import (
     asserts,
     ast,
     compilation,
+    diag,
     errors,
     ir_env,
     opt_util,
@@ -364,6 +365,14 @@ class Typ(abc.ABC):
     @abc.abstractmethod
     def name(self) -> str:
         """This type's human-readable name, as used in diagnostics."""
+
+    def diag_str(self) -> str:
+        """Return ``name``, which is how a diagnostic shows the type."""
+        return self.name
+
+    def report_proof(self) -> Optional[diag.ReportProof]:
+        """Return ``None``: a type records no errors reported about it."""
+        return None
 
     @property
     def qualified_name(self) -> str:
