@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import diag, errors
+from leech import diag, diag_kinds, errors
 
 
 def test_match_exhaustive_enum(compiler):
@@ -461,8 +461,9 @@ def test_match_non_exhaustive_error(compiler):
         return match (c) { Color::Red => 0i32, };
     }
     """
-    with pytest.raises(errors.NonExhaustiveMatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_EXHAUSTIVE_MATCH,)
 
 
 def test_match_non_exhaustive_with_redundant_arm_warns(compiler):
@@ -476,13 +477,12 @@ def test_match_non_exhaustive_with_redundant_arm_warns(compiler):
         };
     }
     """
-    diags = diag.Diags()
-    with pytest.raises(errors.NonExhaustiveMatchError):
-        compiler.compile(src, diags=diags)
-    assert [type(err) for err in diags.all()] == [
-        errors.UnreachableMatchArmWarning,
-        errors.NonExhaustiveMatchError,
-    ]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (
+        diag_kinds.NON_EXHAUSTIVE_MATCH,
+        diag_kinds.UNREACHABLE_MATCH_ARM,
+    )
 
 
 def test_match_arm_typ_mismatch_error(compiler):
@@ -494,8 +494,9 @@ def test_match_arm_typ_mismatch_error(compiler):
         };
     }
     """
-    with pytest.raises(errors.MatchArmTypMismatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_MATCH_ARM_TYPES,)
 
 
 def test_pattern_typ_mismatch_error(compiler):
@@ -507,8 +508,9 @@ def test_pattern_typ_mismatch_error(compiler):
         };
     }
     """
-    with pytest.raises(errors.PatternTypMismatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATTERN_TYPE_MISMATCH,)
 
 
 def test_binding_in_or_pattern_error(compiler):
@@ -522,8 +524,9 @@ def test_binding_in_or_pattern_error(compiler):
         };
     }
     """
-    with pytest.raises(errors.BindingInOrPatternError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.BINDING_IN_OR_PATTERN,)
 
 
 def test_payload_pattern_on_enum_variant_error(compiler):
@@ -537,8 +540,9 @@ def test_payload_pattern_on_enum_variant_error(compiler):
         };
     }
     """
-    with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
 
 def test_payload_binding_on_enum_variant_error(compiler):
@@ -552,8 +556,9 @@ def test_payload_binding_on_enum_variant_error(compiler):
         };
     }
     """
-    with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
 
 def test_payload_pattern_nested_under_or_pattern_error(compiler):
@@ -566,8 +571,9 @@ def test_payload_pattern_nested_under_or_pattern_error(compiler):
         };
     }
     """
-    with pytest.raises(errors.WrongNumberOfPayloadPatternsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
 
 def test_not_a_pattern_error(compiler):
@@ -580,5 +586,6 @@ def test_not_a_pattern_error(compiler):
         };
     }
     """
-    with pytest.raises(errors.NotAPatternError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_PATTERN_PATH,)

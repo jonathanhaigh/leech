@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_mod_array(compiler):
@@ -67,8 +67,9 @@ def test_array_index_signed_is_rejected(compiler):
         return arr.[i];
     }
     """
-    with pytest.raises(errors.InvalidIndexTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INDEX_TYPE_MISMATCH,)
 
 
 def test_comptime_array_index_int_lit_infers_usize(compiler):
@@ -91,8 +92,9 @@ def test_comptime_array_invalid_index(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidIndexTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INDEX_TYPE_MISMATCH,)
 
 
 def test_comptime_index_into_non_array(compiler):
@@ -104,8 +106,9 @@ def test_comptime_index_into_non_array(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IndexIntoInvalidTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_ARRAY_INDEX,)
 
 
 def test_local_array(compiler):
@@ -129,8 +132,9 @@ def test_local_array_incompatible_typs(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleTypInArrayExprError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARRAY_ELEMENT_TYPE_MISMATCH,)
 
 
 def test_local_array_invalid_index(compiler):
@@ -143,8 +147,9 @@ def test_local_array_invalid_index(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidIndexTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INDEX_TYPE_MISMATCH,)
 
 
 def test_local_index_into_non_array(compiler):
@@ -156,8 +161,9 @@ def test_local_index_into_non_array(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IndexIntoInvalidTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_ARRAY_INDEX,)
 
 
 def test_array_ret_typ_and_param_typ(compiler):
@@ -207,8 +213,9 @@ def test_empty_array_wrong_expected_length(compiler):
         return f(array[i32, 0]{});
     }
     """
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_empty_array_return(compiler):
@@ -270,8 +277,9 @@ def test_array_lit_wrong_number_of_elements(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfArrayLitElementsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARRAY_ELEMENT_COUNT_MISMATCH,)
 
 
 def test_array_lit_named_field_rejected(compiler):
@@ -281,8 +289,9 @@ def test_array_lit_named_field_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.NamedFieldInArrayLitError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NAMED_FIELD_IN_ARRAY_LITERAL,)
 
 
 def test_array_lit_length_not_concrete(compiler):
@@ -292,8 +301,9 @@ def test_array_lit_length_not_concrete(compiler):
     src = """
     fn f[value N: usize]() array[i32, N] { return array[i32, N]{1, 2, 3}; }
     """
-    with pytest.raises(errors.ArrayLitLengthNotConcreteError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.GENERIC_ARRAY_LITERAL_LENGTH,)
 
 
 def test_generic_fn_body_uses_array_typ_with_value_param(compiler):

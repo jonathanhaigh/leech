@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_int_arith(compiler):
@@ -41,8 +41,9 @@ def test_incompatible_bin_op_args(compiler, lhs, rhs):
         return 0;
     }}
     """
-    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_OPERAND_TYPES,)
 
 
 def test_invalid_bin_op_arg(compiler):
@@ -52,8 +53,9 @@ def test_invalid_bin_op_arg(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidBinOpArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,)
 
 
 def test_division_by_non_comptime_value_is_not_a_compile_error(compiler):
@@ -101,8 +103,9 @@ def test_comptime_signed_division_by_zero(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 def test_comptime_unsigned_division(compiler):
@@ -125,8 +128,9 @@ def test_comptime_unsigned_division_by_zero(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 def test_comptime_division_by_zero_in_called_fn(compiler):
@@ -139,8 +143,9 @@ def test_comptime_division_by_zero_in_called_fn(compiler):
         return x;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 def test_comptime_add_at_typ_max_is_allowed(compiler):
@@ -163,8 +168,9 @@ def test_comptime_add_overflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 def test_comptime_unsigned_sub_underflow(compiler):
@@ -174,8 +180,9 @@ def test_comptime_unsigned_sub_underflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 def test_comptime_mul_overflow(compiler):
@@ -185,8 +192,9 @@ def test_comptime_mul_overflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 def test_comptime_signed_sub_underflow(compiler):
@@ -200,8 +208,9 @@ def test_comptime_signed_sub_underflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 def test_comptime_signed_div_overflow(compiler):
@@ -215,8 +224,9 @@ def test_comptime_signed_div_overflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 def test_comptime_signed_div_truncates_toward_zero(compiler):
@@ -265,8 +275,9 @@ def test_comptime_neg_overflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
 
 @pytest.mark.parametrize(
@@ -327,10 +338,11 @@ def test_negated_int_lit_overflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
-    msg = str(exc_info.value)
+    msg = str(exc_info.value.diags[0])
     assert "-200" in msg
     assert '"i8"' in msg
 
@@ -342,8 +354,9 @@ def test_negated_int_lit_infers_unsigned_is_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidUnaryOpArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNARY_OPERAND_TYPE_MISMATCH,)
 
 
 def test_invalid_unary_op_arg_unsigned(compiler):
@@ -353,8 +366,9 @@ def test_invalid_unary_op_arg_unsigned(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidUnaryOpArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNARY_OPERAND_TYPE_MISMATCH,)
 
 
 def test_invalid_unary_op_arg_non_int(compiler):
@@ -364,8 +378,9 @@ def test_invalid_unary_op_arg_non_int(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidUnaryOpArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNARY_OPERAND_TYPE_MISMATCH,)
 
 
 def test_comptime_int_operation_overflow_distinct_from_lit_overflow(compiler):
@@ -379,5 +394,6 @@ def test_comptime_int_operation_overflow_distinct_from_lit_overflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PanicAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)

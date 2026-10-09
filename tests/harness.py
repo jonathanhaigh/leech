@@ -170,9 +170,9 @@ class CompiledProgram:
 class CompilerHarness:
     """Compiler test operations scoped to one temporary workspace.
 
-    Each operation that compiles emits its diagnostics, apart from an error it raises, to the
-    ``diags`` it is given, or to a new collection of its own. Pass ``diags`` to inspect them
-    after the operation raises.
+    Each operation that compiles reports its diagnostics to the ``diags`` it is given, or to a
+    new collection of its own. Pass ``diags`` to inspect the warnings of a compilation that
+    succeeds; one with errors raises ``diag.CompilationError``, which holds every diagnostic.
     """
 
     workspace: Final[pathlib.Path]

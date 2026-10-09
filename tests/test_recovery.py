@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from leech import diag, errors, ir_loader, opt_util
+from leech import diag, diag_kinds, errors, ir_loader, opt_util
 from leech.cli import leech as leech_cli
 from tests import harness
 
@@ -20,13 +20,11 @@ def test_errors_in_separate_bodies_are_all_reported_in_source_order(compiler):
     fn b() i32 { return true; }
     struct S { x: Missing }
     """
-    diags = diag.Diags()
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH, diag_kinds.UNKNOWN_NAME)
 
-    with pytest.raises(errors.InvalidRetTypError):
-        compiler.build(src, diags=diags)
-
-    found = diags.sorted()
-    assert [type(d) for d in found] == [errors.InvalidRetTypError, errors.ItemNotFoundError]
+    found = exc_info.value.diags
     harness.assert_span_at(found[0].message.span, src, "true")
     harness.assert_span_at(found[1].message.span, src, "Missing")
 
@@ -38,12 +36,9 @@ def test_broken_struct_used_by_several_functions_is_reported_once(compiler):
     fn b(s: S) i32 { return 0; }
     fn c() i32 { let s = S { x: 2 }; return 1; }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.ItemNotFoundError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.ItemNotFoundError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_broken_signature_used_by_several_callers_is_reported_once(compiler):
@@ -52,12 +47,9 @@ def test_broken_signature_used_by_several_callers_is_reported_once(compiler):
     fn a() i32 { return f(1); }
     fn b() i32 { return f(2); }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.ItemNotFoundError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.ItemNotFoundError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_initializer_error_and_body_error_are_both_reported(compiler):
@@ -66,15 +58,9 @@ def test_initializer_error_and_body_error_are_both_reported(compiler):
     fn uses_g() i32 { return g; }
     fn other() i32 { return true; }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.IncompatibleLetTypError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.sorted()] == [
-        errors.IncompatibleLetTypError,
-        errors.InvalidRetTypError,
-    ]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.LET_TYPE_MISMATCH, diag_kinds.RETURN_TYPE_MISMATCH)
 
 
 def test_errors_in_root_and_imported_modules_follow_load_order(compiler):
@@ -82,12 +68,11 @@ def test_errors_in_root_and_imported_modules_follow_load_order(compiler):
         "import a;\nfn r() i32 { return true; }\n",
         harness.ModSrc("a", "pub fn f() i32 { return true; }\n"),
     )
-    diags = diag.Diags()
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(program)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,) * 2
 
-    with pytest.raises(errors.InvalidRetTypError):
-        compiler.build(program, diags=diags)
-
-    paths = [opt_path(d) for d in diags.sorted()]
+    paths = [opt_path(d) for d in exc_info.value.diags]
     assert paths == [compiler.workspace / "main.leech", compiler.workspace / "a.leech"]
 
 
@@ -103,12 +88,9 @@ def test_duplicate_definition_is_reported_once_and_its_body_is_not_checked(compi
     fn f() i32 { return true; }
     fn g() i32 { return f(); }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.DuplicateItemDefnError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.DuplicateItemDefnError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_rejected_name_is_poisoned_so_uses_report_nothing_more(compiler):
@@ -116,12 +98,9 @@ def test_rejected_name_is_poisoned_so_uses_report_nothing_more(compiler):
     fn i32() i32 { return 0; }
     fn g() i32 { return i32(); }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.ReservedNameError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.ReservedNameError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 def test_rejected_import_is_poisoned_so_uses_report_nothing_more(compiler):
@@ -130,15 +109,9 @@ def test_rejected_import_is_poisoned_so_uses_report_nothing_more(compiler):
     fn g() i32 { return missing::f(); }
     fn h() i32 { return true; }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.ModDoesNotExistError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.sorted()] == [
-        errors.ModDoesNotExistError,
-        errors.InvalidRetTypError,
-    ]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_MODULE, diag_kinds.RETURN_TYPE_MISMATCH)
 
 
 def test_incomplete_impl_is_rejected_without_registering(compiler):
@@ -151,12 +124,9 @@ def test_incomplete_impl_is_rejected_without_registering(compiler):
     impl T for S { fn a(*self) i32 { return 1; } fn b(*self) i32 { return 2; } }
     fn main() i32 { let s = S { x: 1 }; return s.a(); }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.TraitMethodNotImplementedError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.TraitMethodNotImplementedError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_TRAIT_METHOD,)
 
 
 def test_rejected_item_leaves_no_comptime_parameter_to_check(compiler):
@@ -164,12 +134,9 @@ def test_rejected_item_leaves_no_comptime_parameter_to_check(compiler):
     fn f() i32 { return 0; }
     fn f[T: Missing](x: T) i32 { return 0; }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.DuplicateItemDefnError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.DuplicateItemDefnError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_mutually_recursive_initializers_are_reported_once(compiler):
@@ -180,15 +147,12 @@ def test_mutually_recursive_initializers_are_reported_once(compiler):
     fn g() i32 { return b; }
     fn h() i32 { return true; }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.CircularVarInitializerError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.sorted()] == [
-        errors.CircularVarInitializerError,
-        errors.InvalidRetTypError,
-    ]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (
+        diag_kinds.RECURSIVE_INITIALIZER,
+        diag_kinds.RETURN_TYPE_MISMATCH,
+    )
 
 
 def test_mutually_infinite_structs_are_reported_once(compiler):
@@ -197,12 +161,9 @@ def test_mutually_infinite_structs_are_reported_once(compiler):
     struct B { a: A }
     pub fn f() i32 { return 0; }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.InfiniteSizeTypError):
-        compiler.compile(src, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.InfiniteSizeTypError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_mutually_recursive_trait_bounds_are_reported_once(compiler):
@@ -210,12 +171,9 @@ def test_mutually_recursive_trait_bounds_are_reported_once(compiler):
     trait A[T: B[T]] { fn a(*self) T; }
     trait B[T: A[T]] { fn b(*self) T; }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.RecursiveTraitBoundError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.RecursiveTraitBoundError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_TRAIT_BOUND,)
 
 
 def test_build_reports_later_compilations_diagnostics_in_load_order(tmp_path):
@@ -267,15 +225,9 @@ def test_parse_error_in_an_import_rejects_only_the_import(compiler):
         "import a;\nfn f() i32 { return a::g(); }\nfn h() i32 { return true; }\n",
         harness.ModSrc("a", "pub fn g() i32 { return 0 }\n"),
     )
-    diags = diag.Diags()
-
-    with pytest.raises(errors.InvalidRetTypError):
-        compiler.build(program, diags=diags)
-
-    assert [type(d) for d in diags.sorted()] == [
-        errors.InvalidRetTypError,
-        errors.UnexpectedTokenError,
-    ]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(program)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH, diag_kinds.UNEXPECTED_TOKEN)
 
 
 def test_rejected_import_does_not_load_its_module(compiler):
@@ -286,12 +238,9 @@ def test_rejected_import_does_not_load_its_module(compiler):
             harness.ModSrc("x::a", "pub fn bad() i32 { return true; }\n"),
         ),
     )
-    diags = diag.Diags()
-
-    with pytest.raises(errors.DuplicateItemDefnError):
-        compiler.build(program, diags=diags)
-
-    assert [type(d) for d in diags.all()] == [errors.DuplicateItemDefnError]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(program)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_mismatched_branches_are_ordered_by_their_expression(compiler):
@@ -302,16 +251,14 @@ def test_mismatched_branches_are_ordered_by_their_expression(compiler):
     }
     pub fn b() i32 { return true; }
     """
-    diags = diag.Diags()
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (
+        diag_kinds.CONFLICTING_BRANCH_TYPES,
+        diag_kinds.RETURN_TYPE_MISMATCH,
+    )
 
-    with pytest.raises(errors.IfElsTypMismatchError) as exc_info:
-        compiler.build(src, diags=diags)
-
-    harness.assert_span_at(exc_info.value.message.span, src, "if (true)")
-    assert [type(d) for d in diags.sorted()] == [
-        errors.IfElsTypMismatchError,
-        errors.InvalidRetTypError,
-    ]
+    harness.assert_span_at(exc_info.value.diags[0].span, src, "if (true)")
 
 
 def test_rejected_item_keeps_its_name_so_a_redefinition_is_a_duplicate(compiler):
@@ -320,12 +267,9 @@ def test_rejected_item_keeps_its_name_so_a_redefinition_is_a_duplicate(compiler)
     fn f() i32 { return 0; }
     fn g() i32 { return f(); }
     """
-    diags = diag.Diags()
-
-    with pytest.raises(errors.SelfParamOutsideImplError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.sorted()] == [
-        errors.SelfParamOutsideImplError,
-        errors.DuplicateItemDefnError,
-    ]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (
+        diag_kinds.SELF_PARAMETER_OUTSIDE_IMPL,
+        diag_kinds.DUPLICATE_DEFINITION,
+    )

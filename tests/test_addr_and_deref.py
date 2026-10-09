@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_addr_and_deref(compiler):
@@ -39,8 +39,9 @@ def test_addr_and_deref_fn(compiler):
         return y();
     }
     """
-    with pytest.raises(errors.DerefInvalidTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_POINTER_DEREFERENCE,)
 
 
 def test_comptime_addr_and_deref_fn(compiler):
@@ -52,8 +53,9 @@ def test_comptime_addr_and_deref_fn(compiler):
         return y();
     }
     """
-    with pytest.raises(errors.DerefInvalidTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_POINTER_DEREFERENCE,)
 
 
 def test_addr_and_deref_field(compiler):
@@ -183,8 +185,9 @@ def test_addr_of_comptime_value(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ADDRESS_OF_TEMPORARY,)
 
 
 def test_addr_of_comptime_addr_of_deref(compiler):
@@ -206,8 +209,9 @@ def test_deref_non_ptr(compiler):
         return x.*;
     }
     """
-    with pytest.raises(errors.DerefInvalidTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_POINTER_DEREFERENCE,)
 
 
 def test_deref_comptime_non_ptr(compiler):
@@ -218,8 +222,9 @@ def test_deref_comptime_non_ptr(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.DerefInvalidTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_POINTER_DEREFERENCE,)
 
 
 def test_comptime_return_addr_of_local(compiler):
@@ -233,8 +238,9 @@ def test_comptime_return_addr_of_local(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ADDRESS_OF_TEMPORARY,)
 
 
 def test_comptime_return_addr_of_local_in_array(compiler):
@@ -248,8 +254,9 @@ def test_comptime_return_addr_of_local_in_array(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ADDRESS_OF_TEMPORARY,)
 
 
 def test_comptime_return_addr_of_local_in_struct(compiler):
@@ -266,5 +273,6 @@ def test_comptime_return_addr_of_local_in_struct(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ADDRESS_OF_TEMPORARY,)

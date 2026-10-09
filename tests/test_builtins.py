@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import asserts, errors, ir_env, ir_module, target, typs
+from leech import asserts, diag, diag_kinds, ir_env, ir_module, target, typs
 
 
 def _get_intrinsic(mod, name: str) -> ir_module.IntrinsicFnSymbol:
@@ -16,8 +16,9 @@ def _get_intrinsic(mod, name: str) -> ir_module.IntrinsicFnSymbol:
 def test_bare_generic_builtin_reference_requires_typ_args(compiler):
     src = "pub fn main() i32 { let size = __size_of; return 0; }"
 
-    with pytest.raises(errors.MissingComptimeArgsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_COMPTIME_ARGUMENT,)
 
 
 # Widths whose byte size is unambiguous and target-independent: these are
@@ -104,9 +105,10 @@ def test_size_of_wrong_number_of_typ_args(compiler):
         return __size_of[i32, bool]();
     }
     """
-    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"__size_of"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
+    assert '"__size_of"' in str(exc_info.value.diags[0])
 
 
 @pytest.mark.parametrize(("typ", "expected_size"), _UNAMBIGUOUS_TYPS)
@@ -270,8 +272,9 @@ def test_ptr_cast_mut_at_comptime_raises_even_for_same_typ(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PtrCastNotComptimeEvaluableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_POINTER_CAST,)
 
 
 def test_ptr_cast_mut_across_different_pointee_typs_at_comptime_raises(compiler):
@@ -283,8 +286,9 @@ def test_ptr_cast_mut_across_different_pointee_typs_at_comptime_raises(compiler)
         return 0;
     }
     """
-    with pytest.raises(errors.PtrCastNotComptimeEvaluableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_POINTER_CAST,)
 
 
 def test_ptr_cast_mut_wrong_number_of_typ_args(compiler):
@@ -295,9 +299,10 @@ def test_ptr_cast_mut_wrong_number_of_typ_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"__ptr_cast_mut"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
+    assert '"__ptr_cast_mut"' in str(exc_info.value.diags[0])
 
 
 def test_is_null_false_for_real_pointer(compiler):

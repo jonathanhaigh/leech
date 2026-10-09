@@ -33,30 +33,29 @@ class Program:
         """Load, check and discover the whole program in one compilation.
 
         Every diagnostic is reported to the session. Checking continues past an error in one
-        declaration to find errors in others. If there are any errors, the first one in
-        source order is raised.
+        declaration to find errors in others. If there are any errors,
+        ``diag.CompilationError`` is raised with every diagnostic in source order.
         """
         ctx = compilation.Ctx(session)
         try:
             root = ctx.loader.load_root(self.root, self.root.stem)
         except errors.UserError as err:
             ctx.diags.error(err)
-            _raise_first_error(ctx.diags)
+            _fail(ctx.diags)
         except diag.ReportedError:
-            _raise_first_error(ctx.diags)
+            _fail(ctx.diags)
         ctx.loader.check_declarations()
         if self.entry:
             with ctx.recovering():
                 root.designate_entry()
         instances = mono.discover(ctx)
         if ctx.diags.has_errors:
-            _raise_first_error(ctx.diags)
+            _fail(ctx.diags)
         return CheckedProgram(ctx, root, instances)
 
 
-def _raise_first_error(diags: diag.Diags) -> NoReturn:
-    """Raise the first reported error, in source order."""
-    raise next(err for err in diags.sorted() if err.level == errors.ERROR)
+def _fail(diags: diag.Diags) -> NoReturn:
+    raise diag.CompilationError(diags.sorted())
 
 
 @dataclasses.dataclass(frozen=True)

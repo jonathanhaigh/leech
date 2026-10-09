@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import asserts, ast, errors, ir_env, ir_module, mono, typs
+from leech import asserts, ast, diag, diag_kinds, ir_env, ir_module, mono, typs
 from tests import harness
 
 
@@ -42,10 +42,11 @@ def test_duplicate_struct_typ_param_precedes_body_error(compiler):
     pub fn main() i32 { let x: NoSuchTyp = 0; return 0; }
     """
 
-    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION, diag_kinds.UNKNOWN_NAME)
 
-    assert '"T"' in str(exc_info.value)
+    assert '"T"' in str(exc_info.value.diags[0])
 
 
 def test_reserved_struct_typ_param_precedes_body_error(compiler):
@@ -54,10 +55,11 @@ def test_reserved_struct_typ_param_precedes_body_error(compiler):
     pub fn main() i32 { let x: NoSuchTyp = 0; return 0; }
     """
 
-    with pytest.raises(errors.ReservedNameError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME, diag_kinds.UNKNOWN_NAME)
 
-    assert '"i32"' in str(exc_info.value)
+    assert '"i32"' in str(exc_info.value.diags[0])
 
 
 def test_generic_struct_single_typ_param(compiler):
@@ -279,10 +281,11 @@ def test_bare_reference_to_generic_struct_requires_typ_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Box"' in str(exc_info.value)
-    span = exc_info.value.message.span
+    assert exc_info.value.kinds == (diag_kinds.MISSING_COMPTIME_ARGUMENT,)
+    assert '"Box"' in str(exc_info.value.diags[0])
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "Box = ")
 
 
@@ -298,11 +301,12 @@ def test_bare_generic_struct_assoc_fn_scope_requires_typ_args(compiler):
     }
     """
 
-    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_COMPTIME_ARGUMENT,)
 
-    assert '"Box"' in str(exc_info.value)
-    span = exc_info.value.message.span
+    assert '"Box"' in str(exc_info.value.diags[0])
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "Box::make")
 
 
@@ -352,8 +356,9 @@ def test_generic_struct_assoc_fn_scope_checks_arg_arity(compiler):
     }
     """
 
-    with pytest.raises(errors.WrongNumberOfComptimeArgsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
 
 
 def test_generic_struct_assoc_fn_scope_forwards_value_param(compiler):
@@ -400,11 +405,12 @@ def test_comptime_args_on_non_generic_assoc_fn_scope(compiler):
     }
     """
 
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
 
-    assert '"Foo"' in str(exc_info.value)
-    span = exc_info.value.message.span
+    assert '"Foo"' in str(exc_info.value.diags[0])
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "Foo[i32]::make")
 
 
@@ -416,9 +422,10 @@ def test_wrong_number_of_typ_args_on_generic_struct(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Pair"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
+    assert '"Pair"' in str(exc_info.value.diags[0])
 
 
 def test_explicit_typ_args_on_non_generic_struct(compiler):
@@ -429,9 +436,10 @@ def test_explicit_typ_args_on_non_generic_struct(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Foo"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
+    assert '"Foo"' in str(exc_info.value.diags[0])
 
 
 def test_generic_struct_duplicate_field(compiler):
@@ -442,8 +450,9 @@ def test_generic_struct_duplicate_field(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DuplicateFieldInStructDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_STRUCT_FIELD,)
 
 
 def test_struct_value_param_typ_resolves_sibling_typ_param(compiler):
@@ -453,9 +462,10 @@ def test_struct_value_param_typ_resolves_sibling_typ_param(compiler):
     struct S[T, value N: T] {}
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidValueParamTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"T"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNSUPPORTED_VALUE_PARAMETER_TYPE,)
+    assert '"T"' in str(exc_info.value.diags[0])
 
 
 def test_value_param_used_as_struct_field_typ_is_rejected(compiler):
@@ -463,8 +473,9 @@ def test_value_param_used_as_struct_field_typ_is_rejected(compiler):
     struct S[value N: usize] { f: N }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ValueUsedAsTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.VALUE_USED_AS_TYPE,)
 
 
 def test_generic_struct_infinite_size_via_own_typ_param(compiler):
@@ -477,11 +488,15 @@ def test_generic_struct_infinite_size_via_own_typ_param(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
-    assert len(exc_info.value.extra) == 1
-    assert exc_info.value.extra[0].message == 'Field "x" of struct "L" contains "L[T]" by value'
+    assert len(exc_info.value.diags[0].extra) == 1
+    assert (
+        exc_info.value.diags[0].extra[0].message
+        == 'Field "x" of struct "L" contains "L[T]" by value'
+    )
 
 
 def test_generic_struct_ptr_to_self_is_finite(compiler):
@@ -503,12 +518,13 @@ def test_growing_generic_struct_declaration_cycle(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
-    assert exc_info.value.message.message == 'Struct "L" has infinite size'
-    assert len(exc_info.value.extra) == 1
-    assert exc_info.value.extra[0].message == (
+    assert exc_info.value.diags[0].message.message == 'Struct "L" has infinite size'
+    assert len(exc_info.value.diags[0].extra) == 1
+    assert exc_info.value.diags[0].extra[0].message == (
         'Field "x" of struct "L" contains "L[array[T, 1]]" by value'
     )
 
@@ -518,10 +534,11 @@ def test_growing_generic_struct_declaration_cycle_through_pointer_arg(compiler):
     struct L[T] { x: L[*T] }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
-    assert [note.message for note in exc_info.value.extra] == [
+    assert [note.message for note in exc_info.value.diags[0].extra] == [
         'Field "x" of struct "L" contains "L[*T]" by value'
     ]
 
@@ -532,10 +549,11 @@ def test_mutual_growing_generic_struct_declaration_cycle(compiler):
     struct B[T] { y: A[array[T, 1]] }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,) * 2
 
-    assert [note.message for note in exc_info.value.extra] == [
+    assert [note.message for note in exc_info.value.diags[0].extra] == [
         'Field "x" of struct "A" contains "B[T]" by value',
         'Field "y" of struct "B[T]" contains "A[array[T, 1]]" by value',
     ]
@@ -547,11 +565,12 @@ def test_generic_struct_nested_cycle_keeps_nested_root_name(compiler):
     struct B[T] { y: B[T] }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,) * 2
 
-    assert exc_info.value.message.message == 'Struct "B[T]" has infinite size'
-    assert [note.message for note in exc_info.value.extra] == [
+    assert exc_info.value.diags[0].message.message == 'Struct "B[T]" has infinite size'
+    assert [note.message for note in exc_info.value.diags[0].extra] == [
         'Field "y" of struct "B[T]" contains "B[T]" by value'
     ]
 
@@ -716,9 +735,10 @@ def test_generic_inherent_impl_does_not_inherit_struct_typ_param_name(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ItemNotFoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"A"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
+    assert '"A"' in str(exc_info.value.diags[0])
 
 
 def test_generic_inherent_impl_with_unsatisfied_bound_does_not_apply(compiler):
@@ -736,8 +756,9 @@ def test_generic_inherent_impl_with_unsatisfied_bound_does_not_apply(compiler):
         return b.get();
     }
     """
-    with pytest.raises(errors.NotCallableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_CALL,)
 
 
 def test_bounded_generic_inherent_impl_method_calls_sibling(compiler):
@@ -793,8 +814,9 @@ def test_generic_inherent_impl_bound_unsatisfied_by_callers_typ_param(compiler):
         return f(b);
     }
     """
-    with pytest.raises(errors.NotCallableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_CALL,)
 
 
 def test_declared_bound_discharges_a_structs_own_bound(compiler):
@@ -990,9 +1012,10 @@ def test_generic_impl_block_body_rejects_invalid_op_on_typ_param(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidBinOpArgTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"T"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,)
+    assert '"T"' in str(exc_info.value.diags[0])
 
 
 def test_generic_struct_instance_caches_by_typ_args(compiler):
@@ -1073,8 +1096,9 @@ def test_impl_on_generic_struct_target_qualified_path(compiler):
     a_src = """
     pub struct Pair[T] { val: T }
     """
-    with pytest.raises(errors.ImplForNonLocalTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.IMPL_OUTSIDE_TYPE_MODULE,)
 
 
 def test_struct_value_param_used_in_array_field(compiler):

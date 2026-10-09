@@ -175,20 +175,20 @@ spaces or shell quoting. The contract is deliberately small:
   For a numeric exit, `output=` matches stdout exactly and stderr must be empty. For
   `SIGABRT`, `output=` matches the stable prefix of stderr and stdout must be empty. A second
   output fence is an error.
-- `mode=error` requires `error=UserErrorSubclass` on the root and exactly one `text`
+- `mode=error` requires `error=<diagnostic name>` on the root and exactly one `text`
   fence with `diagnostic=ID`. It is a single-file case: no helper module fences.
   Remove the fence's one structural final newline from the diagnostic excerpt, require
   one nonempty line, and assert it occurs in the primary diagnostic message
-  (`err.message.message`). The raised class must match exactly and have `ERROR` severity.
-  Validate that `error=` names a concrete `errors.UserError` subclass at collection time.
+  (`err.message.message`). The compilation must report exactly one diagnostic, of the named
+  kind. Validate at collection time that `error=` is the current name of an error kind.
   This tests the salient message without coupling the guide to source-path formatting,
   caret placement, or secondary notes. A wrong error type, an unrelated registered
   diagnostic, or a successful compile fails.
 - By default `run` and `compile` require **no registered diagnostics**. To demonstrate a
-  warning, a **single-file** case in either mode may put `warning=UserErrorSubclass` on
+  warning, a **single-file** case in either mode may put `warning=<diagnostic name>` on
   its root and exactly one `text diagnostic=ID` fence. Require exactly one registered
-  warning of that class with the stated primary-message excerpt and no other diagnostics.
-  Collection validates the class name; execution validates `WARNING` severity. This
+  warning of that kind with the stated primary-message excerpt and no other diagnostics.
+  Collection validates that the name is the current name of a warning kind. This
   single-file rule avoids counting the same warning twice when a helper module is checked
   as an import and as a standalone compilation. Isolate Leech's module-global diagnostic
   list and level around every case,

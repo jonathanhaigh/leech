@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 AND_CASES = (
     (True, True, True),
@@ -225,8 +225,9 @@ def test_invalid_logic_bin_op_lhs(compiler, op):
         return 0;
     }}
     """
-    with pytest.raises(errors.InvalidBinOpArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,)
 
 
 @pytest.mark.parametrize("op", ("and", "or"))
@@ -237,8 +238,9 @@ def test_invalid_logic_bin_op_rhs(compiler, op):
         return 0;
     }}
     """
-    with pytest.raises(errors.InvalidBinOpArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,)
 
 
 def test_invalid_not_operand(compiler):
@@ -248,8 +250,9 @@ def test_invalid_not_operand(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidUnaryOpArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNARY_OPERAND_TYPE_MISMATCH,)
 
 
 @pytest.mark.parametrize("op", ("and", "or"))

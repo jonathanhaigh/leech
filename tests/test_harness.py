@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from leech import diag, errors
+from leech import diag, diag_kinds, errors
 from leech import src as leech_src
 from tests import harness
 
@@ -209,8 +209,9 @@ def test_build_materializes_imports(compiler: harness.CompilerHarness):
 
 
 def test_build_propagates_user_error(compiler: harness.CompilerHarness):
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("fn invalid() i32 { true }")
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
 
 def test_success_does_not_print(compiler: harness.CompilerHarness, capsys):
@@ -295,8 +296,9 @@ def test_compile_generates_every_imported_module(compiler: harness.CompilerHarne
 
 
 def test_compile_propagates_user_error(compiler: harness.CompilerHarness):
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile("pub fn main() i32 { true }")
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
 
 def test_run_returns_separate_streams_and_status(compiler: harness.CompilerHarness):

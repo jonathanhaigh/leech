@@ -5,7 +5,7 @@
 import lark
 import pytest
 
-from leech import errors, parse
+from leech import diag, diag_kinds, parse
 
 
 def test_while_stmt_no_semicolon(compiler):
@@ -79,8 +79,9 @@ def test_semicolon_still_required_to_discard_tail_value(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WhileTypNotVoidError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.WHILE_BODY_TYPE_MISMATCH,)
 
 
 def test_semicolon_discards_tail_value(compiler):

@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_break(compiler):
@@ -197,8 +197,9 @@ def test_break_outside_loop(compiler):
         break;
     }
     """
-    with pytest.raises(errors.BreakNotInLoopError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.BREAK_OUTSIDE_LOOP,)
 
 
 def test_continue_outside_loop(compiler):
@@ -207,8 +208,9 @@ def test_continue_outside_loop(compiler):
         continue;
     }
     """
-    with pytest.raises(errors.ContinueNotInLoopError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONTINUE_OUTSIDE_LOOP,)
 
 
 def test_labeled_break_outside_loop(compiler):
@@ -219,8 +221,9 @@ def test_labeled_break_outside_loop(compiler):
         break nope;
     }
     """
-    with pytest.raises(errors.BreakNotInLoopError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.BREAK_OUTSIDE_LOOP,)
 
 
 def test_break_unknown_label(compiler):
@@ -232,8 +235,9 @@ def test_break_unknown_label(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.LoopLabelNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_LOOP_LABEL,)
 
 
 def test_continue_unknown_label(compiler):
@@ -245,8 +249,9 @@ def test_continue_unknown_label(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.LoopLabelNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_LOOP_LABEL,)
 
 
 def test_comptime_break_outside_loop(compiler):
@@ -256,5 +261,6 @@ def test_comptime_break_outside_loop(compiler):
     };
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(errors.BreakNotInLoopError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.BREAK_OUTSIDE_LOOP,)

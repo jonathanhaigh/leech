@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_mut_ptr_coerces_to_const_ptr_arg(compiler):
@@ -97,8 +97,9 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_arg(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_const_ptr_does_not_coerce_to_mut_ptr_return(compiler):
@@ -110,8 +111,9 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_return(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
 
 def test_const_ptr_does_not_coerce_to_mut_ptr_assignment(compiler):
@@ -124,8 +126,9 @@ def test_const_ptr_does_not_coerce_to_mut_ptr_assignment(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleAssignmentTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TYPE_MISMATCH,)
 
 
 def test_ptr_coercion_does_not_change_pointee(compiler):
@@ -139,8 +142,9 @@ def test_ptr_coercion_does_not_change_pointee(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleStructFieldTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.STRUCT_FIELD_TYPE_MISMATCH,)
 
 
 def test_comptime_mut_ptr_coerces_to_const_ptr(compiler):
@@ -214,8 +218,9 @@ def test_narrowing_int_coercion_rejected(compiler, src_typ, dst_typ):
         return 0;
     }}
     """
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_widening_sign_extends_signed_source(compiler):
@@ -352,8 +357,9 @@ def test_narrowing_int_coercion_let_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleLetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.LET_TYPE_MISMATCH,)
 
 
 def test_mut_ptr_coerces_to_const_ptr_let_initializer(compiler):
@@ -422,8 +428,9 @@ def test_no_coercion_in_arithmetic(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_OPERAND_TYPES,)
 
 
 def test_no_coercion_in_comparison(compiler):
@@ -435,8 +442,9 @@ def test_no_coercion_in_comparison(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_OPERAND_TYPES,)
 
 
 def test_no_coercion_in_let_initializer(compiler):
@@ -462,5 +470,6 @@ def test_bool_does_not_coerce_to_int(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)

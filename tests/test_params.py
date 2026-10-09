@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_param_typ_not_defined(compiler):
@@ -12,8 +12,9 @@ def test_param_typ_not_defined(compiler):
     pub fn f(p: not_a_typ) { }
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_param_shadows_mod_var(compiler):
@@ -40,5 +41,6 @@ def test_duplicate_param_name(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)

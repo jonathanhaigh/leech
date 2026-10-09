@@ -59,6 +59,11 @@ class UserError(Exception):
         """The severity of this error's primary message."""
         return self.message.level
 
+    @property
+    def span(self) -> Optional[src.SrcSpan]:
+        """The primary message's location."""
+        return self.message.span
+
 
 class UnexpectedCharacterError(UserError):
     """Raised when the lexer encounters a character that can't start any

@@ -5,7 +5,7 @@
 import lark
 import pytest
 
-from leech import errors, parse, reserved
+from leech import diag, diag_kinds, parse, reserved
 
 _DECLARATIONS = {
     "struct_name": "struct if { mut x: i32 }\npub fn main() i32 { return 0; }",
@@ -41,8 +41,9 @@ _DECLARATIONS = {
 
 @pytest.mark.parametrize("decl", list(_DECLARATIONS))
 def test_keyword_rejected_as_declared_name(compiler, decl):
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(_DECLARATIONS[decl])
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 _BUILTIN_TYP_NAMES = {
@@ -58,8 +59,9 @@ _BUILTIN_TYP_NAMES = {
 
 @pytest.mark.parametrize("decl", list(_BUILTIN_TYP_NAMES))
 def test_compiler_bound_typ_name_rejected_as_declared_name(compiler, decl):
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(_BUILTIN_TYP_NAMES[decl])
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 def test_keyword_set_matches_grammar():
@@ -96,8 +98,9 @@ _LOOP_LABELS = {
 
 @pytest.mark.parametrize("label", list(_LOOP_LABELS))
 def test_reserved_name_rejected_as_loop_label(compiler, label):
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(_LOOP_LABELS[label])
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 #: Longer than CPython's int-from-string digit limit, so parsing the width
@@ -115,5 +118,6 @@ def test_int_typ_name_with_unparseable_width_rejected_as_declaration(compiler):
     src = (
         f"struct {_UNPARSEABLE_WIDTH_TYP_NAME} {{ mut x: i32 }}\npub fn main() i32 {{ return 0; }}"
     )
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)

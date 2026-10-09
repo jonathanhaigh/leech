@@ -13,6 +13,7 @@ from leech import (
     ast,
     compilation,
     diag,
+    diag_kinds,
     errors,
     ir_env,
     ir_module,
@@ -79,14 +80,15 @@ def test_int_lit_overflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
-    msg = str(exc_info.value)
+    msg = str(exc_info.value.diags[0])
     assert "256" in msg
     assert '"u8"' in msg
 
-    span = exc_info.value.message.span
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "256u8")
 
 
@@ -97,14 +99,15 @@ def test_comptime_int_lit_overflow(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
-    msg = str(exc_info.value)
+    msg = str(exc_info.value.diags[0])
     assert "256" in msg
     assert '"u8"' in msg
 
-    span = exc_info.value.message.span
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "256u8")
 
 
@@ -128,14 +131,15 @@ def test_int_lit_overflow_signed(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
-    msg = str(exc_info.value)
+    msg = str(exc_info.value.diags[0])
     assert "128" in msg
     assert '"i8"' in msg
 
-    span = exc_info.value.message.span
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "128i8")
 
 
@@ -146,14 +150,15 @@ def test_comptime_int_lit_overflow_signed(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
-    msg = str(exc_info.value)
+    msg = str(exc_info.value.diags[0])
     assert "128" in msg
     assert '"i8"' in msg
 
-    span = exc_info.value.message.span
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "128i8")
 
 
@@ -237,8 +242,9 @@ def test_int_lit_inference_does_not_reach_across_a_typed_operand(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleLetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.LET_TYPE_MISMATCH,)
 
 
 def test_explicit_int_lit_suffix_beats_inference(compiler):
@@ -249,8 +255,9 @@ def test_explicit_int_lit_suffix_beats_inference(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleLetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.LET_TYPE_MISMATCH,)
 
 
 def test_int_lit_too_big_for_inferred_typ(compiler):
@@ -260,14 +267,15 @@ def test_int_lit_too_big_for_inferred_typ(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IntLitOverflowError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
-    msg = str(exc_info.value)
+    msg = str(exc_info.value.diags[0])
     assert "300" in msg
     assert '"u8"' in msg
 
-    span = exc_info.value.message.span
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "300")
 
 
@@ -549,8 +557,9 @@ def test_int_typ_name_with_unparseable_width_is_not_a_typ(compiler):
     # The width exceeds CPython's int-from-string digit limit; resolving it
     # must diagnose an unknown type rather than crash.
     name = "i" + "9" * 5000
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(f"pub fn main() i32 {{ let x: {name} = 5; return 0; }}")
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_comptime_value_typ_interns_equal_values():

@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors, typs
+from leech import diag, diag_kinds, typs
 
 
 def test_never_coerces_to_any_type():
@@ -237,8 +237,9 @@ def test_not_diverges_does_not_propagate_past_bool(compiler):
         return x;
     }
     """
-    with pytest.raises(errors.IncompatibleLetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.LET_TYPE_MISMATCH,)
 
 
 # --- `never` as a written return-type annotation - the source-level
@@ -298,8 +299,9 @@ def test_never_fn_falling_off_end_is_missing_ret(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingRetError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_RETURN,)
 
 
 def test_never_fn_returning_a_value_is_invalid_ret_typ(compiler):
@@ -311,8 +313,9 @@ def test_never_fn_returning_a_value_is_invalid_ret_typ(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
 
 @pytest.mark.parametrize(
@@ -326,5 +329,6 @@ def test_never_fn_returning_a_value_is_invalid_ret_typ(compiler):
     ],
 )
 def test_never_not_nameable_outside_ret_typ(compiler, src):
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)

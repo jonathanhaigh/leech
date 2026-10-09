@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 CMP_OPS = ("<", "<=", "==", "!=", ">=", ">")
 
@@ -68,5 +68,6 @@ def test_incompatible_cmp_args(compiler, op, lhs, rhs):
         return 0;
     }}
     """
-    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_OPERAND_TYPES,)

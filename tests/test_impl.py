@@ -4,7 +4,19 @@
 
 import pytest
 
-from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, opt_util, typs
+from leech import (
+    asserts,
+    ast,
+    compilation,
+    diag,
+    diag_kinds,
+    errors,
+    ir_env,
+    ir_module,
+    ir_traits,
+    opt_util,
+    typs,
+)
 from tests import harness
 
 
@@ -144,8 +156,9 @@ def test_assoc_fn_lookup_does_not_leak_module_scope(compiler):
         return Foo::helper();
     }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_assoc_fn_lookup_does_not_leak_builtin_scope(compiler):
@@ -158,8 +171,9 @@ def test_assoc_fn_lookup_does_not_leak_builtin_scope(compiler):
         return Foo::usize;
     }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_impl_before_struct_defn(compiler):
@@ -184,9 +198,10 @@ def test_duplicate_assoc_fn_name(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert "associated function" in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
+    assert "associated function" in str(exc_info.value.diags[0])
 
 
 def test_duplicate_assoc_fn_name_across_impl_blocks(compiler):
@@ -200,8 +215,9 @@ def test_duplicate_assoc_fn_name_across_impl_blocks(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_field_and_receiverless_assoc_fn_same_name_coexist(compiler):
@@ -226,8 +242,9 @@ def test_overlapping_generic_inherent_impls_with_same_fn_name_rejected_at_declar
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_partially_overlapping_generic_inherent_impls_with_same_fn_name_rejected(compiler):
@@ -241,8 +258,9 @@ def test_partially_overlapping_generic_inherent_impls_with_same_fn_name_rejected
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_unconstrained_impl_typ_param_rejected(compiler):
@@ -253,8 +271,9 @@ def test_unconstrained_impl_typ_param_rejected(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.UnconstrainedImplComptimeParamError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNCONSTRAINED_IMPL_PARAMETER,)
 
 
 def test_impl_typ_param_nested_in_self_typ_is_constrained(compiler):
@@ -300,8 +319,9 @@ def test_impl_typ_param_used_only_by_method_is_unconstrained(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.UnconstrainedImplComptimeParamError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNCONSTRAINED_IMPL_PARAMETER,)
 
 
 def test_uncalled_private_impl_method_body_is_still_typechecked(compiler):
@@ -312,8 +332,9 @@ def test_uncalled_private_impl_method_body_is_still_typechecked(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
 
 def test_disjoint_inherent_impls_reuse_assoc_fn_name(compiler):
@@ -415,8 +436,9 @@ def test_field_not_reachable_by_assoc_fn_path(compiler):
         return Foo::a;
     }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_assoc_fn_not_usable_as_typ(compiler):
@@ -431,8 +453,9 @@ def test_assoc_fn_not_usable_as_typ(compiler):
     fn g(p: Foo::f) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_sibling_assoc_fn_call_by_bare_name(compiler):
@@ -464,8 +487,9 @@ def test_separate_inherent_impl_blocks_do_not_share_bare_assoc_fn_names(compiler
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 @pytest.mark.parametrize(
@@ -484,8 +508,9 @@ def test_impl_on_non_struct_typ(compiler, impl_typ):
     }}
     pub fn main() i32 {{ return 0; }}
     """
-    with pytest.raises(errors.ImplForNonNominalTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNSUPPORTED_IMPL_TYPE,)
 
 
 def test_impl_on_qualified_path_typ(compiler):
@@ -499,8 +524,9 @@ def test_impl_on_qualified_path_typ(compiler):
     a_src = """
     pub struct Foo {}
     """
-    with pytest.raises(errors.ImplForNonLocalTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.IMPL_OUTSIDE_TYPE_MODULE,)
 
 
 def test_cross_module_assoc_fn_call(compiler):
@@ -553,8 +579,9 @@ def test_cross_module_private_assoc_fn_call(compiler):
         fn new() Foo { Foo { a: 7 } }
     }
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_comptime_cross_module_private_assoc_fn_call(compiler):
@@ -571,8 +598,9 @@ def test_comptime_cross_module_private_assoc_fn_call(compiler):
         fn new() Foo { Foo { a: 7 } }
     }
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_impl_value_param_used_in_method_body(compiler):

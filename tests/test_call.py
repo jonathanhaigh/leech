@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import asserts, errors, ir_env, ir_module
+from leech import asserts, diag, diag_kinds, ir_env, ir_module
 
 
 def test_not_callable(compiler):
@@ -15,8 +15,9 @@ def test_not_callable(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.NotCallableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_CALL,)
 
 
 def test_comptime_not_callable(compiler):
@@ -27,8 +28,9 @@ def test_comptime_not_callable(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.NotCallableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_CALL,)
 
 
 def test_invalid_arg_typ(compiler):
@@ -39,8 +41,9 @@ def test_invalid_arg_typ(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_comptime_invalid_arg_typ(compiler):
@@ -51,8 +54,9 @@ def test_comptime_invalid_arg_typ(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_void_call_as_arg(compiler):
@@ -63,8 +67,9 @@ def test_void_call_as_arg(compiler):
         return g(f());
     }
     """
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_too_many_args(compiler):
@@ -75,8 +80,9 @@ def test_too_many_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.TooManyArgsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_COUNT_MISMATCH,)
 
 
 def test_comptime_too_many_args(compiler):
@@ -87,8 +93,9 @@ def test_comptime_too_many_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.TooManyArgsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_COUNT_MISMATCH,)
 
 
 def test_not_enough_args(compiler):
@@ -99,8 +106,9 @@ def test_not_enough_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.NotEnoughArgsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_COUNT_MISMATCH,)
 
 
 def test_comptime_not_enough_args(compiler):
@@ -111,8 +119,9 @@ def test_comptime_not_enough_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.NotEnoughArgsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_COUNT_MISMATCH,)
 
 
 def test_comptime_call_extern(compiler):
@@ -123,10 +132,11 @@ def test_comptime_call_extern(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CallExternFnAtComptimeError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_EXTERN_CALL,)
 
-    span = exc_info.value.message.span
+    span = exc_info.value.diags[0].span
     assert span is not None
     assert span.file.src[span.start : span.end] == "extern fn puts(s: *u8) i32;"
 

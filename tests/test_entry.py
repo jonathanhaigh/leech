@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 from tests import harness
 
 
@@ -42,12 +42,13 @@ def test_entry_is_off_by_default(compiler):
 
 
 def test_missing_main_is_reported(compiler):
-    with pytest.raises(errors.EntryMainMissingError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile("pub fn other() i32 { 0 }", entry=True)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_MAIN_FUNCTION,)
 
-    assert exc_info.value.message.span is None
-    assert str(exc_info.value).startswith('Entry module "main" (')
-    assert str(exc_info.value).endswith('main.leech) has no "main" function')
+    assert exc_info.value.diags[0].span is None
+    assert str(exc_info.value.diags[0]).startswith('Entry module "main" (')
+    assert str(exc_info.value.diags[0]).endswith('main.leech) has no "main" function')
 
 
 @pytest.mark.parametrize(
@@ -58,19 +59,21 @@ def test_missing_main_is_reported(compiler):
     ),
 )
 def test_main_that_is_not_a_defined_fn_is_reported(compiler, src, span_substring):
-    with pytest.raises(errors.EntryMainNotDefinedFnError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src, entry=True)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_MAIN,)
 
-    harness.assert_span_at(exc_info.value.message.span, src, span_substring)
+    harness.assert_span_at(exc_info.value.diags[0].span, src, span_substring)
 
 
 def test_generic_main_is_reported(compiler):
     src = "pub fn main[T]() i32 { 0 }"
 
-    with pytest.raises(errors.EntryMainGenericError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src, entry=True)
+    assert exc_info.value.kinds == (diag_kinds.GENERIC_MAIN,)
 
-    harness.assert_span_at(exc_info.value.message.span, src, "main")
+    harness.assert_span_at(exc_info.value.diags[0].span, src, "main")
 
 
 @pytest.mark.parametrize(
@@ -82,13 +85,14 @@ def test_generic_main_is_reported(compiler):
     ),
 )
 def test_main_with_wrong_signature_is_reported(compiler, src, fn_typ_name):
-    with pytest.raises(errors.EntryMainSignatureError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src, entry=True)
+    assert exc_info.value.kinds == (diag_kinds.MAIN_TYPE_MISMATCH,)
 
-    assert str(exc_info.value) == (
+    assert str(exc_info.value.diags[0]) == (
         f'The program entry point "main" must have type "fn() i32", not "{fn_typ_name}"'
     )
-    harness.assert_span_at(exc_info.value.message.span, src, "main")
+    harness.assert_span_at(exc_info.value.diags[0].span, src, "main")
 
 
 @pytest.mark.parametrize(
@@ -103,8 +107,9 @@ def test_main_with_wrong_signature_is_reported(compiler, src, fn_typ_name):
     ids=("type", "imported module"),
 )
 def test_type_or_module_named_main_is_not_a_main_function(compiler, program):
-    with pytest.raises(errors.EntryMainMissingError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(program, entry=True)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_MAIN_FUNCTION,)
 
 
 def test_main_function_is_found_beside_a_type_named_main(compiler):
@@ -130,8 +135,9 @@ def test_imported_extern_main_with_other_type_is_reported(compiler):
         "import helper; pub fn main() i32 { 0 }", harness.ModSrc("helper", helper_src)
     )
 
-    with pytest.raises(errors.EntryMainExternConflictError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(program, entry=True)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_MAIN_DECLARATIONS,)
 
-    assert '"fn(i32) i32"' in str(exc_info.value)
-    harness.assert_span_at(exc_info.value.message.span, helper_src, "extern fn main")
+    assert '"fn(i32) i32"' in str(exc_info.value.diags[0])
+    harness.assert_span_at(exc_info.value.diags[0].span, helper_src, "extern fn main")

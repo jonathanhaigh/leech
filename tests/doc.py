@@ -5,7 +5,6 @@
 """Collection and execution of tested Leech examples in public Markdown."""
 
 import dataclasses
-import inspect
 import pathlib
 import shutil
 import signal
@@ -17,7 +16,7 @@ import markdown_it
 import markdown_it.token
 import pytest
 
-from leech import diag, errors
+from leech import diag, diag_kinds, errors
 from tests import harness
 
 _SRC_KEYS: Final = frozenset({"test", "file", "mode", "exit", "error", "warning"})
@@ -114,7 +113,7 @@ class DocCase:
     program: harness.TestProgram
     expected_output: str
     expected_exit: int
-    diag_type: Optional[type[errors.UserError]]
+    diag_kind: Optional[diag.DiagKind]
     diag_excerpt: Optional[str]
     expects_warning: bool
 
@@ -156,9 +155,11 @@ class DocCase:
     def _execution_error(self, err: Exception, tmp_path: pathlib.Path) -> DocExampleError:
         mod = _relative_mod_path_from_error(err, tmp_path)
         mod_text = f" (module {mod})" if mod is not None else ""
+        detail = f"{type(err).__name__}: {err}"
+        if isinstance(err, diag.CompilationError):
+            detail = "; ".join(_describe_diag(d) for d in err.diags)
         return DocExampleError(
-            f"{self.loc.page}:{self.loc.line}: test={self.test_id}{mod_text}: "
-            f"{type(err).__name__}: {err}"
+            f"{self.loc.page}:{self.loc.line}: test={self.test_id}{mod_text}: {detail}"
         )
 
     def _check_emitted_diags(self, emitted: tuple[errors.UserError, ...]) -> None:
@@ -168,17 +169,13 @@ class DocCase:
             raise AssertionError(f"unexpected emitted diagnostics: {emitted!r}")
 
     def _check_emitted_warning(self, emitted: tuple[errors.UserError, ...]) -> None:
-        assert self.diag_type is not None
+        assert self.diag_kind is not None
         assert self.diag_excerpt is not None
         if len(emitted) != 1:
             raise AssertionError(f"expected one warning, got {len(emitted)} diagnostics")
         warning = emitted[0]
-        if type(warning) is not self.diag_type:
-            raise AssertionError(
-                f"expected warning {self.diag_type.__name__}, got {type(warning).__name__}"
-            )
-        if warning.level != errors.WARNING:
-            raise AssertionError(f"expected WARNING severity, got {warning.level.name}")
+        if warning.kind is not self.diag_kind:
+            raise AssertionError(f"expected warning {self.diag_kind.name}, got {warning.kind.name}")
         if self.diag_excerpt not in warning.message.message:
             raise AssertionError(
                 f"warning message does not contain {self.diag_excerpt!r}: "
@@ -186,33 +183,26 @@ class DocCase:
             )
 
     def _execute_expected_error(self, compiler: harness.CompilerHarness, diags: diag.Diags) -> None:
-        assert self.diag_type is not None
-        assert self.diag_excerpt is not None
+        assert self.diag_kind is not None
         try:
             compiler.compile(self.program, diags=diags)
-        except errors.UserError as err:
-            self._check_expected_error(err, diags.all())
+        except diag.CompilationError as failed:
+            self._check_expected_error(failed)
             return
-        raise AssertionError(f"expected {self.diag_type.__name__}, but compilation succeeded")
+        raise AssertionError(f"expected {self.diag_kind.name}, but compilation succeeded")
 
-    def _check_expected_error(
-        self, err: errors.UserError, emitted: tuple[errors.UserError, ...]
-    ) -> None:
-        assert self.diag_type is not None
+    def _check_expected_error(self, failed: diag.CompilationError) -> None:
+        assert self.diag_kind is not None
         assert self.diag_excerpt is not None
-        if type(err) is not self.diag_type:
-            raise AssertionError(
-                f"expected {self.diag_type.__name__}, got {type(err).__name__}"
-            ) from err
-        if err.level != errors.ERROR:
-            raise AssertionError(f"expected ERROR severity, got {err.level.name}") from err
+        if failed.kinds != (self.diag_kind,):
+            names = ", ".join(kind.name for kind in failed.kinds)
+            raise AssertionError(f"expected only {self.diag_kind.name}, got {names}") from failed
+        (err,) = failed.diags
+        assert isinstance(err, errors.UserError)
         if self.diag_excerpt not in err.message.message:
             raise AssertionError(
                 f"error message does not contain {self.diag_excerpt!r}: {err.message.message!r}"
-            ) from err
-        unexpected = tuple(other for other in emitted if other is not err)
-        if unexpected:
-            raise AssertionError(f"unexpected emitted diagnostics: {unexpected!r}") from err
+            ) from failed
 
 
 @dataclasses.dataclass(frozen=True)
@@ -259,23 +249,26 @@ class _RootOptions:
     error_name: Optional[str]
     warning_name: Optional[str]
 
-    def diag_type(self, loc: FenceLoc) -> Optional[type[errors.UserError]]:
+    def diag_kind(self, loc: FenceLoc) -> Optional[diag.DiagKind]:
+        """Return the kind of diagnostic named by ``error=`` or ``warning=``, if either is given.
+
+        The name must be a current name, not a former one, of a kind at the matching level.
+        """
         name = self.error_name
+        level, level_desc = diag.ERROR, "an error"
         if self.mode == "error" and name is None:
-            raise DocCollectionError(loc, "mode=error requires error=UserErrorSubclass")
+            raise DocCollectionError(loc, "mode=error requires error=<diagnostic name>")
         if name is None:
             name = self.warning_name
+            level, level_desc = diag.WARNING, "a warning"
         if name is None:
             return None
-        value = getattr(errors, name, None)
-        if (
-            not isinstance(value, type)
-            or value is errors.UserError
-            or not issubclass(value, errors.UserError)
-            or inspect.isabstract(value)
-        ):
-            raise DocCollectionError(loc, f"unknown or nonconcrete UserError subclass {name!r}")
-        return value
+        kind = diag_kinds.lookup(name)
+        if kind is None or kind.name != name:
+            raise DocCollectionError(loc, f"unknown diagnostic name {name!r}")
+        if kind.level != level:
+            raise DocCollectionError(loc, f"diagnostic {name!r} is not {level_desc}")
+        return kind
 
     def exit_status(self, loc: FenceLoc) -> int:
         if self.exit_value is None:
@@ -388,7 +381,7 @@ class _CaseBuilder:
         options = self.root_options
         assert options is not None
         self._validate_case_shape(root, options)
-        diag_type = options.diag_type(root.loc)
+        diag_kind = options.diag_kind(root.loc)
         expects_warning = options.warning_name is not None
         self._validate_result_fences(root, options.mode, expects_warning)
         expected_exit = options.exit_status(root.loc)
@@ -400,7 +393,7 @@ class _CaseBuilder:
             program=self._program(root),
             expected_output=expected_output,
             expected_exit=expected_exit,
-            diag_type=diag_type,
+            diag_kind=diag_kind,
             diag_excerpt=self._diag_excerpt(),
             expects_warning=expects_warning,
         )
@@ -563,11 +556,18 @@ def parse_doc_page(page: pathlib.Path, markdown: str) -> list[DocCase]:
     return _DocPageParser(page).parse(markdown)
 
 
+def _describe_diag(d: errors.UserError) -> str:
+    return f"{d.kind.name}: {d.message.message}"
+
+
 def _relative_mod_path_from_error(err: BaseException, tmp_path: pathlib.Path) -> Optional[str]:
-    if not isinstance(err, errors.UserError) or err.message.span is None:
+    reported: object = err
+    if isinstance(err, diag.CompilationError):
+        reported = err.diags[0]
+    if not isinstance(reported, errors.UserError) or reported.message.span is None:
         return None
     try:
-        return str(err.message.span.file.path.resolve().relative_to(tmp_path.resolve()))
+        return str(reported.message.span.file.path.resolve().relative_to(tmp_path.resolve()))
     except ValueError:
         return None
 

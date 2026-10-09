@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 from tests import harness
 
 
@@ -80,8 +80,9 @@ def test_duplicate_field_in_struct_defn(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.DuplicateFieldInStructDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_STRUCT_FIELD,)
 
 
 def test_unknown_typ_for_struct_field(compiler):
@@ -93,8 +94,9 @@ def test_unknown_typ_for_struct_field(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_struct_in_struct(compiler):
@@ -158,8 +160,9 @@ def test_duplicate_field_in_unused_private_struct_in_imported_module(compiler):
     }
     """
     program = harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src))
-    with pytest.raises(errors.DuplicateFieldInStructDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(program)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_STRUCT_FIELD,)
 
 
 def test_struct_contains_itself_by_value(compiler):
@@ -171,8 +174,9 @@ def test_struct_contains_itself_by_value(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_duplicate_field_reported_before_infinite_size(compiler):
@@ -190,8 +194,9 @@ def test_duplicate_field_reported_before_infinite_size(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.DuplicateFieldInStructDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_STRUCT_FIELD,)
 
 
 def test_struct_contains_itself_via_zero_length_array(compiler):
@@ -206,8 +211,9 @@ def test_struct_contains_itself_via_zero_length_array(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_struct_contains_itself_via_nonempty_array(compiler):
@@ -219,8 +225,9 @@ def test_struct_contains_itself_via_nonempty_array(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_mutual_struct_recursion_by_value(compiler):
@@ -235,8 +242,9 @@ def test_mutual_struct_recursion_by_value(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_mutual_struct_recursion_by_ptr(compiler):
@@ -282,8 +290,9 @@ def test_typ_of_brace_expr_invalid(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.TypeOfBraceExprInvalidError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_STRUCT_OR_ARRAY_LITERAL,)
 
 
 def test_missing_field_in_struct_expr(compiler):
@@ -297,8 +306,9 @@ def test_missing_field_in_struct_expr(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingFieldInStructExprError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_STRUCT_FIELD,)
 
 
 def test_invalid_field_in_struct_expr(compiler):
@@ -312,8 +322,9 @@ def test_invalid_field_in_struct_expr(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidStructFieldError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_STRUCT_FIELD,)
 
 
 def test_duplicate_field_in_struct_expr(compiler):
@@ -327,8 +338,9 @@ def test_duplicate_field_in_struct_expr(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.DuplicateFieldInStructExprError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_STRUCT_FIELD_VALUE,)
 
 
 def test_incompatible_struct_field_typ(compiler):
@@ -341,8 +353,9 @@ def test_incompatible_struct_field_typ(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleStructFieldTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.STRUCT_FIELD_TYPE_MISMATCH,)
 
 
 def test_void_call_as_struct_field_initializer(compiler):
@@ -356,8 +369,9 @@ def test_void_call_as_struct_field_initializer(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleStructFieldTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.STRUCT_FIELD_TYPE_MISMATCH,)
 
 
 def test_field_access_into_non_struct(compiler):
@@ -368,8 +382,9 @@ def test_field_access_into_non_struct(compiler):
         return x.a;
     }
     """
-    with pytest.raises(errors.FieldAccessIntoInvalidTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_STRUCT_FIELD_ACCESS,)
 
 
 def test_comptime_struct_access(compiler):
@@ -399,8 +414,9 @@ def test_typ_of_comptime_struct_expr_not_struct(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.TypeOfBraceExprInvalidError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_STRUCT_OR_ARRAY_LITERAL,)
 
 
 def test_missing_field_in_comptime_struct_expr(compiler):
@@ -414,8 +430,9 @@ def test_missing_field_in_comptime_struct_expr(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingFieldInStructExprError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_STRUCT_FIELD,)
 
 
 def test_invalid_field_in_comptime_struct_expr(compiler):
@@ -429,8 +446,9 @@ def test_invalid_field_in_comptime_struct_expr(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidStructFieldError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_STRUCT_FIELD,)
 
 
 def test_duplicate_field_in_comptime_struct_expr(compiler):
@@ -444,8 +462,9 @@ def test_duplicate_field_in_comptime_struct_expr(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.DuplicateFieldInStructExprError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_STRUCT_FIELD_VALUE,)
 
 
 def test_incompatible_comptime_struct_field_typ(compiler):
@@ -458,8 +477,9 @@ def test_incompatible_comptime_struct_field_typ(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleStructFieldTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.STRUCT_FIELD_TYPE_MISMATCH,)
 
 
 def test_comptime_field_access_into_non_struct(compiler):
@@ -471,8 +491,9 @@ def test_comptime_field_access_into_non_struct(compiler):
         return y;
     }
     """
-    with pytest.raises(errors.FieldAccessIntoInvalidTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_STRUCT_FIELD_ACCESS,)
 
 
 def test_self_as_ret_typ_in_inherent_impl(compiler):

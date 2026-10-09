@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_while(compiler):
@@ -61,8 +61,9 @@ def test_while_body_not_void(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WhileTypNotVoidError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.WHILE_BODY_TYPE_MISMATCH,)
 
 
 def test_void_call_as_while_cond(compiler):
@@ -74,5 +75,6 @@ def test_void_call_as_while_cond(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WhileCondNotBoolError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.WHILE_CONDITION_TYPE_MISMATCH,)

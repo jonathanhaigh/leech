@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from leech import codegen, diag, errors, mono, program, session
+from leech import codegen, diag, diag_kinds, errors, mono, program, session
 from tests import harness
 
 
@@ -105,32 +105,33 @@ def test_check_rejects_options_it_does_not_take(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("src", "error"),
+    ("src", "kinds"),
     (
         # Module variable initializers.
-        ("let x = 1(2);", errors.NotCallableError),
-        ("let x = { x };", errors.CircularVarInitializerError),
-        ("struct S { a: i32 }\nlet x = S { b: 1 };", errors.InvalidStructFieldError),
+        ("let x = 1(2);", (diag_kinds.NON_FUNCTION_CALL,)),
+        ("let x = { x };", (diag_kinds.RECURSIVE_INITIALIZER,)),
+        ("struct S { a: i32 }\nlet x = S { b: 1 };", (diag_kinds.UNKNOWN_STRUCT_FIELD,)),
         # Compile-time evaluation of an initializer.
-        ("extern fn g() i32;\nlet x = g();", errors.CallExternFnAtComptimeError),
-        ('let x: i32 = panic("no");', errors.PanicAtComptimeError),
+        ("extern fn g() i32;\nlet x = g();", (diag_kinds.COMPTIME_EXTERN_CALL,)),
+        ('let x: i32 = panic("no");', (diag_kinds.UNREACHABLE_CODE, diag_kinds.COMPTIME_PANIC)),
         # Structs and unions, whether or not anything uses them.
-        ("struct S { s: S }", errors.InfiniteSizeTypError),
-        ("struct S { x: Missing }", errors.ItemNotFoundError),
-        ("struct S[T] { x: S[T] }", errors.InfiniteSizeTypError),
-        ("union U { A(Missing) }", errors.ItemNotFoundError),
-        ("union U[T] { A(T, U[T]) }", errors.InfiniteSizeTypError),
+        ("struct S { s: S }", (diag_kinds.INFINITELY_SIZED_TYPE,)),
+        ("struct S { x: Missing }", (diag_kinds.UNKNOWN_NAME,)),
+        ("struct S[T] { x: S[T] }", (diag_kinds.INFINITELY_SIZED_TYPE,)),
+        ("union U { A(Missing) }", (diag_kinds.UNKNOWN_NAME,)),
+        ("union U[T] { A(T, U[T]) }", (diag_kinds.INFINITELY_SIZED_TYPE,)),
         # Extern declarations, whether or not anything calls them.
-        ("extern fn f(x: Missing);", errors.ItemNotFoundError),
+        ("extern fn f(x: Missing);", (diag_kinds.UNKNOWN_NAME,)),
         # Enums.
-        ("enum E { A, A }", errors.DuplicateVariantInEnumDefnError),
-        ("enum E(bool) { A }", errors.EnumBackingTypNotIntError),
-        ("enum E(u8) { A = 300 }", errors.IntLitOverflowError),
+        ("enum E { A, A }", (diag_kinds.DUPLICATE_ENUM_VARIANT,)),
+        ("enum E(bool) { A }", (diag_kinds.NON_INTEGER_ENUM_BACKING_TYPE,)),
+        ("enum E(u8) { A = 300 }", (diag_kinds.INTEGER_LITERAL_OVERFLOW,)),
     ),
 )
-def test_checking_reports_every_declaration_kind(compiler, src, error):
-    with pytest.raises(error):
+def test_checking_reports_every_declaration_kind(compiler, src, kinds):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build(f"{src}\npub fn main() i32 {{ return 0; }}")
+    assert exc_info.value.kinds == kinds
 
 
 def test_discovery_reports_each_failing_instance_and_continues(compiler):
@@ -223,12 +224,7 @@ def test_discovery_continues_past_a_failing_signature(compiler):
 
 def test_discovery_runs_despite_declaration_errors(compiler):
     src = "fn bad() i32 { return true; }\npub fn main() i32 { return 0; return 1; }"
-    diags = diag.Diags()
 
-    with pytest.raises(errors.InvalidRetTypError):
-        compiler.build(src, diags=diags)
-
-    assert [type(d) for d in diags.sorted()] == [
-        errors.InvalidRetTypError,
-        errors.UnreachableCodeWarning,
-    ]
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH, diag_kinds.UNREACHABLE_CODE)

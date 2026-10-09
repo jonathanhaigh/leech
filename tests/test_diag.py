@@ -144,7 +144,7 @@ def test_programs_have_independent_diags(tmp_path):
     assert clean_diags.all() == ()
 
 
-def test_raised_error_is_reported_after_earlier_warnings(tmp_path):
+def test_compilation_error_holds_every_diagnostic_in_the_session(tmp_path):
     path = tmp_path / "app.leech"
     path.write_text(
         "enum E { A }\n"
@@ -153,14 +153,13 @@ def test_raised_error_is_reported_after_earlier_warnings(tmp_path):
     )
     diags = diag.Diags()
 
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         program.Program(path, entry=False).check(session.Session(diags))
-
-    assert [type(d) for d in diags.all()] == [
-        errors.UnreachableMatchArmWarning,
-        errors.InvalidRetTypError,
-    ]
-    assert diags.has_errors
+    assert exc_info.value.kinds == (
+        diag_kinds.UNREACHABLE_MATCH_ARM,
+        diag_kinds.RETURN_TYPE_MISMATCH,
+    )
+    assert exc_info.value.diags == diags.sorted()
 
 
 _ARG_KIND = diag.DiagKind("test-arg", diag.ERROR, 'cannot use "{name}" of type "{typ}"')
@@ -247,16 +246,16 @@ def test_unlabelled_span_takes_no_arguments(tmp_path):
         d.with_label(_span(tmp_path / "a.leech"), None, name="x")
 
 
-def test_compilation_failed_lists_kinds_in_order():
-    error = diag.Diag.new(_ARG_KIND, None, name="x", typ="i32")
+def test_compilation_error_lists_kinds_in_order():
     warning = errors.UnreachableCodeWarning("statement", None)
+    error = errors.CcNotFoundError("cc")
 
     failed = diag.CompilationError([warning, error])
 
     assert failed.diags == (warning, error)
-    assert failed.kinds == (diag_kinds.UNREACHABLE_CODE, _ARG_KIND)
+    assert failed.kinds == (diag_kinds.UNREACHABLE_CODE, diag_kinds.MISSING_C_COMPILER)
 
 
-def test_compilation_failed_needs_an_error():
+def test_compilation_error_needs_an_error():
     with pytest.raises(AssertionError):
         diag.CompilationError([errors.UnreachableCodeWarning("statement", None)])

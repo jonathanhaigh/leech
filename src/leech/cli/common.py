@@ -32,13 +32,14 @@ def version_text(prog: str) -> str:
 def reporting_user_errors(session: session_mod.Session) -> Iterator[None]:
     """Report a user error escaping the block to the session, and suppress it.
 
-    An error already reported, raised as ``diag.ReportedError``, is suppressed too.
+    Errors already reported, raised as ``diag.ReportedError`` or ``diag.CompilationError``,
+    are suppressed too.
     """
     try:
         yield
     except errors.UserError as err:
         session.diags.error(err)
-    except diag.ReportedError:
+    except diag.ReportedError, diag.CompilationError:
         pass
 
 

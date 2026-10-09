@@ -230,9 +230,9 @@ class CompilationError(Exception):
     order.
     """
 
-    diags: Final[tuple[Diag | errors.UserError, ...]]
+    diags: Final[tuple[errors.UserError, ...]]
 
-    def __init__(self, diags: Sequence[Diag | errors.UserError]) -> None:
+    def __init__(self, diags: Sequence[errors.UserError]) -> None:
         assert any(d.level == ERROR for d in diags), "a failed compilation has an error"
         super().__init__("compilation failed")
         self.diags = tuple(diags)

@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 from tests import harness
 
 
@@ -86,8 +86,9 @@ def test_enum_variant_value_mismatched_suffix_rejected(compiler):
     enum Color(u8) { Red, Green = 5i32, Blue }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.EnumVariantValueTypMismatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ENUM_DISCRIMINANT_TYPE_MISMATCH,)
 
 
 def test_enum_auto_increment_without_explicit_backing_typ(compiler):
@@ -197,8 +198,9 @@ def test_enum_inferred_discriminant_overflows_unsigned_64_bit(compiler):
     enum Huge { A = 18446744073709551616 }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.EnumDiscriminantOverflowError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ENUM_DISCRIMINANT_OVERFLOW,)
 
 
 def test_enum_inferred_discriminant_overflows_signed_64_bit(compiler):
@@ -206,8 +208,9 @@ def test_enum_inferred_discriminant_overflows_signed_64_bit(compiler):
     enum Huge { A = -9223372036854775809 }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.EnumDiscriminantOverflowError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ENUM_DISCRIMINANT_OVERFLOW,)
 
 
 def test_enum_duplicate_discriminant_values_allowed(compiler):
@@ -227,9 +230,10 @@ def test_enum_duplicate_variant_name_rejected(compiler):
     enum Color { Red, Red }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DuplicateVariantInEnumDefnError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Red"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_ENUM_VARIANT,)
+    assert '"Red"' in str(exc_info.value.diags[0])
 
 
 def test_enum_explicit_backing_typ_not_int(compiler):
@@ -237,8 +241,9 @@ def test_enum_explicit_backing_typ_not_int(compiler):
     enum Bad(bool) { A, B }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.EnumBackingTypNotIntError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_INTEGER_ENUM_BACKING_TYPE,)
 
 
 def test_enum_discriminant_overflows_explicit_backing_typ(compiler):
@@ -246,8 +251,9 @@ def test_enum_discriminant_overflows_explicit_backing_typ(compiler):
     enum TooBig(u8) { A = 300 }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.IntLitOverflowError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
 
 def test_enum_negative_discriminant_overflows_unsigned_backing_typ(compiler):
@@ -255,8 +261,9 @@ def test_enum_negative_discriminant_overflows_unsigned_backing_typ(compiler):
     enum Bad(u8) { A = -1 }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.IntLitOverflowError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
 
 def test_enum_to_int_on_signed_backing_typ(compiler):
@@ -297,8 +304,9 @@ def test_private_enum_inaccessible_from_other_module(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_enum_variant_typ_args_on_non_generic_enum(compiler):
@@ -309,8 +317,9 @@ def test_enum_variant_typ_args_on_non_generic_enum(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
 
 
 def test_enum_unknown_variant(compiler):
@@ -321,5 +330,6 @@ def test_enum_unknown_variant(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)

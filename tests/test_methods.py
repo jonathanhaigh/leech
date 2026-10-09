@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 from tests import harness
 
 
@@ -52,8 +52,9 @@ def test_mut_ptr_method_call_on_const_place_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_const_ptr_method_call_on_mut_place(compiler):
@@ -131,8 +132,9 @@ def test_dot_call_private_method_cross_module_rejected(compiler):
         fn get(*self) i32 { self.*.n }
     }
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_self_param_outside_impl_rejected(compiler):
@@ -140,8 +142,9 @@ def test_self_param_outside_impl_rejected(compiler):
     pub fn f(*self) i32 { 0 }
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(errors.SelfParamOutsideImplError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.SELF_PARAMETER_OUTSIDE_IMPL,)
 
 
 def test_self_param_on_extern_rejected(compiler):
@@ -149,8 +152,9 @@ def test_self_param_on_extern_rejected(compiler):
     extern fn f(*self) i32;
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(errors.SelfParamOutsideImplError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.SELF_PARAMETER_OUTSIDE_IMPL,)
 
 
 def test_dot_call_on_receiverless_assoc_fn_rejected(compiler):
@@ -166,8 +170,9 @@ def test_dot_call_on_receiverless_assoc_fn_rejected(compiler):
         return c.new();
     }
     """
-    with pytest.raises(errors.NotAMethodError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSOCIATED_FUNCTION_USED_AS_METHOD,)
 
 
 def test_method_passes_self_by_value_to_free_function(compiler):
@@ -217,8 +222,9 @@ def test_dot_call_falls_back_to_field_access_when_no_method_matches(compiler):
         return h.n();
     }
     """
-    with pytest.raises(errors.NotCallableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_CALL,)
 
 
 def test_dot_call_falls_back_to_callable_struct_field(compiler):

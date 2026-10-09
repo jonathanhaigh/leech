@@ -6,7 +6,18 @@ from typing import cast
 
 import pytest
 
-from leech import asserts, ast, compilation, diag, errors, ir_env, ir_module, ir_values, typs
+from leech import (
+    asserts,
+    ast,
+    compilation,
+    diag,
+    diag_kinds,
+    errors,
+    ir_env,
+    ir_module,
+    ir_values,
+    typs,
+)
 from tests import harness
 
 
@@ -144,16 +155,18 @@ def test_var_not_found_at_mod_scope(compiler):
     let a = x;
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_var_not_found_at_fn_scope(compiler):
     src = """
     pub fn main() i32 { x }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_var_not_found_as_assignment_target(compiler):
@@ -164,8 +177,9 @@ def test_var_not_found_as_assignment_target(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_var_not_found_behind_addr_of(compiler):
@@ -176,8 +190,9 @@ def test_var_not_found_behind_addr_of(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_shadowed_mod_var(compiler):
@@ -239,8 +254,9 @@ def test_cannot_access_inner_scope(compiler):
         return x;
     }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_duplicate_mod_var(compiler):
@@ -249,8 +265,9 @@ def test_duplicate_mod_var(compiler):
     let x = 200;
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_duplicate_local_var(compiler):
@@ -261,8 +278,9 @@ def test_duplicate_local_var(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_void_local_var(compiler):
@@ -273,8 +291,9 @@ def test_void_local_var(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.VoidVarInitializerError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.VOID_INITIALIZER,)
 
 
 def test_void_mod_var(compiler):
@@ -285,8 +304,9 @@ def test_void_mod_var(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.VoidVarInitializerError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.VOID_INITIALIZER,)
 
 
 def test_diverging_if_els_local_var_true(compiler):
@@ -344,11 +364,14 @@ def test_mod_var_self_cycle(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CircularVarInitializerError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
-    assert exc_info.value.message.message == 'Initializer of variable "a" depends on itself'
-    assert [note.message for note in exc_info.value.extra] == ['Variable "a" defined here']
+    assert (
+        exc_info.value.diags[0].message.message == 'Initializer of variable "a" depends on itself'
+    )
+    assert [note.message for note in exc_info.value.diags[0].extra] == ['Variable "a" defined here']
 
 
 def test_mod_var_cycle(compiler):
@@ -359,8 +382,9 @@ def test_mod_var_cycle(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CircularVarInitializerError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
 
 def test_mod_var_three_way_cycle(compiler):
@@ -372,11 +396,14 @@ def test_mod_var_three_way_cycle(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CircularVarInitializerError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
-    assert exc_info.value.message.message == 'Initializer of variable "a" depends on itself'
-    assert [note.message for note in exc_info.value.extra] == [
+    assert (
+        exc_info.value.diags[0].message.message == 'Initializer of variable "a" depends on itself'
+    )
+    assert [note.message for note in exc_info.value.diags[0].extra] == [
         'Variable "a" defined here',
         'Variable "b" defined here',
         'Variable "c" defined here',
@@ -398,11 +425,14 @@ def test_cross_module_var_cycle(compiler):
     import main;
     pub let y = main::x;
     """
-    with pytest.raises(errors.CircularVarInitializerError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
-    assert exc_info.value.message.message == 'Initializer of variable "x" depends on itself'
-    assert [note.message for note in exc_info.value.extra] == [
+    assert (
+        exc_info.value.diags[0].message.message == 'Initializer of variable "x" depends on itself'
+    )
+    assert [note.message for note in exc_info.value.diags[0].extra] == [
         'Variable "x" defined here',
         'Variable "y" defined here',
     ]

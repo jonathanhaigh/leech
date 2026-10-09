@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import asserts, ast, errors, ir_env, ir_module, ir_values, mono, typs
+from leech import asserts, ast, diag, diag_kinds, ir_env, ir_module, ir_values, mono, typs
 from tests import harness
 
 
@@ -76,8 +76,9 @@ def test_uncalled_private_fn_body_is_still_typechecked(compiler):
     fn invalid() i32 { return true; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
 
 def test_uncalled_private_fn_is_not_emitted(compiler):
@@ -226,9 +227,10 @@ def test_generic_fn_body_rejects_arithmetic_on_typ_param(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidBinOpArgTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"T"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,)
+    assert '"T"' in str(exc_info.value.diags[0])
 
 
 def test_generic_fn_body_rejects_field_access_on_typ_param(compiler):
@@ -238,9 +240,10 @@ def test_generic_fn_body_rejects_field_access_on_typ_param(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.FieldAccessIntoInvalidTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"T"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.NON_STRUCT_FIELD_ACCESS,)
+    assert '"T"' in str(exc_info.value.diags[0])
 
 
 def test_generic_fn_body_rejects_indexing_typ_param(compiler):
@@ -250,9 +253,10 @@ def test_generic_fn_body_rejects_indexing_typ_param(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.IndexIntoInvalidTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"T"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.NON_ARRAY_INDEX,)
+    assert '"T"' in str(exc_info.value.diags[0])
 
 
 def test_generic_fn_body_rejects_calling_typ_param(compiler):
@@ -263,9 +267,10 @@ def test_generic_fn_body_rejects_calling_typ_param(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.NotCallableError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"T"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_CALL,)
+    assert '"T"' in str(exc_info.value.diags[0])
 
 
 def test_generic_fn_body_rejects_deref_of_typ_param(compiler):
@@ -275,9 +280,10 @@ def test_generic_fn_body_rejects_deref_of_typ_param(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DerefInvalidTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"T"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.NON_POINTER_DEREFERENCE,)
+    assert '"T"' in str(exc_info.value.diags[0])
 
 
 def test_generic_fn_distinct_typ_params_are_incompatible(compiler):
@@ -290,9 +296,10 @@ def test_generic_fn_distinct_typ_params_are_incompatible(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.IncompatibleLetTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    msg = str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.LET_TYPE_MISMATCH,)
+    msg = str(exc_info.value.diags[0])
     assert '"T"' in msg
     assert '"U"' in msg
 
@@ -305,11 +312,12 @@ def test_bare_reference_to_generic_fn_requires_typ_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_COMPTIME_ARGUMENT,)
 
-    assert '"id"' in str(exc_info.value)
-    span = exc_info.value.message.span
+    assert '"id"' in str(exc_info.value.diags[0])
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "id;")
 
 
@@ -321,9 +329,10 @@ def test_address_of_generic_fn_requires_typ_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"id"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_COMPTIME_ARGUMENT,)
+    assert '"id"' in str(exc_info.value.diags[0])
 
 
 def test_generic_fn_instance_as_function_pointer(compiler):
@@ -376,9 +385,10 @@ def test_wrong_number_of_explicit_typ_args_on_bare_generic_fn_reference(compiler
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"id"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
+    assert '"id"' in str(exc_info.value.diags[0])
 
 
 def test_explicit_typ_args_on_non_generic_fn_reference(compiler):
@@ -389,9 +399,10 @@ def test_explicit_typ_args_on_non_generic_fn_reference(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"f"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
+    assert '"f"' in str(exc_info.value.diags[0])
 
 
 def test_calling_generic_fn_infers_typ_args_from_argument(compiler):
@@ -640,9 +651,10 @@ def test_calling_generic_fn_cannot_infer_typ_arg_from_bare_int_lit(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.CannotInferComptimeArgError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    msg = str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT,)
+    msg = str(exc_info.value.diags[0])
     assert '"T"' in msg
     assert '"id"' in msg
 
@@ -655,9 +667,10 @@ def test_calling_generic_fn_with_wrong_number_of_explicit_typ_args(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"id"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
+    assert '"id"' in str(exc_info.value.diags[0])
 
 
 def test_explicit_typ_args_on_non_generic_fn(compiler):
@@ -668,9 +681,10 @@ def test_explicit_typ_args_on_non_generic_fn(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"f"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
+    assert '"f"' in str(exc_info.value.diags[0])
 
 
 def test_generic_assoc_fn_not_yet_supported(compiler):
@@ -958,9 +972,10 @@ def test_value_param_with_unsupported_typ_is_rejected(compiler):
     fn f[value N: Foo]() {}
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidValueParamTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Foo"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNSUPPORTED_VALUE_PARAMETER_TYPE,)
+    assert '"Foo"' in str(exc_info.value.diags[0])
 
 
 def test_value_param_declared_as_ptr_typ_is_rejected(compiler):
@@ -968,8 +983,9 @@ def test_value_param_declared_as_ptr_typ_is_rejected(compiler):
     fn f[value N: *usize]() {}
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidValueParamTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNSUPPORTED_VALUE_PARAMETER_TYPE,)
 
 
 def test_unmarked_value_param_is_a_typ_param(compiler):
@@ -980,8 +996,10 @@ def test_unmarked_value_param_is_a_typ_param(compiler):
     fn f[N: usize]() {}
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 def test_typ_arg_given_for_value_param_is_rejected(compiler):
@@ -992,8 +1010,10 @@ def test_typ_arg_given_for_value_param_is_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a comptime value"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a comptime value" in str(exc_info.value.diags[0])
 
 
 def test_value_arg_given_for_typ_param_is_rejected(compiler):
@@ -1004,8 +1024,9 @@ def test_value_arg_given_for_typ_param_is_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongKindOfComptimeArgError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_KIND_MISMATCH,)
 
 
 def test_wrong_typ_value_arg_is_rejected(compiler):
@@ -1016,8 +1037,9 @@ def test_wrong_typ_value_arg_is_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongComptimeValueTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_wrong_value_arg_on_bare_generic_fn_reference_is_rejected(compiler):
@@ -1028,8 +1050,9 @@ def test_wrong_value_arg_on_bare_generic_fn_reference_is_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongComptimeValueTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_typ_arg_on_bare_generic_value_param_fn_reference_is_rejected(compiler):
@@ -1040,8 +1063,10 @@ def test_typ_arg_on_bare_generic_value_param_fn_reference_is_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a comptime value"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a comptime value" in str(exc_info.value.diags[0])
 
 
 def test_value_param_used_as_param_typ_is_rejected(compiler):
@@ -1049,8 +1074,9 @@ def test_value_param_used_as_param_typ_is_rejected(compiler):
     fn f[value N: usize](x: N) usize { return N; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ValueUsedAsTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.VALUE_USED_AS_TYPE,)
 
 
 def test_value_param_used_as_let_typ_is_rejected(compiler):
@@ -1061,8 +1087,9 @@ def test_value_param_used_as_let_typ_is_rejected(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ValueUsedAsTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.VALUE_USED_AS_TYPE,)
 
 
 def test_value_param_used_as_ptr_pointee_typ_is_rejected(compiler):
@@ -1070,8 +1097,9 @@ def test_value_param_used_as_ptr_pointee_typ_is_rejected(compiler):
     fn f[value N: usize](x: *N) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ValueUsedAsTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.VALUE_USED_AS_TYPE,)
 
 
 def test_out_of_range_value_arg_is_rejected(compiler):
@@ -1082,8 +1110,9 @@ def test_out_of_range_value_arg_is_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IntLitOverflowError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.INTEGER_LITERAL_OVERFLOW,)
 
 
 def test_int_lit_against_bool_value_param_is_rejected(compiler):
@@ -1094,8 +1123,9 @@ def test_int_lit_against_bool_value_param_is_rejected(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.WrongKindOfComptimeArgError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_KIND_MISMATCH,)
 
 
 def test_value_param_inferred_from_array_arg(compiler):

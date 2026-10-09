@@ -9,6 +9,7 @@ from leech import (
     ast,
     comptime,
     diag,
+    diag_kinds,
     errors,
     ir_env,
     ir_module,
@@ -257,18 +258,21 @@ def test_union_tag_typ_is_the_narrowest_unsigned_fit(compiler, count, width):
 
 
 def test_duplicate_variant_in_union_defn_error(compiler):
-    with pytest.raises(errors.DuplicateVariantInUnionDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union U { A, A }")
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_UNION_VARIANT,)
 
 
 def test_reserved_variant_name_error(compiler):
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union U { match }")
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 def test_union_by_value_self_cycle_is_rejected(compiler):
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union Bad { A, B(Bad) }")
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_union_through_pointer_is_finite(compiler):
@@ -277,31 +281,35 @@ def test_union_through_pointer_is_finite(compiler):
 
 
 def test_union_through_array_element_is_rejected(compiler):
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union Bad { A, B(array[Bad, 1]) }")
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_union_and_struct_mutual_by_value_cycle_is_rejected(compiler):
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union U { A, B(S) }\nstruct S { u: U }")
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_growing_generic_union_declaration_cycle_is_rejected(compiler):
     # Every payload adds an array layer, so exact type identity never
     # repeats; the declaration still recurs with a growing argument.
-    with pytest.raises(errors.InfiniteSizeTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union L[T] { Nil, Cons(L[array[T, 1]]) }")
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
-    assert exc_info.value.message.message == 'Union "L" has infinite size'
-    assert len(exc_info.value.extra) == 1
-    assert exc_info.value.extra[0].message == (
+    assert exc_info.value.diags[0].message.message == 'Union "L" has infinite size'
+    assert len(exc_info.value.diags[0].extra) == 1
+    assert exc_info.value.diags[0].extra[0].message == (
         'Payload 0 of variant "Cons" of union "L" contains "L[array[T, 1]]" by value'
     )
 
 
 def test_growing_generic_union_cycle_through_a_struct_is_rejected(compiler):
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union U[T] { A, B(S[array[T, 1]]) }\nstruct S[T] { u: U[T] }")
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,) * 2
 
 
 def test_cycle_growing_through_a_union_comptime_argument_is_rejected(compiler):
@@ -309,13 +317,15 @@ def test_cycle_growing_through_a_union_comptime_argument_is_rejected(compiler):
     # contains_typ to look inside a UnionTyp's own comptime arguments.
     # Without that the walk never recognises the repeat and recurses until
     # it exhausts the stack.
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union L[T] { Nil, Cons(L[L[T]]) }")
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,)
 
 
 def test_cycle_growing_through_a_union_argument_via_a_struct_is_rejected(compiler):
-    with pytest.raises(errors.InfiniteSizeTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union U[T] { A, B(S[T]) }\nstruct S[T] { u: U[U[T]] }")
+    assert exc_info.value.kinds == (diag_kinds.INFINITELY_SIZED_TYPE,) * 2
 
 
 def test_generic_union_through_pointer_argument_is_finite(compiler):
@@ -419,8 +429,9 @@ def test_variant_comptime_args_can_be_explicit(compiler):
 def test_explicit_comptime_args_beat_the_payload_argument(compiler):
     # The payload would infer Option[i32]; the path already said otherwise,
     # so the argument is checked against the spelled-out instance instead.
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, "let x = Option[bool]::Some(1i32);")
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 @pytest.mark.parametrize(
@@ -458,55 +469,62 @@ def test_unit_variant_infers_from_a_block_tail_expression(compiler):
 
 
 def test_unit_variant_with_nothing_to_infer_from_is_rejected(compiler):
-    with pytest.raises(errors.CannotInferComptimeArgError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, "let x = Option::None;")
+    assert exc_info.value.kinds == (diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT,)
 
 
 def test_payload_variant_named_as_a_value_is_rejected(compiler):
-    with pytest.raises(errors.VariantConstructorNotAValueError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, "let x = Option::Some;")
+    assert exc_info.value.kinds == (diag_kinds.MISSING_VARIANT_PAYLOAD,)
 
 
 def test_payload_variant_addressed_is_rejected(compiler):
-    with pytest.raises(errors.VariantConstructorNotAValueError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, "let x = &Option::Some;")
+    assert exc_info.value.kinds == (diag_kinds.MISSING_VARIANT_PAYLOAD,)
 
 
 def test_unit_variant_called_is_rejected(compiler):
-    with pytest.raises(errors.UnitVariantCalledError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, "let x: Option[i32] = Option::None();")
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_VARIANT_PAYLOAD,)
 
 
 @pytest.mark.parametrize(
-    "body,error",
+    "body",
     [
-        ("let x = Option::Some();", errors.NotEnoughArgsError),
-        ("let x = Option::Some(1i32, 2i32);", errors.TooManyArgsError),
+        "let x = Option::Some();",
+        "let x = Option::Some(1i32, 2i32);",
         # E is unrelated to Ok's payload, so without the arity-first
-        # check this would report CannotInferComptimeArgError on E rather
+        # check this would report uninferable-comptime-argument on E rather
         # than counting the extra argument.
-        ("let x = Res::Ok(1i32, 2i32);", errors.TooManyArgsError),
+        "let x = Res::Ok(1i32, 2i32);",
     ],
 )
-def test_payload_arity_is_checked_before_inference(compiler, body, error):
+def test_payload_arity_is_checked_before_inference(compiler, body):
     # Neither the path nor an expected type fixes T here, so inference
     # would read the very arguments the call miscounts. Checking the count
-    # first is what keeps this from becoming CannotInferComptimeArgError.
-    with pytest.raises(error):
+    # first is what keeps this from becoming uninferable-comptime-argument.
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, body)
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_COUNT_MISMATCH,)
 
 
 def test_wrong_payload_typ_is_rejected(compiler):
-    with pytest.raises(errors.InvalidArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, "let x: Option[bool] = Option::Some(1i32);")
+    assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
 def test_partially_inferable_variant_names_the_unbound_parameter(compiler):
     # Err(E) fixes E from its payload and leaves T with nothing to say.
-    with pytest.raises(errors.CannotInferComptimeArgError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, "let x = Res::Err(1i32);")
+    assert exc_info.value.kinds == (diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT,)
 
-    msg = str(exc_info.value)
+    msg = str(exc_info.value.diags[0])
     assert '"T"' in msg
     assert '"Res"' in msg
     assert "generic union" in msg
@@ -527,8 +545,9 @@ def test_partially_inferable_variant_is_fixed_by_the_missing_context(compiler, b
 def test_peer_context_across_if_branches_is_not_inferred(compiler):
     # Deferred, not accidental: the second branch is checked with no
     # expected type of its own, so it has nothing to infer T from.
-    with pytest.raises(errors.CannotInferComptimeArgError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_body(compiler, "let o = if (true) { Option::Some(1i32) } else { Option::None };")
+    assert exc_info.value.kinds == (diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT,)
 
 
 def test_peer_context_across_if_branches_works_when_annotated(compiler):
@@ -592,9 +611,10 @@ def test_payload_binding_takes_the_payload_typ(compiler):
     ],
 )
 def test_uncovered_payload_values_are_named(compiler, arms):
-    with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_match(compiler, f"return match (o) {{ {arms} }};")
-    assert _witnesses(exc_info.value) == ["Option::Some(_)"]
+    assert exc_info.value.kinds == (diag_kinds.NON_EXHAUSTIVE_MATCH,)
+    assert _witnesses(exc_info.value.diags[0]) == ["Option::Some(_)"]
 
 
 _NESTED = _UNIONS + "union Nested { N(Option[i32]) }\n"
@@ -609,9 +629,10 @@ def test_nested_union_payload_is_exhausted_column_by_column(compiler):
 
 
 def test_nested_union_payload_witness_names_both_levels(compiler):
-    with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_nested(compiler, "Nested::N(Option::None) => 0i32,")
-    assert _witnesses(exc_info.value) == ["Nested::N(Option::Some(_))"]
+    assert exc_info.value.kinds == (diag_kinds.NON_EXHAUSTIVE_MATCH,)
+    assert _witnesses(exc_info.value.diags[0]) == ["Nested::N(Option::Some(_))"]
 
 
 def _check_generic_nested(compiler, arms: str) -> None:
@@ -631,20 +652,22 @@ def test_generic_nested_union_payload_is_exhausted_column_by_column(compiler):
 
 
 def test_generic_nested_union_witness_names_every_level(compiler):
-    with pytest.raises(errors.NonExhaustiveMatchError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_generic_nested(compiler, "Res::Ok(Option::None) => 0i32, Res::Err(_) => 1i32,")
-    assert _witnesses(exc_info.value) == ["Res::Ok(Option::Some(_))"]
+    assert exc_info.value.kinds == (diag_kinds.NON_EXHAUSTIVE_MATCH,)
+    assert _witnesses(exc_info.value.diags[0]) == ["Res::Ok(Option::Some(_))"]
 
 
 def test_generic_nested_payload_binding_takes_the_innermost_typ(compiler):
     # `x` must be the i32 inside Option, not the Option itself.
-    with pytest.raises(errors.MatchArmTypMismatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_generic_nested(
             compiler,
             "Res::Ok(Option::Some(let x)) => x + 1i32,"
             " Res::Ok(Option::None) => false,"
             " Res::Err(_) => 1i32,",
         )
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_MATCH_ARM_TYPES,)
 
 
 def test_binding_under_an_or_pattern_outranks_an_enum_payload(compiler):
@@ -653,8 +676,9 @@ def test_binding_under_an_or_pattern_outranks_an_enum_payload(compiler):
     # a BindingInOrPatternError rather than the payload-arity error the
     # enum variant would otherwise give.
     body = "return match (e) { E::A(let x) | E::B => 1i32, };"
-    with pytest.raises(errors.BindingInOrPatternError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build(f"enum E {{ A, B }}\npub fn f(e: E) i32 {{ {body} }}")
+    assert exc_info.value.kinds == (diag_kinds.BINDING_IN_OR_PATTERN,)
 
 
 def test_unreachable_payload_arm_warns(compiler):
@@ -674,25 +698,28 @@ def test_unreachable_payload_arm_warns(compiler):
     ],
 )
 def test_wrong_number_of_payload_patterns(compiler, arm, got, expected):
-    with pytest.raises(errors.WrongNumberOfPayloadPatternsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_match(compiler, f"return match (o) {{ {arm}, _ => 0i32, }};")
+    assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
-    assert f"got {got}, expected {expected}" in str(exc_info.value)
+    assert f"got {got}, expected {expected}" in str(exc_info.value.diags[0])
 
 
 def test_variant_of_another_union_cannot_match(compiler):
-    with pytest.raises(errors.PatternTypMismatchError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_match(compiler, "return match (o) { Res::Ok(_) => 1i32, _ => 0i32, };")
+    assert exc_info.value.kinds == (diag_kinds.PATTERN_TYPE_MISMATCH,)
 
     # The message sentence-cases its opening without touching the path.
-    assert 'Path pattern "Res::Ok"' in str(exc_info.value)
+    assert 'Path pattern "Res::Ok"' in str(exc_info.value.diags[0])
 
 
 def test_pattern_comptime_args_must_name_the_column_instance(compiler):
-    with pytest.raises(errors.PatternTypMismatchError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_match(compiler, "return match (o) { Option[bool]::Some(_) => 1i32, _ => 0i32, };")
+    assert exc_info.value.kinds == (diag_kinds.PATTERN_TYPE_MISMATCH,)
 
-    assert '"Option[bool]"' in str(exc_info.value)
+    assert '"Option[bool]"' in str(exc_info.value.diags[0])
 
 
 @pytest.mark.parametrize(
@@ -706,16 +733,18 @@ def test_pattern_comptime_args_must_name_the_column_instance(compiler):
     ],
 )
 def test_binding_anywhere_under_an_or_pattern_is_rejected(compiler, arm):
-    with pytest.raises(errors.BindingInOrPatternError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _check_match(compiler, f"return match (o) {{ {arm}, _ => 0i32, }};")
+    assert exc_info.value.kinds == (diag_kinds.BINDING_IN_OR_PATTERN,)
 
 
 def test_two_bindings_of_one_name_in_an_arm_are_rejected(compiler):
     # Confirms existing behaviour rather than adding any: an arm's
     # bindings all share one scope.
     body = "return match (p) { Pair::Both(let x, let x) => x, };"
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build(f"union Pair {{ Both(i32, i32) }}\npub fn f(p: Pair) i32 {{ {body} }}")
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def _mod_var_value(mod, name: str) -> ir_values.ComptimeValue:
@@ -779,8 +808,9 @@ def test_comptime_nested_variant_construction(compiler):
 def test_comptime_union_payload_cannot_hold_a_temporary_address(compiler):
     # ComptimeUnion is not a ComptimeAggregate, so without its own arm in
     # _check_not_temporary a temporary pointer would escape inside one.
-    with pytest.raises(errors.CannotTakeAddressOfComptimeValueError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build("union Boxed { B(*i32) }\npub let g = Boxed::B(&1);")
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ADDRESS_OF_TEMPORARY,)
 
 
 def _union_instr_cfg(union_typ: typs.UnionTyp, payload: int):
@@ -1291,8 +1321,9 @@ def test_overlapping_trait_impls_for_one_union_rejected(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ConflictingImplsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_IMPLS,)
 
 
 def test_orphan_trait_impl_for_a_non_local_union_rejected(compiler):
@@ -1307,8 +1338,9 @@ def test_orphan_trait_impl_for_a_non_local_union_rejected(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.OrphanImplError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.ORPHAN_IMPL,)
 
 
 def test_foreign_trait_impl_for_a_local_union_is_not_an_orphan(compiler):
@@ -1344,8 +1376,9 @@ def test_inherent_impl_for_a_non_local_union_rejected(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ImplForNonLocalTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.IMPL_OUTSIDE_TYPE_MODULE,)
 
 
 @pytest.mark.parametrize(
@@ -1364,8 +1397,9 @@ def test_assoc_fn_named_after_a_variant_rejected(compiler, order):
     {order}
     pub fn main() i32 {{ return 0; }}
     """
-    with pytest.raises(errors.FnNameClashesWithUnionVariantError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_VARIANT_AND_FUNCTION_NAMES,)
 
 
 def test_assoc_fn_named_after_a_variant_of_a_generic_union_rejected(compiler):
@@ -1376,8 +1410,9 @@ def test_assoc_fn_named_after_a_variant_of_a_generic_union_rejected(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.FnNameClashesWithUnionVariantError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_VARIANT_AND_FUNCTION_NAMES,)
 
 
 def test_assoc_fn_not_named_after_a_variant_is_accepted(compiler):
@@ -1420,8 +1455,9 @@ def test_inherent_method_named_after_a_variant_rejected(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.FnNameClashesWithUnionVariantError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_VARIANT_AND_FUNCTION_NAMES,)
 
 
 # --- end-to-end runtime and comptime behaviour ---

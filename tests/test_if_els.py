@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_if_false_else_expr_val(compiler):
@@ -147,8 +147,9 @@ def test_if_with_tail_expr(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IfTypNotVoidError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.IF_WITHOUT_ELSE_TYPE_MISMATCH,)
 
 
 def test_if_els_with_mismatching_typs(compiler):
@@ -163,8 +164,9 @@ def test_if_els_with_mismatching_typs(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IfElsTypMismatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_BRANCH_TYPES,)
 
 
 def test_void_call_as_if_cond(compiler):
@@ -177,8 +179,9 @@ def test_void_call_as_if_cond(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IfCondNotBoolError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.IF_CONDITION_TYPE_MISMATCH,)
 
 
 def test_if_els_two_void_branches(compiler):

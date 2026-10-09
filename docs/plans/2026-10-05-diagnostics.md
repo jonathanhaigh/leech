@@ -356,7 +356,11 @@ and rewrites `exc_info.value.message.span`/`.extra` accesses to `exc_info.value.
 Sites without `as exc_info` gain one. Tests whose programs report more than one diagnostic
 are fixed by hand. `tests/doc.py` accepts `error=<name>`/`warning=<name>` (rejecting unknown names at
 collection), and any fences in `README.md`/`docs/guide/` and the `tests/test_doc.py` fixtures
-are rewritten. Message-text assertions are updated to the normalized wording.
+are rewritten. The raised diagnostics are still `UserError`s, with their existing message
+text, so message-text assertions are updated to the normalized wording as each module's raise
+sites move to the catalogue in Commit C. Only sites that compile through
+`program.Program.check` are rewritten; tests that call the parser, loader or registry directly
+still expect the `UserError` class until their module is migrated.
 
 **Commit C… — migrate raise sites, one module per commit** (`parse`, `ir_env`, `typs`,
 `ir_traits`, `ir_module`, `ir_loader`, `comptime`, `typcheck`, `toolchain`/`program`/`cli`):

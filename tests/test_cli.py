@@ -13,7 +13,7 @@ import tempfile
 
 import pytest
 
-from leech import errors, program, session, target, toolchain
+from leech import diag, diag_kinds, errors, program, session, target, toolchain
 from leech.cli import leech as leech_cli
 from tests import harness
 
@@ -425,7 +425,7 @@ def test_program_reports_its_own_warnings(tmp_path):
     assert clean.diags.level == errors.NOTE
 
 
-def test_program_reports_raised_error_after_warnings(tmp_path):
+def test_compilation_error_carries_earlier_warnings(tmp_path):
     src_path = tmp_path / "app.leech"
     src_path.write_text(
         "enum E { A }\n"
@@ -434,14 +434,15 @@ def test_program_reports_raised_error_after_warnings(tmp_path):
     )
     compilation = session.Session()
 
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         program.Program(src_path, entry=False).check(compilation)
+    assert exc_info.value.kinds == (
+        diag_kinds.UNREACHABLE_MATCH_ARM,
+        diag_kinds.RETURN_TYPE_MISMATCH,
+    )
 
     assert compilation.diags.level == errors.ERROR
-    assert [type(d) for d in compilation.diags.all()] == [
-        errors.UnreachableMatchArmWarning,
-        errors.InvalidRetTypError,
-    ]
+    assert compilation.diags.sorted() == exc_info.value.diags
 
 
 def test_program_fails_on_emitted_error(tmp_path, monkeypatch):
@@ -450,7 +451,8 @@ def test_program_fails_on_emitted_error(tmp_path, monkeypatch):
     harness.emit_error_while_checking(monkeypatch)
     compilation = session.Session()
 
-    with pytest.raises(errors.CcNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         program.Program(src_path, entry=False).check(compilation)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_C_COMPILER,)
 
     assert [type(d) for d in compilation.diags.all()] == [errors.CcNotFoundError]

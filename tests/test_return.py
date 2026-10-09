@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds, errors
 from tests import harness
 
 
@@ -22,8 +22,9 @@ def test_missing_return(compiler):
         puts("abcd");
     }
     """
-    with pytest.raises(errors.MissingRetError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_RETURN,)
 
 
 def test_invalid_void_return(compiler):
@@ -32,8 +33,9 @@ def test_invalid_void_return(compiler):
         return;
     }
     """
-    with pytest.raises(errors.InvalidVoidRetError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_RETURN_VALUE,)
 
 
 def test_invalid_return_typ(compiler):
@@ -42,8 +44,9 @@ def test_invalid_return_typ(compiler):
         return "abcd";
     }
     """
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
 
 def test_return_typ_not_defined(compiler):
@@ -51,8 +54,9 @@ def test_return_typ_not_defined(compiler):
     pub fn f() not_a_typ { }
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(errors.ItemNotFoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
 
 
 def test_comptime_return(compiler):
@@ -62,8 +66,9 @@ def test_comptime_return(compiler):
     };
     pub fn main() i32 { 0 }
     """
-    with pytest.raises(errors.RetNotInFnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_OUTSIDE_FUNCTION,)
 
 
 def test_unreachable_code_warns_once_per_block_at_its_first_statement(compiler):

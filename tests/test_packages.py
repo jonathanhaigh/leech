@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors, program, session
+from leech import diag, diag_kinds, program, session
 from tests import harness
 
 
@@ -102,10 +102,11 @@ def test_import_is_not_relative_to_the_importing_file(compiler):
         harness.ModSrc("pkg::sub::helper", "pub fn f() i32 { return 10; }"),
     )
 
-    with pytest.raises(errors.ModDoesNotExistError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build(program)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_MODULE,)
 
-    harness.assert_span_at(exc_info.value.message.span, a_src, "sub::helper")
+    harness.assert_span_at(exc_info.value.diags[0].span, a_src, "sub::helper")
 
 
 def test_nested_import_does_not_exist(compiler):
@@ -115,9 +116,10 @@ def test_nested_import_does_not_exist(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ModDoesNotExistError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(main_src)
-    assert "sub::nope" in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_MODULE,)
+    assert "sub::nope" in str(exc_info.value.diags[0])
 
 
 @pytest.mark.parametrize(
@@ -132,11 +134,12 @@ def test_import_path_rejects_comptime_args_before_missing_module_lookup(
     pub fn main() i32 {{ return 0; }}
     """
 
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(main_src)
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
 
-    assert f'"{offending_seg}"' in str(exc_info.value)
-    span = exc_info.value.message.span
+    assert f'"{offending_seg}"' in str(exc_info.value.diags[0])
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, f"{offending_seg}[i32]")
 
 
@@ -147,10 +150,11 @@ def test_module_path_seg_rejects_comptime_args(compiler):
     """
     a_src = "pub fn f() i32 { 0 }"
 
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
-    assert '"a"' in str(exc_info.value)
-    span = exc_info.value.message.span
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
+    assert '"a"' in str(exc_info.value.diags[0])
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "a[i32]::f")
 
 
@@ -216,8 +220,9 @@ def test_directory_named_like_module_is_not_a_module(tmp_path):
     main_path = _write(tmp_path / "app" / "main.leech", "import lib; pub fn f() i32 { lib::g() }")
     (tmp_path / "app" / "lib.leech").mkdir()
 
-    with pytest.raises(errors.ModDoesNotExistError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         _compile(main_path)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_MODULE,)
 
 
 def test_non_root_module_compiles_against_the_root_package(compiler):
@@ -248,7 +253,8 @@ def test_import_linking_outside_every_package_is_reported(tmp_path):
     main_path = _write(tmp_path / "app" / "main.leech", main_src)
     (tmp_path / "app" / "alias.leech").symlink_to(outside)
 
-    with pytest.raises(errors.ModOutsidePackagesError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         _compile(main_path)
+    assert exc_info.value.kinds == (diag_kinds.MODULE_OUTSIDE_PACKAGES,)
 
-    harness.assert_span_at(exc_info.value.message.span, main_src, "alias;")
+    harness.assert_span_at(exc_info.value.diags[0].span, main_src, "alias;")

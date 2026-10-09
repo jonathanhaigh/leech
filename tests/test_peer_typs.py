@@ -6,7 +6,7 @@ import signal
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 # --- if/else arms ---
 
@@ -49,8 +49,9 @@ def test_if_two_decided_arms_must_agree(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IfElsTypMismatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_BRANCH_TYPES,)
 
 
 def test_if_diverging_arm_does_not_decide_typ(compiler):
@@ -112,8 +113,9 @@ def test_binop_two_decided_operands_must_agree(compiler, expr):
         return 0;
     }}
     """
-    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_OPERAND_TYPES,)
 
 
 def test_binop_flexible_operand_does_not_adopt_non_int_typ(compiler):
@@ -127,8 +129,9 @@ def test_binop_flexible_operand_does_not_adopt_non_int_typ(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleBinOpArgTypsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_OPERAND_TYPES,)
 
 
 # --- Evaluation order is left-to-right ---

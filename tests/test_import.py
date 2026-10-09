@@ -6,7 +6,7 @@ import collections
 
 import pytest
 
-from leech import ast, diag, errors, mono, parse, typcheck
+from leech import ast, diag, diag_kinds, errors, mono, parse, typcheck
 from leech import src as leech_src
 from tests import harness
 
@@ -24,8 +24,9 @@ def test_import_of_module_with_syntax_error(compiler):
     a_src = """
     pub fn f() i32
     """
-    with pytest.raises(errors.UnexpectedTokenError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_TOKEN,)
 
 
 def test_import_fn(compiler):
@@ -91,8 +92,9 @@ def test_uncalled_private_fn_in_imported_module_is_typechecked(compiler):
     """
     program = harness.TestProgram.from_main(main_src, harness.ModSrc("helper", helper_src))
 
-    with pytest.raises(errors.InvalidRetTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(program)
+    assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
 
 def test_imported_unreachable_body_can_request_unused_struct_instance(compiler):
@@ -148,8 +150,9 @@ def test_import_private_fn(compiler):
         return 101;
     }
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_import_private_fn_use_comptime(compiler):
@@ -165,8 +168,9 @@ def test_import_private_fn_use_comptime(compiler):
         return 101;
     }
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_import_var(compiler):
@@ -208,8 +212,9 @@ def test_import_private_var(compiler):
     a_src = """
     let x = 11;
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_import_private_var_use_comptime(compiler):
@@ -223,8 +228,9 @@ def test_import_private_var_use_comptime(compiler):
     a_src = """
     let x = 11;
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_import_typ(compiler):
@@ -274,8 +280,9 @@ def test_import_private_typ(compiler):
         int: i32,
     }
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_import_private_typ_use_comptime(compiler):
@@ -291,8 +298,9 @@ def test_import_private_typ_use_comptime(compiler):
         int: i32,
     }
     """
-    with pytest.raises(errors.PrivateItemAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_ITEM_ACCESS,)
 
 
 def test_import_typ_with_var_of_same_name(compiler):
@@ -374,8 +382,9 @@ def test_import_private_struct_field_construct(compiler):
         priv_val: i32,
     }
     """
-    with pytest.raises(errors.PrivateStructFieldAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_FIELD_ACCESS,)
 
 
 def test_comptime_import_private_struct_field_construct(compiler):
@@ -391,8 +400,9 @@ def test_comptime_import_private_struct_field_construct(compiler):
         priv_val: i32,
     }
     """
-    with pytest.raises(errors.PrivateStructFieldAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_FIELD_ACCESS,)
 
 
 def test_import_private_struct_field_read(compiler):
@@ -414,8 +424,9 @@ def test_import_private_struct_field_read(compiler):
         return T { priv_val: 1 };
     }
     """
-    with pytest.raises(errors.PrivateStructFieldAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_FIELD_ACCESS,)
 
 
 def test_import_private_struct_field_write(compiler):
@@ -436,8 +447,9 @@ def test_import_private_struct_field_write(compiler):
         return T { priv_val: 1 };
     }
     """
-    with pytest.raises(errors.PrivateStructFieldAccessError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.PRIVATE_FIELD_ACCESS,)
 
 
 def test_private_struct_field_accessible_via_assoc_fn_in_defining_module(compiler):
@@ -476,8 +488,9 @@ def test_mod_does_not_exist(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.ModDoesNotExistError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(main_src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_MODULE,)
 
 
 def test_duplicate_import(compiler):
@@ -495,8 +508,9 @@ def test_duplicate_import(compiler):
         return 1;
     }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 @pytest.mark.parametrize(
@@ -527,8 +541,9 @@ def test_mod_used_as_typ(compiler, defn):
         return 1;
     }
     """
-    with pytest.raises(errors.ModUsedAsTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.MODULE_USED_AS_TYPE,)
 
 
 def test_import_and_struct_same_name(compiler):
@@ -546,8 +561,9 @@ def test_import_and_struct_same_name(compiler):
         return 1;
     }
     """
-    with pytest.raises(errors.DuplicateItemDefnError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
 
 
 def test_import_and_var_same_name(compiler):
@@ -913,22 +929,24 @@ def test_conflicting_extern_declarations_are_reported_at_the_later_one(compiler)
         harness.ModSrc("b", b_src),
     )
 
-    with pytest.raises(errors.ConflictingExternDeclError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build(program)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)
 
-    harness.assert_span_at(exc_info.value.message.span, b_src, "extern fn puts")
-    (note,) = exc_info.value.extra
+    harness.assert_span_at(exc_info.value.diags[0].span, b_src, "extern fn puts")
+    (note,) = exc_info.value.diags[0].extra
     harness.assert_span_at(note.span, a_src, "extern fn puts")
 
 
 def test_extern_conflicting_with_the_preludes_is_reported_at_the_programs(compiler):
     src = "extern fn write(fd: i32, buf: *u8, count: usize) i32;\npub fn main() i32 { 0 }"
 
-    with pytest.raises(errors.ConflictingExternDeclError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)
 
-    harness.assert_span_at(exc_info.value.message.span, src, "extern fn write")
-    (note,) = exc_info.value.extra
+    harness.assert_span_at(exc_info.value.diags[0].span, src, "extern fn write")
+    (note,) = exc_info.value.diags[0].extra
     assert note.span is not None
     assert note.span.file.path.name == "prelude.leech"
 
@@ -938,5 +956,6 @@ def test_extern_declarations_differing_only_in_pointer_mutability_conflict(compi
         "import std::mem;\nextern fn free(p: *u8);\npub fn main() i32 { 0 }"
     )
 
-    with pytest.raises(errors.ConflictingExternDeclError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.build(program)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)

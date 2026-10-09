@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import errors
+from leech import diag, diag_kinds
 
 
 def test_assign_to_local_var(compiler):
@@ -41,8 +41,9 @@ def test_comptime_assign_to_mod_var(compiler):
         return a;
     }
     """
-    with pytest.raises(errors.SetNonLocalVarAtComptimeError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_NON_LOCAL_WRITE,)
 
 
 def test_assign_to_const_local_var(compiler):
@@ -53,8 +54,9 @@ def test_assign_to_const_local_var(compiler):
         return a;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_to_const_mod_var(compiler):
@@ -65,8 +67,9 @@ def test_assign_to_const_mod_var(compiler):
         return a;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_to_local_arr_element(compiler):
@@ -99,8 +102,9 @@ def test_assign_to_const_local_arr_element(compiler):
         return a.[2usize] + a.[0usize];
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_to_const_local_nested_arr_element(compiler):
@@ -111,8 +115,9 @@ def test_assign_to_const_local_nested_arr_element(compiler):
         return a.[1usize].[0usize];
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_to_local_struct_field(compiler):
@@ -154,8 +159,9 @@ def test_assign_to_const_local_struct_field(compiler):
         return x.a;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_to_local_struct_const_field(compiler):
@@ -168,8 +174,9 @@ def test_assign_to_local_struct_const_field(compiler):
         return x.a;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_to_const_local_nested_struct_field(compiler):
@@ -182,8 +189,9 @@ def test_assign_to_const_local_nested_struct_field(compiler):
         return x.b.a;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_to_local_nested_struct_const_field(compiler):
@@ -196,8 +204,9 @@ def test_assign_to_local_nested_struct_const_field(compiler):
         return x.b.a;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_through_ptr_deref(compiler):
@@ -224,8 +233,9 @@ def test_assign_through_const_ptr_deref(compiler):
         return x;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_through_explicit_mut_ptr_param(compiler):
@@ -257,8 +267,9 @@ def test_assign_wrong_typ_to_local(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleAssignmentTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TYPE_MISMATCH,)
 
 
 def test_assign_wrong_typ_through_ptr_deref(compiler):
@@ -270,8 +281,9 @@ def test_assign_wrong_typ_through_ptr_deref(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleAssignmentTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TYPE_MISMATCH,)
 
 
 def test_assign_wrong_typ_to_struct_field(compiler):
@@ -283,8 +295,9 @@ def test_assign_wrong_typ_to_struct_field(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.IncompatibleAssignmentTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TYPE_MISMATCH,)
 
 
 def test_assign_to_const_reported_before_typ_mismatch(compiler):
@@ -297,8 +310,9 @@ def test_assign_to_const_reported_before_typ_mismatch(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_through_explicit_const_ptr_param(compiler):
@@ -313,8 +327,9 @@ def test_assign_through_explicit_const_ptr_param(compiler):
         return x;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_to_temporary(compiler):
@@ -328,8 +343,9 @@ def test_assign_to_temporary(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.AssignToConstError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
 
 
 def test_assign_evaluates_place_before_value(compiler):

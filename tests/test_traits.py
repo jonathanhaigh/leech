@@ -4,7 +4,18 @@
 
 import pytest
 
-from leech import asserts, ast, compilation, errors, ir_env, ir_module, ir_traits, typs
+from leech import (
+    asserts,
+    ast,
+    compilation,
+    diag,
+    diag_kinds,
+    errors,
+    ir_env,
+    ir_module,
+    ir_traits,
+    typs,
+)
 from tests import harness
 
 
@@ -424,8 +435,9 @@ def test_generic_impl_body_rejects_invalid_op(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.InvalidBinOpArgTypError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,)
 
 
 def test_calling_method_through_generic_impl(compiler):
@@ -502,8 +514,9 @@ def test_generic_impl_with_unsatisfied_bound_does_not_apply(compiler):
         return call_show(b);
     }
     """
-    with pytest.raises(errors.UnsatisfiedBoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
 
 
 def test_generic_impl_with_unsatisfied_bound_provides_no_method(compiler):
@@ -519,8 +532,9 @@ def test_generic_impl_with_unsatisfied_bound_provides_no_method(compiler):
         return b.show();
     }
     """
-    with pytest.raises(errors.NotCallableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_CALL,)
 
 
 def test_generic_impl_bound_unsatisfied_by_callers_typ_param(compiler):
@@ -538,8 +552,9 @@ def test_generic_impl_bound_unsatisfied_by_callers_typ_param(compiler):
         return f(b);
     }
     """
-    with pytest.raises(errors.NotCallableError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_FUNCTION_CALL,)
 
 
 def test_generic_impl_bound_satisfied_by_callers_typ_param(compiler):
@@ -612,9 +627,10 @@ def test_unsatisfied_bound_on_generic_fn_call(compiler):
         return double_show(n);
     }
     """
-    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    msg = str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
+    msg = str(exc_info.value.diags[0])
     assert '"bool"' in msg
     assert '"Show"' in msg
     assert '"T"' in msg
@@ -629,8 +645,9 @@ def test_unsatisfied_bound_on_generic_struct_instantiation(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.UnsatisfiedBoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
 
 
 def test_bound_satisfied_on_generic_struct_instantiation(compiler):
@@ -657,9 +674,10 @@ def test_ambiguous_method_call_between_two_traits(compiler):
         return x.f();
     }
     """
-    with pytest.raises(errors.AmbiguousMethodError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"f"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.AMBIGUOUS_METHOD_CALL,)
+    assert '"f"' in str(exc_info.value.diags[0])
 
 
 def test_ambiguous_method_call_on_bound_typ_param(compiler):
@@ -671,8 +689,9 @@ def test_ambiguous_method_call_on_bound_typ_param(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.AmbiguousMethodError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.AMBIGUOUS_METHOD_CALL,)
 
 
 #: A bound and everything it needs, to be spliced either side of the
@@ -708,9 +727,10 @@ def test_unsatisfied_bound_diagnosed_the_same_either_declaration_order(compiler,
     pub fn main() i32 { return f(true); }
     """
     )
-    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Show"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
+    assert '"Show"' in str(exc_info.value.diags[0])
 
 
 @pytest.mark.parametrize("forward", (False, True))
@@ -723,8 +743,10 @@ def test_non_trait_bound_diagnosed_the_same_either_declaration_order(compiler, f
     pub fn main() i32 { return 0; }
     """
     )
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 def test_bound_names_non_trait_via_method_call(compiler):
@@ -735,8 +757,10 @@ def test_bound_names_non_trait_via_method_call(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 def test_bound_names_unapplied_generic_non_trait(compiler):
@@ -745,8 +769,10 @@ def test_bound_names_unapplied_generic_non_trait(compiler):
     fn f[T: NotATrait](x: T) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 #: One never-applied declaration of each kind that can take comptime
@@ -768,8 +794,10 @@ def test_non_trait_bound_on_unused_declaration_is_rejected(compiler, decl):
     {_UNUSED_BAD_BOUND_DECLS[decl]}
     pub fn main() i32 {{ return 0; }}
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 def test_bound_names_non_trait_on_unused_typ_param(compiler):
@@ -781,8 +809,10 @@ def test_bound_names_non_trait_on_unused_typ_param(compiler):
     fn f[T: NotATrait](x: T) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 def test_bound_names_non_trait_on_generic_struct_instantiation(compiler):
@@ -794,8 +824,10 @@ def test_bound_names_non_trait_on_generic_struct_instantiation(compiler):
         return 0;
     }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 def test_trait_missing_method_not_implemented(compiler):
@@ -804,10 +836,11 @@ def test_trait_missing_method_not_implemented(compiler):
     impl Show for i32 {}
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.TraitMethodNotImplementedError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"show"' in str(exc_info.value)
-    assert '"Show"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_TRAIT_METHOD,)
+    assert '"show"' in str(exc_info.value.diags[0])
+    assert '"Show"' in str(exc_info.value.diags[0])
 
 
 def test_trait_impl_extra_method(compiler):
@@ -819,9 +852,10 @@ def test_trait_impl_extra_method(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ExtraMethodInImplError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"other"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_TRAIT_METHOD,)
+    assert '"other"' in str(exc_info.value.diags[0])
 
 
 def test_trait_impl_duplicate_method(compiler):
@@ -833,9 +867,10 @@ def test_trait_impl_duplicate_method(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.DuplicateItemDefnError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert "method" in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.DUPLICATE_DEFINITION,)
+    assert "method" in str(exc_info.value.diags[0])
 
 
 def test_trait_impl_duplicate_extra_method_is_rejected_atomically(compiler):
@@ -871,9 +906,10 @@ def test_trait_impl_method_signature_mismatch(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.TraitMethodSignatureMismatchError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"show"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.TRAIT_METHOD_TYPE_MISMATCH,)
+    assert '"show"' in str(exc_info.value.diags[0])
 
 
 def test_trait_impl_method_wrong_receiver_mutability(compiler):
@@ -884,8 +920,9 @@ def test_trait_impl_method_wrong_receiver_mutability(compiler):
     }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.TraitMethodSignatureMismatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.TRAIT_METHOD_TYPE_MISMATCH,)
 
 
 def test_conflicting_impls_of_same_trait_same_typ(compiler):
@@ -895,8 +932,9 @@ def test_conflicting_impls_of_same_trait_same_typ(compiler):
     impl Show for i32 { fn show(*self) i32 { self.* } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ConflictingImplsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_IMPLS,)
 
 
 def test_partially_overlapping_generic_trait_impls_conflict(compiler):
@@ -907,8 +945,9 @@ def test_partially_overlapping_generic_trait_impls_conflict(compiler):
     impl[U] Show for Pair[bool, U] { fn show(*self) i32 { 2 } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ConflictingImplsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_IMPLS,)
 
 
 @pytest.mark.parametrize(
@@ -934,8 +973,9 @@ def test_blanket_trait_impl_conflicts_with_concrete_impl(compiler, impls):
     pub fn main() i32 { return 0; }
     """
     )
-    with pytest.raises(errors.ConflictingImplsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.CONFLICTING_IMPLS,)
 
 
 def test_blanket_trait_impl_is_selected_for_concrete_typ(compiler):
@@ -985,8 +1025,9 @@ def test_orphan_impl_neither_trait_nor_typ_local(compiler):
     impl a::Show for i32 { fn show(*self) i32 { self.* } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.OrphanImplError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
+    assert exc_info.value.kinds == (diag_kinds.ORPHAN_IMPL,)
 
 
 def test_impl_local_trait_for_foreign_typ_not_orphan(compiler):
@@ -1025,8 +1066,10 @@ def test_impl_for_non_trait(compiler):
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 def test_impl_for_unapplied_generic_non_trait(compiler):
@@ -1035,8 +1078,10 @@ def test_impl_for_unapplied_generic_non_trait(compiler):
     impl NotATrait for i32 { fn f() i32 { 1 } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a trait"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a trait" in str(exc_info.value.diags[0])
 
 
 def test_trait_used_as_typ(compiler):
@@ -1045,9 +1090,10 @@ def test_trait_used_as_typ(compiler):
     fn f(x: Show) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.TraitUsedAsTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Show"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.TRAIT_USED_AS_TYPE,)
+    assert '"Show"' in str(exc_info.value.diags[0])
 
 
 @pytest.mark.parametrize("trait_typ", ("Container", "Container[i32]"))
@@ -1056,9 +1102,10 @@ def test_generic_trait_used_as_typ(compiler, trait_typ):
     trait Container[T] {{ fn get(*self) T; }}
     pub fn main(x: {trait_typ}) i32 {{ return 0; }}
     """
-    with pytest.raises(errors.TraitUsedAsTypError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Container"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.TRAIT_USED_AS_TYPE,)
+    assert '"Container"' in str(exc_info.value.diags[0])
 
 
 def test_trait_method_missing_receiver(compiler):
@@ -1066,8 +1113,9 @@ def test_trait_method_missing_receiver(compiler):
     trait Show { fn show() i32; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.TraitMethodMissingReceiverError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_SELF_PARAMETER,)
 
 
 def test_trait_method_call_span(compiler):
@@ -1081,9 +1129,10 @@ def test_trait_method_call_span(compiler):
         return double_show(n);
     }
     """
-    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    span = exc_info.value.message.span
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "double_show(n)")
 
 
@@ -1098,9 +1147,10 @@ def test_explicit_generic_fn_bound_error_uses_path_span(compiler):
         return double_show[bool](n);
     }
     """
-    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    span = exc_info.value.message.span
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
+    span = exc_info.value.diags[0].span
     span = harness.assert_span_at(span, src, "double_show[bool](n)")
     assert span.file.src[span.start : span.end] == "double_show[bool]"
 
@@ -1189,9 +1239,10 @@ def test_bound_with_generic_args_on_non_generic_trait(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Show"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
+    assert '"Show"' in str(exc_info.value.diags[0])
 
 
 def test_unused_bound_with_generic_args_on_non_generic_trait(compiler):
@@ -1200,8 +1251,9 @@ def test_unused_bound_with_generic_args_on_non_generic_trait(compiler):
     fn f[T: Show[i32]](x: T) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ComptimeArgsOnNonGenericItemError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT,)
 
 
 def test_bound_on_generic_trait_without_typ_args(compiler):
@@ -1213,9 +1265,10 @@ def test_bound_on_generic_trait_without_typ_args(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.MissingComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Container"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_COMPTIME_ARGUMENT,)
+    assert '"Container"' in str(exc_info.value.diags[0])
 
 
 def test_bound_with_wrong_number_of_typ_args(compiler):
@@ -1227,9 +1280,10 @@ def test_bound_with_wrong_number_of_typ_args(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.WrongNumberOfComptimeArgsError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Container"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
+    assert '"Container"' in str(exc_info.value.diags[0])
 
 
 def test_checking_bound_with_generic_args_not_supported_yet(compiler):
@@ -1258,9 +1312,10 @@ def test_bound_typ_arg_violating_traits_own_bound(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    msg = str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
+    msg = str(exc_info.value.diags[0])
     assert '"bool"' in msg
     assert '"Show"' in msg
 
@@ -1301,9 +1356,10 @@ def test_unsatisfied_bound_trait_arg_on_unused_declaration(compiler):
     pub fn main() i32 { return 0; }
     """
     )
-    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"bool"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
+    assert '"bool"' in str(exc_info.value.diags[0])
 
 
 @pytest.mark.parametrize(
@@ -1325,10 +1381,11 @@ def test_bound_on_sibling_typ_param_must_be_carried_by_its_declaration(compiler,
     pub fn main() i32 { return 0; }
     """
     )
-    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert f'"{unbounded}"' in str(exc_info.value)
-    assert '"Show"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
+    assert f'"{unbounded}"' in str(exc_info.value.diags[0])
+    assert '"Show"' in str(exc_info.value.diags[0])
 
 
 def test_bound_referencing_sibling_typ_param_carrying_the_needed_bound(compiler):
@@ -1355,9 +1412,10 @@ def test_bound_referencing_sibling_typ_param_rejects_unsatisfying_arg(compiler):
     }
     """
     )
-    with pytest.raises(errors.UnsatisfiedBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"bool"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
+    assert '"bool"' in str(exc_info.value.diags[0])
 
 
 def test_bound_referencing_sibling_typ_param_satisfied(compiler):
@@ -1379,11 +1437,9 @@ def test_bound_referencing_sibling_typ_param_satisfied(compiler):
         compiler.compile(src)
 
 
-def _assert_recursive_trait_bound_error(exc, primary: str, cycle: list[str]) -> None:
-    assert (
-        exc.value.message.message == f'Trait bound "{primary}" is part of a recursive bound cycle'
-    )
-    assert [note.message for note in exc.value.extra] == [
+def _assert_recursive_trait_bound_error(err, primary: str, cycle: list[str]) -> None:
+    assert err.message.message == f'Trait bound "{primary}" is part of a recursive bound cycle'
+    assert [note.message for note in err.extra] == [
         f'Trait bound "{name}" participates in this cycle' for name in cycle
     ]
 
@@ -1397,11 +1453,12 @@ def test_self_referential_trait_bound(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    _assert_recursive_trait_bound_error(exc_info, "Foo[T]", ["Foo[T]"])
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_TRAIT_BOUND,)
+    _assert_recursive_trait_bound_error(exc_info.value.diags[0], "Foo[T]", ["Foo[T]"])
 
-    span = exc_info.value.message.span
+    span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "Foo[T]")
 
 
@@ -1415,9 +1472,10 @@ def test_mutually_recursive_trait_bounds(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    _assert_recursive_trait_bound_error(exc_info, "A[T]", ["A[T]", "B[T]"])
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_TRAIT_BOUND,)
+    _assert_recursive_trait_bound_error(exc_info.value.diags[0], "A[T]", ["A[T]", "B[T]"])
 
 
 def test_growing_recursive_trait_bound_via_pointer(compiler):
@@ -1430,9 +1488,10 @@ def test_growing_recursive_trait_bound_via_pointer(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    _assert_recursive_trait_bound_error(exc_info, "Foo[*T]", ["Foo[*T]"])
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_TRAIT_BOUND,)
+    _assert_recursive_trait_bound_error(exc_info.value.diags[0], "Foo[*T]", ["Foo[*T]"])
 
 
 def test_growing_recursive_trait_bound_via_array(compiler):
@@ -1444,9 +1503,12 @@ def test_growing_recursive_trait_bound_via_array(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    _assert_recursive_trait_bound_error(exc_info, "Bar[array[T, 2]]", ["Bar[array[T, 2]]"])
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_TRAIT_BOUND,)
+    _assert_recursive_trait_bound_error(
+        exc_info.value.diags[0], "Bar[array[T, 2]]", ["Bar[array[T, 2]]"]
+    )
 
 
 def test_growing_mutually_recursive_trait_bounds(compiler):
@@ -1459,19 +1521,20 @@ def test_growing_mutually_recursive_trait_bounds(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.RecursiveTraitBoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    _assert_recursive_trait_bound_error(exc_info, "P[*T]", ["P[*T]", "Q[*T]"])
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_TRAIT_BOUND,)
+    _assert_recursive_trait_bound_error(exc_info.value.diags[0], "P[*T]", ["P[*T]", "Q[*T]"])
 
 
 def _assert_recursive_impl_selection_error(
-    exc, trait_name: str, typ_name: str, impl_names: list[str]
+    err, trait_name: str, typ_name: str, impl_names: list[str]
 ) -> None:
     assert (
-        exc.value.message.message
+        err.message.message
         == f'Selecting an implementation of trait "{trait_name}" for type "{typ_name}" is recursive'
     )
-    assert [note.message for note in exc.value.extra] == [
+    assert [note.message for note in err.extra] == [
         f'Implementation "{name}" participates in this cycle' for name in impl_names
     ]
 
@@ -1482,9 +1545,10 @@ def test_direct_recursive_impl_selection(compiler):
     impl[T: Show] Show for T { fn show(*self) i32 { 0 } }
     pub fn main() i32 { let x: i32 = 1; return x.show(); }
     """
-    with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    _assert_recursive_impl_selection_error(exc_info, "Show", "i32", ["<T as Show>"])
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
+    _assert_recursive_impl_selection_error(exc_info.value.diags[0], "Show", "i32", ["<T as Show>"])
 
 
 def test_mutual_recursive_impl_selection(compiler):
@@ -1495,10 +1559,11 @@ def test_mutual_recursive_impl_selection(compiler):
     impl[T: A] B for T { fn b(*self) i32 { 0 } }
     pub fn main() i32 { let x: i32 = 1; return x.a(); }
     """
-    with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
     _assert_recursive_impl_selection_error(
-        exc_info,
+        exc_info.value.diags[0],
         "A",
         "i32",
         ["<T as A>", "<T as B>"],
@@ -1517,10 +1582,11 @@ def test_recursive_impl_selection_excludes_path_into_cycle(compiler):
     impl[T: A] D for T { fn d(*self) i32 { 0 } }
     pub fn main() i32 { let x: i32 = 1; return x.d(); }
     """
-    with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
     _assert_recursive_impl_selection_error(
-        exc_info,
+        exc_info.value.diags[0],
         "A",
         "i32",
         ["<T as A>", "<T as B>", "<T as C>"],
@@ -1534,9 +1600,10 @@ def test_recursive_impl_selection_through_trait_owned_bound(compiler):
     impl[T: G[i32]] S for T { fn s(*self) i32 { 0 } }
     pub fn main() i32 { let x: i32 = 1; return x.s(); }
     """
-    with pytest.raises(errors.RecursiveImplSelectionError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    _assert_recursive_impl_selection_error(exc_info, "S", "i32", ["<T as S>"])
+    assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
+    _assert_recursive_impl_selection_error(exc_info.value.diags[0], "S", "i32", ["<T as S>"])
 
 
 def test_calling_method_through_bound_with_generic_args_not_supported_yet(compiler):
@@ -1560,8 +1627,9 @@ def test_bound_method_reports_missing_trait_args_instead_of_crashing(compiler):
     fn f[U: Container](x: U) i32 { return x.get(); }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.MissingComptimeArgsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.MISSING_COMPTIME_ARGUMENT,)
 
 
 def test_bound_method_reports_wrong_trait_arg_count_before_unsupported_error(compiler):
@@ -1570,8 +1638,9 @@ def test_bound_method_reports_wrong_trait_arg_count_before_unsupported_error(com
     fn f[U: Container[i32, bool]](x: U) i32 { return x.get(); }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.WrongNumberOfComptimeArgsError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.COMPTIME_ARGUMENT_COUNT_MISMATCH,)
 
 
 def test_bound_method_reports_wrong_trait_arg_kind_before_unsupported_error(compiler):
@@ -1580,8 +1649,10 @@ def test_bound_method_reports_wrong_trait_arg_kind_before_unsupported_error(comp
     fn f[U: Sized[i32]](x: U) i32 { return x.get(); }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.PathTargetKindError, match="names a type, not a comptime value"):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.PATH_KIND_MISMATCH,)
+    assert "names a type, not a comptime value" in str(exc_info.value.diags[0])
 
 
 def test_bound_method_reports_trait_arg_bound_error_before_unsupported_error(compiler):
@@ -1591,8 +1662,9 @@ def test_bound_method_reports_trait_arg_bound_error_before_unsupported_error(com
     fn f[U: Container[bool]](x: U) i32 { return x.get(); }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.UnsatisfiedBoundError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNSATISFIED_TRAIT_BOUND,)
 
 
 def test_same_trait_at_different_typ_args_is_not_a_cycle(compiler):
@@ -1685,8 +1757,9 @@ def test_impl_with_wrong_typ_for_self_param_still_rejected(compiler):
     impl Comparable for i32 { fn cmp(*self, other: *bool) i32 { 0 } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.TraitMethodSignatureMismatchError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.TRAIT_METHOD_TYPE_MISMATCH,)
 
 
 def test_self_resolves_to_typ_param_through_trait_bound(compiler):
@@ -1708,8 +1781,9 @@ def test_self_reserved_as_struct_name(compiler):
     struct Self { mut x: i32 }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 def test_self_reserved_as_trait_name(compiler):
@@ -1717,8 +1791,9 @@ def test_self_reserved_as_trait_name(compiler):
     trait Self { fn f(*self) i32; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 def test_self_reserved_as_fn_generic_param_name(compiler):
@@ -1726,8 +1801,9 @@ def test_self_reserved_as_fn_generic_param_name(compiler):
     fn f[Self](x: Self) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 def test_self_reserved_as_impl_generic_param_name(compiler):
@@ -1736,8 +1812,9 @@ def test_self_reserved_as_impl_generic_param_name(compiler):
     impl[Self] Foo[Self] { fn get(*self) Self { self.*.val } }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ReservedNameError):
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.RESERVED_NAME,)
 
 
 def test_self_does_not_resolve_in_trait_generic_param_bound(compiler):
@@ -1752,9 +1829,10 @@ def test_self_does_not_resolve_in_trait_generic_param_bound(compiler):
         return f(n);
     }
     """
-    with pytest.raises(errors.ItemNotFoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Self"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
+    assert '"Self"' in str(exc_info.value.diags[0])
 
 
 def test_self_does_not_resolve_in_free_fn(compiler):
@@ -1762,9 +1840,10 @@ def test_self_does_not_resolve_in_free_fn(compiler):
     fn f(x: Self) i32 { return 0; }
     pub fn main() i32 { return 0; }
     """
-    with pytest.raises(errors.ItemNotFoundError) as exc_info:
+    with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert '"Self"' in str(exc_info.value)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
+    assert '"Self"' in str(exc_info.value.diags[0])
 
 
 def _show_impl_for_s(compiler) -> tuple[ir_traits.Trait, typs.StructTyp, ir_traits.Impl]:

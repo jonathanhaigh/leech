@@ -8,7 +8,7 @@ import shutil
 
 import pytest
 
-from leech import errors
+from leech import diag_kinds
 from tests import doc
 
 _PAGE = pathlib.Path("docs/guide/test.md")
@@ -75,13 +75,13 @@ hello
 
 def test_parse_expected_error_and_warning():
     cases = parse_doc_page(
-        """```leech test=bad file=main.leech mode=error error=InvalidRetTypError
+        """```leech test=bad file=main.leech mode=error error=return-type-mismatch
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=bad
 Return expression has invalid type
 ```
-```leech test=warning file=main.leech mode=compile warning=UnreachableCodeWarning
+```leech test=warning file=main.leech mode=compile warning=unreachable-code
 pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=warning
@@ -90,9 +90,9 @@ return statement is unreachable
 """
     )
 
-    assert cases[0].diag_type is errors.InvalidRetTypError
+    assert cases[0].diag_kind is diag_kinds.RETURN_TYPE_MISMATCH
     assert not cases[0].expects_warning
-    assert cases[1].diag_type is errors.UnreachableCodeWarning
+    assert cases[1].diag_kind is diag_kinds.UNREACHABLE_CODE
     assert cases[1].expects_warning
 
 
@@ -218,12 +218,16 @@ pub fn main() i32 { return 0; }
             "duplicate or interleaved test ID",
         ),
         (
-            "```leech test=x file=main.leech mode=error error=NoSuchError\nfn f() {}\n```\n",
-            "unknown or nonconcrete",
+            "```leech test=x file=main.leech mode=error error=no-such-diagnostic\nfn f() {}\n```\n",
+            "unknown diagnostic name 'no-such-diagnostic'",
         ),
         (
-            "```leech test=x file=main.leech mode=error error=UserError\nfn f() {}\n```\n",
-            "unknown or nonconcrete",
+            "```leech test=x file=main.leech mode=error error=unreachable-code\nfn f() {}\n```\n",
+            "diagnostic 'unreachable-code' is not an error",
+        ),
+        (
+            "```leech test=x file=main.leech mode=compile warning=unknown-name\nfn f() {}\n```\n",
+            "diagnostic 'unknown-name' is not a warning",
         ),
         (
             "```leech test=x file=main.leech mode=run std=io\nfn main() {}\n```\n",
@@ -234,7 +238,7 @@ pub fn main() i32 { return 0; }
             "metadata not allowed with mode=compile",
         ),
         (
-            """```leech test=x file=main.leech mode=error warning=UnreachableCodeWarning
+            """```leech test=x file=main.leech mode=error warning=unreachable-code
 fn f() {}
 ```
 """,
@@ -265,14 +269,14 @@ fn answer() {}
             "reserved final module name segment",
         ),
         (
-            """```leech test=x file=main.leech mode=compile warning=UnreachableCodeWarning
+            """```leech test=x file=main.leech mode=compile warning=unreachable-code
 pub fn main() i32 { return 0; }
 ```
 """,
             "require a diagnostic= fence",
         ),
         (
-            """```leech test=x file=main.leech mode=error error=InvalidRetTypError
+            """```leech test=x file=main.leech mode=error error=return-type-mismatch
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=x newline=no
@@ -282,7 +286,7 @@ invalid
             "newline=no is not allowed on a diagnostic",
         ),
         (
-            """```leech test=x file=main.leech mode=error error=InvalidRetTypError
+            """```leech test=x file=main.leech mode=error error=return-type-mismatch
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=x
@@ -340,14 +344,14 @@ pub fn answer() i32 { return 7; }
 pub fn answer() i32 { return 7; }
 ```
 """,
-        """```leech test=error file=main.leech mode=error error=InvalidRetTypError
+        """```leech test=error file=main.leech mode=error error=return-type-mismatch
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=error
 Return expression has invalid type
 ```
 """,
-        """```leech test=warning file=main.leech mode=compile warning=UnreachableCodeWarning
+        """```leech test=warning file=main.leech mode=compile warning=unreachable-code
 pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=warning
@@ -373,7 +377,7 @@ pub fn answer() i32 { return helper::answer() + 1; }
 pub fn answer() i32 { return 10; }
 ```
 """,
-        """```leech test=run-warning file=main.leech mode=run exit=1 warning=UnreachableCodeWarning
+        """```leech test=run-warning file=main.leech mode=run exit=1 warning=unreachable-code
 pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=run-warning
@@ -408,7 +412,7 @@ def test_execute_valid_case(tmp_path, markdown):
 pub fn main() i32 { return 0 }
 ```
 """,
-            "UnexpectedTokenError",
+            "unexpected-token: Unexpected token",
         ),
         (
             """```leech test=warning file=main.leech mode=compile
@@ -418,17 +422,17 @@ pub fn main() i32 { return 1; return 2; }
             "unexpected emitted diagnostics",
         ),
         (
-            """```leech test=wrong file=main.leech mode=error error=InvalidRetTypError
+            """```leech test=wrong file=main.leech mode=error error=return-type-mismatch
 pub fn main() i32 { return 0 @ 1; }
 ```
 ```text diagnostic=wrong
 Return expression has invalid type
 ```
 """,
-            "expected InvalidRetTypError, got UnexpectedCharacterError",
+            "expected only return-type-mismatch, got unexpected-character",
         ),
         (
-            """```leech test=wrong-message file=main.leech mode=error error=InvalidRetTypError
+            """```leech test=wrong-message file=main.leech mode=error error=return-type-mismatch
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=wrong-message
@@ -439,17 +443,17 @@ different message
         ),
         (
             "```leech test=wrong-warning file=main.leech mode=compile "
-            "warning=UnreachableMatchArmWarning\n"
+            "warning=unreachable-match-arm\n"
             "pub fn main() i32 { return 1; return 2; }\n"
             "```\n"
             "```text diagnostic=wrong-warning\n"
             "return statement is unreachable\n"
             "```\n",
-            "expected warning UnreachableMatchArmWarning, got UnreachableCodeWarning",
+            "expected warning unreachable-match-arm, got unreachable-code",
         ),
         (
             "```leech test=wrong-warning-message file=main.leech mode=compile "
-            "warning=UnreachableCodeWarning\n"
+            "warning=unreachable-code\n"
             "pub fn main() i32 { return 1; return 2; }\n"
             "```\n"
             "```text diagnostic=wrong-warning-message\n"
