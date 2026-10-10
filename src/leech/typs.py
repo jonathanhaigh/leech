@@ -1695,23 +1695,21 @@ class EnumTyp(Typ):
         min_value = min(values, default=0)
         max_value = max(values, default=0)
         inferred_signage = signage.SIGNED if min_value < 0 else signage.UNSIGNED
-        for width in (8, 16, 32):
+        for width in (8, 16, 32, 64):
             candidate = IntTyp(width, inferred_signage)
             if candidate.fits(min_value) and candidate.fits(max_value):
                 return candidate
 
         widest = IntTyp(64, inferred_signage)
-        if not (widest.fits(min_value) and widest.fits(max_value)):
-            overflowing_value = min_value if not widest.fits(min_value) else max_value
-            overflowing_span = next(
-                variant_ast.span
-                for variant_ast, value in zip(self.ast.variants, values, strict=True)
-                if value == overflowing_value
-            )
-            self._env.ctx.diags.raise_error(
-                diag_kinds.ENUM_DISCRIMINANT_OVERFLOW, overflowing_span, value=overflowing_value
-            )
-        return widest
+        overflowing_value = min_value if not widest.fits(min_value) else max_value
+        overflowing_span = next(
+            variant_ast.span
+            for variant_ast, value in zip(self.ast.variants, values, strict=True)
+            if value == overflowing_value
+        )
+        self._env.ctx.diags.raise_error(
+            diag_kinds.ENUM_DISCRIMINANT_OVERFLOW, overflowing_span, value=overflowing_value
+        )
 
     @property
     def span(self) -> src.SrcSpan:

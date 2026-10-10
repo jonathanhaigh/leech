@@ -62,7 +62,10 @@ exclude = ["docs/**/*.md"]
 [tool.ruff.lint]
 # UP045 (Optional[X] -> X | None) is disabled: this codebase prefers
 # `Optional[X]` over PEP 604 syntax for nullable types.
-ignore = ["UP045"]
+# RET503 (missing explicit return) is disabled: ruff can't see that a call to
+# another module's `NoReturn` function, such as `Diags.raise_error`, ends a
+# function, while basedpyright's reportReturnType catches a real missing return.
+ignore = ["UP045", "RET503"]
 select = [
     "E", "F", "W",   # pycodestyle / pyflakes (default set, kept explicit)
     "A",             # flake8-builtins: don't shadow builtins

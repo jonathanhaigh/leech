@@ -101,7 +101,7 @@ def test_run_prints_build_warnings_before_running(tmp_path):
     proc = run_leech("run", root)
 
     assert proc.returncode == 0
-    assert proc.stderr.startswith("WARNING: return statement is unreachable\n")
+    assert proc.stderr.startswith("WARNING: unreachable return statement\n")
 
 
 def test_run_root_outside_working_directory(tmp_path):

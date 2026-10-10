@@ -180,19 +180,19 @@ class ModLoader:
             candidates = [ModId(self._root_package, idents)]
         else:
             candidates = []
-        found = next((candidate for candidate in candidates if candidate.file.is_file()), None)
-        if found is None:
-            self.ctx.diags.raise_error(diag_kinds.UNKNOWN_MODULE, path.span, name=path.str())
-        # A link is named after the file it resolves to.
-        mod_id = self._mod_id_for_file(found.file)
-        if mod_id is None:
-            self.ctx.diags.raise_error(
-                diag_kinds.MODULE_OUTSIDE_PACKAGES,
-                path.span,
-                name=path.str(),
-                path=str(found.file),
-            )
-        return mod_id
+        for candidate in candidates:
+            if candidate.file.is_file():
+                # A link is named after the file it resolves to.
+                mod_id = self._mod_id_for_file(candidate.file)
+                if mod_id is None:
+                    self.ctx.diags.raise_error(
+                        diag_kinds.MODULE_OUTSIDE_PACKAGES,
+                        path.span,
+                        name=path.str(),
+                        path=str(candidate.file),
+                    )
+                return mod_id
+        self.ctx.diags.raise_error(diag_kinds.UNKNOWN_MODULE, path.span, name=path.str())
 
     def load(self, mod_id: ModId) -> ir_module.Mod:
         """Load the module ``mod_id`` once, returning the same module on later requests."""
@@ -279,9 +279,7 @@ class ModLoader:
                         typ=fn_typ,
                         earlier_typ=other_typ,
                     )
-                    if other.span is not None:
-                        d = d.with_label(diag_kinds.EARLIER_DECL_HERE, other.span)
-                    self.ctx.diags.error(d)
+                    self.ctx.diags.error(d.with_label(diag_kinds.EARLIER_DECL_HERE, other.span))
                 earlier.append((fn, fn_typ))
 
     @property

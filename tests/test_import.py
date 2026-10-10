@@ -6,7 +6,7 @@ import collections
 
 import pytest
 
-from leech import ast, diag, diag_kinds, errors, mono, parse, typcheck
+from leech import ast, diag, diag_kinds, mono, parse, typcheck
 from leech import src as leech_src
 from tests import harness
 
@@ -860,7 +860,7 @@ def test_warning_in_a_module_imported_twice_is_reported_once(compiler):
 
     compiler.compile(program, diags=diags)
 
-    assert [type(d) for d in diags.all()] == [errors.UnreachableCodeWarning]
+    assert [d.kind for d in diags.all()] == [diag_kinds.UNREACHABLE_CODE]
 
 
 def test_private_fn_reached_only_from_another_modules_public_fn_is_generated(compiler):

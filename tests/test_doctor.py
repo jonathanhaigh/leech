@@ -188,6 +188,6 @@ def test_doctor_renders_build_diagnostics_before_a_crash(monkeypatch, capsys):
         doctor.DoctorCommand().execute(argparse.Namespace(), "leech")
 
     stderr = capsys.readouterr().err
-    user_error = stderr.index("ERROR: Return expression has invalid type")
+    user_error = stderr.index("ERROR: return expression has type")
     ice = stderr.index("ERROR: internal compiler error: RuntimeError: boom")
     assert user_error < ice

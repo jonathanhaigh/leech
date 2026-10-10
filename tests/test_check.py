@@ -55,7 +55,7 @@ def test_check_reports_warning_and_succeeds(tmp_path):
     proc = run_leech("check", root)
 
     assert proc.returncode == 0
-    assert proc.stderr.startswith("WARNING: return statement is unreachable\n")
+    assert proc.stderr.startswith("WARNING: unreachable return statement\n")
 
 
 def test_check_reports_struct_declaration_error(tmp_path):
@@ -206,7 +206,7 @@ def test_check_generates_no_ir(tmp_path, monkeypatch):
 
     found = harness.check_program(root)
 
-    assert [type(d) for d in found] == [errors.UnreachableCodeWarning]
+    assert [d.kind for d in found] == [diag_kinds.UNREACHABLE_CODE]
 
 
 def test_check_reports_unused_extern_signature_error(tmp_path):

@@ -173,8 +173,15 @@ class Diag:
         assert self.span is not None, "a spanless diagnostic has no primary label"
         return dataclasses.replace(self, primary_label=Msg(kind, args))
 
-    def with_label(self, kind: MsgKind, span: src.SrcSpan, /, **args: DiagArgValue) -> Self:
-        """Return this diagnostic with ``kind``'s text at a related ``span``, in any file."""
+    def with_label(
+        self, kind: MsgKind, span: Optional[src.SrcSpan], /, **args: DiagArgValue
+    ) -> Self:
+        """Return this diagnostic with ``kind``'s text at a related ``span``, in any file.
+
+        A label shows its span, so with no ``span`` this diagnostic is returned unchanged.
+        """
+        if span is None:
+            return self
         return dataclasses.replace(self, labels=(*self.labels, Label(span, Msg(kind, args))))
 
     def with_note(

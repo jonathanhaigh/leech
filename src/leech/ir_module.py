@@ -363,7 +363,7 @@ class SrcFnSymbol(ParsedFnSymbol[ast.FnDefn], LowerableFn):
     @compilation.unit
     def typ_check_results(self) -> check_results.TypCheckResults:
         """The unsubstituted lowering facts shared by all instances."""
-        return typcheck.TypCheck().check_fn(
+        return typcheck.TypCheck(self.ctx).check_fn(
             opt_util.opt_unwrap(self.ast), self.env, self.fn_typ.ret_typ, self.params
         )
 
@@ -756,7 +756,9 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
         Built lazily, on first access; forced by ``cfg`` before
         lowering begins.
         """
-        return typcheck.TypCheck().check_var_initializer(opt_util.opt_unwrap(self.ast), self.env)
+        return typcheck.TypCheck(self.ctx).check_var_initializer(
+            opt_util.opt_unwrap(self.ast), self.env
+        )
 
     @property
     @compilation.unit

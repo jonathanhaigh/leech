@@ -11,7 +11,6 @@ from leech import (
     compilation,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     ir_loader,
     ir_module,
@@ -98,7 +97,7 @@ def test_declaration_checking_is_an_explicit_post_load_phase(compiler):
     assert ctx.diags.all() == ()
     ctx.loader.check_declarations()
 
-    assert [type(d) for d in ctx.diags.all()] == [errors.InvalidRetTypError]
+    assert [d.kind for d in ctx.diags.all()] == [diag_kinds.RETURN_TYPE_MISMATCH]
 
 
 @pytest.mark.parametrize("mod_name", ("library", "main"))

@@ -188,9 +188,7 @@ class Env:
             d = diag.Diag.new(
                 diag_kinds.DUPLICATE_DEFINITION, span, item_kind=ns.item_kind(), name=name
             )
-            if existing_span is not None:
-                d = d.with_label(diag_kinds.PREVIOUS_DEFN_HERE, existing_span)
-            self.ctx.diags.raise_error(d)
+            self.ctx.diags.raise_error(d.with_label(diag_kinds.PREVIOUS_DEFN_HERE, existing_span))
 
     def poison(
         self, ns: Env.Namespace, name: str, reported: diag.ReportProof, span: src.SrcSpan
@@ -305,9 +303,7 @@ class Env:
         d = diag.Diag.new(
             diag_kinds.PRIVATE_ITEM_ACCESS, access_span, item_kind=item_kind, name=name
         )
-        if defn_span is not None:
-            d = d.with_note(diag_kinds.DEFINED_HERE, defn_span, name=name)
-        self.ctx.diags.raise_error(d)
+        self.ctx.diags.raise_error(d.with_label(diag_kinds.DEFINED_HERE, defn_span, name=name))
 
     def _lookup_assoc_fn(
         self,
@@ -385,11 +381,11 @@ class Env:
                 impl_args = item.impl.comptime_params
             return self._apply_fn_path_seg(item, impl_args, seg)
 
-        if seg.comptime_args:
-            self.ctx.diags.raise_error(
-                diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT, seg.span, item=seg.ident.name
-            )
-        return item
+        if not seg.comptime_args:
+            return item
+        self.ctx.diags.raise_error(
+            diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT, seg.span, item=seg.ident.name
+        )
 
     def _resolve_path_seg(
         self,
@@ -431,12 +427,12 @@ class Env:
     def _require_path_scope(self, target: PathResult, seg: ast.PathSeg) -> PathScope:
         match target:
             case ir_module.Mod() | typs.StructTyp() | typs.EnumTyp() | typs.UnionTyp():
-                pass
+                return target
             case typs.UnionTypTemplate():
                 # A union template qualifies a path even unapplied, so that
                 # `Option::Some` can name a variant whose comptime
                 # arguments are still to be inferred.
-                pass
+                return target
             case typs.GenericTypTemplate():
                 self.ctx.diags.raise_error(
                     diag_kinds.MISSING_COMPTIME_ARGUMENT, seg.span, item=target.name
@@ -461,7 +457,6 @@ class Env:
                     item_kind=Env._path_target_kind(target),
                     name=name,
                 )
-        return target
 
     def resolve_typ(self, path: ast.Path) -> typs.TypKind:
         """Resolve a qualified path whose final segment must be a type."""

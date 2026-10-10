@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from leech import diag, diag_kinds, errors, ir_loader, opt_util
+from leech import diag, diag_kinds, ir_loader, opt_util
 from leech.cli import leech as leech_cli
 from tests import harness
 
@@ -187,7 +187,7 @@ def test_build_reports_later_compilations_diagnostics_in_load_order(tmp_path):
 
     assert result.exe is not None
     spans = [opt_util.opt_unwrap(d.span) for d in result.diags]
-    assert [type(d) for d in result.diags] == [errors.UnreachableCodeWarning] * 2
+    assert [d.kind for d in result.diags] == [diag_kinds.UNREACHABLE_CODE] * 2
     assert [span.file.path.name for span in spans] == ["app.leech", "a.leech"]
 
 
@@ -214,7 +214,7 @@ def test_internal_error_renders_earlier_diagnostics_first(tmp_path, monkeypatch,
         leech_cli.main()
 
     stderr = capsys.readouterr().err
-    user_error = stderr.index("ERROR: Return expression has invalid type")
+    user_error = stderr.index("ERROR: return expression has type")
     ice = stderr.index("ERROR: internal compiler error: RuntimeError: boom")
     note = stderr.index("NOTE: this is a bug in leech; please report it")
     assert user_error < ice < note

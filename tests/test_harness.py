@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from leech import diag, diag_kinds, errors
+from leech import diag, diag_kinds
 from leech import src as leech_src
 from tests import harness
 
@@ -266,7 +266,7 @@ def test_each_compile_has_its_own_diags(compiler: harness.CompilerHarness):
     warned = compiler.compile("pub fn main() i32 { return 0; return 1; }")
     clean = compiler.compile("pub fn main() i32 { return 0; }")
 
-    assert [type(d) for d in warned.diags.all()] == [errors.UnreachableCodeWarning]
+    assert [d.kind for d in warned.diags.all()] == [diag_kinds.UNREACHABLE_CODE]
     assert clean.diags.all() == ()
 
 
@@ -276,7 +276,7 @@ def test_compile_emits_to_the_given_diags(compiler: harness.CompilerHarness):
     compiled = compiler.compile("pub fn main() i32 { return 0; return 1; }", diags=diags)
 
     assert compiled.diags is diags
-    assert [type(d) for d in diags.all()] == [errors.UnreachableCodeWarning]
+    assert [d.kind for d in diags.all()] == [diag_kinds.UNREACHABLE_CODE]
 
 
 def test_compile_generates_every_imported_module(compiler: harness.CompilerHarness):

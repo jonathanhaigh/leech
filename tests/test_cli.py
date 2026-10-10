@@ -198,11 +198,10 @@ def test_failed_check_writes_nothing(tmp_path):
     assert proc.returncode == 1
     assert proc.stdout == ""
     assert proc.stderr == (
-        'ERROR: Left operand of binary operation "+" has invalid type "bool", '
-        'expecting "an integer type"\n'
+        'ERROR: invalid type "bool" for left operand of "+", expected "an integer type"\n'
         "2|     return true + 1;\n"
         "--------------^\n"
-        'NOTE: For "+" operation here\n'
+        'NOTE: for "+" operation here\n'
         "2|     return true + 1;\n"
         "-------------------^\n"
     )
@@ -254,7 +253,7 @@ def test_warning_still_writes_output(tmp_path):
 
     assert proc.returncode == 0
     assert proc.stdout == ""
-    assert proc.stderr == "WARNING: return statement is unreachable\n3|     return 2;\n-------^\n"
+    assert proc.stderr == "WARNING: unreachable return statement\n3|     return 2;\n-------^\n"
     assert "ret i32 1" in fn_definition((tmp_path / "main.ll").read_text(), "main::main")
 
 
@@ -318,7 +317,7 @@ def test_warning_fires_once_for_multiple_dead_statements(tmp_path):
 
     assert proc.returncode == 0
     assert proc.stdout == ""
-    assert proc.stderr == "WARNING: let statement is unreachable\n3|     let y = 2;\n-------^\n"
+    assert proc.stderr == "WARNING: unreachable let statement\n3|     let y = 2;\n-------^\n"
 
 
 def test_in_process_error_renders_message_and_writes_nothing(tmp_path, monkeypatch, capsys):
@@ -329,9 +328,7 @@ def test_in_process_error_renders_message_and_writes_nothing(tmp_path, monkeypat
     assert code == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith(
-        'ERROR: Left operand of binary operation "+" has invalid type "bool", '
-    )
+    assert captured.err.startswith('ERROR: invalid type "bool" for left operand of "+"')
     assert listing(tmp_path) == {"main.leech"}
 
 
@@ -427,7 +424,7 @@ def test_program_reports_its_own_warnings(tmp_path):
     program.Program(clean_path, entry=False).check(clean).llvm_ir()
 
     assert warned.diags.level == errors.WARNING
-    assert [type(d) for d in warned.diags.all()] == [errors.UnreachableCodeWarning]
+    assert [d.kind for d in warned.diags.all()] == [diag_kinds.UNREACHABLE_CODE]
     assert clean.diags.all() == ()
     assert clean.diags.level == errors.NOTE
 

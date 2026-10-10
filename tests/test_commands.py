@@ -94,7 +94,7 @@ def test_output_options_map_kinds_to_paths(args, outputs):
 @pytest.mark.parametrize(
     ("src", "cc", "expected"),
     (
-        ("pub fn main() i32 { return true; }\n", None, "ERROR: Return expression has invalid"),
+        ("pub fn main() i32 { return true; }\n", None, "ERROR: return expression has type"),
         (_HELLO, "/nonexistent/cc", 'ERROR: C compiler "/nonexistent/cc" not found'),
         (_HELLO, "false", "ERROR: Linking failed: `false "),
     ),
@@ -139,7 +139,7 @@ def test_run_renders_build_diagnostics_once(tmp_path, monkeypatch, capsys):
 
     assert exc_info.value.code == 1
     stderr = capsys.readouterr().err
-    warning = "WARNING: return statement is unreachable"
+    warning = "WARNING: unreachable return statement"
     assert stderr.count(warning) == 1
     assert stderr.index(warning) < stderr.index("ERROR: Cannot run ")
 
@@ -186,7 +186,7 @@ def test_crash_after_run_renders_build_diagnostics_once(tmp_path, monkeypatch, c
         leech_cli.main()
 
     stderr = capsys.readouterr().err
-    warning = "WARNING: return statement is unreachable"
+    warning = "WARNING: unreachable return statement"
     assert stderr.count(warning) == 1
     assert stderr.index(warning) < stderr.index("ERROR: internal compiler error")
 

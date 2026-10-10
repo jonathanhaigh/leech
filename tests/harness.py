@@ -65,13 +65,6 @@ def check_program(root: pathlib.Path) -> tuple[diag.AnyDiag, ...]:
     return session.diags.sorted()
 
 
-def user_error(d: diag.AnyDiag) -> errors.UserError:
-    """Return ``d``, asserting that it is still reported as a ``UserError``, for assertions on
-    its ``message`` and ``extra``."""
-    assert isinstance(d, errors.UserError), f"{d!r} is a diag.Diag"
-    return d
-
-
 def emit_error_while_checking(monkeypatch) -> None:
     """Make checking emit an error without raising it."""
     discover = mono.discover

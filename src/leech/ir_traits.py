@@ -457,9 +457,9 @@ class ImplRegistry:
                     trait=trait.name,
                     typ=trait_impl.self_typ,
                 )
-                if existing_trait_impl.span is not None:
-                    d = d.with_label(diag_kinds.PREVIOUS_IMPL_HERE, existing_trait_impl.span)
-                self.ctx.diags.raise_error(d)
+                self.ctx.diags.raise_error(
+                    d.with_label(diag_kinds.PREVIOUS_IMPL_HERE, existing_trait_impl.span)
+                )
 
     def _check_inherent_impl_conflicts(
         self, inherent_impl: Impl, existing_inherent_impls: Collection[Impl]
@@ -656,6 +656,4 @@ def _raise_duplicate_definition(
     previous_span: Optional[src.SrcSpan],
 ) -> NoReturn:
     d = diag.Diag.new(diag_kinds.DUPLICATE_DEFINITION, span, item_kind=item_kind, name=name)
-    if previous_span is not None:
-        d = d.with_label(diag_kinds.PREVIOUS_DEFN_HERE, previous_span)
-    ctx.diags.raise_error(d)
+    ctx.diags.raise_error(d.with_label(diag_kinds.PREVIOUS_DEFN_HERE, previous_span))

@@ -379,7 +379,7 @@ and the text renderer accept a `Diag` beside a `UserError`; the next adds `Diags
 and lets the reporting methods build the `Diag`. The renderer shows a `Diag`'s message and
 notes in the existing layout, and, from `typs` on, each label as a note with its own excerpt,
 as spanned notes print today. Tests read a not-yet-migrated diagnostic's `message` and `extra`
-through `harness.user_error`, which goes away with the last class.
+through `harness.user_error`, which goes away once no test needs it (after `typcheck`).
 
 **Final commit.** Delete `errors.py` and `TextErrorRenderer`'s dependence on it (the
 existing renderer moves to `diag_text.py` unchanged in layout, using catalogue messages);

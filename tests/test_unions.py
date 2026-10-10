@@ -10,7 +10,6 @@ from leech import (
     comptime,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     ir_module,
     ir_values,
@@ -582,9 +581,8 @@ def test_non_generic_union_variants_need_no_inference(compiler):
 
 def _witnesses(error) -> list[str]:
     """The uncovered patterns a non-exhaustive match reports, in order."""
-    return [
-        extra.message.removeprefix('Uncovered pattern "').removesuffix('"') for extra in error.extra
-    ]
+    assert all(note.msg.kind is diag_kinds.UNCOVERED_PATTERN for note in error.notes)
+    return [note.msg.args["pattern"] for note in error.notes]
 
 
 @pytest.mark.parametrize(
@@ -693,7 +691,7 @@ def test_unreachable_payload_arm_warns(compiler):
     diags = diag.Diags()
     _check_match(compiler, f"return match (o) {{ {arms} }};", diags=diags)
 
-    assert [type(err) for err in diags.all()] == [errors.UnreachableMatchArmWarning]
+    assert [err.kind for err in diags.all()] == [diag_kinds.UNREACHABLE_MATCH_ARM]
 
 
 @pytest.mark.parametrize(
@@ -709,7 +707,9 @@ def test_wrong_number_of_payload_patterns(compiler, arm, got, expected):
         _check_match(compiler, f"return match (o) {{ {arm}, _ => 0i32, }};")
     assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
-    assert f"got {got}, expected {expected}" in str(exc_info.value.diags[0])
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert (err.msg.args["given"], err.msg.args["expected"]) == (got, expected)
 
 
 def test_variant_of_another_union_cannot_match(compiler):
@@ -717,8 +717,7 @@ def test_variant_of_another_union_cannot_match(compiler):
         _check_match(compiler, "return match (o) { Res::Ok(_) => 1i32, _ => 0i32, };")
     assert exc_info.value.kinds == (diag_kinds.PATTERN_TYPE_MISMATCH,)
 
-    # The message sentence-cases its opening without touching the path.
-    assert 'Path pattern "Res::Ok"' in str(exc_info.value.diags[0])
+    assert '"Res::Ok"' in str(exc_info.value.diags[0])
 
 
 def test_pattern_comptime_args_must_name_the_column_instance(compiler):

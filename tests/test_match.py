@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import diag, diag_kinds, errors
+from leech import diag, diag_kinds
 
 
 def test_match_exhaustive_enum(compiler):
@@ -421,7 +421,7 @@ def test_match_aliased_discriminant_warns(compiler):
     """
     compiled = compiler.compile(src)
 
-    assert [type(err) for err in compiled.diags.all()] == [errors.UnreachableMatchArmWarning]
+    assert [err.kind for err in compiled.diags.all()] == [diag_kinds.UNREACHABLE_MATCH_ARM]
 
 
 def test_match_arm_typs_peer_across_multiple_arms(compiler):

@@ -18,7 +18,7 @@ from leech import (
     ast,
     check_results,
     compilation,
-    errors,
+    diag_kinds,
     ir_module,
     ir_traits,
     ir_values,
@@ -143,9 +143,9 @@ class CfgBuilder:
         for bb in self.cfg.nodes:
             if bb.first_unreachable is not None:
                 self._ctx.diags.warn(
-                    errors.UnreachableCodeWarning(
-                        bb.first_unreachable.diag_str(), bb.first_unreachable.span
-                    )
+                    diag_kinds.UNREACHABLE_CODE,
+                    bb.first_unreachable.span,
+                    code=bb.first_unreachable.diag_str(),
                 )
 
     def _build_fn_body(self, fn_ast: ast.FnDefn) -> None:

@@ -4,7 +4,7 @@
 
 import pytest
 
-from leech import diag, diag_kinds, errors
+from leech import diag, diag_kinds
 from tests import harness
 
 
@@ -37,6 +37,13 @@ def test_invalid_void_return(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.MISSING_RETURN_VALUE,)
 
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    harness.assert_span_at(err.span, src, "return;")
+    (label,) = err.labels
+    assert label.msg.kind is diag_kinds.RET_TYP_HERE
+    harness.assert_span_at(label.span, src, "i32 {")
+
 
 def test_invalid_return_typ(compiler):
     src = """
@@ -47,6 +54,13 @@ def test_invalid_return_typ(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
+
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    harness.assert_span_at(err.span, src, '"abcd"')
+    (label,) = err.labels
+    assert label.msg.kind is diag_kinds.RET_TYP_HERE
+    harness.assert_span_at(label.span, src, "i32 {")
 
 
 def test_return_typ_not_defined(compiler):
@@ -87,6 +101,6 @@ pub fn f(b: bool) i32 {
     compiled = compiler.compile(src)
 
     warnings = compiled.diags.all()
-    assert [type(w) for w in warnings] == [errors.UnreachableCodeWarning] * 2
-    harness.assert_span_at(warnings[0].message.span, src, "g();\n        g();")
-    harness.assert_span_at(warnings[1].message.span, src, "g();\n    }\n}")
+    assert [w.kind for w in warnings] == [diag_kinds.UNREACHABLE_CODE] * 2
+    harness.assert_span_at(warnings[0].span, src, "g();\n        g();")
+    harness.assert_span_at(warnings[1].span, src, "g();\n    }\n}")

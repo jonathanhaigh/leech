@@ -4,6 +4,7 @@
 
 import dataclasses
 import pathlib
+from typing import Optional
 
 import pytest
 
@@ -15,10 +16,14 @@ def _span(path: pathlib.Path) -> leech_src.SrcSpan:
     return leech_src.SrcSpan(leech_src.SrcFile(path), 0, 1, 1, 1, 1, 2)
 
 
+def _warning(span: Optional[leech_src.SrcSpan]) -> diag.Diag:
+    return diag.Diag.new(diag_kinds.UNREACHABLE_CODE, span, code="statement")
+
+
 def test_only_errors_have_proofs():
     diags = diag.Diags()
 
-    diags.warn(errors.UnreachableCodeWarning("statement", None))
+    diags.warn(_warning(None))
     assert not diags.has_errors
     assert diags.any_error() is None
 
@@ -39,7 +44,7 @@ def test_any_error_is_the_first_error():
 
 def test_diags_keep_emission_order():
     diags = diag.Diags()
-    warning = errors.UnreachableCodeWarning("statement", None)
+    warning = _warning(None)
     error = errors.CcNotFoundError("cc")
 
     diags.warn(warning)
@@ -62,11 +67,11 @@ def test_duplicates_are_dropped_and_keep_the_original_proof():
 def test_duplicates_compare_source_files_by_resolved_path(tmp_path):
     path = tmp_path / "app.leech"
     diags = diag.Diags()
-    first = errors.UnreachableCodeWarning("statement", _span(path))
+    first = _warning(_span(path))
 
     diags.warn(first)
-    diags.warn(errors.UnreachableCodeWarning("statement", _span(tmp_path / "." / "app.leech")))
-    diags.warn(errors.UnreachableCodeWarning("statement", _span(tmp_path / "other.leech")))
+    diags.warn(_warning(_span(tmp_path / "." / "app.leech")))
+    diags.warn(_warning(_span(tmp_path / "other.leech")))
 
     assert len(diags.all()) == 2
     assert diags.all()[0] is first
@@ -76,7 +81,7 @@ def test_level_is_the_highest_level():
     diags = diag.Diags()
     assert diags.level == diag.NOTE
 
-    diags.warn(errors.UnreachableCodeWarning("statement", None))
+    diags.warn(_warning(None))
     assert diags.level == diag.WARNING
 
     diags.error(errors.CcNotFoundError("cc"))
@@ -103,7 +108,7 @@ def test_error_and_warn_reject_the_wrong_level():
     diags = diag.Diags()
 
     with pytest.raises(AssertionError, match="not an error"):
-        diags.error(errors.UnreachableCodeWarning("statement", None))
+        diags.error(_warning(None))
     with pytest.raises(AssertionError, match="not a warning"):
         diags.warn(errors.CcNotFoundError("cc"))
     assert diags.all() == ()
@@ -141,7 +146,7 @@ def test_programs_have_independent_diags(tmp_path):
     warned.llvm_ir()
     clean.llvm_ir()
 
-    assert [type(d) for d in warned_diags.all()] == [errors.UnreachableCodeWarning]
+    assert [d.kind for d in warned_diags.all()] == [diag_kinds.UNREACHABLE_CODE]
     assert clean_diags.all() == ()
 
 
@@ -232,13 +237,19 @@ def test_diag_new_takes_the_kind_level_and_adds_labels_and_notes_in_order(tmp_pa
     ]
 
 
+def test_label_without_a_span_is_left_out(tmp_path):
+    d = diag.Diag.new(_ARG_KIND, _span(tmp_path / "a.leech"), name="x", typ="i32")
+
+    assert d.with_label(_NOTE_KIND, None, name="x") is d
+
+
 def test_diag_message_needs_a_diag_kind():
     with pytest.raises(AssertionError):
         diag.Diag(diag.Msg(_NOTE_KIND, {"name": "x"}), None, diag.ERROR)
 
 
 def test_compilation_error_lists_kinds_in_order():
-    warning = errors.UnreachableCodeWarning("statement", None)
+    warning = _warning(None)
     error = errors.CcNotFoundError("cc")
 
     failed = diag.CompilationError([warning, error])
@@ -249,7 +260,7 @@ def test_compilation_error_lists_kinds_in_order():
 
 def test_compilation_error_needs_an_error():
     with pytest.raises(AssertionError):
-        diag.CompilationError([errors.UnreachableCodeWarning("statement", None)])
+        diag.CompilationError([_warning(None)])
 
 
 def test_diag_str_is_its_message(tmp_path):
@@ -288,7 +299,7 @@ def test_diags_and_user_errors_are_sorted_together(tmp_path):
     file = leech_src.SrcFile(path)
     late = errors.CcNotFoundError("cc")
     later_span = leech_src.SrcSpan(file, 5, 6, 2, 2, 1, 2)
-    later = errors.UnreachableCodeWarning("statement", later_span)
+    later = _warning(later_span)
     early = diag.Diag.new(_ARG_KIND, _span(path), name="x", typ="i32")
     diags = diag.Diags()
 

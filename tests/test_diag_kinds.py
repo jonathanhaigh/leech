@@ -86,12 +86,7 @@ def test_every_user_error_class_has_its_own_kind():
     for cls in classes:
         assert "kind" in vars(cls), cls
         assert cls.kind in diag_kinds.DIAG_KINDS, cls
-    # One kind reports an argument count that is too high or too low.
-    shared = {errors.TooManyArgsError, errors.NotEnoughArgsError}
-    assert {cls.kind for cls in shared} == {diag_kinds.ARGUMENT_COUNT_MISMATCH}
-    others = [cls for cls in classes if cls not in shared]
-    assert len({cls.kind for cls in others}) == len(others)
-    assert diag_kinds.ARGUMENT_COUNT_MISMATCH not in {cls.kind for cls in others}
+    assert len({cls.kind for cls in classes}) == len(classes)
 
 
 def test_constant_is_named_after_its_kind():
@@ -105,8 +100,3 @@ def test_name_uses_whole_words_and_says_what_is_wrong(kind):
     words = set(kind.name.split("-"))
     assert not words & _ABBREVIATIONS, kind.name
     assert not words & _VAGUE_WORDS, kind.name
-
-
-def test_only_warning_classes_have_warning_kinds():
-    warning_classes = {cls for cls in _user_error_classes() if cls.kind.level == diag.WARNING}
-    assert warning_classes == {errors.UnreachableCodeWarning, errors.UnreachableMatchArmWarning}

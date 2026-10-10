@@ -79,13 +79,13 @@ def test_parse_expected_error_and_warning():
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=bad
-Return expression has invalid type
+return expression has type
 ```
 ```leech test=warning file=main.leech mode=compile warning=unreachable-code
 pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=warning
-return statement is unreachable
+unreachable return statement
 ```
 """
     )
@@ -348,14 +348,14 @@ pub fn answer() i32 { return 7; }
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=error
-Return expression has invalid type
+return expression has type
 ```
 """,
         """```leech test=warning file=main.leech mode=compile warning=unreachable-code
 pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=warning
-return statement is unreachable
+unreachable return statement
 ```
 """,
         """```leech test=abort file=main.leech mode=run exit=SIGABRT
@@ -381,7 +381,7 @@ pub fn answer() i32 { return 10; }
 pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=run-warning
-return statement is unreachable
+unreachable return statement
 ```
 """,
         """```leech test=nested-compile file=main.leech mode=compile
@@ -426,7 +426,7 @@ pub fn main() i32 { return 1; return 2; }
 pub fn main() i32 { return 0 @ 1; }
 ```
 ```text diagnostic=wrong
-Return expression has invalid type
+return expression has type
 ```
 """,
             "expected only return-type-mismatch, got unexpected-character",
@@ -447,7 +447,7 @@ different message
             "pub fn main() i32 { return 1; return 2; }\n"
             "```\n"
             "```text diagnostic=wrong-warning\n"
-            "return statement is unreachable\n"
+            "unreachable return statement\n"
             "```\n",
             "expected warning unreachable-match-arm, got unreachable-code",
         ),

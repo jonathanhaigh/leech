@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from leech import errors
+from leech import diag_kinds, errors
 from tests import harness
 
 _HELLO = 'import std::io;\npub fn main() i32 { io::println("hello"); return 0; }\n'
@@ -207,7 +207,7 @@ def test_warning_from_a_shared_module_is_printed_once(tmp_path):
     proc = run_leech("build", root, cwd=tmp_path)
 
     assert proc.returncode == 0, proc.stderr
-    assert proc.stderr.count("WARNING: return statement is unreachable") == 2
+    assert proc.stderr.count("WARNING: unreachable return statement") == 2
     assert "1| pub fn v() i32 { return 1; return 2; }" in proc.stderr
     assert "2| pub fn u() i32 { return 3; return 4; }" in proc.stderr
     assert run_exe(tmp_path / "main").returncode == 4
@@ -311,7 +311,7 @@ def test_builds_have_independent_diags(tmp_path):
     result = harness.build_exe(root)
 
     assert warned.exe is not None
-    assert [type(d) for d in warned.diags] == [errors.UnreachableCodeWarning]
+    assert [d.kind for d in warned.diags] == [diag_kinds.UNREACHABLE_CODE]
     assert result.exe is not None
     assert result.diags == ()
 
@@ -326,7 +326,7 @@ def test_build_reports_a_warning_seen_by_several_compilations_once(tmp_path):
     result = harness.build_exe(root)
 
     assert result.exe is not None
-    assert [type(d) for d in result.diags] == [errors.UnreachableMatchArmWarning]
+    assert [d.kind for d in result.diags] == [diag_kinds.UNREACHABLE_MATCH_ARM]
 
 
 def test_build_fails_on_emitted_error(tmp_path, monkeypatch):

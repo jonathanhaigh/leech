@@ -12,15 +12,15 @@ to lowering.
 
 import contextlib
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Final, Optional
+from typing import TYPE_CHECKING, Final, NoReturn, Optional
 
 from leech import (
     asserts,
     ast,
     check_results,
+    compilation,
     diag,
     diag_kinds,
-    errors,
     ir_env,
     ir_values,
     opt_util,
@@ -65,21 +65,6 @@ def _match_arm_check_order(arms: Sequence[ast.MatchArm]) -> tuple[list[int], lis
     return fixed_indices, flexible_indices
 
 
-def _reject_nested_bindings(pat: ast.PatternKind) -> None:
-    """Raise if a binding appears anywhere beneath an or-pattern alternative."""
-    match pat:
-        case ast.BindingPattern():
-            raise errors.BindingInOrPatternError(pat.span)
-        case ast.PathPattern():
-            for subpattern in pat.payload:
-                _reject_nested_bindings(subpattern)
-        case ast.OrPattern():
-            for alternative in pat.alternatives:
-                _reject_nested_bindings(alternative)
-        case ast.WildcardPattern() | ast.IntLitPattern() | ast.BoolLitPattern():
-            return
-
-
 def _callable_typ(typ: typs.Typ) -> Optional[typs.CallableTyp]:
     """Return the callable behind a pointer type, if present."""
     if isinstance(typ, typs.PtrTyp) and isinstance(typ.pointee_typ, typs.CallableTyp):
@@ -98,14 +83,16 @@ class TypCheck:
     """Type-check a function body or module-variable initializer."""
 
     results: Final[check_results.TypCheckResults]
+    _ctx: Final[compilation.Ctx]
     _ret_typ: Optional[typs.Typ]
     _ret_typ_span: Optional[src.SrcSpan]
     _fn_name: Optional[str]
     #: Enclosing while loops' labels and own AST nodes, innermost last.
     _loop_labels: Final[list[tuple[Optional[str], ast.WhileExpr]]]
 
-    def __init__(self) -> None:
+    def __init__(self, ctx: compilation.Ctx) -> None:
         self.results = check_results.TypCheckResults()
+        self._ctx = ctx
         self._ret_typ = None
         self._ret_typ_span = None
         self._fn_name = None
@@ -130,8 +117,7 @@ class TypCheck:
     ) -> check_results.TypCheckResults:
         """Type-check a function body and return its lowering facts."""
         self._ret_typ = ret_typ
-        # Missing-return diagnostics concern the whole function.
-        self._ret_typ_span = fn_ast.span
+        self._ret_typ_span = opt_util.opt_map(fn_ast.ret_typ, lambda t: t.span)
         self._fn_name = fn_ast.name.name
 
         e = e.new_child()
@@ -143,22 +129,18 @@ class TypCheck:
         block_typ = self._check_expr(fn_ast.block, e, ret_typ)
         ret_ast = opt_util.opt_or_default(fn_ast.block.expr, fn_ast.block)
 
-        ret_typ_ast_span = opt_util.opt_map(fn_ast.ret_typ, lambda t: t.span)
         if block_typ != typs.VOID:
             # never is exempt here too - it's recorded (as NeverDiverge)
             # but that's never Invalid, matching CfgBuilder's own
             # never-typed early return, which skips coercion entirely.
             coercion = self._record_coercion(ret_ast, block_typ, ret_typ)
             if isinstance(coercion, check_results.Invalid):
-                raise errors.InvalidRetTypError(
-                    self._fn_name,
-                    ret_typ.name,
-                    ret_typ_ast_span,
-                    block_typ.name,
-                    ret_ast.span,
+                self._raise_ret_typ_error(
+                    diag_kinds.RETURN_TYPE_MISMATCH, ret_ast.span, given_typ=block_typ
                 )
         elif ret_typ != typs.VOID:
-            raise errors.MissingRetError(self._fn_name, fn_ast.span, ret_typ.name, ret_typ_ast_span)
+            # A missing return concerns the whole function.
+            self._raise_ret_typ_error(diag_kinds.MISSING_RETURN, fn_ast.span)
 
         return self.results
 
@@ -204,7 +186,7 @@ class TypCheck:
             case ast.IntLit():
                 typ = self._infer_int_lit_typ(expr_ast, expected_typ)
                 if not typ.fits(expr_ast.value):
-                    e.ctx.diags.raise_error(
+                    self._ctx.diags.raise_error(
                         diag_kinds.INTEGER_LITERAL_OVERFLOW,
                         expr_ast.span,
                         value=expr_ast.value,
@@ -243,16 +225,19 @@ class TypCheck:
         cond_typ = self._check_expr(if_ast.condition, e, None)
         cond_coercion = self._record_coercion(if_ast.condition, cond_typ, typs.BOOL)
         if isinstance(cond_coercion, check_results.Invalid):
-            raise errors.IfCondNotBoolError(
-                if_ast.condition.diag_str(),
-                cond_typ.name,
+            self._ctx.diags.raise_error(
+                diag_kinds.IF_CONDITION_TYPE_MISMATCH,
                 if_ast.condition.span,
+                expr=if_ast.condition.diag_str(),
+                typ=cond_typ,
             )
 
         if if_ast.els is None:
             then_typ = self._check_expr(if_ast.then, e, expected_typ)
             if then_typ != typs.NEVER and then_typ != typs.VOID:
-                raise errors.IfTypNotVoidError(then_typ.name, if_ast.then.span)
+                self._ctx.diags.raise_error(
+                    diag_kinds.IF_WITHOUT_ELSE_TYPE_MISMATCH, if_ast.then.span, typ=then_typ
+                )
             return typs.VOID
 
         els_ast = if_ast.els
@@ -274,8 +259,10 @@ class TypCheck:
             els_typ = self._check_expr(els_ast, e, els_hint)
 
         if then_typ != typs.NEVER and els_typ != typs.NEVER and then_typ != els_typ:
-            raise errors.IfElsTypMismatchError(
-                if_ast.span, then_typ.name, if_ast.then.span, els_typ.name, els_ast.span
+            self._ctx.diags.raise_error(
+                diag.Diag.new(diag_kinds.CONFLICTING_BRANCH_TYPES, if_ast.span)
+                .with_label(diag_kinds.IF_TYP, if_ast.then.span, typ=then_typ)
+                .with_label(diag_kinds.ELSE_TYP, els_ast.span, typ=els_typ)
             )
 
         if then_typ != typs.NEVER:
@@ -323,21 +310,22 @@ class TypCheck:
                 result_typ = arm_typ
                 result_span = arm_ast.body.span
             elif arm_typ != result_typ:
-                raise errors.MatchArmTypMismatchError(
-                    match_ast.span,
-                    result_typ.name,
-                    result_span,
-                    arm_typ.name,
-                    arm_ast.body.span,
+                self._ctx.diags.raise_error(
+                    diag.Diag.new(diag_kinds.CONFLICTING_MATCH_ARM_TYPES, match_ast.span)
+                    .with_label(diag_kinds.MATCH_ARM_TYP, result_span, typ=result_typ)
+                    .with_label(diag_kinds.MATCH_ARM_TYP, arm_ast.body.span, typ=arm_typ)
                 )
 
         plan = patterns.build_match_plan(arm_patterns, space)
         reachable_arms = set(plan.reachable_arms)
         for i, arm_ast in enumerate(match_ast.arms):
             if i not in reachable_arms:
-                e.ctx.diags.warn(errors.UnreachableMatchArmWarning(arm_ast.span))
+                self._ctx.diags.warn(diag_kinds.UNREACHABLE_MATCH_ARM, arm_ast.span)
         if plan.missing:
-            raise errors.NonExhaustiveMatchError(match_ast.span, plan.missing)
+            d = diag.Diag.new(diag_kinds.NON_EXHAUSTIVE_MATCH, match_ast.span)
+            for witness in plan.missing:
+                d = d.with_note(diag_kinds.UNCOVERED_PATTERN, pattern=witness.render())
+            self._ctx.diags.raise_error(d)
         self.results._set_match_plan(match_ast, plan)
 
         return result_typ
@@ -346,14 +334,15 @@ class TypCheck:
         cond_typ = self._check_expr(while_ast.condition, e, None)
         cond_coercion = self._record_coercion(while_ast.condition, cond_typ, typs.BOOL)
         if isinstance(cond_coercion, check_results.Invalid):
-            raise errors.WhileCondNotBoolError(
-                while_ast.condition.diag_str(),
-                cond_typ.name,
+            self._ctx.diags.raise_error(
+                diag_kinds.WHILE_CONDITION_TYPE_MISMATCH,
                 while_ast.condition.span,
+                expr=while_ast.condition.diag_str(),
+                typ=cond_typ,
             )
 
         if while_ast.label is not None and reserved.is_reserved(while_ast.label.name):
-            e.ctx.diags.raise_error(
+            self._ctx.diags.raise_error(
                 diag_kinds.RESERVED_NAME, while_ast.label.span, name=while_ast.label.name
             )
         self._loop_labels.append((opt_util.opt_map(while_ast.label, lambda x: x.name), while_ast))
@@ -362,7 +351,9 @@ class TypCheck:
         finally:
             self._loop_labels.pop()
         if block_typ not in (typs.NEVER, typs.VOID):
-            raise errors.WhileTypNotVoidError(block_typ.name, while_ast.block.span)
+            self._ctx.diags.raise_error(
+                diag_kinds.WHILE_BODY_TYPE_MISMATCH, while_ast.block.span, typ=block_typ
+            )
 
         return typs.VOID
 
@@ -387,11 +378,13 @@ class TypCheck:
         self, pat: ast.BindingPattern, column_typ: typs.Typ, e: ir_env.Env
     ) -> patterns.WildcardPattern:
         if column_typ == typs.VOID:
-            raise errors.VoidVarInitializerError(pat.span)
+            self._ctx.diags.raise_error(diag_kinds.VOID_INITIALIZER, pat.span)
         mut = typs.Mutability.from_ast(pat.mut)
         self.results._set_local_typ(pat, typs.PtrTyp(column_typ, mut))
         if reserved.is_reserved(pat.ident.name):
-            e.ctx.diags.raise_error(diag_kinds.RESERVED_NAME, pat.ident.span, name=pat.ident.name)
+            self._ctx.diags.raise_error(
+                diag_kinds.RESERVED_NAME, pat.ident.span, name=pat.ident.name
+            )
         e.add_var(pat.ident.name, pat)
         return patterns.WildcardPattern()
 
@@ -404,17 +397,11 @@ class TypCheck:
         )
         value = -pat.lit.value if pat.negative else pat.lit.value
         if not lit_typ.fits(value):
-            e.ctx.diags.raise_error(
+            self._ctx.diags.raise_error(
                 diag_kinds.INTEGER_LITERAL_OVERFLOW, pat.span, value=value, typ=lit_typ
             )
         if not isinstance(column_typ, typs.IntTyp) or lit_typ != column_typ:
-            raise errors.PatternTypMismatchError(
-                pat.diag_str(),
-                lit_typ.name,
-                column_typ.name,
-                pat.span,
-                None,
-            )
+            self._raise_pattern_typ_mismatch(pat, lit_typ, column_typ)
         constructor = patterns.IntConstructor(value)
         self.results._set_pattern_constructor(pat, constructor)
         return patterns.ConstructorPattern(constructor, ())
@@ -423,13 +410,7 @@ class TypCheck:
         self, pat: ast.BoolLitPattern, column_typ: typs.Typ
     ) -> patterns.ConstructorPattern:
         if column_typ != typs.BOOL:
-            raise errors.PatternTypMismatchError(
-                pat.diag_str(),
-                typs.BOOL.name,
-                column_typ.name,
-                pat.span,
-                None,
-            )
+            self._raise_pattern_typ_mismatch(pat, typs.BOOL, column_typ)
         constructor = patterns.BoolConstructor(pat.lit.value)
         self.results._set_pattern_constructor(pat, constructor)
         return patterns.ConstructorPattern(constructor, ())
@@ -443,7 +424,9 @@ class TypCheck:
             case typs.UnionVariantRef() as ref:
                 return self._check_union_variant_pattern(pat, ref, column_typ, e)
             case _:
-                raise errors.NotAPatternError(pat.path.str(), pat.span)
+                self._ctx.diags.raise_error(
+                    diag_kinds.NON_PATTERN_PATH, pat.span, path=pat.path.str()
+                )
 
     def _check_enum_variant_pattern(
         self,
@@ -453,17 +436,15 @@ class TypCheck:
     ) -> patterns.ConstructorPattern:
         """Check an enum variant pattern, which carries no payload to destructure."""
         if pat.payload:
-            raise errors.WrongNumberOfPayloadPatternsError(
-                pat.path.str(), pat.span, len(pat.payload), 0
+            self._ctx.diags.raise_error(
+                diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,
+                pat.span,
+                variant=pat.path.str(),
+                given=len(pat.payload),
+                expected=0,
             )
         if variant.typ != column_typ:
-            raise errors.PatternTypMismatchError(
-                pat.diag_str(),
-                variant.typ.name,
-                column_typ.name,
-                pat.span,
-                None,
-            )
+            self._raise_pattern_typ_mismatch(pat, variant.typ, column_typ)
         constructor = patterns.VariantConstructor(variant.value, pat.path.str())
         self.results._set_pattern_constructor(pat, constructor)
         return patterns.ConstructorPattern(constructor, ())
@@ -482,18 +463,18 @@ class TypCheck:
         checked to name that same instance.
         """
         if not isinstance(column_typ, typs.UnionTyp) or column_typ.template is not ref.template:
-            raise errors.PatternTypMismatchError(
-                pat.diag_str(), ref.owner.name, column_typ.name, pat.span, None
-            )
+            self._raise_pattern_typ_mismatch(pat, ref.owner.name, column_typ)
         if isinstance(ref.owner, typs.UnionTyp) and ref.owner is not column_typ:
-            raise errors.PatternTypMismatchError(
-                pat.diag_str(), ref.owner.name, column_typ.name, pat.span, None
-            )
+            self._raise_pattern_typ_mismatch(pat, ref.owner, column_typ)
 
         variant = column_typ.variant_at(ref.variant.index)
         if len(pat.payload) != variant.arity:
-            raise errors.WrongNumberOfPayloadPatternsError(
-                pat.path.str(), pat.span, len(pat.payload), variant.arity
+            self._ctx.diags.raise_error(
+                diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,
+                pat.span,
+                variant=pat.path.str(),
+                given=len(pat.payload),
+                expected=variant.arity,
             )
         subpatterns = tuple(
             self._check_pattern(subpattern, payload_typ, e)
@@ -509,9 +490,34 @@ class TypCheck:
     ) -> patterns.OrPattern:
         alternatives: list[patterns.PatternKind] = []
         for alternative in pat.alternatives:
-            _reject_nested_bindings(alternative)
+            self._reject_nested_bindings(alternative)
             alternatives.append(self._check_pattern(alternative, column_typ, e))
         return patterns.OrPattern(tuple(alternatives))
+
+    def _reject_nested_bindings(self, pat: ast.PatternKind) -> None:
+        """Raise if a binding appears anywhere beneath an or-pattern alternative."""
+        match pat:
+            case ast.BindingPattern():
+                self._ctx.diags.raise_error(diag_kinds.BINDING_IN_OR_PATTERN, pat.span)
+            case ast.PathPattern():
+                for subpattern in pat.payload:
+                    self._reject_nested_bindings(subpattern)
+            case ast.OrPattern():
+                for alternative in pat.alternatives:
+                    self._reject_nested_bindings(alternative)
+            case ast.WildcardPattern() | ast.IntLitPattern() | ast.BoolLitPattern():
+                return
+
+    def _raise_pattern_typ_mismatch(
+        self, pat: ast.PatternKind, pattern_typ: diag.DiagArgValue, scrutinee_typ: typs.Typ
+    ) -> NoReturn:
+        self._ctx.diags.raise_error(
+            diag_kinds.PATTERN_TYPE_MISMATCH,
+            pat.span,
+            pattern=pat.diag_str(),
+            pattern_typ=pattern_typ,
+            scrutinee_typ=scrutinee_typ,
+        )
 
     def _union_variant_constructors(
         self, union_typ: typs.UnionTyp, e: ir_env.Env
@@ -574,25 +580,18 @@ class TypCheck:
 
         num_args = len(call_ast.args) + (1 if recv_typ is not None else 0)
         num_params = len(param_typs)
-        if num_args < num_params:
-            raise errors.NotEnoughArgsError(callee_diag_str, call_ast.span, num_args, num_params)
-        if num_args > num_params:
-            raise errors.TooManyArgsError(
-                callee_diag_str,
-                call_ast.args[-1].span,
-                num_args,
-                num_params,
-            )
+        self._check_arg_count(callee_diag_str, call_ast, num_args, num_params)
 
         if recv_ast is not None and recv_typ is not None:
             recv_coercion = self._record_coercion(recv_ast, recv_typ, param_typs[0])
             if isinstance(recv_coercion, check_results.Invalid):
-                raise errors.InvalidArgTypError(
-                    callee_diag_str,
-                    1,
-                    recv_typ.name,
-                    param_typs[0].name,
+                self._ctx.diags.raise_error(
+                    diag_kinds.ARGUMENT_TYPE_MISMATCH,
                     recv_ast.span,
+                    arg_num=1,
+                    callee=callee_diag_str,
+                    given_typ=recv_typ,
+                    expected_typ=param_typs[0],
                 )
 
         offset = 1 if recv_typ is not None else 0
@@ -600,15 +599,33 @@ class TypCheck:
             arg_typ = self._check_expr(arg_ast, e, param_typs[i])
             arg_coercion = self._record_coercion(arg_ast, arg_typ, param_typs[i])
             if isinstance(arg_coercion, check_results.Invalid):
-                raise errors.InvalidArgTypError(
-                    callee_diag_str,
-                    i + 1,
-                    arg_typ.name,
-                    param_typs[i].name,
+                self._ctx.diags.raise_error(
+                    diag_kinds.ARGUMENT_TYPE_MISMATCH,
                     arg_ast.span,
+                    arg_num=i + 1,
+                    callee=callee_diag_str,
+                    given_typ=arg_typ,
+                    expected_typ=param_typs[i],
                 )
 
         return fn_typ.ret_typ
+
+    def _check_arg_count(
+        self, callee_diag_str: str, call_ast: ast.CallExpr, num_args: int, num_params: int
+    ) -> None:
+        if num_args == num_params:
+            return
+        # Too few arguments are reported at the call, and too many at the last one.
+        span = call_ast.span
+        if num_args > num_params:
+            span = call_ast.args[-1].span
+        self._ctx.diags.raise_error(
+            diag_kinds.ARGUMENT_COUNT_MISMATCH,
+            span,
+            callee=callee_diag_str,
+            given=num_args,
+            expected=num_params,
+        )
 
     def _resolve_callee(
         self, call_ast: ast.CallExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
@@ -636,8 +653,11 @@ class TypCheck:
             callee_typ = self._check_expr(callee_ast, e, None)
             fn_typ = _callable_typ(callee_typ)
             if fn_typ is None:
-                raise errors.NotCallableError(
-                    callee_ast.diag_str(), callee_typ.name, callee_ast.span
+                self._ctx.diags.raise_error(
+                    diag_kinds.NON_FUNCTION_CALL,
+                    callee_ast.span,
+                    callee=callee_ast.diag_str(),
+                    typ=callee_typ,
                 )
             return fn_typ, None, None
 
@@ -674,16 +694,20 @@ class TypCheck:
                         item_kind="function",
                         name=name,
                     )
-                    if selected_fn.span is not None:
-                        d = d.with_note(diag_kinds.DEFINED_HERE, selected_fn.span, name=name)
-                    e.ctx.diags.raise_error(d)
+                    self._ctx.diags.raise_error(
+                        d.with_label(diag_kinds.DEFINED_HERE, selected_fn.span, name=name)
+                    )
                 assert selected_fn.ast is not None
                 if selected_fn.ast.receiver is None:
-                    raise errors.NotAMethodError(
-                        callee_ast.field.name,
-                        pointee_typ.name,
+                    name = callee_ast.field.name
+                    d = diag.Diag.new(
+                        diag_kinds.ASSOCIATED_FUNCTION_USED_AS_METHOD,
                         callee_ast.field.span,
-                        selected_fn.span,
+                        fn=name,
+                        struct_typ=pointee_typ,
+                    )
+                    self._ctx.diags.raise_error(
+                        d.with_label(diag_kinds.DEFINED_HERE, selected_fn.span, name=name)
                     )
                 return method.fn_typ, callee_ast.value, recv_typ
 
@@ -693,7 +717,12 @@ class TypCheck:
         callee_typ = opt_util.opt_or_default(opt_util.opt_map(field, lambda f: f.typ), typs.VOID)
         fn_typ = _callable_typ(callee_typ)
         if fn_typ is None:
-            raise errors.NotCallableError(callee_ast.diag_str(), callee_typ.name, callee_ast.span)
+            self._ctx.diags.raise_error(
+                diag_kinds.NON_FUNCTION_CALL,
+                callee_ast.span,
+                callee=callee_ast.diag_str(),
+                typ=callee_typ,
+            )
         return fn_typ, None, None
 
     def _resolve_bound_method(
@@ -717,7 +746,7 @@ class TypCheck:
                         " isn't supported yet"
                     )
                 matches.append(method)
-        return ir_traits.disambiguate(matches, name, typ_param, span, e.ctx.diags)
+        return ir_traits.disambiguate(matches, name, typ_param, span, self._ctx.diags)
 
     def _resolve_fn_call(
         self, candidate: ir_module.FnCandidate, call_ast: ast.CallExpr, e: ir_env.Env
@@ -756,9 +785,7 @@ class TypCheck:
 
         for typ_param in comptime_params:
             if typ_param not in bindings:
-                raise errors.CannotInferComptimeArgError(
-                    "function", fn.name, typ_param.name, call_ast.span
-                )
+                self._raise_uninferable(call_ast.span, "function", fn.name, typ_param)
 
         return bindings
 
@@ -794,22 +821,12 @@ class TypCheck:
             rhs_typ = self._check_expr(op_ast.rhs, e, rhs_hint)
 
         if lhs_typ != typs.NEVER and not isinstance(lhs_typ, typs.IntTyp):
-            raise errors.InvalidBinOpArgTypError(
-                op,
-                op_ast.op.span,
-                "left",
-                lhs_typ.name,
-                "an integer type",
-                op_ast.lhs.span,
-            )
+            self._raise_bin_operand_typ_error(op_ast, "left", lhs_typ, "an integer type")
         if lhs_typ != typs.NEVER and rhs_typ != typs.NEVER and lhs_typ != rhs_typ:
-            raise errors.IncompatibleBinOpArgTypsError(
-                op,
-                op_ast.op.span,
-                lhs_typ.name,
-                op_ast.lhs.span,
-                rhs_typ.name,
-                op_ast.rhs.span,
+            self._ctx.diags.raise_error(
+                diag.Diag.new(diag_kinds.CONFLICTING_OPERAND_TYPES, op_ast.op.span, op=op)
+                .with_label(diag_kinds.LEFT_OPERAND_TYP, op_ast.lhs.span, typ=lhs_typ)
+                .with_label(diag_kinds.RIGHT_OPERAND_TYP, op_ast.rhs.span, typ=rhs_typ)
             )
 
         match op:
@@ -823,27 +840,47 @@ class TypCheck:
         lhs_typ = self._check_expr(op_ast.lhs, e, None)
         lhs_coercion = self._record_coercion(op_ast.lhs, lhs_typ, typs.BOOL)
         if isinstance(lhs_coercion, check_results.Invalid):
-            raise errors.InvalidBinOpArgTypError(
-                op_ast.op.name,
-                op_ast.op.span,
-                "left",
-                lhs_typ.name,
-                "bool",
-                op_ast.lhs.span,
-            )
+            self._raise_bin_operand_typ_error(op_ast, "left", lhs_typ, typs.BOOL)
 
         rhs_typ = self._check_expr(op_ast.rhs, e, None)
         rhs_coercion = self._record_coercion(op_ast.rhs, rhs_typ, typs.BOOL)
         if isinstance(rhs_coercion, check_results.Invalid):
-            raise errors.InvalidBinOpArgTypError(
-                op_ast.op.name,
-                op_ast.op.span,
-                "right",
-                rhs_typ.name,
-                "bool",
-                op_ast.rhs.span,
-            )
+            self._raise_bin_operand_typ_error(op_ast, "right", rhs_typ, typs.BOOL)
         return typs.BOOL
+
+    def _raise_bin_operand_typ_error(
+        self,
+        op_ast: ast.BinOpExpr,
+        side: str,
+        given_typ: typs.Typ,
+        expected_typ: diag.DiagArgValue,
+    ) -> NoReturn:
+        operand = op_ast.lhs
+        if side == "right":
+            operand = op_ast.rhs
+        self._ctx.diags.raise_error(
+            diag.Diag.new(
+                diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,
+                operand.span,
+                given_typ=given_typ,
+                side=side,
+                op=op_ast.op.name,
+                expected_typ=expected_typ,
+            ).with_label(diag_kinds.OP_HERE, op_ast.op.span, op=op_ast.op.name)
+        )
+
+    def _raise_unary_operand_typ_error(
+        self, op_ast: ast.UnaryOpExpr, given_typ: typs.Typ, expected_typ: diag.DiagArgValue
+    ) -> NoReturn:
+        self._ctx.diags.raise_error(
+            diag.Diag.new(
+                diag_kinds.UNARY_OPERAND_TYPE_MISMATCH,
+                op_ast.operand.span,
+                given_typ=given_typ,
+                op=op_ast.op.name,
+                expected_typ=expected_typ,
+            ).with_label(diag_kinds.OP_HERE, op_ast.op.span, op=op_ast.op.name)
+        )
 
     def _check_unary_op_expr(
         self, op_ast: ast.UnaryOpExpr, e: ir_env.Env, expected_typ: Optional[typs.Typ]
@@ -863,13 +900,7 @@ class TypCheck:
         operand_typ = self._check_expr(op_ast.operand, e, None)
         coercion = self._record_coercion(op_ast.operand, operand_typ, typs.BOOL)
         if isinstance(coercion, check_results.Invalid):
-            raise errors.InvalidUnaryOpArgTypError(
-                op_ast.op.name,
-                op_ast.op.span,
-                operand_typ.name,
-                "bool",
-                op_ast.operand.span,
-            )
+            self._raise_unary_operand_typ_error(op_ast, operand_typ, typs.BOOL)
         return typs.BOOL
 
     def _check_neg_expr(
@@ -878,16 +909,10 @@ class TypCheck:
         if isinstance(op_ast.operand, ast.IntLit):
             typ = self._infer_int_lit_typ(op_ast.operand, expected_typ)
             if typ.signage != signage.SIGNED:
-                raise errors.InvalidUnaryOpArgTypError(
-                    op_ast.op.name,
-                    op_ast.op.span,
-                    typ.name,
-                    "a signed integer type",
-                    op_ast.operand.span,
-                )
+                self._raise_unary_operand_typ_error(op_ast, typ, "a signed integer type")
             value = -op_ast.operand.value
             if not typ.fits(value):
-                e.ctx.diags.raise_error(
+                self._ctx.diags.raise_error(
                     diag_kinds.INTEGER_LITERAL_OVERFLOW, op_ast.span, value=value, typ=typ
                 )
             self.results._set_folded_int_lit(op_ast, typ, value)
@@ -898,13 +923,7 @@ class TypCheck:
         if operand_typ != typs.NEVER and (
             not isinstance(operand_typ, typs.IntTyp) or operand_typ.signage != signage.SIGNED
         ):
-            raise errors.InvalidUnaryOpArgTypError(
-                op_ast.op.name,
-                op_ast.op.span,
-                operand_typ.name,
-                "a signed integer type",
-                op_ast.operand.span,
-            )
+            self._raise_unary_operand_typ_error(op_ast, operand_typ, "a signed integer type")
         return operand_typ
 
     def _resolve_var(self, var_ast: ast.VarExpr, e: ir_env.Env) -> resolve.VarTarget:
@@ -946,7 +965,9 @@ class TypCheck:
     ) -> typs.UnionTyp:
         """Check a variant named outside a call, which must carry no payload."""
         if ref.variant.arity != 0:
-            raise errors.VariantConstructorNotAValueError(var_ast.path.str(), var_ast.span)
+            self._ctx.diags.raise_error(
+                diag_kinds.MISSING_VARIANT_PAYLOAD, var_ast.span, variant=var_ast.path.str()
+            )
         union_typ = self._variant_union_typ(ref, (), e, expected_typ, var_ast.span)
         self.results._set_variant_construction(var_ast, union_typ, ref.variant.index)
         return union_typ
@@ -961,7 +982,9 @@ class TypCheck:
     ) -> typs.FnTyp:
         """Synthesize the constructor type of a variant applied to its payload."""
         if ref.variant.arity == 0:
-            raise errors.UnitVariantCalledError(callee_ast.path.str(), call_ast.span)
+            self._ctx.diags.raise_error(
+                diag_kinds.UNEXPECTED_VARIANT_PAYLOAD, call_ast.span, variant=callee_ast.path.str()
+            )
         # The arity is checked here rather than left to _check_call_expr,
         # which compares counts only after the callee resolves: inferring
         # this variant's comptime arguments reads the very arguments a
@@ -972,18 +995,12 @@ class TypCheck:
         variant = union_typ.variant_at(ref.variant.index)
         return typs.FnTyp(union_typ, variant.payload_typs)
 
-    @staticmethod
     def _check_variant_arity(
-        ref: typs.UnionVariantRef, callee_ast: ast.VarExpr, call_ast: ast.CallExpr
+        self, ref: typs.UnionVariantRef, callee_ast: ast.VarExpr, call_ast: ast.CallExpr
     ) -> None:
-        arity = ref.variant.arity
-        num_args = len(call_ast.args)
-        if num_args < arity:
-            raise errors.NotEnoughArgsError(callee_ast.diag_str(), call_ast.span, num_args, arity)
-        if num_args > arity:
-            raise errors.TooManyArgsError(
-                callee_ast.diag_str(), call_ast.args[-1].span, num_args, arity
-            )
+        self._check_arg_count(
+            callee_ast.diag_str(), call_ast, len(call_ast.args), ref.variant.arity
+        )
 
     def _variant_union_typ(
         self,
@@ -1020,9 +1037,7 @@ class TypCheck:
 
         for comptime_param in comptime_params:
             if comptime_param not in bindings:
-                raise errors.CannotInferComptimeArgError(
-                    "union", template.name, comptime_param.name, span
-                )
+                self._raise_uninferable(span, "union", template.name, comptime_param)
 
         comptime_args = tuple(bindings[param] for param in comptime_params)
         typs.check_comptime_arg_bounds(comptime_params, comptime_args, e, span)
@@ -1033,7 +1048,7 @@ class TypCheck:
     ) -> typs.PtrTyp:
         """Complete and record a function used without call inference context."""
         if candidate.explicit_fn_args is None:
-            e.ctx.diags.raise_error(
+            self._ctx.diags.raise_error(
                 diag_kinds.MISSING_COMPTIME_ARGUMENT, var_ast.span, item=candidate.fn.name
             )
         applied = candidate.apply(candidate.explicit_fn_args)
@@ -1043,12 +1058,14 @@ class TypCheck:
     def _check_array_access_expr(self, aa_expr: ast.ArrayAccessExpr, e: ir_env.Env) -> typs.Typ:
         arr_typ = self._check_expr(aa_expr.array, e, None)
         if not isinstance(arr_typ, typs.ArrayTyp):
-            raise errors.IndexIntoInvalidTypError(arr_typ.name, aa_expr.array.span)
+            self._ctx.diags.raise_error(diag_kinds.NON_ARRAY_INDEX, aa_expr.array.span, typ=arr_typ)
 
         index_typ = self._check_expr(aa_expr.index, e, typs.USIZE)
         index_coercion = self._record_coercion(aa_expr.index, index_typ, typs.USIZE)
         if isinstance(index_coercion, check_results.Invalid):
-            raise errors.InvalidIndexTypError(index_typ.name, aa_expr.index.span)
+            self._ctx.diags.raise_error(
+                diag_kinds.INDEX_TYPE_MISMATCH, aa_expr.index.span, typ=index_typ
+            )
 
         return arr_typ.element_typ
 
@@ -1063,7 +1080,9 @@ class TypCheck:
                 return self._check_struct_lit_expr(brace_expr, typ, e)
             case _:
                 # Brace expressions reject every other current or future type.
-                raise errors.TypeOfBraceExprInvalidError(typ.name, brace_expr.typ.span)
+                self._ctx.diags.raise_error(
+                    diag_kinds.NON_STRUCT_OR_ARRAY_LITERAL, brace_expr.typ.span, typ=typ
+                )
 
     def _check_struct_lit_expr(
         self, brace_expr: ast.BraceExpr, struct_typ: typs.StructTyp, e: ir_env.Env
@@ -1072,41 +1091,50 @@ class TypCheck:
         field_value_typs: dict[str, typs.Typ] = {}
         for element in brace_expr.elements:
             if not isinstance(element, ast.StructFieldExpr):
-                raise errors.PositionalElementInStructExprError(struct_typ.name, element.span)
+                self._ctx.diags.raise_error(
+                    diag_kinds.POSITIONAL_VALUE_IN_STRUCT_EXPRESSION,
+                    element.span,
+                    struct_typ=struct_typ,
+                )
             name = element.ident.name
             field = struct_typ.fields.get(name)
             if field is None:
-                raise errors.InvalidStructFieldError(
-                    name, element.ident.span, struct_typ.name, struct_typ.span
-                )
+                self._raise_unknown_field(struct_typ, name, element.ident.span)
             self.results._set_struct_field_index(element, field.index)
             if not field.is_accessible_from(brace_expr.span.file):
-                raise errors.PrivateStructFieldAccessError(
-                    field.name, element.ident.span, struct_typ.name, field.ast.span
-                )
+                self._raise_private_field(struct_typ, field, element.ident.span)
             if name in field_value_asts:
-                raise errors.DuplicateFieldInStructExprError(
-                    name, element.ident.span, field_value_asts[name].span
+                self._ctx.diags.raise_error(
+                    diag.Diag.new(
+                        diag_kinds.DUPLICATE_STRUCT_FIELD_VALUE, element.ident.span, field=name
+                    ).with_label(diag_kinds.PREVIOUS_VALUE_HERE, field_value_asts[name].span)
                 )
             field_value_asts[name] = element.value
             field_value_typs[name] = self._check_expr(element.value, e, field.typ)
 
         for field in struct_typ.fields.values():
             if field.name not in field_value_asts:
-                raise errors.MissingFieldInStructExprError(
-                    field.name, field.ast.span, struct_typ.name, brace_expr.span
+                self._ctx.diags.raise_error(
+                    diag.Diag.new(
+                        diag_kinds.MISSING_STRUCT_FIELD,
+                        brace_expr.span,
+                        field=field.name,
+                        struct_typ=struct_typ,
+                    ).with_label(diag_kinds.DEFINED_HERE, field.ast.span, name=field.name)
                 )
             value_ast = field_value_asts[field.name]
             value_typ = field_value_typs[field.name]
             coercion = self._record_coercion(value_ast, value_typ, field.typ)
             if isinstance(coercion, check_results.Invalid):
-                raise errors.IncompatibleStructFieldTypError(
-                    field.name,
-                    struct_typ.name,
-                    value_typ.name,
-                    value_ast.span,
-                    field.typ.name,
-                    field.ast.span,
+                self._ctx.diags.raise_error(
+                    diag.Diag.new(
+                        diag_kinds.STRUCT_FIELD_TYPE_MISMATCH,
+                        value_ast.span,
+                        field=field.name,
+                        struct_typ=struct_typ,
+                        field_typ=field.typ,
+                        given_typ=value_typ,
+                    ).with_label(diag_kinds.DEFINED_HERE, field.ast.span, name=field.name)
                 )
 
         return struct_typ
@@ -1117,15 +1145,21 @@ class TypCheck:
         elements: list[ast.ExprKind] = []
         for element in brace_expr.elements:
             if isinstance(element, ast.StructFieldExpr):
-                raise errors.NamedFieldInArrayLitError(element.ident.name, element.span)
+                self._ctx.diags.raise_error(
+                    diag_kinds.NAMED_FIELD_IN_ARRAY_LITERAL, element.span, field=element.ident.name
+                )
             elements.append(element)
 
         if not isinstance(arr_typ.length, typs.ComptimeValueTyp):
-            raise errors.ArrayLitLengthNotConcreteError(brace_expr.span)
+            self._ctx.diags.raise_error(diag_kinds.GENERIC_ARRAY_LITERAL_LENGTH, brace_expr.span)
         expected_len = arr_typ.length_value
         if len(elements) != expected_len:
-            raise errors.WrongNumberOfArrayLitElementsError(
-                arr_typ.name, len(elements), expected_len, brace_expr.span
+            self._ctx.diags.raise_error(
+                diag_kinds.ARRAY_ELEMENT_COUNT_MISMATCH,
+                brace_expr.span,
+                array_typ=arr_typ,
+                given=len(elements),
+                expected=expected_len,
             )
 
         elt_typ = arr_typ.element_typ
@@ -1133,8 +1167,12 @@ class TypCheck:
             elt_typ_i = self._check_expr(elt_ast, e, elt_typ)
             coercion = self._record_coercion(elt_ast, elt_typ_i, elt_typ)
             if isinstance(coercion, check_results.Invalid):
-                raise errors.IncompatibleTypInArrayExprError(
-                    elt_typ_i.name, i, elt_ast.span, arr_typ.name
+                self._ctx.diags.raise_error(
+                    diag_kinds.ARRAY_ELEMENT_TYPE_MISMATCH,
+                    elt_ast.span,
+                    index=i,
+                    element_typ=elt_typ_i,
+                    array_typ=arr_typ,
                 )
 
         return arr_typ
@@ -1142,25 +1180,43 @@ class TypCheck:
     def _check_field_access_expr(self, fa_expr: ast.FieldAccessExpr, e: ir_env.Env) -> typs.Typ:
         struct_typ = self._check_expr(fa_expr.value, e, None)
         if not isinstance(struct_typ, typs.StructTyp):
-            raise errors.FieldAccessIntoInvalidTypError(struct_typ.name, fa_expr.value.span)
+            self._ctx.diags.raise_error(
+                diag_kinds.NON_STRUCT_FIELD_ACCESS, fa_expr.value.span, typ=struct_typ
+            )
 
         field_name = fa_expr.field.name
         field = struct_typ.fields.get(field_name)
         if field is None:
-            raise errors.InvalidStructFieldError(
-                field_name, fa_expr.field.span, struct_typ.name, struct_typ.span
-            )
+            self._raise_unknown_field(struct_typ, field_name, fa_expr.field.span)
         self.results._set_struct_field_index(fa_expr, field.index)
         if not field.is_accessible_from(fa_expr.span.file):
-            raise errors.PrivateStructFieldAccessError(
-                field_name, fa_expr.field.span, struct_typ.name, field.ast.span
-            )
+            self._raise_private_field(struct_typ, field, fa_expr.field.span)
         return field.typ
+
+    def _raise_unknown_field(
+        self, struct_typ: typs.StructTyp, name: str, span: src.SrcSpan
+    ) -> NoReturn:
+        self._ctx.diags.raise_error(
+            diag.Diag.new(
+                diag_kinds.UNKNOWN_STRUCT_FIELD, span, struct_typ=struct_typ, field=name
+            ).with_label(diag_kinds.DEFINED_HERE, struct_typ.span, name=struct_typ.name)
+        )
+
+    def _raise_private_field(
+        self, struct_typ: typs.StructTyp, field: typs.StructField, span: src.SrcSpan
+    ) -> NoReturn:
+        self._ctx.diags.raise_error(
+            diag.Diag.new(
+                diag_kinds.PRIVATE_FIELD_ACCESS, span, field=field.name, struct_typ=struct_typ
+            ).with_label(diag_kinds.DEFINED_HERE, field.ast.span, name=field.name)
+        )
 
     def _check_deref_expr(self, d_expr: ast.DerefExpr, e: ir_env.Env) -> typs.Typ:
         ptr_typ = self._check_expr(d_expr.ptr, e, None)
         if not isinstance(ptr_typ, typs.PtrTyp) or isinstance(ptr_typ.pointee_typ, typs.FnTyp):
-            raise errors.DerefInvalidTypError(ptr_typ.name, d_expr.ptr.span)
+            self._ctx.diags.raise_error(
+                diag_kinds.NON_POINTER_DEREFERENCE, d_expr.ptr.span, typ=ptr_typ
+            )
         return ptr_typ.pointee_typ
 
     def _check_place(self, expr_ast: ast.ExprKind, e: ir_env.Env) -> typs.PtrTyp:
@@ -1259,9 +1315,8 @@ class TypCheck:
 
     def _check_ret_stmt(self, ret_ast: ast.RetStmt, e: ir_env.Env) -> None:
         if self._ret_typ is None:
-            raise errors.RetNotInFnError(ret_ast.span)
+            self._ctx.diags.raise_error(diag_kinds.RETURN_OUTSIDE_FUNCTION, ret_ast.span)
         ret_typ = self._ret_typ
-        fn_name = opt_util.opt_unwrap(self._fn_name)
 
         if ret_ast.expr is not None:
             expr_typ = self._check_expr(ret_ast.expr, e, ret_typ)
@@ -1270,29 +1325,53 @@ class TypCheck:
             # return, which skips coercion entirely.
             coercion = self._record_coercion(ret_ast.expr, expr_typ, ret_typ)
             if isinstance(coercion, check_results.Invalid):
-                raise errors.InvalidRetTypError(
-                    fn_name,
-                    ret_typ.name,
-                    self._ret_typ_span,
-                    expr_typ.name,
-                    ret_ast.expr.span,
+                self._raise_ret_typ_error(
+                    diag_kinds.RETURN_TYPE_MISMATCH, ret_ast.expr.span, given_typ=expr_typ
                 )
             return
 
         if ret_typ != typs.VOID:
-            raise errors.InvalidVoidRetError(
-                fn_name, ret_typ.name, self._ret_typ_span, ret_ast.span
-            )
+            self._raise_ret_typ_error(diag_kinds.MISSING_RETURN_VALUE, ret_ast.span)
+
+    def _raise_ret_typ_error(
+        self, kind: diag.DiagKind, span: src.SrcSpan, /, **args: diag.DiagArgValue
+    ) -> NoReturn:
+        """Report an error about the function's return type, which is labelled if written."""
+        d = diag.Diag.new(
+            kind,
+            span,
+            fn=opt_util.opt_unwrap(self._fn_name),
+            ret_typ=opt_util.opt_unwrap(self._ret_typ),
+            **args,
+        )
+        self._ctx.diags.raise_error(d.with_label(diag_kinds.RET_TYP_HERE, self._ret_typ_span))
+
+    def _raise_uninferable(
+        self,
+        span: Optional[src.SrcSpan],
+        item_kind: str,
+        item: str,
+        param: typs.ComptimeParamTyp,
+    ) -> NoReturn:
+        self._ctx.diags.raise_error(
+            diag.Diag.new(
+                diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT,
+                span,
+                param=param.name,
+                item_kind=item_kind,
+                item=item,
+            ).with_note(diag_kinds.GIVE_COMPTIME_ARGS, item=item)
+        )
 
     def _check_break_stmt(self, break_ast: ast.BreakStmt) -> None:
         if not self._loop_labels:
-            raise errors.BreakNotInLoopError(break_ast.span)
+            self._ctx.diags.raise_error(diag_kinds.BREAK_OUTSIDE_LOOP, break_ast.span)
         target = self._resolve_loop_label(break_ast.label)
         self.results.resolutions.set_loop_target(break_ast, target)
 
     def _check_continue_stmt(self, continue_ast: ast.ContinueStmt) -> None:
         if not self._loop_labels:
-            raise errors.ContinueNotInLoopError(continue_ast.span)
+            self._ctx.diags.raise_error(diag_kinds.CONTINUE_OUTSIDE_LOOP, continue_ast.span)
         target = self._resolve_loop_label(continue_ast.label)
         self.results.resolutions.set_loop_target(continue_ast, target)
 
@@ -1305,7 +1384,7 @@ class TypCheck:
         for loop_label, while_ast in reversed(self._loop_labels):
             if loop_label == label.name:
                 return while_ast
-        raise errors.LoopLabelNotFoundError(label.name, label.span)
+        self._ctx.diags.raise_error(diag_kinds.UNKNOWN_LOOP_LABEL, label.span, label=label.name)
 
     def _check_let_stmt(self, let_ast: ast.LetStmt, e: ir_env.Env) -> bool:
         expr_typ, declared_typ = self._check_let_initializer(let_ast, e)
@@ -1314,7 +1393,7 @@ class TypCheck:
         place_typ = typs.PtrTyp(bound_typ, mut)
         self.results._set_local_typ(let_ast, place_typ)
         if reserved.is_reserved(let_ast.ident.name):
-            e.ctx.diags.raise_error(
+            self._ctx.diags.raise_error(
                 diag_kinds.RESERVED_NAME, let_ast.ident.span, name=let_ast.ident.name
             )
         e.add_var(let_ast.ident.name, let_ast)
@@ -1328,7 +1407,7 @@ class TypCheck:
         declared_typ = opt_util.opt_map(declared_typ_ast, lambda t: typs.Typ.from_ast(t, e))
         expr_typ = self._check_expr(let_ast.expr, e, declared_typ)
         if expr_typ == typs.VOID:
-            raise errors.VoidVarInitializerError(let_ast.expr.span)
+            self._ctx.diags.raise_error(diag_kinds.VOID_INITIALIZER, let_ast.expr.span)
         if declared_typ_ast is None:
             return expr_typ, None
 
@@ -1336,12 +1415,14 @@ class TypCheck:
         self.results._set_let_declared_typ(let_ast, declared_typ)
         coercion = self._record_coercion(let_ast.expr, expr_typ, declared_typ)
         if isinstance(coercion, check_results.Invalid):
-            raise errors.IncompatibleLetTypError(
-                let_ast.ident.name,
-                declared_typ.name,
-                expr_typ.name,
-                let_ast.expr.span,
-                declared_typ_ast.span,
+            self._ctx.diags.raise_error(
+                diag.Diag.new(
+                    diag_kinds.LET_TYPE_MISMATCH,
+                    let_ast.expr.span,
+                    var=let_ast.ident.name,
+                    declared_typ=declared_typ,
+                    given_typ=expr_typ,
+                ).with_label(diag_kinds.DECLARED_TYP_HERE, declared_typ_ast.span, typ=declared_typ)
             )
         return expr_typ, declared_typ
 
@@ -1351,12 +1432,19 @@ class TypCheck:
         expr_typ = self._check_expr(ass_ast.expr, e, place_typ)
 
         if place_mut == typs.CONST:
-            raise errors.AssignToConstError(ass_ast.place.span)
+            self._ctx.diags.raise_error(
+                diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE, ass_ast.place.span
+            )
 
         coercion = self._record_coercion(ass_ast.expr, expr_typ, place_typ)
         if isinstance(coercion, check_results.Invalid):
-            raise errors.IncompatibleAssignmentTypError(
-                expr_typ.name, place_typ.name, ass_ast.expr.span, ass_ast.place.span
+            self._ctx.diags.raise_error(
+                diag.Diag.new(
+                    diag_kinds.ASSIGNMENT_TYPE_MISMATCH,
+                    ass_ast.expr.span,
+                    given_typ=expr_typ,
+                    place_typ=place_typ,
+                ).with_label(diag_kinds.PLACE_TYP, ass_ast.place.span, typ=place_typ)
             )
         return place_typ == typs.NEVER or expr_typ == typs.NEVER
 
