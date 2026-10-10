@@ -5,12 +5,11 @@
 """User-facing diagnostics: error/warning types, and their rendering."""
 
 import dataclasses
-import pathlib
 import sys
 from collections.abc import Sequence
 from typing import ClassVar, Final, Optional
 
-from leech import asserts, diag, diag_kinds, src
+from leech import asserts, diag, src
 
 Level = diag.Level
 NOTE = diag.NOTE
@@ -54,76 +53,6 @@ class UserError(Exception):
     def span(self) -> Optional[src.SrcSpan]:
         """The primary message's location."""
         return self.message.span
-
-
-class CcInvalidError(UserError):
-    """Raised when the ``CC`` environment variable can't be split into a command."""
-
-    kind = diag_kinds.MALFORMED_C_COMPILER_COMMAND
-
-    def __init__(self, value: str, reason: str) -> None:
-        super().__init__(ERROR, f"The C compiler command CC={value!r} is invalid: {reason}", None)
-
-
-class CcNotFoundError(UserError):
-    """Raised when the C compiler used for linking isn't on ``PATH``."""
-
-    kind = diag_kinds.MISSING_C_COMPILER
-
-    def __init__(self, program: str) -> None:
-        super().__init__(
-            ERROR,
-            f'C compiler "{program}" not found; install gcc or clang, or set CC to a C compiler',
-            None,
-        )
-
-
-class LinkFailedError(UserError):
-    """Raised when the C compiler fails to link an executable; notes carry its output."""
-
-    kind = diag_kinds.LINK_FAILURE
-
-    def __init__(self, command: str, problem: str, output: str) -> None:
-        super().__init__(ERROR, f"Linking failed: `{command}` {problem}", None)
-        if output.strip():
-            self._add_extra(NOTE, output.rstrip("\n"), None)
-
-
-class BuildOutputError(UserError):
-    """Raised when a build's output files can't be written."""
-
-    kind = diag_kinds.UNWRITABLE_OUTPUT
-
-    def __init__(self, reason: str) -> None:
-        super().__init__(ERROR, f"Cannot write build output: {reason}", None)
-
-
-class RunFailedError(UserError):
-    """Raised when a built program can't be started."""
-
-    kind = diag_kinds.RUN_FAILURE
-
-    def __init__(self, exe: pathlib.Path, reason: str) -> None:
-        super().__init__(ERROR, f"Cannot run {exe}: {reason}", None)
-
-
-class DoctorCheckError(UserError):
-    """Raised when a ``leech doctor`` toolchain check fails; a note suggests a fix."""
-
-    kind = diag_kinds.TOOLCHAIN_CHECK_FAILURE
-
-    def __init__(self, problem: str, fix: str) -> None:
-        super().__init__(ERROR, problem, None)
-        self._add_extra(NOTE, fix, None)
-
-
-class DoctorFixNote(UserError):  # noqa: N818 - a note, not an error
-    """A note from ``leech doctor`` suggesting how to fix the problems reported before it."""
-
-    kind = diag_kinds.C_COMPILER_HINT
-
-    def __init__(self, fix: str) -> None:
-        super().__init__(NOTE, fix, None)
 
 
 class TextErrorRenderer:

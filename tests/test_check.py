@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from leech import codegen, diag, diag_kinds, errors, mono, program, session
+from leech import codegen, diag, diag_kinds, mono, program, session
 from tests import harness
 
 
@@ -175,8 +175,8 @@ def _check_main(tmp_path) -> pathlib.Path:
 
 
 def test_user_error_raised_while_generating_ir_is_internal(tmp_path, monkeypatch):
-    def fail(_compiler: codegen.Compiler) -> None:
-        raise errors.CcNotFoundError("cc")
+    def fail(compiler: codegen.Compiler) -> None:
+        compiler._root.ctx.diags.raise_error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
 
     monkeypatch.setattr(codegen.Compiler, "compile", fail)
 
@@ -189,7 +189,7 @@ def test_user_error_emitted_while_generating_ir_is_internal(tmp_path, monkeypatc
 
     def emit(compiler: codegen.Compiler) -> None:
         compile_(compiler)
-        compiler._root.ctx.diags.error(errors.CcNotFoundError("cc"))
+        compiler._root.ctx.diags.error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
 
     monkeypatch.setattr(codegen.Compiler, "compile", emit)
 

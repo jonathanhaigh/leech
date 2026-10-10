@@ -13,7 +13,7 @@ import operator
 from collections.abc import Callable, Collection, Hashable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, Final, NoReturn, Optional, Protocol, cast, override
 
-from leech import diag, errors, opt_util, patterns
+from leech import diag, opt_util, patterns
 from leech import session as session_mod
 
 if TYPE_CHECKING:
@@ -205,10 +205,10 @@ class Ctx:
         """Return ``owner``'s analysis unit ``name``, calling ``compute`` the first time.
 
         An analysis unit is a lazily computed property whose computation may report user
-        errors. A failure is cached too: a user error ``compute`` raises is reported once,
-        and every request, including the first, raises ``diag.ReportedError`` carrying its
-        proof. An error already reported, raised as ``diag.ReportedError``, is not reported
-        again. Any other exception propagates and is not cached.
+        errors. A failure is cached too: a user error ``compute`` reports and raises as
+        ``diag.ReportedError`` is not reported again, and every request, including the
+        first, raises ``diag.ReportedError`` carrying its proof. Any other exception
+        propagates and is not cached.
 
         Results are kept per compilation, so an object shared by several compilations has a
         separate result in each.
@@ -235,17 +235,15 @@ class Ctx:
     def recovering(self) -> Iterator[Recovery]:
         """Recover from a user error raised in the block, which ends the block.
 
-        The error is reported unless it was already reported, as ``diag.ReportedError``,
-        and is not propagated. The yielded ``Recovery``'s ``failure`` is its proof once the
-        block has ended. Any other exception propagates.
+        The error, already reported and raised as ``diag.ReportedError``, is not propagated.
+        The yielded ``Recovery``'s ``failure`` is its proof once the block has ended. Any
+        other exception propagates.
         """
         recovery = Recovery()
         try:
             yield recovery
         except diag.ReportedError as err:
             recovery.failure = err.reported
-        except errors.UserError as err:
-            recovery.failure = self.diags.error(err)
 
     def discard_comptime_params(self, owners: Collection[Hashable]) -> None:
         """Forget the recorded comptime parameters declared by any of ``owners``.

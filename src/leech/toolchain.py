@@ -12,11 +12,11 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterable, Mapping
-from typing import Final, Optional
+from typing import Final, NoReturn, Optional
 
 from llvmlite import binding as llb
 
-from leech import errors, ll_emit
+from leech import diag, diag_kinds, ll_emit
 
 
 class OutputKind(enum.Enum):
@@ -48,10 +48,11 @@ class Linker:
         self.command = command
 
     @classmethod
-    def from_env(cls) -> Linker:
+    def from_env(cls, diags: diag.Diags) -> Linker:
         """Return the linker named by ``$CC``, split like a shell, or ``cc``.
 
-        An unset, empty or blank ``CC`` means ``cc``.
+        An unset, empty or blank ``CC`` means ``cc``. A problem with it is reported to
+        ``diags``.
         """
         value = os.environ.get("CC", "")
         command = ["cc"]
@@ -59,28 +60,42 @@ class Linker:
             try:
                 command = shlex.split(value)
             except ValueError as err:
-                raise errors.CcInvalidError(value, str(err)) from err
+                diags.raise_error(
+                    diag_kinds.MALFORMED_C_COMPILER_COMMAND, None, value=value, reason=str(err)
+                )
         if shutil.which(command[0]) is None:
-            raise errors.CcNotFoundError(command[0])
+            diags.raise_error(
+                diag.Diag.new(diag_kinds.MISSING_C_COMPILER, None, program=command[0]).with_note(
+                    diag_kinds.INSTALL_CC
+                )
+            )
         return cls(tuple(command))
 
-    def link(self, obj: pathlib.Path, exe: pathlib.Path) -> None:
-        """Link ``obj`` into the executable ``exe``, which must not exist yet."""
+    def link(self, obj: pathlib.Path, exe: pathlib.Path, diags: diag.Diags) -> None:
+        """Link ``obj`` into the executable ``exe``, which must not exist yet, reporting a
+        failure to ``diags``."""
         command = [*self.command, str(obj), "-o", str(exe)]
         try:
             proc = subprocess.run(command, capture_output=True, text=True, check=False)
         except OSError as err:
-            raise errors.LinkFailedError(shlex.join(command), "could not run", str(err)) from err
+            _raise_link_failure(diags, command, "could not run", str(err))
         if proc.returncode != 0:
-            raise errors.LinkFailedError(
-                shlex.join(command),
-                f"exited with status {proc.returncode}",
-                proc.stdout + proc.stderr,
+            _raise_link_failure(
+                diags, command, f"exited with status {proc.returncode}", proc.stdout + proc.stderr
             )
         if exe.is_symlink() or not exe.is_file():
-            raise errors.LinkFailedError(
-                shlex.join(command), "succeeded but wrote no executable", proc.stdout + proc.stderr
+            _raise_link_failure(
+                diags, command, "succeeded but wrote no executable", proc.stdout + proc.stderr
             )
+
+
+def _raise_link_failure(
+    diags: diag.Diags, command: list[str], problem: str, output: str
+) -> NoReturn:
+    d = diag.Diag.new(diag_kinds.LINK_FAILURE, None, command=shlex.join(command), problem=problem)
+    if output.strip():
+        d = d.with_note(diag_kinds.LINKER_OUTPUT, output=output.rstrip("\n"))
+    diags.raise_error(d)
 
 
 def write_outputs(
@@ -88,9 +103,10 @@ def write_outputs(
     outputs: Mapping[OutputKind, pathlib.Path],
     opt_level: int,
     linker: Optional[Linker],
+    diags: diag.Diags,
 ) -> None:
     """Write each requested kind of ``module``'s output to its path, generating machine code at
-    ``opt_level`` and linking an executable with ``linker``.
+    ``opt_level`` and linking an executable with ``linker``. Problems are reported to ``diags``.
 
     Every output is produced in a temporary directory before any path is replaced, so a failed
     link changes nothing. Each path is then replaced atomically, in the order of the kinds, so
@@ -102,14 +118,16 @@ def write_outputs(
     try:
         for path in outputs.values():
             if path.is_dir():
-                raise errors.BuildOutputError(f"{path} is a directory")
+                diags.raise_error(
+                    diag_kinds.UNWRITABLE_OUTPUT, None, reason=f"{path} is a directory"
+                )
         with tempfile.TemporaryDirectory(prefix="leech-") as tmp_dir:
-            staged = _stage(module, outputs.keys(), opt_level, linker, pathlib.Path(tmp_dir))
+            staged = _stage(module, outputs.keys(), opt_level, linker, pathlib.Path(tmp_dir), diags)
             for kind in OutputKind:
                 if kind in outputs:
                     _commit(staged[kind], outputs[kind])
     except OSError as err:
-        raise errors.BuildOutputError(str(err)) from err
+        diags.raise_error(diag_kinds.UNWRITABLE_OUTPUT, None, reason=str(err))
 
 
 def _stage(
@@ -118,6 +136,7 @@ def _stage(
     opt_level: int,
     linker: Optional[Linker],
     directory: pathlib.Path,
+    diags: diag.Diags,
 ) -> dict[OutputKind, pathlib.Path]:
     """Write each kind of output into ``directory``, with an object for the executable."""
     to_stage = set(kinds)
@@ -131,7 +150,7 @@ def _stage(
         match kind:
             case OutputKind.EXE:
                 assert linker is not None
-                linker.link(staged[OutputKind.OBJ], path)
+                linker.link(staged[OutputKind.OBJ], path, diags)
             case OutputKind.ASM:
                 # Generating machine code changes the module, so the object, generated
                 # next, must not see what generating assembly did.

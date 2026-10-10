@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import pytest
 
-from leech import asserts, compilation, diag, errors, ir_env, ir_module, opt_util, typs
+from leech import asserts, compilation, diag, diag_kinds, ir_env, ir_module, opt_util, typs
 
 
 def test_ctx_detect_cycle_reports_cycle_details() -> None:
@@ -157,7 +157,7 @@ def test_unit_reports_a_failure_once_and_memoizes_it():
     ctx = compilation.Ctx()
 
     def fail() -> int:
-        raise errors.CcNotFoundError("cc")
+        ctx.diags.raise_error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
 
     owner = _Owner(ctx, fail)
 
@@ -169,14 +169,14 @@ def test_unit_reports_a_failure_once_and_memoizes_it():
 
     assert proofs[0] is proofs[1]
     assert owner.calls == 1
-    assert [type(d) for d in ctx.diags.all()] == [errors.CcNotFoundError]
+    assert [d.kind for d in ctx.diags.all()] == [diag_kinds.MISSING_C_COMPILER]
 
 
 def test_unit_does_not_report_an_already_reported_error_again():
     ctx = compilation.Ctx()
 
     def fail() -> int:
-        raise errors.CcNotFoundError("cc")
+        ctx.diags.raise_error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
 
     inner = _Owner(ctx, fail)
     outer = _Owner(ctx, lambda: inner.value)
@@ -220,7 +220,7 @@ def test_unit_results_belong_to_one_compilation():
     second = compilation.Ctx()
 
     def fail() -> int:
-        raise errors.CcNotFoundError("cc")
+        first.diags.raise_error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
 
     owner = _Owner(first, fail)
     with pytest.raises(diag.ReportedError):
@@ -230,12 +230,12 @@ def test_unit_results_belong_to_one_compilation():
     assert len(second.diags.all()) == 0
 
 
-def test_recovering_reports_a_new_error_and_passes_on_a_reported_one():
+def test_recovering_keeps_the_proof_of_a_reported_error():
     ctx = compilation.Ctx()
     reached_end = False
 
     with ctx.recovering() as first:
-        raise errors.CcNotFoundError("cc")
+        ctx.diags.raise_error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
     reported = opt_util.opt_unwrap(first.failure)
     with ctx.recovering() as again:
         raise diag.ReportedError(reported)
@@ -303,24 +303,9 @@ def test_unit_result_captures_a_value():
     assert result.failure is None
 
 
-def test_unit_result_reports_a_user_error_once():
-    ctx = compilation.Ctx()
-
-    def fail() -> int:
-        raise errors.CcNotFoundError("cc")
-
-    result = compilation.UnitResult.capture(ctx, fail)
-
-    assert result.failure is ctx.diags.any_error()
-    with pytest.raises(diag.ReportedError) as exc_info:
-        result.get()
-    assert exc_info.value.reported is result.failure
-    assert len(ctx.diags.all()) == 1
-
-
 def test_unit_result_passes_on_an_already_reported_error():
     ctx = compilation.Ctx()
-    reported = ctx.diags.error(errors.CcNotFoundError("cc"))
+    reported = ctx.diags.error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
 
     def fail() -> int:
         raise diag.ReportedError(reported)

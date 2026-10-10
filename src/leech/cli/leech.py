@@ -13,7 +13,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import Final, NoReturn, override
 
-from leech import errors, parse, program, toolchain
+from leech import diag, diag_kinds, parse, program, toolchain
 from leech import session as session_mod
 from leech.cli import common, doctor
 
@@ -74,7 +74,7 @@ class RunCommand(common.Command):
 
     @override
     def run(self, args: argparse.Namespace, session: session_mod.Session) -> int:
-        exe = _run_cache_dir(args.root) / args.root.stem
+        exe = _run_cache_dir(args.root, session.diags) / args.root.stem
         common.build(args.root, {toolchain.OutputKind.EXE: exe}, session)
         self.render_diags(session)
         sys.stdout.flush()
@@ -82,10 +82,10 @@ class RunCommand(common.Command):
         try:
             _exec_natively(exe, args.program_args)
         except OSError as err:
-            raise errors.RunFailedError(exe, str(err)) from err
+            session.diags.raise_error(diag_kinds.RUN_FAILURE, None, exe=str(exe), reason=str(err))
 
 
-def _run_cache_dir(root: pathlib.Path) -> pathlib.Path:
+def _run_cache_dir(root: pathlib.Path, diags: diag.Diags) -> pathlib.Path:
     """Return the absolute directory ``leech run`` builds ``root``'s executable in, creating it.
 
     It is ``leech/run/<sha256 of the root's absolute path>`` in the user's cache directory.
@@ -98,7 +98,7 @@ def _run_cache_dir(root: pathlib.Path) -> pathlib.Path:
             if not path.is_dir():
                 path.mkdir(mode=0o700, exist_ok=True)
     except OSError as err:
-        raise errors.BuildOutputError(str(err)) from err
+        diags.raise_error(diag_kinds.UNWRITABLE_OUTPUT, None, reason=str(err))
     return directory
 
 

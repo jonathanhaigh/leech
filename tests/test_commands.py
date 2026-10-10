@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from leech import diag, errors, session, toolchain
+from leech import diag_kinds, session, toolchain
 from leech.cli import common
 from leech.cli import leech as leech_cli
 
@@ -95,8 +95,8 @@ def test_output_options_map_kinds_to_paths(args, outputs):
     ("src", "cc", "expected"),
     (
         ("pub fn main() i32 { return true; }\n", None, "ERROR: return expression has type"),
-        (_HELLO, "/nonexistent/cc", 'ERROR: C compiler "/nonexistent/cc" not found'),
-        (_HELLO, "false", "ERROR: Linking failed: `false "),
+        (_HELLO, "/nonexistent/cc", 'ERROR: cannot find C compiler "/nonexistent/cc"'),
+        (_HELLO, "false", "ERROR: linking failed: `false "),
     ),
 )
 def test_build_failure_is_a_diagnostic_not_a_crash(tmp_path, src, cc, expected):
@@ -120,7 +120,7 @@ def test_unwritable_build_output_is_a_diagnostic_not_a_crash(tmp_path):
     proc = run_tool("leech", "build", root, "-o", out, cwd=tmp_path)
 
     assert proc.returncode == 1
-    assert proc.stderr == f"ERROR: Cannot write build output: {out} is a directory\n"
+    assert proc.stderr == f"ERROR: cannot write build output: {out} is a directory\n"
     assert _ICE not in proc.stderr
 
 
@@ -141,21 +141,7 @@ def test_run_renders_build_diagnostics_once(tmp_path, monkeypatch, capsys):
     stderr = capsys.readouterr().err
     warning = "WARNING: unreachable return statement"
     assert stderr.count(warning) == 1
-    assert stderr.index(warning) < stderr.index("ERROR: Cannot run ")
-
-
-def test_command_reports_a_raised_user_error(capsys):
-    class _Failing(common.Command):
-        name = "failing"
-        help = description = "fail"
-
-        def run(self, args, session):
-            del args, session
-            raise errors.CcNotFoundError("cc")
-
-    assert _Failing().execute(argparse.Namespace(), "leech") == 1
-
-    assert capsys.readouterr().err.startswith('ERROR: C compiler "cc" not found')
+    assert stderr.index(warning) < stderr.index('ERROR: cannot run "')
 
 
 def test_command_reports_an_already_reported_error_once(capsys):
@@ -165,11 +151,11 @@ def test_command_reports_an_already_reported_error_once(capsys):
 
         def run(self, args, session):
             del args
-            raise diag.ReportedError(session.diags.error(errors.CcNotFoundError("cc")))
+            session.diags.raise_error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
 
     assert _Failing().execute(argparse.Namespace(), "leech") == 1
 
-    assert capsys.readouterr().err.count("ERROR: C compiler") == 1
+    assert capsys.readouterr().err.count('ERROR: cannot find C compiler "cc"') == 1
 
 
 def test_crash_after_run_renders_build_diagnostics_once(tmp_path, monkeypatch, capsys):
@@ -199,5 +185,5 @@ def test_output_in_a_missing_directory_is_a_diagnostic_not_a_crash(tmp_path):
     )
 
     assert proc.returncode == 1
-    assert proc.stderr.startswith("ERROR: Cannot write build output: ")
+    assert proc.stderr.startswith("ERROR: cannot write build output: ")
     assert _ICE not in proc.stderr

@@ -160,9 +160,9 @@ def test_executable_is_linked_from_the_emitted_object(tmp_path, monkeypatch):
     linked_objs = []
     link = toolchain.Linker.link
 
-    def recording_link(linker, obj, exe):
+    def recording_link(linker, obj, exe, diags):
         linked_objs.append(obj.read_bytes())
-        link(linker, obj, exe)
+        link(linker, obj, exe, diags)
 
     monkeypatch.setattr(toolchain.Linker, "link", recording_link)
 
@@ -218,7 +218,7 @@ def test_failed_link_leaves_existing_outputs_unchanged(tmp_path):
     proc = run_build(tmp_path, root, "--emit", "llvm-ir,obj,exe", env=env_with_cc("false"))
 
     assert proc.returncode == 1
-    assert proc.stderr.startswith("ERROR: Linking failed: `false ")
+    assert proc.stderr.startswith("ERROR: linking failed: `false ")
     assert {name: (tmp_path / name).read_bytes() for name in old} == old
     assert listing(tmp_path) == {"app.leech", *old}
 
@@ -242,7 +242,7 @@ def test_executable_needs_a_c_compiler(tmp_path):
     proc = run_build(tmp_path, root, "--emit", "llvm-ir,exe", env=env_with_cc("/nonexistent/cc"))
 
     assert proc.returncode == 1
-    assert proc.stderr.startswith('ERROR: C compiler "/nonexistent/cc" not found')
+    assert proc.stderr.startswith('ERROR: cannot find C compiler "/nonexistent/cc"')
     assert listing(tmp_path) == {"app.leech"}
 
 
@@ -459,4 +459,4 @@ def test_program_fails_on_emitted_error(tmp_path, monkeypatch):
         program.Program(src_path, entry=False).check(compilation)
     assert exc_info.value.kinds == (diag_kinds.MISSING_C_COMPILER,)
 
-    assert [type(d) for d in compilation.diags.all()] == [errors.CcNotFoundError]
+    assert [d.kind for d in compilation.diags.all()] == [diag_kinds.MISSING_C_COMPILER]

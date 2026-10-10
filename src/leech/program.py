@@ -10,7 +10,7 @@ from typing import Final, NoReturn
 
 from llvmlite import binding as llb
 
-from leech import codegen, compilation, diag, errors, ir_module, ll_emit, mono
+from leech import codegen, compilation, diag, ir_module, ll_emit, mono
 from leech import session as session_mod
 
 
@@ -39,9 +39,6 @@ class Program:
         ctx = compilation.Ctx(session)
         try:
             root = ctx.loader.load_root(self.root, self.root.stem)
-        except errors.UserError as err:
-            ctx.diags.error(err)
-            _fail(ctx.diags)
         except diag.ReportedError:
             _fail(ctx.diags)
         ctx.loader.check_declarations()
@@ -77,8 +74,6 @@ class CheckedProgram:
         try:
             compiler = codegen.Compiler(self.root, self.instances)
             compiler.compile()
-        except errors.UserError as err:
-            raise _user_error_while_generating_ir(err) from err
         except diag.ReportedError as err:
             raise _user_error_while_generating_ir(err.reported.diag) from err
         reported = diags.any_error()

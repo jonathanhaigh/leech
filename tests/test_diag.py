@@ -16,6 +16,10 @@ def _span(path: pathlib.Path) -> leech_src.SrcSpan:
     return leech_src.SrcSpan(leech_src.SrcFile(path), 0, 1, 1, 1, 1, 2)
 
 
+def _error(program: str) -> diag.Diag:
+    return diag.Diag.new(diag_kinds.MISSING_C_COMPILER, None, program=program)
+
+
 def _warning(span: Optional[leech_src.SrcSpan]) -> diag.Diag:
     return diag.Diag.new(diag_kinds.UNREACHABLE_CODE, span, code="statement")
 
@@ -27,7 +31,7 @@ def test_only_errors_have_proofs():
     assert not diags.has_errors
     assert diags.any_error() is None
 
-    reported = diags.error(errors.CcNotFoundError("cc"))
+    reported = diags.error(_error("cc"))
     assert isinstance(reported, diag.ReportProof)
     assert diags.has_errors
     assert diags.any_error() is reported
@@ -36,8 +40,8 @@ def test_only_errors_have_proofs():
 def test_any_error_is_the_first_error():
     diags = diag.Diags()
 
-    first = diags.error(errors.CcNotFoundError("first"))
-    diags.error(errors.CcNotFoundError("second"))
+    first = diags.error(_error("first"))
+    diags.error(_error("second"))
 
     assert diags.any_error() is first
 
@@ -45,7 +49,7 @@ def test_any_error_is_the_first_error():
 def test_diags_keep_emission_order():
     diags = diag.Diags()
     warning = _warning(None)
-    error = errors.CcNotFoundError("cc")
+    error = _error("cc")
 
     diags.warn(warning)
     diags.error(error)
@@ -55,10 +59,10 @@ def test_diags_keep_emission_order():
 
 def test_duplicates_are_dropped_and_keep_the_original_proof():
     diags = diag.Diags()
-    first = errors.CcNotFoundError("cc")
+    first = _error("cc")
 
     reported = diags.error(first)
-    again = diags.error(errors.CcNotFoundError("cc"))
+    again = diags.error(_error("cc"))
 
     assert again is reported
     assert diags.all() == (first,)
@@ -84,7 +88,7 @@ def test_level_is_the_highest_level():
     diags.warn(_warning(None))
     assert diags.level == diag.WARNING
 
-    diags.error(errors.CcNotFoundError("cc"))
+    diags.error(_error("cc"))
     assert diags.level == diag.ERROR
 
 
@@ -95,10 +99,10 @@ def test_errors_reexports_diag_levels():
 
 def test_proof_holds_the_recorded_error():
     diags = diag.Diags()
-    first = errors.CcNotFoundError("cc")
+    first = _error("cc")
 
     reported = diags.error(first)
-    again = diags.error(errors.CcNotFoundError("cc"))
+    again = diags.error(_error("cc"))
 
     assert reported.diag is first
     assert again is reported
@@ -110,17 +114,17 @@ def test_error_and_warn_reject_the_wrong_level():
     with pytest.raises(AssertionError, match="not an error"):
         diags.error(_warning(None))
     with pytest.raises(AssertionError, match="not a warning"):
-        diags.warn(errors.CcNotFoundError("cc"))
+        diags.warn(_error("cc"))
     assert diags.all() == ()
 
 
 def test_report_proof_cannot_be_created_outside_diags():
     with pytest.raises(AssertionError):
-        diag.ReportProof(object(), errors.CcNotFoundError("cc"))
+        diag.ReportProof(object(), _error("cc"))
 
 
 def test_reported_error_carries_its_proof():
-    reported = diag.Diags().error(errors.CcNotFoundError("cc"))
+    reported = diag.Diags().error(_error("cc"))
 
     assert diag.ReportedError(reported).reported is reported
 
@@ -250,7 +254,7 @@ def test_diag_message_needs_a_diag_kind():
 
 def test_compilation_error_lists_kinds_in_order():
     warning = _warning(None)
-    error = errors.CcNotFoundError("cc")
+    error = _error("cc")
 
     failed = diag.CompilationError([warning, error])
 
@@ -294,10 +298,10 @@ def test_diags_with_the_same_kind_messages_and_spans_are_duplicates(tmp_path):
     assert len(diags.all()) == 3
 
 
-def test_diags_and_user_errors_are_sorted_together(tmp_path):
+def test_spanless_diags_sort_after_spanned_ones(tmp_path):
     path = tmp_path / "a.leech"
     file = leech_src.SrcFile(path)
-    late = errors.CcNotFoundError("cc")
+    late = _error("cc")
     later_span = leech_src.SrcSpan(file, 5, 6, 2, 2, 1, 2)
     later = _warning(later_span)
     early = diag.Diag.new(_ARG_KIND, _span(path), name="x", typ="i32")

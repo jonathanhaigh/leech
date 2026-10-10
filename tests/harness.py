@@ -12,7 +12,7 @@ from leech import (
     ast,
     compilation,
     diag,
-    errors,
+    diag_kinds,
     ir_module,
     ll_emit,
     mono,
@@ -51,7 +51,7 @@ def build_exe(root: pathlib.Path) -> BuildResult:
     session = session_mod.Session()
     exe = root.with_suffix("").absolute()
     built = None
-    with common.reporting_user_errors(session):
+    with common.suppressing_reported_errors():
         common.build(root, {toolchain.OutputKind.EXE: exe}, session)
         built = exe
     return BuildResult(built, session.diags.sorted())
@@ -60,7 +60,7 @@ def build_exe(root: pathlib.Path) -> BuildResult:
 def check_program(root: pathlib.Path) -> tuple[diag.AnyDiag, ...]:
     """Check a program as ``leech check`` does, returning its diagnostics in source order."""
     session = session_mod.Session()
-    with common.reporting_user_errors(session):
+    with common.suppressing_reported_errors():
         leech_program.Program(root, entry=True).check(session)
     return session.diags.sorted()
 
@@ -70,7 +70,7 @@ def emit_error_while_checking(monkeypatch) -> None:
     discover = mono.discover
 
     def discover_and_emit(ctx: compilation.Ctx) -> mono.MonoResult:
-        ctx.diags.error(errors.CcNotFoundError("emitted"))
+        ctx.diags.error(diag_kinds.MISSING_C_COMPILER, None, program="emitted")
         return discover(ctx)
 
     monkeypatch.setattr(mono, "discover", discover_and_emit)
@@ -318,9 +318,9 @@ class CompilerHarness:
         obj_path.write_bytes(ll_emit.emit(module, ll_emit.EmitKind.OBJ, 0))
         exe_path = link_dir / "program"
         try:
-            linker = toolchain.Linker.from_env()
-        except errors.UserError as err:
-            raise AssertionError(f"{err}; workspace: {self.workspace}") from err
+            linker = toolchain.Linker.from_env(diag.Diags())
+        except diag.ReportedError as err:
+            raise AssertionError(f"{err.reported.diag}; workspace: {self.workspace}") from err
         result = self._invoke_tool([*linker.command, str(obj_path), "-o", str(exe_path)])
         if result.returncode != 0:
             raise self._tool_failure("linking failed", result)

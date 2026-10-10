@@ -57,8 +57,8 @@ def test_doctor_reports_missing_cc():
     assert proc.returncode == 1
     assert proc.stdout.endswith("C compiler: FAILED\n")
     assert proc.stderr == (
-        'ERROR: C compiler "/nonexistent/cc" not found; install gcc or clang, or set CC to a '
-        "C compiler\n"
+        'ERROR: cannot find C compiler "/nonexistent/cc"\n'
+        "NOTE: install gcc or clang, or set CC to a C compiler\n"
     )
 
 
@@ -67,9 +67,7 @@ def test_doctor_reports_malformed_cc():
 
     assert proc.returncode == 1
     assert proc.stdout.endswith("C compiler: FAILED\n")
-    assert (
-        proc.stderr == "ERROR: The C compiler command CC='cc \"' is invalid: No closing quotation\n"
-    )
+    assert proc.stderr == 'ERROR: invalid C compiler command "CC=cc "": No closing quotation\n'
 
 
 def test_doctor_reports_failing_cc_version(tmp_path):
@@ -80,8 +78,9 @@ def test_doctor_reports_failing_cc_version(tmp_path):
     assert proc.returncode == 1
     assert proc.stdout.endswith("C compiler version: FAILED\n")
     assert proc.stderr == (
-        f"ERROR: `{cc} --version` exited with status 1 and printed no version\n"
-        "NOTE: Check that CC names a C compiler that can link programs, such as gcc\n"
+        f"ERROR: toolchain check failed: `{cc} --version` exited with status 1 and printed no "
+        "version\n"
+        "NOTE: check that CC names a C compiler that can link programs, such as gcc\n"
     )
 
 
@@ -93,10 +92,10 @@ def test_doctor_reports_failing_link(tmp_path):
     assert proc.returncode == 1
     assert "  fake 1.0\n" in proc.stdout
     assert proc.stdout.endswith("Build a test program: FAILED\n")
-    assert proc.stderr.startswith(f"ERROR: Linking failed: `{cc} ")
+    assert proc.stderr.startswith(f"ERROR: linking failed: `{cc} ")
     assert "succeeded but wrote no executable" in proc.stderr
     assert proc.stderr.endswith(
-        "NOTE: Check that CC names a C compiler that can link programs, such as gcc\n"
+        "NOTE: check that CC names a C compiler that can link programs, such as gcc\n"
     )
 
 
@@ -115,10 +114,11 @@ def test_doctor_reports_misbehaving_test_program(tmp_path):
     assert proc.returncode == 1
     assert proc.stdout.endswith("Run the test program: FAILED\n")
     assert proc.stderr == (
-        "ERROR: The test program exited with status 0 and printed 'wrong\\n', expecting "
+        "ERROR: toolchain check failed: the test program exited with status 0 and printed "
+        "'wrong\\n', expecting "
         "status 0 and "
         "'leech doctor\\n'\n"
-        "NOTE: Check that CC names a C compiler that can link programs, such as gcc\n"
+        "NOTE: check that CC names a C compiler that can link programs, such as gcc\n"
     )
 
 
@@ -136,11 +136,11 @@ def test_doctor_reports_test_program_that_cannot_run(tmp_path):
     assert proc.returncode == 1
     assert proc.stdout.endswith("Run the test program: FAILED\n")
     assert proc.stderr.startswith(
-        "ERROR: Cannot run the test program: [Errno 13] Permission denied"
+        "ERROR: toolchain check failed: cannot run the test program: [Errno 13] Permission denied"
     )
     assert "Traceback" not in proc.stderr
     assert proc.stderr.endswith(
-        "NOTE: Check that CC names a C compiler that can link programs, such as gcc\n"
+        "NOTE: check that CC names a C compiler that can link programs, such as gcc\n"
     )
 
 
@@ -170,7 +170,7 @@ def test_doctor_reports_hanging_test_program(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out.endswith("Run the test program: FAILED\n")
     assert captured.err.startswith(
-        "ERROR: Running the test program did not finish within 1 seconds\n"
+        "ERROR: toolchain check failed: running the test program did not finish within 1 seconds\n"
     )
 
 

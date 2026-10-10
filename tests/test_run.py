@@ -248,5 +248,5 @@ def test_run_reports_exec_failure_without_traceback(tmp_path, monkeypatch, capsy
     assert signal.getsignal(signal.SIGPIPE) == signal.SIG_IGN
     exe = cached_exe(root)
     assert capsys.readouterr().err == (
-        f"ERROR: Cannot run {exe}: [Errno 13] Permission denied: '{exe}'\n"
+        f"ERROR: cannot run \"{exe}\": [Errno 13] Permission denied: '{exe}'\n"
     )

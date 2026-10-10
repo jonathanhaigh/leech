@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from leech import diag_kinds, errors
+from leech import diag_kinds
 from tests import harness
 
 _HELLO = 'import std::io;\npub fn main() i32 { io::println("hello"); return 0; }\n'
@@ -229,8 +229,8 @@ def test_missing_cc_is_reported_before_compiling(tmp_path):
 
     assert proc.returncode == 1
     assert proc.stderr == (
-        'ERROR: C compiler "/nonexistent/cc" not found; install gcc or clang, or set CC to a '
-        "C compiler\n"
+        'ERROR: cannot find C compiler "/nonexistent/cc"\n'
+        "NOTE: install gcc or clang, or set CC to a C compiler\n"
     )
     assert [p.name for p in tmp_path.iterdir()] == ["hello.leech"]
 
@@ -241,9 +241,7 @@ def test_malformed_cc_is_reported(tmp_path):
     proc = run_leech("build", root, env=env_with_cc('cc "'), cwd=tmp_path)
 
     assert proc.returncode == 1
-    assert (
-        proc.stderr == "ERROR: The C compiler command CC='cc \"' is invalid: No closing quotation\n"
-    )
+    assert proc.stderr == 'ERROR: invalid C compiler command "CC=cc "": No closing quotation\n'
 
 
 def test_link_failure_is_reported_with_compiler_output(tmp_path):
@@ -252,9 +250,9 @@ def test_link_failure_is_reported_with_compiler_output(tmp_path):
     proc = run_leech("build", root, env=env_with_cc("cc -Wl,--no-such-flag"), cwd=tmp_path)
 
     assert proc.returncode == 1
-    assert proc.stderr.startswith("ERROR: Linking failed: `cc -Wl,--no-such-flag ")
+    assert proc.stderr.startswith("ERROR: linking failed: `cc -Wl,--no-such-flag ")
     assert "exited with status" in proc.stderr
-    assert "NOTE: " in proc.stderr
+    assert "NOTE: the C compiler printed:\n" in proc.stderr
     assert "no-such-flag" in proc.stderr.split("NOTE: ", 1)[1]
     assert "Traceback" not in proc.stderr
     assert not (tmp_path / "hello").exists()
@@ -274,7 +272,7 @@ def test_a_directory_destination_is_refused_before_anything_is_written(tmp_path)
     proc = run_leech("build", root, "--emit", "llvm-ir,exe", cwd=tmp_path)
 
     assert proc.returncode == 1
-    assert proc.stderr == "ERROR: Cannot write build output: hello is a directory\n"
+    assert proc.stderr == "ERROR: cannot write build output: hello is a directory\n"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["hello", "hello.leech"]
 
 
@@ -285,7 +283,7 @@ def test_default_output_that_is_a_directory_is_refused(tmp_path):
     proc = run_leech("build", root, cwd=tmp_path)
 
     assert proc.returncode == 1
-    assert proc.stderr == "ERROR: Cannot write build output: hello is a directory\n"
+    assert proc.stderr == "ERROR: cannot write build output: hello is a directory\n"
 
 
 def test_linker_that_writes_nothing_fails_and_keeps_old_executable(tmp_path):
@@ -297,7 +295,7 @@ def test_linker_that_writes_nothing_fails_and_keeps_old_executable(tmp_path):
     proc = run_leech("build", root, env=env_with_cc(str(fake_cc)), cwd=tmp_path)
 
     assert proc.returncode == 1
-    assert proc.stderr.startswith(f"ERROR: Linking failed: `{fake_cc} ")
+    assert proc.stderr.startswith(f"ERROR: linking failed: `{fake_cc} ")
     assert "succeeded but wrote no executable" in proc.stderr
     assert old_exe.read_text() == "old"
     assert [p.name for p in old_exe.parent.iterdir() if "tmp" in p.name] == []
@@ -336,5 +334,5 @@ def test_build_fails_on_emitted_error(tmp_path, monkeypatch):
     result = harness.build_exe(root)
 
     assert result.exe is None
-    assert [type(d) for d in result.diags] == [errors.CcNotFoundError]
+    assert [d.kind for d in result.diags] == [diag_kinds.MISSING_C_COMPILER]
     assert not (tmp_path / "hello").exists()

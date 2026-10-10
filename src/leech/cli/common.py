@@ -29,18 +29,11 @@ def version_text(prog: str) -> str:
 
 
 @contextlib.contextmanager
-def reporting_user_errors(session: session_mod.Session) -> Iterator[None]:
-    """Report a user error escaping the block to the session, and suppress it.
-
-    Errors already reported, raised as ``diag.ReportedError`` or ``diag.CompilationError``,
-    are suppressed too.
-    """
-    try:
+def suppressing_reported_errors() -> Iterator[None]:
+    """Suppress a user error escaping the block, which was reported to the session when it
+    was raised as ``diag.ReportedError`` or ``diag.CompilationError``."""
+    with contextlib.suppress(diag.ReportedError, diag.CompilationError):
         yield
-    except errors.UserError as err:
-        session.diags.error(err)
-    except diag.ReportedError, diag.CompilationError:
-        pass
 
 
 class OptionGroup(abc.ABC):
@@ -127,9 +120,9 @@ class Command(abc.ABC):
     """A command-line command: its arguments, and what it does in a session.
 
     The command's diagnostics are rendered once it finishes, unless it rendered them itself
-    with ``render_diags``. A user error it raises is
-    reported to the session and fails the command with status 1, as an error already reported
-    does; any other exception is reported as an internal compiler error.
+    with ``render_diags``. A user error is reported to the session when it is found, and the
+    ``diag.ReportedError`` or ``diag.CompilationError`` raised for it fails the command with
+    status 1; any other exception is reported as an internal compiler error.
     """
 
     name: ClassVar[str]
@@ -164,7 +157,7 @@ class Command(abc.ABC):
             group.configure(args, session)
         with self._reporting_crashes(session, tool):
             status = 1
-            with reporting_user_errors(session):
+            with suppressing_reported_errors():
                 status = self.run(args, session)
         self.render_diags(session)
         return status
@@ -206,6 +199,8 @@ def build(
     """
     linker = None
     if toolchain.OutputKind.EXE in outputs:
-        linker = toolchain.Linker.from_env()
+        linker = toolchain.Linker.from_env(session.diags)
     checked = program.Program(root, entry=True).check(session)
-    toolchain.write_outputs(checked.llvm_module(), outputs, session.opt_level, linker)
+    toolchain.write_outputs(
+        checked.llvm_module(), outputs, session.opt_level, linker, session.diags
+    )
