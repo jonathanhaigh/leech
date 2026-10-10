@@ -194,7 +194,7 @@ def test_or_evaluates_rhs_when_lhs_false(compiler):
 
 def test_comptime_and_short_circuits(compiler):
     # Without short-circuiting, the interpreter would evaluate the
-    # division and raise PanicAtComptimeError (division by zero).
+    # division and report comptime-panic (division by zero).
     src = """
     let x = false and (1i32 / 0i32 == 0i32);
     pub fn main() i32 {

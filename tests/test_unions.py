@@ -836,7 +836,9 @@ def test_union_tag_instr_reads_the_variant_index(compiler):
     bb.ret(tag, None)
 
     assert tag.typ == union_typ.tag_typ
-    result = asserts.checked_cast(comptime.Interpreter(cfg, (), ()).eval(), ir_values.ComptimeInt)
+    result = asserts.checked_cast(
+        comptime.Interpreter(cfg, (), (), mod.ctx).eval(), ir_values.ComptimeInt
+    )
     assert result.value == 1
     assert result.typ == union_typ.tag_typ
 
@@ -849,7 +851,9 @@ def test_union_payload_instr_reads_the_active_variants_field(compiler):
     bb.ret(payload, None)
 
     assert payload.typ == typs.I32
-    result = asserts.checked_cast(comptime.Interpreter(cfg, (), ()).eval(), ir_values.ComptimeInt)
+    result = asserts.checked_cast(
+        comptime.Interpreter(cfg, (), (), mod.ctx).eval(), ir_values.ComptimeInt
+    )
     assert result.value == 7
 
 
@@ -864,7 +868,7 @@ def test_union_payload_instr_rejects_the_wrong_variant(compiler):
     bb.ret(bb.union_payload(made, 1, 0, None), None)
 
     with pytest.raises(AssertionError):
-        comptime.Interpreter(cfg, (), ()).eval()
+        comptime.Interpreter(cfg, (), (), mod.ctx).eval()
 
 
 def test_generic_body_lowers_the_substituted_union_instance(compiler):

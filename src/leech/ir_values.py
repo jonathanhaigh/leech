@@ -322,7 +322,7 @@ class ComptimePtr[AstT_co: ast.Ast = ast.Ast](ComptimeValue[typs.PtrTyp, AstT_co
 
         Used to reject taking the address of, or returning a pointer
         into, a compile-time-only temporary (see
-        ``errors.CannotTakeAddressOfComptimeValueError``).
+        ``comptime-address-of-temporary``).
         """
 
 
@@ -1007,8 +1007,12 @@ class UnionPayloadInstr(Instr):
         return union_typ.variant_at(self.variant_index).payload_typs[self.field_index]
 
 
-class CallInstr(Instr[typs.Typ, ast.CallExpr]):
-    """Calls a function."""
+class CallInstr(Instr):
+    """Calls a function.
+
+    A call the compiler synthesizes, such as a runtime check's call to ``panic``, has the
+    checked expression as its AST node.
+    """
 
     callee: Final[Value]
     args: Final[tuple[Value, ...]]
@@ -1019,7 +1023,7 @@ class CallInstr(Instr[typs.Typ, ast.CallExpr]):
         bb: BasicBlock,
         callee: Value,
         args: tuple[Value, ...],
-        ast_node: Optional[ast.CallExpr],
+        ast_node: Optional[ast.Ast],
     ) -> None:
         super().__init__(bb, ast_node)
         self.callee = callee
@@ -1312,7 +1316,7 @@ class BasicBlock:
         )
 
     def call(
-        self, callee: Value, args: tuple[Value, ...], ast_node: Optional[ast.CallExpr]
+        self, callee: Value, args: tuple[Value, ...], ast_node: Optional[ast.Ast]
     ) -> CallInstr:
         return self._add_instr(CallInstr(self, callee, args, ast_node))
 

@@ -926,63 +926,6 @@ class VoidVarInitializerError(UserError):
         super().__init__(ERROR, "Variable initializer cannot be void", span)
 
 
-class CannotTakeAddressOfComptimeValueError(UserError):
-    """Raised when a compile-time-evaluated expression's result would need
-    the address of a temporary that has no address at runtime."""
-
-    kind = diag_kinds.COMPTIME_ADDRESS_OF_TEMPORARY
-
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, "Cannot take address of comptime value", span)
-
-
-class CallExternFnAtComptimeError(UserError):
-    """Raised when compile-time evaluation needs to call a function with no body."""
-
-    kind = diag_kinds.COMPTIME_EXTERN_CALL
-
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, "Cannot call extern function at comptime", span)
-
-
-class SetNonLocalVarAtComptimeError(UserError):
-    """Raised when compile-time evaluation needs to write through a pointer
-    to a variable outside the expression being evaluated."""
-
-    kind = diag_kinds.COMPTIME_NON_LOCAL_WRITE
-
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, "Cannot set non-local variable at comptime", span)
-
-
-class PanicAtComptimeError(UserError):
-    """Raised when compile-time evaluation calls ``panic`` - either directly,
-    or via a compiler-synthesized runtime check (array bounds, integer
-    overflow, division by zero) evaluated at compile time.
-    """
-
-    kind = diag_kinds.COMPTIME_PANIC
-
-    def __init__(self, message: Optional[str], span: Optional[src.SrcSpan]) -> None:
-        text = "Compile-time evaluation panicked"
-        if message is not None:
-            text += f': "{message}"'
-        super().__init__(ERROR, text, span)
-
-
-class PtrCastNotComptimeEvaluableError(UserError):
-    """Raised when ``__ptr_cast_mut`` is evaluated at compile time - the
-    ``Comptime*`` value model is value-oriented, not byte-oriented, and
-    never records a pointer's mutability separately from its pointee, so
-    it has no sound way to reinterpret one as a different pointer type,
-    not even a mutability-only change."""
-
-    kind = diag_kinds.COMPTIME_POINTER_CAST
-
-    def __init__(self, span: Optional[src.SrcSpan]) -> None:
-        super().__init__(ERROR, "Cannot cast pointer at comptime", span)
-
-
 class CcInvalidError(UserError):
     """Raised when the ``CC`` environment variable can't be split into a command."""
 

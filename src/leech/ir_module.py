@@ -746,7 +746,7 @@ class ModVar(ir_values.ComptimePtr[ast.VarDefn]):
     @property
     @compilation.unit
     def _evaluated_initializer(self) -> ir_values.ComptimeValue:
-        return comptime.Interpreter(self.cfg, (), (), self.env.ctx.builtins.panic_ref).eval()
+        return comptime.Interpreter(self.cfg, (), (), self.env.ctx).eval()
 
     @property
     @compilation.unit

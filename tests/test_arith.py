@@ -5,6 +5,7 @@
 import pytest
 
 from leech import diag, diag_kinds
+from tests import harness
 
 
 def test_int_arith(compiler):
@@ -96,7 +97,7 @@ def test_signed_division_in_unreachable_code_is_not_a_compile_error(compiler):
 def test_comptime_signed_division_by_zero(compiler):
     # Compile-time evaluation shares the same runtime safety checks as
     # codegen (see CfgBuilder._panic_if): this hits the same `panic` call
-    # a runtime division by zero would, reported as PanicAtComptimeError.
+    # a runtime division by zero would, reported as comptime-panic with its message.
     src = """
     let x = 5 / 0;
     pub fn main() i32 {
@@ -106,6 +107,13 @@ def test_comptime_signed_division_by_zero(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
+
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    harness.assert_span_at(err.span, src, "5 / 0")
+    assert [(note.msg.kind, note.msg.args["message"]) for note in err.notes] == [
+        (diag_kinds.PANIC_MESSAGE, "division by zero")
+    ]
 
 
 def test_comptime_unsigned_division(compiler):
@@ -385,7 +393,7 @@ def test_invalid_unary_op_arg_non_int(compiler):
 
 def test_comptime_int_operation_overflow_distinct_from_lit_overflow(compiler):
     # Neither operand literal (100i8) overflows on its own - only the
-    # result of adding them does. This must raise PanicAtComptimeError (the
+    # result of adding them does. This must report comptime-panic (the
     # runtime overflow check, evaluated at compile time), not
     # integer-literal-overflow (which only ever rejects a literal itself).
     src = """
@@ -397,3 +405,4 @@ def test_comptime_int_operation_overflow_distinct_from_lit_overflow(compiler):
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
+    harness.assert_span_at(exc_info.value.diags[0].span, src, "100i8 + 100i8")

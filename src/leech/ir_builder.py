@@ -1280,6 +1280,6 @@ class CfgBuilder:
         self._cbranch(cond, fail_bb, ok_bb, ast_node)
         self._set_position(fail_bb)
         panic_ref = opt_util.opt_unwrap(self._ctx.builtins.panic_ref)
-        self._curr_bb.call(panic_ref, (ir_values.ComptimeCStr(message, None),), None)
+        self._curr_bb.call(panic_ref, (ir_values.ComptimeCStr(message, None),), ast_node)
         self._curr_bb.unreachable(ast_node)
         self._set_position(ok_bb)

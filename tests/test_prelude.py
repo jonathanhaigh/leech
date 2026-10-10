@@ -4,7 +4,7 @@
 
 import signal
 
-from leech import ir_module, ir_values
+from leech import ast, ir_module, ir_values
 from tests import harness
 
 
@@ -119,8 +119,8 @@ def test_source_and_synthesized_panic_calls_share_reference(compiler):
 
     # There may be multiple synthesized arithmetic checks; require both the
     # source call and at least one synthesized call before comparing identity.
-    assert any(call.ast is not None for call in panic_calls)
-    assert any(call.ast is None for call in panic_calls)
+    assert any(isinstance(call.ast, ast.CallExpr) for call in panic_calls)
+    assert any(isinstance(call.ast, ast.BinOpExpr) for call in panic_calls)
     panic_callees = [call.callee for call in panic_calls]
     assert all(isinstance(callee, ir_module.FnRef) for callee in panic_callees)
     assert all(callee is panic_callees[0] for callee in panic_callees)

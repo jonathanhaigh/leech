@@ -4,11 +4,22 @@
 
 """A tree-walking IR interpreter for compile-time evaluation."""
 
-from typing import Final, Optional
+from typing import Final, NoReturn, Optional
 
 from llvmlite import ir as ll
 
-from leech import asserts, errors, ir_module, ir_values, ll_typs, target, typs
+from leech import (
+    asserts,
+    compilation,
+    diag,
+    diag_kinds,
+    ir_module,
+    ir_values,
+    ll_typs,
+    src,
+    target,
+    typs,
+)
 
 
 def _size_of(sized_typ: typs.TypKind) -> int:
@@ -34,8 +45,8 @@ def _wrap(value: int, typ: typs.IntTyp) -> int:
 class Interpreter:
     """Execute a control-flow graph with compile-time-known arguments.
 
-    Calls to ``panic_ref`` become compile-time panic diagnostics, including calls emitted by
-    runtime checks. The same function identity propagates into nested interpreters.
+    Calls to the prelude's ``panic`` become compile-time panic diagnostics, including calls
+    emitted by runtime checks. Errors are reported to ``ctx``'s diagnostics.
     """
 
     _registers: Final[dict[ir_values.Value, ir_values.ComptimeValue]]
@@ -44,7 +55,7 @@ class Interpreter:
     _prev_bb: Optional[ir_values.BasicBlock]
     _curr_instr_index: int
     _ret_value: Optional[ir_values.ComptimeValue]
-    _panic_ref: Final[Optional[ir_module.FnRef]]
+    _ctx: Final[compilation.Ctx]
     #: Overflow results consumed by the checked operation's paired flag instruction.
     _overflow_flags: Final[dict[ir_values.Instr, bool]]
 
@@ -53,7 +64,7 @@ class Interpreter:
         cfg: ir_values.Cfg,
         params: tuple[ir_values.Param, ...],
         args: tuple[ir_values.ComptimeValue, ...],
-        panic_ref: Optional[ir_module.FnRef] = None,
+        ctx: compilation.Ctx,
     ) -> None:
         self._cfg = cfg
         self._registers = dict(zip(params, args, strict=True))
@@ -61,7 +72,7 @@ class Interpreter:
         self._prev_bb = None
         self._curr_instr_index = 0
         self._ret_value = None
-        self._panic_ref = panic_ref
+        self._ctx = ctx
         self._overflow_flags = {}
 
     def eval(self) -> ir_values.ComptimeValue:
@@ -75,6 +86,15 @@ class Interpreter:
             self._curr_instr_index += 1
             self._eval_instr(self._curr_bb.instrs[instr_index])
 
+    def _raise_panic(
+        self, args: tuple[ir_values.ComptimeValue, ...], span: Optional[src.SrcSpan]
+    ) -> NoReturn:
+        d = diag.Diag.new(diag_kinds.COMPTIME_PANIC, span)
+        message = _panic_message(args)
+        if message is not None:
+            d = d.with_note(diag_kinds.PANIC_MESSAGE, message=message)
+        self._ctx.diags.raise_error(d)
+
     def _get_comptime_value(self, value: ir_values.Value) -> ir_values.ComptimeValue:
         if isinstance(value, ir_values.ComptimeValue):
             return value
@@ -82,7 +102,7 @@ class Interpreter:
 
     def _check_not_temporary(self, value: ir_values.ComptimeValue) -> None:
         if isinstance(value, ir_values.ComptimePtr) and value.is_temporary():
-            raise errors.CannotTakeAddressOfComptimeValueError(value.span)
+            self._ctx.diags.raise_error(diag_kinds.COMPTIME_ADDRESS_OF_TEMPORARY, value.span)
         if isinstance(value, ir_values.ComptimeAggregate):
             for elt in value.values():
                 self._check_not_temporary(elt)
@@ -200,7 +220,7 @@ class Interpreter:
                     self._get_comptime_value(instr.dest), ir_values.ComptimePtr
                 )
                 if not dest.is_temporary():
-                    raise errors.SetNonLocalVarAtComptimeError(instr.span)
+                    self._ctx.diags.raise_error(diag_kinds.COMPTIME_NON_LOCAL_WRITE, instr.span)
                 value = self._get_comptime_value(instr.value)
                 dest.store(value)
             case ir_values.GepInstr():
@@ -244,14 +264,13 @@ class Interpreter:
                     self._get_comptime_value(instr.callee), ir_module.FnRef
                 )
                 args = tuple(self._get_comptime_value(arg) for arg in instr.args)
-                if self._panic_ref is not None and callee is self._panic_ref:
-                    raise errors.PanicAtComptimeError(_panic_message(args), instr.span)
+                panic_ref = self._ctx.builtins.panic_ref
+                if panic_ref is not None and callee is panic_ref:
+                    self._raise_panic(args, instr.span)
                 fn = callee.instance
                 if not fn.has_body:
-                    raise errors.CallExternFnAtComptimeError(callee.span)
-                self._registers[instr] = Interpreter(
-                    fn.cfg, fn.params, args, self._panic_ref
-                ).eval()
+                    self._ctx.diags.raise_error(diag_kinds.COMPTIME_EXTERN_CALL, callee.span)
+                self._registers[instr] = Interpreter(fn.cfg, fn.params, args, self._ctx).eval()
             case ir_values.PhiInstr():
                 assert self._prev_bb is not None
                 self._registers[instr] = self._get_comptime_value(instr.incoming[self._prev_bb])
@@ -283,7 +302,7 @@ class Interpreter:
                 # own mutability separately from its pointee's), so it has
                 # no sound way to reinterpret a pointer as a different
                 # type - not even a mutability-only change.
-                raise errors.PtrCastNotComptimeEvaluableError(instr.span)
+                self._ctx.diags.raise_error(diag_kinds.COMPTIME_POINTER_CAST, instr.span)
             case ir_values.PtrMutRelaxInstr():
                 operand = asserts.checked_cast(
                     self._get_comptime_value(instr.operand), ir_values.ComptimePtr
