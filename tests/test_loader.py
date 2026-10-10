@@ -187,10 +187,13 @@ def test_root_name_must_match_its_location(tmp_path, rel_path, name):
     path.parent.mkdir(exist_ok=True)
     path.write_text("pub fn f() i32 { return 0; }\n")
 
-    with pytest.raises(errors.ModNameLocationMismatchError) as exc_info:
+    with pytest.raises(diag.ReportedError) as exc_info:
         compilation.Ctx().loader.load_root(path, name)
 
-    assert str(exc_info.value).startswith(f'Module name "{name}" does not match the location ')
+    err = exc_info.value.reported.diag
+    assert err.kind is diag_kinds.MODULE_LOCATION_MISMATCH
+    assert isinstance(err, diag.Diag)
+    assert err.msg.args["name"] == name
 
 
 def test_std_names_are_reserved_for_the_bundled_library(tmp_path):
@@ -198,8 +201,9 @@ def test_std_names_are_reserved_for_the_bundled_library(tmp_path):
     path = tmp_path / "std" / "io.leech"
     path.write_text("pub fn f() i32 { return 0; }\n")
 
-    with pytest.raises(errors.StdModNameReservedError):
+    with pytest.raises(diag.ReportedError) as exc_info:
         compilation.Ctx().loader.load_root(path, "std::io")
+    assert exc_info.value.reported.diag.kind is diag_kinds.RESERVED_MODULE_NAME
 
 
 def test_bundled_module_root_is_named_in_the_std_package():
@@ -207,8 +211,9 @@ def test_bundled_module_root_is_named_in_the_std_package():
     loader = compilation.Ctx().loader
 
     assert loader.load_root(path, "std::io").name == "std::io"
-    with pytest.raises(errors.ModNameLocationMismatchError):
+    with pytest.raises(diag.ReportedError) as exc_info:
         compilation.Ctx().loader.load_root(path, "io")
+    assert exc_info.value.reported.diag.kind is diag_kinds.MODULE_LOCATION_MISMATCH
 
 
 def test_syntax_error_in_a_bundled_module_is_an_internal_error(tmp_path):

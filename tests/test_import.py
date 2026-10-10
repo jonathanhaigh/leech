@@ -933,9 +933,11 @@ def test_conflicting_extern_declarations_are_reported_at_the_later_one(compiler)
         compiler.build(program)
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)
 
-    harness.assert_span_at(exc_info.value.diags[0].span, b_src, "extern fn puts")
-    (note,) = harness.user_error(exc_info.value.diags[0]).extra
-    harness.assert_span_at(note.span, a_src, "extern fn puts")
+    err = exc_info.value.diags[0]
+    harness.assert_span_at(err.span, b_src, "extern fn puts")
+    assert isinstance(err, diag.Diag)
+    (label,) = err.labels
+    harness.assert_span_at(label.span, a_src, "extern fn puts")
 
 
 def test_extern_conflicting_with_the_preludes_is_reported_at_the_programs(compiler):
@@ -945,10 +947,11 @@ def test_extern_conflicting_with_the_preludes_is_reported_at_the_programs(compil
         compiler.build(src)
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)
 
-    harness.assert_span_at(exc_info.value.diags[0].span, src, "extern fn write")
-    (note,) = harness.user_error(exc_info.value.diags[0]).extra
-    assert note.span is not None
-    assert note.span.file.path.name == "prelude.leech"
+    err = exc_info.value.diags[0]
+    harness.assert_span_at(err.span, src, "extern fn write")
+    assert isinstance(err, diag.Diag)
+    (label,) = err.labels
+    assert label.span.file.path.name == "prelude.leech"
 
 
 def test_extern_declarations_differing_only_in_pointer_mutability_conflict(compiler):

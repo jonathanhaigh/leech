@@ -146,29 +146,6 @@ class IncompatibleLetTypError(UserError):
             self._add_extra(NOTE, f'Declared with type "{declared_typ}" here', declared_span)
 
 
-class ConflictingExternDeclError(UserError):
-    """Raised when an extern function is declared with a different type from an earlier
-    declaration of the same symbol."""
-
-    kind = diag_kinds.CONFLICTING_EXTERN_DECLARATIONS
-
-    def __init__(
-        self,
-        name: str,
-        typ_name: str,
-        span: Optional[src.SrcSpan],
-        earlier_typ_name: str,
-        earlier_span: Optional[src.SrcSpan],
-    ) -> None:
-        super().__init__(
-            ERROR,
-            f'Extern function "{name}" is declared with type "{typ_name}", but was declared '
-            f'with type "{earlier_typ_name}"',
-            span,
-        )
-        self._add_extra(NOTE, "Earlier declaration here", earlier_span)
-
-
 class NotCallableError(UserError):
     """Raised when calling a value whose type isn't a function pointer."""
 
@@ -1004,57 +981,6 @@ class PtrCastNotComptimeEvaluableError(UserError):
 
     def __init__(self, span: Optional[src.SrcSpan]) -> None:
         super().__init__(ERROR, "Cannot cast pointer at comptime", span)
-
-
-class ModDoesNotExistError(UserError):
-    """Raised when an ``import`` names a module file that doesn't exist."""
-
-    kind = diag_kinds.UNKNOWN_MODULE
-
-    def __init__(self, name: str, span: src.SrcSpan) -> None:
-        super().__init__(ERROR, f'Cannot find module "{name}"', span)
-
-
-class ModNameLocationMismatchError(UserError):
-    """Raised when a module's qualified name doesn't match its file's location."""
-
-    kind = diag_kinds.MODULE_LOCATION_MISMATCH
-
-    def __init__(self, name: str, path: pathlib.Path) -> None:
-        super().__init__(
-            ERROR,
-            f'Module name "{name}" does not match the location of "{path}": a module named '
-            '"x::a" must be the file x/a.leech in its package directory',
-            None,
-        )
-
-
-class ModOutsidePackagesError(UserError):
-    """Raised when an imported module file is a link to a file outside every package."""
-
-    kind = diag_kinds.MODULE_OUTSIDE_PACKAGES
-
-    def __init__(self, name: str, path: pathlib.Path, span: src.SrcSpan) -> None:
-        super().__init__(
-            ERROR,
-            f'Module "{name}" is "{path}", which links to a file outside the root package and '
-            "the standard library",
-            span,
-        )
-
-
-class StdModNameReservedError(UserError):
-    """Raised when a module outside the bundled standard library is given a ``std`` name."""
-
-    kind = diag_kinds.RESERVED_MODULE_NAME
-
-    def __init__(self, name: str, path: pathlib.Path) -> None:
-        super().__init__(
-            ERROR,
-            f'Module name "{name}" for "{path}" is reserved: names starting with "std" belong '
-            "to the bundled standard library",
-            None,
-        )
 
 
 class CcInvalidError(UserError):

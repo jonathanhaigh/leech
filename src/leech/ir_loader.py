@@ -14,9 +14,9 @@ import dataclasses
 import functools
 import pathlib
 from collections.abc import Collection
-from typing import Final, Optional
+from typing import Final, NoReturn, Optional
 
-from leech import asserts, ast, compilation, diag, diag_kinds, errors, ir_module, parse, src, typs
+from leech import asserts, ast, compilation, diag, diag_kinds, ir_module, parse, src, typs
 
 #: Resolved package directory containing the bundled standard library.
 _BUNDLED_ROOT: Final[pathlib.Path] = pathlib.Path(__file__).parent.resolve()
@@ -143,14 +143,25 @@ class ModLoader:
         if mod_id is None:
             package_dir = root_package_dir(path, qualified_name)
             if package_dir is None:
-                raise errors.ModNameLocationMismatchError(qualified_name, path)
+                self._raise_location_mismatch(qualified_name, path)
             if qualified_name.split("::", maxsplit=1)[0] == STD_PACKAGE_NAME:
-                raise errors.StdModNameReservedError(qualified_name, path)
+                self.ctx.diags.raise_error(
+                    diag.Diag.new(
+                        diag_kinds.RESERVED_MODULE_NAME, None, name=qualified_name, path=str(path)
+                    ).with_note(diag_kinds.STD_NAMES_RESERVED)
+                )
             self._root_package = Package(package_dir, None)
             mod_id = asserts.checked_cast(self._mod_id_for_file(path), ModId)
         if mod_id.qualified_name != qualified_name:
-            raise errors.ModNameLocationMismatchError(qualified_name, path)
+            self._raise_location_mismatch(qualified_name, path)
         return self.load(mod_id)
+
+    def _raise_location_mismatch(self, qualified_name: str, path: pathlib.Path) -> NoReturn:
+        self.ctx.diags.raise_error(
+            diag.Diag.new(
+                diag_kinds.MODULE_LOCATION_MISMATCH, None, name=qualified_name, path=str(path)
+            ).with_note(diag_kinds.MOD_NAME_LOCATION)
+        )
 
     def resolve_import(self, path: ast.Path) -> ModId:
         """Resolve an import path to the module it names."""
@@ -169,14 +180,19 @@ class ModLoader:
             candidates = [ModId(self._root_package, idents)]
         else:
             candidates = []
-        for candidate in candidates:
-            if candidate.file.is_file():
-                # A link is named after the file it resolves to.
-                mod_id = self._mod_id_for_file(candidate.file)
-                if mod_id is None:
-                    raise errors.ModOutsidePackagesError(path.str(), candidate.file, path.span)
-                return mod_id
-        raise errors.ModDoesNotExistError(path.str(), path.span)
+        found = next((candidate for candidate in candidates if candidate.file.is_file()), None)
+        if found is None:
+            self.ctx.diags.raise_error(diag_kinds.UNKNOWN_MODULE, path.span, name=path.str())
+        # A link is named after the file it resolves to.
+        mod_id = self._mod_id_for_file(found.file)
+        if mod_id is None:
+            self.ctx.diags.raise_error(
+                diag_kinds.MODULE_OUTSIDE_PACKAGES,
+                path.span,
+                name=path.str(),
+                path=str(found.file),
+            )
+        return mod_id
 
     def load(self, mod_id: ModId) -> ir_module.Mod:
         """Load the module ``mod_id`` once, returning the same module on later requests."""
@@ -240,7 +256,7 @@ class ModLoader:
         declaration of its symbol, since a program declares each symbol once.
 
         Declarations are ordered by their modules' load order, then by position. Each is
-        reported at most once, with a note at the earliest declaration it conflicts with.
+        reported at most once, with a label at the earliest declaration it conflicts with.
         """
         by_symbol = dict[str, list[tuple[ir_module.ExternFnSymbol, typs.FnTyp]]]()
         for mod in self._mods.values():
@@ -256,11 +272,16 @@ class ModLoader:
                 conflicting = next((decl for decl in earlier if decl[1] != fn_typ), None)
                 if conflicting is not None:
                     other, other_typ = conflicting
-                    self.ctx.diags.error(
-                        errors.ConflictingExternDeclError(
-                            fn.name, fn_typ.name, fn.span, other_typ.name, other.span
-                        )
+                    d = diag.Diag.new(
+                        diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,
+                        fn.span,
+                        name=fn.name,
+                        typ=fn_typ,
+                        earlier_typ=other_typ,
                     )
+                    if other.span is not None:
+                        d = d.with_label(diag_kinds.EARLIER_DECL_HERE, other.span)
+                    self.ctx.diags.error(d)
                 earlier.append((fn, fn_typ))
 
     @property

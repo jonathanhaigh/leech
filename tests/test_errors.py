@@ -295,12 +295,13 @@ def test_conflicting_extern_decl_message(compiler):
         compiler.build(src)
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)
 
-    assert str(exc_info.value.diags[0]) == (
-        'Extern function "write" is declared with type "fn(i32, *u8, u64) i32", but was '
-        'declared with type "fn(i32, *u8, u64) i64"'
-    )
-    (note,) = harness.user_error(exc_info.value.diags[0]).extra
-    assert note.message == "Earlier declaration here"
+    err = exc_info.value.diags[0]
+    assert isinstance(err, diag.Diag)
+    assert err.msg.args["name"] == "write"
+    typ, earlier_typ = err.msg.args["typ"], err.msg.args["earlier_typ"]
+    assert isinstance(typ, typs.FnTyp) and typ.ret_typ is typs.I32
+    assert isinstance(earlier_typ, typs.FnTyp) and earlier_typ.ret_typ.name == "i64"
+    assert [label.msg.kind for label in err.labels] == [diag_kinds.EARLIER_DECL_HERE]
 
 
 def test_duplicate_generic_fn_message_has_both_declaration_spans(compiler):
