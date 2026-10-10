@@ -462,6 +462,30 @@ def test_substitute_typ_params_recurses_through_composite_typs(compiler):
     assert fn_typ.substitute_typ_params(mapping) is typs.FnTyp(typs.I32, (typs.I32, typs.BOOL))
 
 
+def test_free_comptime_params_collects_params_from_every_component(compiler):
+    mod = compiler.parse("fn f[T](x: T) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = typs.TypParamTyp(fn, fn.comptime_params[0].ident.name)
+    n = typs.ValueParamTyp(fn, "N", typs.USIZE)
+    array = typs.ArrayTyp(typs.PtrTyp(t, typs.CONST), n)
+
+    assert set(typs.FnTyp(typs.BOOL, (array, t)).free_comptime_params()) == {t, n}
+    assert list(typs.EnumBackingTyp(t).free_comptime_params()) == [t]
+    assert list(typs.FnTyp(typs.BOOL, (typs.I32,)).free_comptime_params()) == []
+
+
+def test_is_concrete_means_having_no_free_comptime_params(compiler):
+    mod = compiler.parse("fn f[T](x: T) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    n = typs.ValueParamTyp(fn, "N", typs.USIZE)
+
+    assert typs.ArrayTyp.of_length(typs.I32, 3).is_concrete()
+    assert not typs.ArrayTyp(typs.I32, n).is_concrete()
+    assert typs.ComptimeValueTyp(typs.USIZE, 3).is_concrete()
+
+
 def _assert_typs_overlap_symmetric(left: typs.Typ, right: typs.Typ, expected: bool) -> None:
     assert typs.typs_overlap(left, right) is expected
     assert typs.typs_overlap(right, left) is expected
@@ -474,6 +498,7 @@ def test_contains_typ_finds_structural_occurrences() -> None:
     assert typs.contains_typ(array, array)
     assert typs.contains_typ(array, ptr)
     assert typs.contains_typ(array, typs.I32)
+    assert typs.contains_typ(array, typs.ComptimeValueTyp(typs.USIZE, 2))
     assert not typs.contains_typ(array, typs.BOOL)
 
 

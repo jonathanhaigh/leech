@@ -256,6 +256,20 @@ def test_trait_declares_value_param(compiler):
     compiler.check(src)
 
 
+def test_impl_value_param_can_appear_only_in_an_array_length(compiler):
+    src = """
+    trait Len { fn len(*self) usize; }
+    impl[value N: usize] Len for array[i32, N] {
+        fn len(*self) usize { return N; }
+    }
+    pub fn main() i32 {
+        let a = array[i32, 3]{1, 2, 3};
+        return if (a.len() == 3usize) { 0 } else { 1 };
+    }
+    """
+    compiler.check(src)
+
+
 def test_bounded_generic_trait_impl_method_calls_sibling(compiler):
     # `twice` resolves `self.*.show()` against the impl's own abstract
     # `Box[T]`, where the impl's `T: Show` is a premise rather than

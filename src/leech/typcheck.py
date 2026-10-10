@@ -11,7 +11,7 @@ to lowering.
 """
 
 import contextlib
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Final, NoReturn, Optional
 
 from leech import (
@@ -72,6 +72,19 @@ def _callable_typ(typ: typs.Typ) -> Optional[typs.CallableTyp]:
     return None
 
 
+def _settled_typ(
+    typ: typs.Typ,
+    comptime_params: Sequence[typs.ComptimeParamTyp],
+    bindings: Mapping[typs.ComptimeParamTyp, typs.Typ],
+) -> Optional[typs.Typ]:
+    """Return ``typ`` with ``bindings`` substituted, or ``None`` if it names a parameter of
+    ``comptime_params`` that ``bindings`` leave unbound."""
+    unbound = frozenset(comptime_params) - bindings.keys()
+    if not unbound.isdisjoint(typ.free_comptime_params()):
+        return None
+    return typ.substitute_typ_params(bindings)
+
+
 def _struct_field(typ: typs.Typ, name: str) -> Optional[typs.StructField]:
     """Return the named struct field, if present."""
     if not isinstance(typ, typs.StructTyp):
@@ -99,14 +112,61 @@ class TypCheck:
         self._loop_labels = []
 
     @contextlib.contextmanager
-    def _speculative(self) -> Iterator[None]:
-        """Temporarily suppress recording of context-dependent lowering facts."""
+    def _speculating(self) -> Iterator[None]:
+        """Speculate in the block: record no lowering facts, and report nothing, as
+        ``compilation.Ctx.speculating`` does."""
         previous = self.results._recording
         self.results._recording = False
         try:
-            yield
+            with self._ctx.speculating():
+                yield
         finally:
             self.results._recording = previous
+
+    def _probe_arg_typs(
+        self,
+        declared_typs: Sequence[typs.Typ],
+        arg_asts: Sequence[ast.ExprKind],
+        e: ir_env.Env,
+    ) -> dict[typs.ComptimeParamTyp, typs.Typ]:
+        """Infer comptime arguments from each argument's type, matched against its declared
+        type from left to right, reporting nothing.
+
+        Unsuffixed integer literals are skipped because they need an expected type, and an
+        argument that fails to check contributes nothing.
+        """
+        bindings: dict[typs.ComptimeParamTyp, typs.Typ] = {}
+        with self._speculating():
+            for declared_typ, arg_ast in zip(declared_typs, arg_asts, strict=False):
+                if _is_flexible_int_lit(arg_ast):
+                    continue
+                try:
+                    arg_typ = self._check_expr(arg_ast, e, None)
+                except diag.SpeculativeError, diag.ReportedError:
+                    continue
+                declared_typ.infer_typ_args(arg_typ, bindings)
+        return bindings
+
+    def _replay_probed_args(
+        self,
+        declared_typs: Sequence[typs.Typ],
+        arg_asts: Sequence[ast.ExprKind],
+        comptime_params: Sequence[typs.ComptimeParamTyp],
+        bindings: Mapping[typs.ComptimeParamTyp, typs.Typ],
+        e: ir_env.Env,
+    ) -> None:
+        """Check the arguments ``_probe_arg_typs`` probed, without speculating, so that what
+        it dropped is reported, raising the first error.
+
+        Each argument is checked against its declared type if ``bindings`` settle every
+        parameter of ``comptime_params`` in it, and otherwise without an expected type,
+        except that an unsuffixed integer literal, which needs one, is skipped.
+        """
+        for declared_typ, arg_ast in zip(declared_typs, arg_asts, strict=False):
+            expected_typ = _settled_typ(declared_typ, comptime_params, bindings)
+            if expected_typ is None and _is_flexible_int_lit(arg_ast):
+                continue
+            self._check_expr(arg_ast, e, expected_typ)
 
     def check_fn(
         self,
@@ -771,20 +831,16 @@ class TypCheck:
         e: ir_env.Env,
         comptime_params: Sequence[typs.ComptimeParamTyp],
     ) -> dict[typs.ComptimeParamTyp, typs.Typ]:
-        """Infer comptime arguments structurally from left to right.
+        """Infer comptime arguments as ``_probe_arg_typs`` does.
 
-        Unsuffixed integer literals are skipped because they need an expected type.
+        If a parameter is left unbound, the arguments are replayed first, as
+        ``_replay_probed_args`` does, so an argument's own error is reported instead.
         """
-        bindings: dict[typs.ComptimeParamTyp, typs.Typ] = {}
-        with self._speculative():
-            for declared_typ, arg_ast in zip(fn.fn_typ.param_typs, call_ast.args, strict=False):
-                if _is_flexible_int_lit(arg_ast):
-                    continue
-                arg_typ = self._check_expr(arg_ast, e, None)
-                declared_typ.infer_typ_args(arg_typ, bindings)
-
+        declared_typs = fn.fn_typ.param_typs
+        bindings = self._probe_arg_typs(declared_typs, call_ast.args, e)
         for typ_param in comptime_params:
             if typ_param not in bindings:
+                self._replay_probed_args(declared_typs, call_ast.args, comptime_params, bindings, e)
                 self._raise_uninferable(call_ast.span, "function", fn.name, typ_param)
 
         return bindings
@@ -1025,18 +1081,11 @@ class TypCheck:
             return expected_typ
 
         comptime_params = template.comptime_params
-        bindings: dict[typs.ComptimeParamTyp, typs.Typ] = {}
-        # This probe lets a failing argument's own diagnostics escape and
-        # be reported twice, inheriting #72 and #73 from the function-call
-        # inference it mirrors.
-        with self._speculative():
-            for declared_typ, arg_ast in zip(ref.variant.payload_typs, arg_asts, strict=False):
-                if _is_flexible_int_lit(arg_ast):
-                    continue
-                declared_typ.infer_typ_args(self._check_expr(arg_ast, e, None), bindings)
-
+        declared_typs = ref.variant.payload_typs
+        bindings = self._probe_arg_typs(declared_typs, arg_asts, e)
         for comptime_param in comptime_params:
             if comptime_param not in bindings:
+                self._replay_probed_args(declared_typs, arg_asts, comptime_params, bindings, e)
                 self._raise_uninferable(span, "union", template.name, comptime_param)
 
         comptime_args = tuple(bindings[param] for param in comptime_params)

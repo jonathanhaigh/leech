@@ -212,13 +212,22 @@ class Ctx:
 
         Results are kept per compilation, so an object shared by several compilations has a
         separate result in each.
+
+        While speculating, ``compute`` speculates too, and no result that would hide a
+        diagnostic it dropped is kept: a unit that raises ``diag.SpeculativeError`` propagates
+        it, and a unit during which any diagnostic was dropped returns its value. Either way,
+        the next request computes the unit again. Diagnostics a unit computed without
+        speculating drops in its own speculation don't count, since it reports the real ones.
         """
         unit_id = UnitId(owner, name)
         result = self._units.get(unit_id)
         if result is None:
+            speculating = self.is_speculating
+            dropped_count = self.diags.dropped_count
             with self._computing(unit_id):
                 result = UnitResult.capture(self, compute)
-            self._units[unit_id] = result
+            if not speculating or self.diags.dropped_count == dropped_count:
+                self._units[unit_id] = result
         return cast(T, result.get())
 
     @contextlib.contextmanager
@@ -230,6 +239,17 @@ class Ctx:
         finally:
             popped = self.unit_stack.pop()
             assert popped is unit_id, "analysis units exited out of order"
+
+    @contextlib.contextmanager
+    def speculating(self) -> Iterator[None]:
+        """Speculate in the block: compute without reporting, as ``diag.Diags.speculating``
+        does."""
+        with self.diags.speculating():
+            yield
+
+    @property
+    def is_speculating(self) -> bool:
+        return self.diags.is_speculating
 
     @contextlib.contextmanager
     def recovering(self) -> Iterator[Recovery]:

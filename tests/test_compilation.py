@@ -200,6 +200,84 @@ def test_unit_lets_internal_errors_propagate_uncached():
     assert owner.calls == 2
 
 
+def _fail_to_find_cc(ctx: compilation.Ctx) -> int:
+    ctx.diags.raise_error(diag_kinds.MISSING_C_COMPILER, None, program="cc")
+
+
+def _warn_and_return_7(ctx: compilation.Ctx) -> int:
+    ctx.diags.warn(diag_kinds.UNREACHABLE_CODE, None, code="statement")
+    return 7
+
+
+def test_unit_failing_while_speculating_reports_when_computed_again():
+    ctx = compilation.Ctx()
+    owner = _Owner(ctx, lambda: _fail_to_find_cc(ctx))
+
+    with ctx.speculating(), pytest.raises(diag.SpeculativeError):
+        _ = owner.value
+    assert ctx.diags.all() == ()
+
+    with pytest.raises(diag.ReportedError):
+        _ = owner.value
+    assert owner.calls == 2
+    assert [d.kind for d in ctx.diags.all()] == [diag_kinds.MISSING_C_COMPILER]
+
+
+def test_units_that_drop_a_warning_while_speculating_report_it_when_computed_again():
+    ctx = compilation.Ctx()
+    inner = _Owner(ctx, lambda: _warn_and_return_7(ctx))
+    outer = _Owner(ctx, lambda: inner.value + 1)
+
+    with ctx.speculating():
+        assert outer.value == 8
+    assert ctx.diags.all() == ()
+
+    assert outer.value == 8
+    assert outer.value == 8
+    assert (outer.calls, inner.calls) == (2, 2)
+    assert [d.kind for d in ctx.diags.all()] == [diag_kinds.UNREACHABLE_CODE]
+
+
+def test_unit_computed_cleanly_while_speculating_is_memoized():
+    ctx = compilation.Ctx()
+    owner = _Owner(ctx, lambda: 7)
+
+    with ctx.speculating():
+        _ = owner.value
+    _ = owner.value
+
+    assert owner.calls == 1
+
+
+def test_unit_that_speculates_itself_is_memoized():
+    ctx = compilation.Ctx()
+
+    def probe() -> int:
+        with ctx.speculating():
+            return _warn_and_return_7(ctx)
+
+    owner = _Owner(ctx, probe)
+    _ = owner.value
+    _ = owner.value
+
+    assert owner.calls == 1
+
+
+def test_unit_failing_with_a_reported_error_while_speculating_is_memoized():
+    ctx = compilation.Ctx()
+    inner = _Owner(ctx, lambda: _fail_to_find_cc(ctx))
+    outer = _Owner(ctx, lambda: inner.value)
+    with pytest.raises(diag.ReportedError):
+        _ = inner.value
+
+    with ctx.speculating(), pytest.raises(diag.ReportedError):
+        _ = outer.value
+    with pytest.raises(diag.ReportedError):
+        _ = outer.value
+
+    assert outer.calls == 1
+
+
 def test_unit_tracks_the_units_being_computed():
     ctx = compilation.Ctx()
     seen: list[list[compilation.UnitId]] = []

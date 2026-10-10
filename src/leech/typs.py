@@ -12,7 +12,7 @@ import inspect
 import re
 import types
 import weakref
-from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Optional, cast, override
 
 from leech import (
@@ -71,21 +71,9 @@ def match_typ_args(declared: Typ, actual: Typ) -> Optional[dict[ComptimeParamTyp
 def _contains_typ(typ: Typ, contained: Typ, resolve: Callable[[Typ], Typ]) -> bool:
     """Check occurrence after resolving each type reached by the traversal."""
     typ = resolve(typ)
-    if typ is contained:
-        return True
-    if isinstance(typ, FnTyp):
-        return _contains_typ(typ.ret_typ, contained, resolve) or any(
-            _contains_typ(param_typ, contained, resolve) for param_typ in typ.param_typs
-        )
-    if isinstance(typ, PtrTyp):
-        return _contains_typ(typ.pointee_typ, contained, resolve)
-    if isinstance(typ, ArrayTyp):
-        return _contains_typ(typ.element_typ, contained, resolve)
-    if isinstance(typ, StructTyp | UnionTyp):
-        return any(_contains_typ(typ_arg, contained, resolve) for typ_arg in typ.comptime_args)
-    if isinstance(typ, EnumBackingTyp):
-        return _contains_typ(typ.inner, contained, resolve)
-    return False
+    return typ is contained or any(
+        _contains_typ(component, contained, resolve) for component in typ.components()
+    )
 
 
 def typs_overlap(a: Typ, b: Typ) -> bool:
@@ -379,12 +367,23 @@ class Typ(abc.ABC):
         is a no-op because it contains no parameters.
         """
 
-    def is_concrete(self) -> bool:
-        """Return whether this type contains no comptime parameters.
+    def components(self) -> Iterable[Typ]:
+        """Return the types this type is built from, such as a pointer's pointee type.
 
-        The base implementation is unconditionally true.
+        The base implementation returns none.
         """
-        return True
+        return ()
+
+    def free_comptime_params(self) -> Iterator[ComptimeParamTyp]:
+        """Iterate over this type's free comptime parameters: those that appear in it, as
+        opposed to those a generic declaration defines. A parameter that appears more than
+        once may be yielded more than once."""
+        for component in self.components():
+            yield from component.free_comptime_params()
+
+    def is_concrete(self) -> bool:
+        """Return whether this type has no free comptime parameters."""
+        return next(self.free_comptime_params(), None) is None
 
     @property
     @abc.abstractmethod
@@ -596,10 +595,8 @@ class FnTyp(CallableTyp):
             declared_param.infer_typ_args(actual_param, bindings)
 
     @override
-    def is_concrete(self) -> bool:
-        return self.ret_typ.is_concrete() and all(
-            param_typ.is_concrete() for param_typ in self.param_typs
-        )
+    def components(self) -> Iterable[Typ]:
+        return (self.ret_typ, *self.param_typs)
 
 
 class PtrTyp(InternedTyp):
@@ -648,8 +645,8 @@ class PtrTyp(InternedTyp):
             self.pointee_typ.infer_typ_args(actual.pointee_typ, bindings)
 
     @override
-    def is_concrete(self) -> bool:
-        return self.pointee_typ.is_concrete()
+    def components(self) -> Iterable[Typ]:
+        return (self.pointee_typ,)
 
     def _new_with_mut(self, mut: Mutability) -> PtrTyp:
         """Return the interned pointer with this pointee and ``mut``."""
@@ -704,8 +701,8 @@ class ArrayTyp(InternedTyp):
             self.length.infer_typ_args(actual.length, bindings)
 
     @override
-    def is_concrete(self) -> bool:
-        return self.element_typ.is_concrete() and self.length.is_concrete()
+    def components(self) -> Iterable[Typ]:
+        return (self.element_typ, self.length)
 
 
 class ComptimeParamTyp(Typ):
@@ -762,8 +759,8 @@ class ComptimeParamTyp(Typ):
         bindings.setdefault(self, actual)
 
     @override
-    def is_concrete(self) -> bool:
-        return False
+    def free_comptime_params(self) -> Iterator[ComptimeParamTyp]:
+        yield self
 
 
 class TypParamTyp(ComptimeParamTyp):
@@ -902,10 +899,6 @@ class ComptimeValueTyp(InternedTyp):
     @override
     def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
         return self
-
-    @override
-    def is_concrete(self) -> bool:
-        return True
 
     @staticmethod
     def checked_value(typ: Typ) -> int | bool:
@@ -1216,8 +1209,8 @@ class StructTyp(Typ):
         return f"{qualified}[{arg_names}]"
 
     @override
-    def is_concrete(self) -> bool:
-        return all(typ_arg.is_concrete() for typ_arg in self.comptime_args)
+    def components(self) -> Iterable[Typ]:
+        return self.comptime_args
 
     @override
     def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
@@ -1486,8 +1479,8 @@ class UnionTyp(Typ):
         return f"{qualified}[{arg_names}]"
 
     @override
-    def is_concrete(self) -> bool:
-        return all(typ_arg.is_concrete() for typ_arg in self.comptime_args)
+    def components(self) -> Iterable[Typ]:
+        return self.comptime_args
 
     @override
     def substitute_typ_params(self, mapping: Mapping[ComptimeParamTyp, Typ]) -> Typ:
@@ -1756,8 +1749,8 @@ class EnumBackingTyp(InternedTyp):
         return EnumBackingTyp(substituted_inner)
 
     @override
-    def is_concrete(self) -> bool:
-        return self.inner.is_concrete()
+    def components(self) -> Iterable[Typ]:
+        return (self.inner,)
 
 
 class VoidTyp(InternedTyp):

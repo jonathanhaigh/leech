@@ -5,12 +5,13 @@
 """Diagnostics: their kinds and values, their per-compilation collection, and proof that an
 error was reported."""
 
+import contextlib
 import dataclasses
 import enum
 import pathlib
 import string
 import types
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Hashable, Iterator, Mapping, Sequence
 from typing import Final, NoReturn, Optional, Protocol, Self, overload
 
 from leech import src
@@ -223,6 +224,17 @@ class ReportedError(Exception):
         self.reported = reported
 
 
+class SpeculativeError(Exception):
+    """Unwinds from an error found while speculating, which was not reported.
+
+    It carries no proof, and is not a ``ReportedError``, so only the code that began
+    speculating handles it.
+    """
+
+    def __init__(self, err: Diag) -> None:
+        super().__init__(f"an error was found while speculating: {err}")
+
+
 class CompilationError(Exception):
     """Raised when a compilation has errors.
 
@@ -256,6 +268,10 @@ class Diags:
     A diagnostic duplicates an earlier one when it has the same kind, levels, messages and
     source locations. Source files are compared by resolved path, so diagnostics from
     separately loaded copies of a file are duplicates too.
+
+    While speculating, nothing new is recorded: a new error raises ``SpeculativeError``
+    instead, and a new warning or note is dropped. A duplicate of a recorded diagnostic is
+    handled as usual, since it reports nothing new.
     """
 
     _diags: Final[list[Diag]]
@@ -264,12 +280,16 @@ class Diags:
     _first_error: Optional[ReportProof]
     #: Each noted source file's position in file order, by resolved path.
     _file_ranks: Final[dict[pathlib.Path, int]]
+    _speculation_depth: int
+    _dropped_count: int
 
     def __init__(self) -> None:
         self._diags = []
         self._seen = {}
         self._first_error = None
         self._file_ranks = {}
+        self._speculation_depth = 0
+        self._dropped_count = 0
 
     def note_file(self, path: pathlib.Path) -> None:
         """Put ``path`` next in file order, unless it is already there.
@@ -299,7 +319,8 @@ class Diags:
 
         The error is a diagnostic, or is built from a kind, a primary span and the kind's
         message arguments, as ``Diag.new`` builds one. Returns its proof, or the proof of the
-        earlier diagnostic it duplicates.
+        earlier diagnostic it duplicates. While speculating, a new error raises
+        ``SpeculativeError`` instead.
         """
         err = _built(err, span, args)
         assert err.level == ERROR, f"not an error: {err!r}"
@@ -369,12 +390,39 @@ class Diags:
         assert err.level == NOTE, f"not a note: {err!r}"
         self._record(err)
 
+    @contextlib.contextmanager
+    def speculating(self) -> Iterator[None]:
+        """Speculate in the block, recording no new diagnostic. Speculation nests."""
+        self._speculation_depth += 1
+        try:
+            yield
+        finally:
+            self._speculation_depth -= 1
+
+    @property
+    def is_speculating(self) -> bool:
+        return self._speculation_depth > 0
+
+    @property
+    def dropped_count(self) -> int:
+        """How many new diagnostics have been dropped while speculating, errors included."""
+        return self._dropped_count
+
     def _record(self, err: Diag) -> Optional[ReportProof]:
         """Record ``err`` unless it duplicates an earlier diagnostic, returning the proof of
-        ``err`` or of the earlier diagnostic if it is an error."""
+        ``err`` or of the earlier diagnostic if it is an error.
+
+        While speculating, a new ``err`` is dropped instead, raising ``SpeculativeError`` if
+        it is an error.
+        """
         key = _key(err)
         if key in self._seen:
             return self._seen[key]
+        if self.is_speculating:
+            self._dropped_count += 1
+            if err.level >= ERROR:
+                raise SpeculativeError(err)
+            return None
         reported = None
         if err.level >= ERROR:
             reported = ReportProof(_KEY, err)

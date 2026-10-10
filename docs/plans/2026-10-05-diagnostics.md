@@ -391,35 +391,40 @@ does not fail.
 **Acceptance:** no `UserError` remains; every user-visible message comes from the catalogue;
 tests assert full ordered kind lists; documentation fences use names.
 
-## Task 5 (#72, #73): Discard diagnostics from speculative probes
+## Task 5 (#72, #73): Report nothing from speculative probes
 
-**Files:** `diag.py`, `compilation.py`, `typcheck.py`; tests in `tests/test_generic_fns.py`,
+**Files:** `diag.py`, `compilation.py`, `typcheck.py`; tests in
+`tests/test_diag.py`, `tests/test_compilation.py`, `tests/test_generic_fns.py`,
 `tests/test_unions.py`, `tests/test_match.py`.
 
-- `Diags.transaction()` buffers diagnostics emitted while the *current unit frame* is on top
-  of `ctx.unit_stack`; diagnostics from frames pushed later (other units forced by the
-  probe) bypass the buffer. Each proof records the transaction it was issued in; once
-  that transaction closes uncommitted the proof is void, and `Ctx.unit` failure
-  memoization, a `ReportedError` caught outside the transaction, and (after #116) recorded facts
-  and the sink's poison suppression assert they never see a void proof. `txn.commit()`
-  records the buffered diagnostics with their existing proofs (as `Diags.merge` does), so
-  proofs already held inside the transaction stay valid.
-- Add `TypCheck._probe_arg_typs` (design contract): inside `self._speculative()` and one
-  transaction, check each non-literal argument in its own `try/except diag.ReportedError`;
-  failures contribute no bindings and set `probe_failed`. Use it from both
-  `_infer_comptime_args` (function calls) and `_variant_union_typ` (generic union-variant
-  constructors), removing the latter's comment about inheriting #72/#73. Unbound parameter
-  with `probe_failed`: suppress `uninferable-comptime-argument` and re-check the arguments
-  authoritatively without expected types, letting the first failure's `ReportedError` propagate
-  (#116 later turns this into a poisoned result).
+- `diag.SpeculativeError`, and `Diags.speculating()` (entered through
+  `Ctx.speculating()`), which nests. While speculating, a new error raises
+  `SpeculativeError` without being recorded, and a new warning or note is dropped; a
+  diagnostic that duplicates a recorded one behaves as usual. The sink counts what it drops.
+- `Ctx.unit` does not memoize a unit that ends with `SpeculativeError` (it propagates), nor
+  one computed while speculating during which anything was dropped. Units that fail with
+  `ReportedError` are memoized as before.
+- `TypCheck._speculating()` also enters `Ctx.speculating()`. Add
+  `TypCheck._probe_arg_typs(declared_typs, arg_asts, e) -> bindings` (design contract):
+  inside `self._speculating()`, check each non-literal argument, catching
+  `SpeculativeError` and `ReportedError`; a failed argument contributes no bindings. Use it
+  from both `_infer_comptime_args` (function calls) and `_variant_union_typ` (generic
+  union-variant constructors), removing the latter's comment about inheriting #72/#73. Unbound parameter:
+  re-check every probed argument authoritatively, against its declared type where the partial
+  bindings settle it, letting the first error's `ReportedError` propagate (#116 later turns
+  this into a poisoned result), and report `uninferable-comptime-argument` only if none
+  fails.
 - Tests: #72's and #73's reproducers; variant-constructor analogues of both (a generic
   union variant `Some(3000000000 + 0)` with an `i64`-typed sibling argument, and a variant
   payload containing a `match` with an unreachable arm); a probe whose argument forces a
-  broken struct declaration reports that struct's error exactly once; a call whose only
-  argument is undefined reports `unknown-name` once and nothing about inference.
+  broken struct declaration reports that struct's error exactly once; a probe that forces a
+  unit which warns reports the warning exactly once; a call whose only argument is
+  undefined reports `unknown-name` once and nothing about inference; when inference fails,
+  a warning in any argument is still reported, whether or not an argument failed, and an argument that is valid against the
+  partially inferred types is not reported; the sink and `Ctx.unit` rules directly.
 
 **Acceptance:** #72 and #73's reproducers, and their union-variant analogues, behave
-correctly; a probe never loses or duplicates another unit's diagnostics.
+correctly; a probe never reports, loses or duplicates a diagnostic.
 
 ## Task 6 (#116): Poison type and expression-level recovery
 

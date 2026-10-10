@@ -115,6 +115,50 @@ def test_error_warn_and_note_reject_the_wrong_level():
     assert diags.all() == ()
 
 
+def test_speculating_records_nothing_new():
+    diags = diag.Diags()
+
+    with diags.speculating():
+        assert diags.is_speculating
+        with pytest.raises(diag.SpeculativeError):
+            diags.error(_error("cc"))
+        with pytest.raises(diag.SpeculativeError):
+            diags.raise_error(_error("cc"))
+        diags.warn(_warning(None))
+        diags.note(diag_kinds.C_COMPILER_HINT, None)
+
+    assert not diags.is_speculating
+    assert diags.all() == ()
+    assert not diags.has_errors
+    assert diags.dropped_count == 4
+
+
+def test_speculating_handles_a_duplicate_of_a_recorded_diag_as_usual():
+    diags = diag.Diags()
+    reported = diags.error(_error("cc"))
+    diags.warn(_warning(None))
+
+    with diags.speculating():
+        assert diags.error(_error("cc")) is reported
+        with pytest.raises(diag.ReportedError) as exc_info:
+            diags.raise_error(_error("cc"))
+        diags.warn(_warning(None))
+
+    assert exc_info.value.reported is reported
+    assert len(diags.all()) == 2
+    assert diags.dropped_count == 0
+
+
+def test_speculation_nests():
+    diags = diag.Diags()
+
+    with diags.speculating():
+        with diags.speculating():
+            pass
+        assert diags.is_speculating
+    assert not diags.is_speculating
+
+
 def test_a_note_is_recorded_without_failing():
     diags = diag.Diags()
 

@@ -145,7 +145,7 @@ Non-goals:
 | Proof of reporting | Reporting an error returns a `ReportProof`. Poison and unit failure require one |
 | Unwinding | One internal exception, `diag.ReportedError(reported)`, raised only after reporting |
 | Ownership | One `diag.Diags` sink per compilation, created by the driver and reachable through `compilation.Ctx` |
-| Speculative checks | Sink transactions that discard the probe's diagnostics |
+| Speculative checks | A speculation scope in which an error unwinds unreported and a warning is dropped, extending into forced units, whose results then aren't memoized |
 | Output order | Sorted by file (module load order), then span start. Emission order breaks ties |
 | Error cap | `-fmax-errors=N` (gcc spelling), default 20, `0` for unlimited. Text output only |
 | Codes | Kebab-case names only (`error[unknown-name]`). No numeric codes |
@@ -165,7 +165,7 @@ Non-goals:
 | --- | --- | --- | --- |
 | rustc | `#[derive(Diagnostic)]` structs with Fluent message files, and `Exxxx` codes with `--explain` texts | `DiagCtxt`. A `Diag` builder must be emitted or cancelled. `emit()` returns `ErrorGuaranteed`. Identical diagnostics are deduplicated by hash | `ty::Error` / `TyKind::Error` poison. Queries return `Result<T, ErrorGuaranteed>`. Callers commonly skip a diagnostic whose types `references_error()`. Compilation stops at phase boundaries (`abort_if_errors`) |
 | Swift | `Diagnostics*.def` macro tables of IDs, kinds and format strings, plus diagnostic groups with Markdown educational notes | `DiagnosticEngine` with `InFlightDiagnostic`. `DiagnosticTransaction` defers diagnostics and can abort them | `ErrorType`, `Decl::setInvalid()`. The request evaluator is demand-driven, like Leech's lazy properties, and diagnoses request cycles |
-| Clang | TableGen `.td` tables of IDs, default severities and warning groups | `DiagnosticsEngine` with pluggable `DiagnosticConsumer`s (text, SARIF) | Invalid-declaration flags, `RecoveryExpr`. Stops after `-ferror-limit` errors (default 20). Suppresses diagnostics after a fatal error |
+| Clang | TableGen `.td` tables of IDs, default severities and warning groups | `DiagnosticsEngine` with pluggable `DiagnosticConsumer`s (text, SARIF). `Sema::SFINAETrap` turns errors during template argument deduction into deduction failure | Invalid-declaration flags, `RecoveryExpr`. Stops after `-ferror-limit` errors (default 20). Suppresses diagnostics after a fatal error |
 | Zig | Ad hoc format strings at each `sema.fail` call. No IDs | One `ErrorMsg` per analysis unit, in `Zcu.failed_analysis` keyed by `AnalUnit` | `error.AnalysisFail` unwinds the current unit. Units that depend on a failed unit are recorded as transitive failures and report nothing. One error per unit |
 | Go (`go/types`, `types2`) | `errorf` format strings with an internal error-code enum | A `Config.Error` callback. Without one, checking stops at the first error | `Typ[Invalid]` absorbs follow-on errors. "Soft" errors still permit a valid interpretation. `gc` stops after 10 errors unless `-e` is given |
 | Roslyn (C#) | `ErrorCode` enum with resource strings, shown as `CSxxxx` | Diagnostics are attached to each lazily bound symbol or body and gathered on demand (`GetDiagnostics`) | `ErrorTypeSymbol` |
@@ -376,7 +376,7 @@ class Diags:
     def raise_error(self, ...) -> NoReturn: ...  # error(...), then raise ReportedError
     def warn(self, ...) -> None: ...  # the kind must be a warning kind
     @contextlib.contextmanager
-    def transaction(self) -> Iterator[Transaction]: ...
+    def speculating(self) -> Iterator[None]: ...  # entered through Ctx.speculating
     @property
     def has_errors(self) -> bool: ...
     def any_error(self) -> Optional[ReportProof]: ...
@@ -440,57 +440,100 @@ rustc's `TyCtxt` model but grouped so it doesn't become one flat bag of everythi
 
 - `Ctx` owns `diags`, the `ModLoader`, the `ImplRegistry`, and a `Builtins` group holding
   the intrinsics and the prelude's `panic_ref`, as well as its existing caches and cycle
-  stacks. The unit stack (#114) and transactions (#72/#73) are added to it later.
+  stacks. The unit stack (#114) and speculation (#72/#73) are added to it later.
 - `ModLoader` narrows to loading and resolving modules.
 - `Env` holds only `ctx`, `items` and `parent`; `Mod` reaches the loader through `ctx`.
 - The prelude is loaded by an explicit call or lazily, so a bare `compilation.Ctx()` stays
   cheap for unit tests.
 
 This matters to the diagnostics work because every analysis unit (#114) needs its `Ctx`, so
-that it can push unit frames, open transactions and report diagnostics. With one root reached through
+that it can push unit frames, speculate and report diagnostics. With one root reached through
 `env.ctx`, reaching it is a single `ctx` property on each owner. Landing #122 between #93
 and #114 avoids rewiring those paths twice.
 
-### Speculative checking: transactions
+### Speculative checking
 
-`with diags.transaction() as txn:` buffers every diagnostic emitted by the current analysis
-unit while the block runs. Leaving the block discards them, unless the code called
-`txn.commit()`. A proof issued inside a transaction records that transaction. Once the
-transaction has closed uncommitted, the proof is *void*. Asserts reject a void
-proof if it is used to fail a unit, or carried by a `ReportedError` that escapes the
-transaction. They also reject one carried by a poison type that reaches a recorded fact or
-the sink. Poison types carry their proof (see [Poison](#poison-and-expression-level-recovery)),
-so this check is always possible. Committing a transaction records its buffered
-diagnostics in the sink with their existing proofs, so the proofs that code
-inside the transaction already holds stay valid.
+A *speculative* check computes something only to learn from it, such as an argument's type
+for inferring comptime arguments, and reports nothing. The authoritative check that follows
+reports the real diagnostics. `with ctx.speculating():` marks everything computed in the
+block as speculative, and nests. While it is active, the sink records nothing new:
 
-A transaction captures only diagnostics of the unit that opened it. If the probe forces
-*another* analysis unit (a struct's field types, a callee's signature), that unit is
-evaluated in its own frame and reports to the sink normally. That unit's result is
-memoized, so if its error went into the discarded buffer, it would be lost forever. Swift's
-`DiagnosticTransaction` has the same scope problem. Leech avoids it by tying transactions to
-the unit stack described next.
+- Reporting an error raises `diag.SpeculativeError` instead of recording it. That exception
+  carries no proof and is not a `ReportedError`, so recovery code (`Ctx.recovering`, and
+  poison after #116) never intercepts it, and the speculative computation unwinds to the code
+  that began speculating. An error that duplicates one already recorded is not new: it
+  returns, or raises `ReportedError` with, the recorded error's proof as usual.
+- A warning or note is dropped, and the computation continues, since a warning does not
+  invalidate its result.
+
+Every `ReportProof` therefore stands for a recorded diagnostic. Nothing reported while
+speculating can be discarded later, so no proof can outlive the diagnostic it proves.
+
+Speculation extends into every analysis unit forced while it is active, so a probe reports
+nothing however fine or coarse the units it reaches are. `Ctx.unit` memoizes no result that
+would hide a dropped diagnostic:
+
+- A unit that ends with `SpeculativeError` is not memoized. The exception propagates, and
+  the unit is computed again the next time something forces it, reporting its error then.
+- A unit computed while speculating is not memoized if any diagnostic was dropped while it
+  ran, including in the units it forced. It returns its value, and is computed again later.
+  The rule covers every enclosing unit computed while speculating, so an outer unit cannot
+  memoize a value that depended on an inner unit that dropped a warning.
+- A unit that fails with `ReportedError`, because it forced a unit that had already failed,
+  is memoized as usual: that proof is real.
+
+Units must therefore be safe to abandon part way and compute again, which the unit and
+cycle stacks already are. A unit's value depends only on its owner, so a result memoized
+while speculating is the result an authoritative request would compute.
+
+A probe can also create an instance that the authoritative check never uses: inferring a
+nested generic call's arguments with no expected type can instantiate it with different
+comptime arguments. Its units report nothing while speculating, but creating it still
+requests it for code generation, as any instance's creation does, so `mono.discover` checks
+it, and reports its errors, even if the program never uses it. Deferring the request until
+the instance is needed without speculating would be unsound: a unit memoized while
+speculating can hold the instance, and code that later reuses the unit's value never
+requests it, leaving it out of code generation. Not memoizing such units as well would close
+that gap at the cost of recomputation, and of fresh objects from recomputed units where
+other caches kept the old ones (see [Risks and open questions](#risks-and-open-questions)).
 
 Both inference probes, `TypCheck._infer_comptime_args` (function calls) and
 `TypCheck._variant_union_typ` (union-variant constructors), share one helper,
-`TypCheck._probe_arg_typs(params, arg_asts, e) -> tuple[bindings, probe_failed]`. It runs
-inside the existing `_speculative()` fact-recording scope and one transaction. For each
-argument (skipping unsuffixed literals, as today), it checks the argument inside its own
-`try`/`except diag.ReportedError`. An argument that raises `ReportedError`, or whose type is poison,
-contributes no inference information, and sets `probe_failed`. No `ReportedError` and no poison
-leaves the probe. Then:
+`TypCheck._probe_arg_typs(declared_typs, arg_asts, e) -> bindings`. It runs inside
+`TypCheck._speculating()`, which suppresses lowering facts and speculates. For each argument
+(skipping unsuffixed literals, as today), it checks the argument, catching `SpeculativeError`
+and `ReportedError`. An argument that fails, or whose type is poison, contributes no
+inference information. Then:
 
 - If every comptime parameter is bound, the authoritative pass proceeds as today. It checks
-  the arguments against the substituted parameter types and reports their real errors.
-- If a parameter is unbound and `probe_failed` is false, `uninferable-comptime-argument` is
-  reported as today.
-- If a parameter is unbound and `probe_failed` is true, `uninferable-comptime-argument` is
-  suppressed. The arguments are checked authoritatively without expected types, which
-  reports their real errors. The call or constructor has poison type. Before poison exists
-  (#116), the first failing argument's `ReportedError` propagates instead.
+  the arguments against the substituted parameter types and reports their real errors and
+  warnings.
+- If a parameter is unbound, every probed argument is first checked again authoritatively,
+  which reports what the probe dropped: a failed argument's real error and every argument's
+  warnings. Each is checked against its declared type with the bindings found so far
+  substituted, if they settle every parameter it names, and otherwise without an expected
+  type (skipping an unsuffixed literal, which needs one). An argument that failed only for
+  want of an expected type, such as `3000000000 + 0` where `T` is `i64`, then succeeds. If an
+  argument has an error, the call or constructor has poison type; before poison exists
+  (#116), the first error's `ReportedError` propagates instead. Otherwise
+  `uninferable-comptime-argument` is reported as today.
 
-This fixes #72 (the probe's false overflow is discarded) and #73 (the probe's duplicate
-warning is discarded), at both probe sites.
+This fixes #72 (the probe's false overflow is never reported) and #73 (the probe's warning
+is dropped, rather than reported and then hidden as a duplicate by the sink), at both probe
+sites.
+
+Clang treats template argument deduction the same way. Inside a
+[`Sema::SFINAETrap`](https://github.com/llvm/llvm-project/blob/main/clang/include/clang/Sema/Sema.h),
+an error makes deduction fail instead of being emitted. Errors from instantiating a
+definition along the way are outside deduction's "immediate context"
+([\[temp.deduct\]/8](https://eel.is/c++draft/temp.deduct#general-8)), and are hard
+errors. Leech differs there: it extends speculation into the units it forces rather than
+reporting their errors, because Leech's probes are an implementation detail rather than a
+language rule.
+TypeScript's overload resolution
+([`checker.ts`](https://github.com/microsoft/TypeScript/blob/main/src/compiler/checker.ts),
+`chooseOverload`) checks each candidate's arguments with error reporting off, then checks
+the chosen candidate with it on.
 
 ### Analysis units and memoized failure
 
@@ -531,11 +574,13 @@ reaches its compilation through a `ctx` property: `FnSymbol` (through `env`), `F
 source-declared `ComptimeParamTyp` (through its declaration's environment). When it
 computes a unit, `Ctx.unit`:
 
-- pushes a unit frame on `Ctx.unit_stack` (transactions use the stack), asserting that the
+- pushes a unit frame on `Ctx.unit_stack`, asserting that the
   unit is not already on it: a unit that reaches itself is a compiler bug, so a cycle in
   the program must be detected before its unit is entered again;
 - catches `ReportedError` and memoizes the failure, without emitting anything, because the
   diagnostic was already reported;
+- memoizes nothing that would hide a diagnostic dropped while speculating (see
+  [Speculative checking](#speculative-checking));
 - while legacy `UserError` raise sites remain, also catches `UserError`, emits it, and
   memoizes the failure;
 - lets every other exception propagate, since those are internal errors.
@@ -648,8 +693,8 @@ records *which* error. `Typ.report_proof()` returns the proof of the first poiso
 component found, for `ErrorTyp` and for any type built from it (pointers, arrays,
 instances with a poisoned argument), and `None` otherwise. Code tests for poison with
 `report_proof() is not None`, never by comparing with a particular `ErrorTyp`. This
-lets a layout query fail its unit with the *component's* proof, and lets transactions
-detect poison from a discarded probe.
+lets a layout query fail its unit with the *component's* proof, and lets a probe treat a
+poisoned argument as one that failed.
 
 `TypCheck` reports most errors with `self._error(kind, span, **args) -> typs.Typ`, which
 emits the error and returns poison as the expression's type. It raises only when the
@@ -1007,9 +1052,20 @@ the exact diagnostic identity.
   template. Runtime asserts plus the catalogue test catch mismatches when a diagnostic is
   built. A suite-wide test hook records which kinds were emitted, and fails if a catalogue
   entry is never emitted by any test, which also finds dead entries.
-- **Transactions and unit frames must nest correctly** when a probe forces another unit.
-  Tests cover a probe that forces a failing struct declaration: its error is reported once,
-  and is not discarded.
+- **Units forced while speculating must be safe to compute again.** A unit abandoned with
+  `SpeculativeError`, or not memoized because it dropped a diagnostic, runs again later, so
+  it must leave no partial side effects. Tests cover a probe that forces a failing struct
+  declaration (its error is reported exactly once, by the authoritative check) and a probe
+  that forces a unit which warns (the warning is reported exactly once). A recomputed unit
+  returns new objects, so a cache outside the units that kept the dropped result's objects,
+  such as `Ctx.union_variant_constructors`, would disagree with it. Only body and
+  initializer checks and lowering warn today, and nothing outside the units keeps their
+  results.
+- **Open
+  ([#129](https://github.com/jonathanhaigh/leech/issues/129)):** an instance created only
+  while speculating is still requested, so `mono.discover` checks it and reports its errors
+  even if the program never uses it. Leech's probes rarely infer arguments that the
+  authoritative check would not, so this is left until it matters.
 - **Staged module building changes `Mod.build`'s structure.** Today `_build_defn` and
   `_build_impl_defn` interleave construction with registration. Splitting them into
   validate-then-commit touches impl registration and comptime-parameter recording, which
@@ -1030,7 +1086,7 @@ Existing issues were rescoped, and #114–#122 filed, as follows.
 | #114 | Recover from errors at analysis-unit boundaries | `Ctx.unit` with a per-compilation memo, memoized `Failed`, staged `Mod.build` with poisoned items, cycle memoization, entry point in the recovery loop, sorted output with `note_file` and `Diags.merge`, ICE rendering. Until #115, `compile_to_ir` re-raises the first sorted error | #93 |
 | #113 | Report every user error before code generation | Force every declaration unit in checking. Discovery is part of checking, with per-request recovery. Phase boundary. `leech check` without codegen. `LlvmVerificationError` becomes `diag.InternalError` | #93 (best after #114) |
 | #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationError`, message-style normalization, `DiagArg` on types, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
-| #72 + #73 | Speculative-probe diagnostics | Sink transactions tied to unit frames. A shared probe helper for function calls and union-variant constructors. Probe failures contribute no inference | #93, #114 |
+| #72 + #73 | Speculative-probe diagnostics | `Ctx.speculating()`: errors unwind unreported as `SpeculativeError`, warnings are dropped, and forced units that dropped anything aren't memoized. A shared probe helper for function calls and union-variant constructors. Probe failures contribute no inference | #93, #114 |
 | #116 | Poison type and expression-level error recovery | `typs.ErrorTyp`, `error_typ(reported)`, `TypCheck._error`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
 | #117 | Limit reported errors with `-fmax-errors` | Cap with withheld-count note, on `leech` | #114 |
 | #118 | Render diagnostics in the rustc layout | `diag_text.py`: header, location, full-span underlines, labels, multi-line spans, notes, summary, `-fdiagnostics-color` | #115 |
@@ -1050,7 +1106,7 @@ flowchart LR
   93 --> 115["115 Diagnostic catalogue"]
   93 -.-> 122["122 Ctx as compilation root"]
   122 -.-> 114
-  114 --> P["72/73 Probe transactions"]
+  114 --> P["72/73 Speculative probes"]
   93 --> P
   93 --> 113["113 Check before codegen"]
   114 --> 116["116 Poison recovery"]

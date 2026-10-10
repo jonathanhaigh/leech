@@ -439,6 +439,77 @@ def test_explicit_comptime_args_beat_the_payload_argument(compiler):
     assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
 
+def test_variant_inference_ignores_a_payload_that_only_fails_without_an_expected_typ(compiler):
+    # Without an expected type, 3000000000 would be an i32 and overflow; T is i64.
+    results = _check_body(
+        compiler, "let p = Pair::Two(5i64, 3000000000 + 0);", "union Pair[T] { Two(T, T) }"
+    )
+    assert _constructions(results) == [("Pair::Two", "Pair[i64]", 0)]
+
+
+def test_variant_inference_does_not_repeat_a_warning_in_a_payload(compiler):
+    src = """
+    enum E { A, B }
+    union Option[T] { None, Some(T) }
+    pub fn main() i32 {
+        let o = Option::Some(match (E::A) { E::A => 0i32, _ => 1i32, _ => 2i32 });
+        return 0i32;
+    }
+    """
+    compiled = compiler.compile(src)
+
+    assert [d.kind for d in compiled.diags.all()] == [diag_kinds.UNREACHABLE_MATCH_ARM]
+
+
+def test_failed_payload_is_reported_instead_of_uninferable_comptime_argument(compiler):
+    with pytest.raises(diag.CompilationError) as exc_info:
+        _check_body(compiler, "let x = Option::Some(nope);")
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
+
+
+def test_failed_variant_inference_reports_a_warning_from_another_payload(compiler):
+    src = """
+    enum E { A, B }
+    union Two[T, U] { Pair(T, U) }
+    pub fn main() i32 {
+        let z = Two::Pair(match (E::A) { E::A => 0i32, _ => 1i32, _ => 2i32 }, nope);
+        return 0i32;
+    }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNREACHABLE_MATCH_ARM, diag_kinds.UNKNOWN_NAME)
+
+
+def test_uninferable_variant_comptime_argument_keeps_warnings_in_the_payloads(compiler):
+    # U's only payload is an unsuffixed literal, which inference skips.
+    src = """
+    enum E { A, B }
+    union Two[T, U] { Pair(T, U) }
+    pub fn main() i32 {
+        let z = Two::Pair(match (E::A) { E::A => 0i32, _ => 1i32, _ => 2i32 }, 0);
+        return 0i32;
+    }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (
+        diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT,
+        diag_kinds.UNREACHABLE_MATCH_ARM,
+    )
+
+
+def test_failed_variant_inference_checks_payloads_against_the_typs_it_inferred(compiler):
+    # T is i64, so 3000000000 + 0 is valid; nope is the real error.
+    with pytest.raises(diag.CompilationError) as exc_info:
+        _check_body(
+            compiler,
+            "let z = Tri::Three(5i64, 3000000000 + 0, nope);",
+            "union Tri[T, U] { Three(T, T, U) }",
+        )
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
+
+
 @pytest.mark.parametrize(
     "body",
     [

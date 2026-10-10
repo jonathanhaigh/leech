@@ -1168,3 +1168,102 @@ def test_first_from_generic_struct_with_value_param(compiler):
     }
     """
     compiler.check(src)
+
+
+def test_inference_ignores_an_argument_that_only_fails_without_an_expected_typ(compiler):
+    # Without an expected type, 3000000000 would be an i32 and overflow; T is i64.
+    src = """
+    fn second[T](x: T, y: T) T { return y; }
+    pub fn main() i32 {
+        let z = second(5i64, 3000000000 + 0);
+        return if (z == 3000000000) { 0 } else { 1 };
+    }
+    """
+    compiler.check(src)
+
+
+def test_inference_does_not_repeat_a_warning_in_an_argument(compiler):
+    src = """
+    enum E { A, B }
+    fn id[T](x: T) T { return x; }
+    pub fn main() i32 {
+        return id(match (E::A) { E::A => 0i32, _ => 1i32, _ => 2i32 });
+    }
+    """
+    compiled = compiler.compile(src)
+
+    assert [d.kind for d in compiled.diags.all()] == [diag_kinds.UNREACHABLE_MATCH_ARM]
+    harness.assert_span_at(compiled.diags.all()[0].span, src, "_ => 2i32")
+
+
+def test_inference_reports_an_error_in_a_declaration_it_forces_once(compiler):
+    src = """
+    fn id[T](x: T) T { return x; }
+    pub fn main() i32 { let s = id(S { a: 1i32 }); return 0i32; }
+    struct S { a: Missing }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
+    harness.assert_span_at(exc_info.value.diags[0].span, src, "Missing")
+
+
+def test_inference_reports_a_warning_in_an_initializer_it_forces_once(compiler):
+    src = """
+    fn id[T](x: T) T { return x; }
+    pub fn main() i32 { return id(g); }
+    enum E { A, B }
+    let g = match (E::A) { E::A => 0i32, _ => 1i32, _ => 2i32 };
+    """
+    compiled = compiler.compile(src)
+
+    assert [d.kind for d in compiled.diags.all()] == [diag_kinds.UNREACHABLE_MATCH_ARM]
+
+
+def test_failed_argument_is_reported_instead_of_uninferable_comptime_argument(compiler):
+    src = """
+    fn id[T](x: T) T { return x; }
+    pub fn main() i32 { return id(nope); }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
+    assert '"nope"' in str(exc_info.value.diags[0])
+
+
+def test_failed_inference_reports_a_warning_from_another_argument(compiler):
+    src = """
+    enum E { A, B }
+    fn f[T, U](a: T, b: U) T { return a; }
+    pub fn main() i32 { return f(match (E::A) { E::A => 0i32, _ => 1i32, _ => 2i32 }, nope); }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNREACHABLE_MATCH_ARM, diag_kinds.UNKNOWN_NAME)
+
+
+def test_failed_inference_checks_arguments_against_the_typs_it_inferred(compiler):
+    # T is i64, so 3000000000 + 0 is valid; nope is the real error.
+    src = """
+    fn f[T, U](a: T, b: T, c: U) T { return a; }
+    pub fn main() i32 { let z = f(5i64, 3000000000 + 0, nope); return 0i32; }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.UNKNOWN_NAME,)
+    assert '"nope"' in str(exc_info.value.diags[0])
+
+
+def test_uninferable_comptime_argument_keeps_warnings_in_the_arguments(compiler):
+    # U's only argument is an unsuffixed literal, which inference skips.
+    src = """
+    enum E { A, B }
+    fn f[T, U](a: T, b: U) T { return a; }
+    pub fn main() i32 { return f(match (E::A) { E::A => 0i32, _ => 1i32, _ => 2i32 }, 0); }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (
+        diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT,
+        diag_kinds.UNREACHABLE_MATCH_ARM,
+    )
