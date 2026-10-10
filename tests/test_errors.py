@@ -23,7 +23,6 @@ def test_unexpected_character_message(compiler):
 
     # Unlike an unexpected token, there's no "expected" note: the lexer
     # couldn't form a token at all, so there's nothing to enumerate.
-    assert isinstance(err, diag.Diag)
     assert err.notes == ()
 
 
@@ -40,7 +39,6 @@ def test_unexpected_token_message(compiler):
     assert '"}"' in str(err)
     harness.assert_span_at(err.span, src, "}")
 
-    assert isinstance(err, diag.Diag)
     (note,) = err.notes
     assert note.msg.kind is diag_kinds.EXPECTED_ONE_OF
     assert '";"' in note.msg.text()
@@ -64,7 +62,6 @@ def test_unexpected_end_of_input_message(compiler):
     # left in the source for the span to point at directly.
     assert span.start_line == 2
 
-    assert isinstance(err, diag.Diag)
     (note,) = err.notes
     assert note.span is None
     # Many different statement/expression-starting tokens are valid here;
@@ -98,7 +95,6 @@ def test_private_struct_field_access_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.PRIVATE_FIELD_ACCESS,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["field"] == "val"
     assert '"T"' in str(err)
     harness.assert_span_at(err.span, main_src, "val")
@@ -130,7 +126,6 @@ def test_private_fn_access_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "f()")
 
-    assert isinstance(err, diag.Diag)
     (label,) = err.labels
     assert label.msg.kind is diag_kinds.DEFINED_HERE
     harness.assert_span_at(label.span, a_src, "fn f()")
@@ -156,7 +151,6 @@ def test_private_var_access_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "x")
 
-    assert isinstance(err, diag.Diag)
     (label,) = err.labels
     assert label.msg.kind is diag_kinds.DEFINED_HERE
     harness.assert_span_at(label.span, a_src, "let x")
@@ -185,7 +179,6 @@ def test_private_typ_access_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, main_src, "T{")
 
-    assert isinstance(err, diag.Diag)
     (label,) = err.labels
     assert label.msg.kind is diag_kinds.DEFINED_HERE
     harness.assert_span_at(label.span, a_src, "struct T")
@@ -256,7 +249,6 @@ def test_mod_used_as_typ_message(compiler):
 
     # The note has no span of its own - a module's AST node covers its
     # whole file, so there's nothing useful to point at.
-    assert isinstance(err, diag.Diag)
     (note,) = err.notes
     assert note.msg.kind is diag_kinds.MOD_QUALIFIES_PATHS
     assert '"a::' in note.msg.text()
@@ -293,7 +285,6 @@ def test_conflicting_extern_decl_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_EXTERN_DECLARATIONS,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["name"] == "write"
     typ, earlier_typ = err.msg.args["typ"], err.msg.args["earlier_typ"]
     assert isinstance(typ, typs.FnTyp) and typ.ret_typ is typs.I32
@@ -313,7 +304,6 @@ pub fn main() i32 { 0 }
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "fn id[U]")
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.notes == ()
     (label,) = err.labels
     assert label.msg is not None
@@ -345,7 +335,6 @@ def test_overlapping_inherent_impl_assoc_fn_name_clash_message(compiler):
     span = exc_info.value.diags[0].span
     harness.assert_span_at(span, src, "get(*self) i32 { 1 }")
 
-    assert isinstance(err, diag.Diag)
     assert err.notes == ()
     (label,) = err.labels
     assert label.msg is not None
@@ -376,7 +365,6 @@ def test_infinite_size_struct_message(compiler):
     harness.assert_span_at(span, src, "struct A")
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     first, second = err.notes
     assert first.msg.kind is second.msg.kind is diag_kinds.FIELD_CONTAINS_BY_VALUE
     assert '"b"' in first.msg.text()
@@ -401,7 +389,6 @@ def test_wrong_number_of_payload_patterns_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["given"], err.msg.args["expected"]) == (1, 0)
     assert '"Color::Red"' in str(err)
     span = exc_info.value.diags[0].span
@@ -421,7 +408,6 @@ def test_circular_var_initializer_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["var"] == "b"
     harness.assert_span_at(err.span, src, "let b")
 
@@ -453,7 +439,6 @@ def test_recursive_trait_bound_message(compiler):
     assert '"Y[T]"' in str(err)
     harness.assert_span_at(err.span, src, "Y[T]] { fn x")
 
-    assert isinstance(err, diag.Diag)
     assert [note.msg.kind for note in err.notes] == [diag_kinds.BOUND_IN_CYCLE] * 3
     assert '"Y[T]"' in err.notes[0].msg.text()
     assert '"Z[T]"' in err.notes[1].msg.text()
@@ -481,7 +466,6 @@ def test_recursive_impl_selection_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_IMPL_SELECTION,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["trait"], err.msg.args["typ"]) == ("A", typs.I32)
     harness.assert_span_at(err.span, src, "impl[T: B]")
 
@@ -590,7 +574,6 @@ pub fn main() i32 {
     assert exc_info.value.kinds == (diag_kinds.ARGUMENT_TYPE_MISMATCH,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["arg_num"] == 1
     assert (err.msg.args["given_typ"], err.msg.args["expected_typ"]) == (
         typs.PtrTyp(typs.U8, typs.CONST),
@@ -612,7 +595,6 @@ def test_invalid_bin_op_arg_typ_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["op"], err.msg.args["side"], err.msg.args["given_typ"]) == (
         "+",
         "left",
@@ -636,7 +618,6 @@ def test_if_els_typ_mismatch_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_BRANCH_TYPES,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     harness.assert_span_at(err.span, src, "if (true)")
 
     then_label, els_label = err.labels
@@ -660,7 +641,6 @@ def test_non_exhaustive_match_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.NON_EXHAUSTIVE_MATCH,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     harness.assert_span_at(err.span, src, "match (c)")
 
     assert [(note.msg.kind, note.msg.args["pattern"], note.span) for note in err.notes] == [
@@ -683,7 +663,6 @@ def test_match_arm_typ_mismatch_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_MATCH_ARM_TYPES,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     harness.assert_span_at(err.span, src, "match (true)")
 
     first, second = err.labels
@@ -723,7 +702,6 @@ pub fn main() i32 {
     assert exc_info.value.kinds == (diag_kinds.UNINFERABLE_COMPTIME_ARGUMENT,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["param"], err.msg.args["item"]) == ("T", "id")
     harness.assert_span_at(err.span, src, "id(5)")
 
@@ -746,7 +724,6 @@ pub fn main() i32 {
     err = exc_info.value.diags[0]
     assert '"id"' in str(err)
     # Which count fills which field, not just that both appear.
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["given"], err.msg.args["expected"]) == (2, 1)
 
     span = exc_info.value.diags[0].span
@@ -840,7 +817,6 @@ def test_non_exhaustive_match_over_a_union_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.NON_EXHAUSTIVE_MATCH,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     harness.assert_span_at(err.span, src, "match (o)")
 
     # The witness carries a payload column, which a wildcard stands for.
@@ -864,7 +840,6 @@ def test_wrong_number_of_payload_patterns_over_a_union_message(compiler):
     assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["given"], err.msg.args["expected"]) == (1, 2)
     assert '"Pair::Both"' in str(err)
     span = exc_info.value.diags[0].span
@@ -892,7 +867,6 @@ def test_infinite_size_union_message(compiler):
     harness.assert_span_at(span, src, "union Tree")
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     (hop,) = err.notes
     assert hop.msg.kind is diag_kinds.PAYLOAD_CONTAINS_BY_VALUE
     assert '"Node"' in hop.msg.text()

@@ -109,7 +109,6 @@ def test_comptime_signed_division_by_zero(compiler):
     assert exc_info.value.kinds == (diag_kinds.COMPTIME_PANIC,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     harness.assert_span_at(err.span, src, "5 / 0")
     assert [(note.msg.kind, note.msg.args["message"]) for note in err.notes] == [
         (diag_kinds.PANIC_MESSAGE, "division by zero")

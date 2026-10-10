@@ -545,7 +545,6 @@ RIGHT_OPERAND_TYP: Final = diag.MsgKind('right operand has type "{typ}"')
 IF_TYP: Final = diag.MsgKind('"if" has type "{typ}"')
 ELSE_TYP: Final = diag.MsgKind('"else" has type "{typ}"')
 MATCH_ARM_TYP: Final = diag.MsgKind('match arm has type "{typ}"')
-SCRUTINEE_TYP: Final = diag.MsgKind('scrutinee has type "{typ}"')
 UNCOVERED_PATTERN: Final = diag.MsgKind('uncovered pattern "{pattern}"')
 GIVE_COMPTIME_ARGS: Final = diag.MsgKind('give it explicitly, e.g. "{item}[...]"')
 MOD_QUALIFIES_PATHS: Final = diag.MsgKind(

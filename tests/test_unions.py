@@ -300,7 +300,6 @@ def test_growing_generic_union_declaration_cycle_is_rejected(compiler):
 
     err = exc_info.value.diags[0]
     assert '"L"' in str(err)
-    assert isinstance(err, diag.Diag)
     (note,) = err.notes
     assert note.msg.kind is diag_kinds.PAYLOAD_CONTAINS_BY_VALUE
     assert '"Cons"' in note.msg.text()
@@ -708,7 +707,6 @@ def test_wrong_number_of_payload_patterns(compiler, arm, got, expected):
     assert exc_info.value.kinds == (diag_kinds.PAYLOAD_PATTERN_COUNT_MISMATCH,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["given"], err.msg.args["expected"]) == (got, expected)
 
 
@@ -1412,7 +1410,6 @@ def test_assoc_fn_named_after_a_variant_rejected(compiler, order):
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_VARIANT_AND_FUNCTION_NAMES,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["fn"], err.msg.args["union"]) == ("A", "U")
     harness.assert_span_at(err.span, src, "A()")
     assert [label.msg.kind for label in err.labels] == [diag_kinds.DEFINED_HERE]

@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from leech import diag, diag_kinds, errors
+from leech import diag, diag_kinds
 
 _KEBAB_CASE = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 _ABBREVIATIONS = {
@@ -29,16 +29,6 @@ _ABBREVIATIONS = {
 }
 _VAGUE_WORDS = {"bad", "error", "invalid", "warning", "wrong"}
 _TEMPLATES = [kind.template for kind in (*diag_kinds.DIAG_KINDS, *diag_kinds.MSG_KINDS)]
-
-
-def _user_error_classes() -> list[type[errors.UserError]]:
-    classes = []
-    pending = list(errors.UserError.__subclasses__())
-    while pending:
-        cls = pending.pop()
-        classes.append(cls)
-        pending.extend(cls.__subclasses__())
-    return classes
 
 
 def test_names_and_aliases_are_unique_kebab_case():
@@ -79,14 +69,6 @@ def test_lookup_finds_a_kind_by_alias(monkeypatch):
 
     assert diag_kinds.lookup("old-name") is renamed
     assert diag_kinds.lookup("new-name") is renamed
-
-
-def test_every_user_error_class_has_its_own_kind():
-    classes = _user_error_classes()
-    for cls in classes:
-        assert "kind" in vars(cls), cls
-        assert cls.kind in diag_kinds.DIAG_KINDS, cls
-    assert len({cls.kind for cls in classes}) == len(classes)
 
 
 def test_constant_is_named_after_its_kind():

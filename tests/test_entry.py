@@ -48,7 +48,6 @@ def test_missing_main_is_reported(compiler):
 
     assert exc_info.value.diags[0].span is None
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["mod"] == "main"
     assert str(err.msg.args["path"]).endswith("main.leech")
 

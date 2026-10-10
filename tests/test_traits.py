@@ -831,6 +831,18 @@ def test_bound_names_non_trait_on_generic_struct_instantiation(compiler):
     assert '"NotATrait"' in str(exc_info.value.diags[0])
 
 
+def test_impl_for_requires_a_trait_name(compiler):
+    src = """
+    trait Show { fn show(*self) i32; }
+    impl *Show for i32 {}
+    pub fn main() i32 { return 0; }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.NON_TRAIT_IMPL,)
+    harness.assert_span_at(exc_info.value.diags[0].span, src, "*Show")
+
+
 def test_trait_missing_method_not_implemented(compiler):
     src = """
     trait Show { fn show(*self) i32; }
@@ -841,7 +853,6 @@ def test_trait_missing_method_not_implemented(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.MISSING_TRAIT_METHOD,)
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["method"], err.msg.args["trait"]) == ("show", "Show")
     harness.assert_span_at(err.span, src, "impl Show")
 
@@ -916,7 +927,6 @@ def test_trait_impl_method_signature_mismatch(compiler):
         compiler.compile(src)
     assert exc_info.value.kinds == (diag_kinds.TRAIT_METHOD_TYPE_MISMATCH,)
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["method"] == "show"
     given, expected = err.msg.args["given_typ"], err.msg.args["expected_typ"]
     assert isinstance(given, typs.FnTyp) and given.ret_typ is typs.BOOL
@@ -962,7 +972,6 @@ def test_partially_overlapping_generic_trait_impls_conflict(compiler):
     assert exc_info.value.kinds == (diag_kinds.CONFLICTING_IMPLS,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     harness.assert_span_at(err.span, src, "impl[U]")
     assert [label.msg.kind for label in err.labels] == [diag_kinds.PREVIOUS_IMPL_HERE]
     harness.assert_span_at(err.labels[0].span, src, "impl[T]")
@@ -1047,7 +1056,6 @@ def test_orphan_impl_neither_trait_nor_typ_local(compiler):
         compiler.compile(harness.TestProgram.from_main(main_src, harness.ModSrc("a", a_src)))
     assert exc_info.value.kinds == (diag_kinds.ORPHAN_IMPL,)
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["trait"], err.msg.args["typ"]) == ("Show", typs.I32)
     harness.assert_span_at(err.span, main_src, "impl a::Show")
 
@@ -1464,7 +1472,6 @@ def test_bound_referencing_sibling_typ_param_satisfied(compiler):
 
 def _assert_recursive_trait_bound_error(err, primary: str, cycle: list[str]) -> None:
     assert f'"{primary}"' in str(err)
-    assert isinstance(err, diag.Diag)
     assert [note.msg.kind for note in err.notes] == [diag_kinds.BOUND_IN_CYCLE] * len(cycle)
     for note, name in zip(err.notes, cycle, strict=True):
         assert f'"{name}"' in note.msg.text()
@@ -1556,7 +1563,6 @@ def test_growing_mutually_recursive_trait_bounds(compiler):
 def _assert_recursive_impl_selection_error(
     err, trait_name: str, typ: typs.Typ, impl_names: list[str]
 ) -> None:
-    assert isinstance(err, diag.Diag)
     assert (err.msg.args["trait"], err.msg.args["typ"]) == (trait_name, typ)
     assert [note.msg.kind for note in err.notes] == [diag_kinds.IMPL_IN_CYCLE] * len(impl_names)
     for note, name in zip(err.notes, impl_names, strict=True):

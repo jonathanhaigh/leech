@@ -368,7 +368,6 @@ def test_mod_var_self_cycle(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["var"] == "a"
     assert [(note.msg.kind, note.msg.args["name"]) for note in err.notes] == [
         (diag_kinds.DEFINED_HERE, "a"),
@@ -402,7 +401,6 @@ def test_mod_var_three_way_cycle(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["var"] == "a"
     assert [(note.msg.kind, note.msg.args["name"]) for note in err.notes] == [
         (diag_kinds.DEFINED_HERE, "a"),
@@ -431,7 +429,6 @@ def test_cross_module_var_cycle(compiler):
     assert exc_info.value.kinds == (diag_kinds.RECURSIVE_INITIALIZER,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["var"] == "x"
     assert [(note.msg.kind, note.msg.args["name"]) for note in err.notes] == [
         (diag_kinds.DEFINED_HERE, "x"),

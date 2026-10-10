@@ -478,8 +478,7 @@ def test_value_param_used_as_struct_field_typ_is_rejected(compiler):
     assert exc_info.value.kinds == (diag_kinds.VALUE_USED_AS_TYPE,)
 
 
-def _field_notes(err: diag.AnyDiag) -> list[str]:
-    assert isinstance(err, diag.Diag)
+def _field_notes(err: diag.Diag) -> list[str]:
     assert all(note.msg.kind is diag_kinds.FIELD_CONTAINS_BY_VALUE for note in err.notes)
     return [note.msg.text() for note in err.notes]
 

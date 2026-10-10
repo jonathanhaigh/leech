@@ -935,7 +935,6 @@ def test_conflicting_extern_declarations_are_reported_at_the_later_one(compiler)
 
     err = exc_info.value.diags[0]
     harness.assert_span_at(err.span, b_src, "extern fn puts")
-    assert isinstance(err, diag.Diag)
     (label,) = err.labels
     harness.assert_span_at(label.span, a_src, "extern fn puts")
 
@@ -949,7 +948,6 @@ def test_extern_conflicting_with_the_preludes_is_reported_at_the_programs(compil
 
     err = exc_info.value.diags[0]
     harness.assert_span_at(err.span, src, "extern fn write")
-    assert isinstance(err, diag.Diag)
     (label,) = err.labels
     assert label.span.file.path.name == "prelude.leech"
 

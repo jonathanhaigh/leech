@@ -14,7 +14,7 @@ import sys
 import tempfile
 from typing import Final, TextIO, override
 
-from leech import diag, diag_kinds, errors, toolchain
+from leech import diag, diag_kinds, toolchain
 from leech import session as session_mod
 from leech.cli import common
 
@@ -98,15 +98,14 @@ class DoctorCommand(common.Command):
     ) -> bool:
         """Report ``check`` as failed, followed by the session's diagnostics.
 
-        With ``fix``, a note on fixing the C compiler follows them.
+        With ``fix``, a note on fixing the C compiler is reported to the session too, and follows
+        them.
         """
         report.write(f"{check}: FAILED\n")
         report.flush()
-        self.render_diags(session)
         if fix:
-            errors.TextErrorRenderer().display_errors(
-                [diag.Diag.new(diag_kinds.C_COMPILER_HINT, None)]
-            )
+            session.diags.note(diag_kinds.C_COMPILER_HINT, None)
+        self.render_diags(session)
         return False
 
 

@@ -8,7 +8,7 @@ from typing import Optional
 
 import pytest
 
-from leech import compilation, diag, diag_kinds, errors, program, session, typs
+from leech import compilation, diag, diag_kinds, diag_text, program, session, typs
 from leech import src as leech_src
 
 
@@ -92,11 +92,6 @@ def test_level_is_the_highest_level():
     assert diags.level == diag.ERROR
 
 
-def test_errors_reexports_diag_levels():
-    assert errors.Level is diag.Level
-    assert (errors.NOTE, errors.WARNING, errors.ERROR) == (diag.NOTE, diag.WARNING, diag.ERROR)
-
-
 def test_proof_holds_the_recorded_error():
     diags = diag.Diags()
     first = _error("cc")
@@ -108,14 +103,26 @@ def test_proof_holds_the_recorded_error():
     assert again is reported
 
 
-def test_error_and_warn_reject_the_wrong_level():
+def test_error_warn_and_note_reject_the_wrong_level():
     diags = diag.Diags()
 
     with pytest.raises(AssertionError, match="not an error"):
         diags.error(_warning(None))
     with pytest.raises(AssertionError, match="not a warning"):
         diags.warn(_error("cc"))
+    with pytest.raises(AssertionError, match="not a note"):
+        diags.note(_warning(None))
     assert diags.all() == ()
+
+
+def test_a_note_is_recorded_without_failing():
+    diags = diag.Diags()
+
+    diags.note(diag_kinds.C_COMPILER_HINT, None)
+
+    assert [d.kind for d in diags.all()] == [diag_kinds.C_COMPILER_HINT]
+    assert diags.level == diag.NOTE
+    assert not diags.has_errors
 
 
 def test_report_proof_cannot_be_created_outside_diags():
@@ -328,7 +335,7 @@ def test_text_renderer_shows_a_diags_labels_and_notes_as_notes(tmp_path, capsys)
         .with_note(_NOTE_KIND, fn_span, name="s")
     )
 
-    errors.TextErrorRenderer().display_errors([d])
+    diag_text.TextRenderer().display_diags([d])
 
     excerpt = "1| fn f() {}\n"
     assert capsys.readouterr().err == (
@@ -352,7 +359,6 @@ def test_error_and_warn_can_build_the_diagnostic(tmp_path):
     diags.warn(diag_kinds.UNREACHABLE_CODE, span, code="statement")
 
     error, warning = diags.all()
-    assert isinstance(error, diag.Diag) and isinstance(warning, diag.Diag)
     assert reported.diag is error
     assert (error.kind, error.span, str(error)) == (
         _ARG_KIND,

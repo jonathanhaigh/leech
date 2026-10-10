@@ -62,12 +62,14 @@ def test_doctor_reports_missing_cc():
     )
 
 
-def test_doctor_reports_malformed_cc():
-    proc = run_doctor('cc "')
+def test_doctor_reports_malformed_cc(monkeypatch, capsys):
+    monkeypatch.setenv("CC", 'cc "')
 
-    assert proc.returncode == 1
-    assert proc.stdout.endswith("C compiler: FAILED\n")
-    assert proc.stderr == 'ERROR: invalid C compiler command "CC=cc "": No closing quotation\n'
+    assert doctor.DoctorCommand().execute(argparse.Namespace(), "leech") == 1
+
+    captured = capsys.readouterr()
+    assert captured.out.endswith("C compiler: FAILED\n")
+    assert captured.err == 'ERROR: invalid C compiler command "CC=cc "": No closing quotation\n'
 
 
 def test_doctor_reports_failing_cc_version(tmp_path):
@@ -84,17 +86,18 @@ def test_doctor_reports_failing_cc_version(tmp_path):
     )
 
 
-def test_doctor_reports_failing_link(tmp_path):
+def test_doctor_reports_failing_link(tmp_path, monkeypatch, capsys):
     cc = fake_cc(tmp_path, 'if [ "$1" = --version ]; then echo fake 1.0; fi\n')
+    monkeypatch.setenv("CC", str(cc))
 
-    proc = run_doctor(str(cc))
+    assert doctor.DoctorCommand().execute(argparse.Namespace(), "leech") == 1
 
-    assert proc.returncode == 1
-    assert "  fake 1.0\n" in proc.stdout
-    assert proc.stdout.endswith("Build a test program: FAILED\n")
-    assert proc.stderr.startswith(f"ERROR: linking failed: `{cc} ")
-    assert "succeeded but wrote no executable" in proc.stderr
-    assert proc.stderr.endswith(
+    captured = capsys.readouterr()
+    assert "  fake 1.0\n" in captured.out
+    assert captured.out.endswith("Build a test program: FAILED\n")
+    assert captured.err.startswith(f"ERROR: linking failed: `{cc} ")
+    assert "succeeded but wrote no executable" in captured.err
+    assert captured.err.endswith(
         "NOTE: check that CC names a C compiler that can link programs, such as gcc\n"
     )
 

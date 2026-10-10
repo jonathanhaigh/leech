@@ -42,7 +42,7 @@ class BuildResult:
 
     #: The absolute path of the built executable, or ``None`` if the build failed.
     exe: Optional[pathlib.Path]
-    diags: tuple[diag.AnyDiag, ...]
+    diags: tuple[diag.Diag, ...]
 
 
 def build_exe(root: pathlib.Path) -> BuildResult:
@@ -57,7 +57,7 @@ def build_exe(root: pathlib.Path) -> BuildResult:
     return BuildResult(built, session.diags.sorted())
 
 
-def check_program(root: pathlib.Path) -> tuple[diag.AnyDiag, ...]:
+def check_program(root: pathlib.Path) -> tuple[diag.Diag, ...]:
     """Check a program as ``leech check`` does, returning its diagnostics in source order."""
     session = session_mod.Session()
     with common.suppressing_reported_errors():

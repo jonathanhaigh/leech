@@ -15,7 +15,7 @@ from typing import ClassVar
 import llvmlite
 from llvmlite import binding as llb
 
-from leech import diag, errors, ll_emit, program, target, toolchain
+from leech import diag, diag_text, ll_emit, program, target, toolchain
 from leech import session as session_mod
 
 
@@ -164,9 +164,9 @@ class Command(abc.ABC):
 
     def render_diags(self, session: session_mod.Session) -> None:
         """Render the session's diagnostics that haven't been rendered yet, in source order."""
-        errors.TextErrorRenderer().display_errors(self._take_unrendered(session))
+        diag_text.TextRenderer().display_diags(self._take_unrendered(session))
 
-    def _take_unrendered(self, session: session_mod.Session) -> list[diag.AnyDiag]:
+    def _take_unrendered(self, session: session_mod.Session) -> list[diag.Diag]:
         unrendered = [err for err in session.diags.sorted() if id(err) not in self._rendered]
         self._rendered.update(id(err) for err in unrendered)
         return unrendered
@@ -181,7 +181,7 @@ class Command(abc.ABC):
         try:
             yield
         except Exception as err:
-            errors.TextErrorRenderer().display_internal_error(
+            diag_text.TextRenderer().display_internal_error(
                 self._take_unrendered(session), err, tool
             )
             raise

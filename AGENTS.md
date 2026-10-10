@@ -78,7 +78,9 @@ explicitly. Identify a diagnostic by its kind (`diag_kinds.X`) and location, not
 text, so that rewording a message doesn't break tests. Check the text only for a term that
 matters, such as the name of the item the diagnostic is about, and with `in` rather than
 comparing the whole message. Where it matters which value fills which field, check the
-message's arguments (`msg.args`) instead.
+message's arguments (`msg.args`) instead. A full run fails if some diagnostic kind, label or
+note in `diag_kinds` is never reported to a `diag.Diags` in the test process; diagnostics
+reported only in a `leech` subprocess don't count, so give each kind an in-process test.
 
 ## Review Guidelines
 

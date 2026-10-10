@@ -38,7 +38,6 @@ def test_invalid_void_return(compiler):
     assert exc_info.value.kinds == (diag_kinds.MISSING_RETURN_VALUE,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     harness.assert_span_at(err.span, src, "return;")
     (label,) = err.labels
     assert label.msg.kind is diag_kinds.RET_TYP_HERE
@@ -56,7 +55,6 @@ def test_invalid_return_typ(compiler):
     assert exc_info.value.kinds == (diag_kinds.RETURN_TYPE_MISMATCH,)
 
     err = exc_info.value.diags[0]
-    assert isinstance(err, diag.Diag)
     harness.assert_span_at(err.span, src, '"abcd"')
     (label,) = err.labels
     assert label.msg.kind is diag_kinds.RET_TYP_HERE

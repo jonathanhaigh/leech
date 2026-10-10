@@ -16,7 +16,7 @@ import markdown_it
 import markdown_it.token
 import pytest
 
-from leech import diag, diag_kinds, errors
+from leech import diag, diag_kinds
 from tests import harness
 
 _SRC_KEYS: Final = frozenset({"test", "file", "mode", "exit", "error", "warning"})
@@ -162,13 +162,13 @@ class DocCase:
             f"{self.loc.page}:{self.loc.line}: test={self.test_id}{mod_text}: {detail}"
         )
 
-    def _check_emitted_diags(self, emitted: tuple[diag.AnyDiag, ...]) -> None:
+    def _check_emitted_diags(self, emitted: tuple[diag.Diag, ...]) -> None:
         if self.expects_warning:
             self._check_emitted_warning(emitted)
         elif emitted:
             raise AssertionError(f"unexpected emitted diagnostics: {emitted!r}")
 
-    def _check_emitted_warning(self, emitted: tuple[diag.AnyDiag, ...]) -> None:
+    def _check_emitted_warning(self, emitted: tuple[diag.Diag, ...]) -> None:
         assert self.diag_kind is not None
         assert self.diag_excerpt is not None
         if len(emitted) != 1:
@@ -554,7 +554,7 @@ def parse_doc_page(page: pathlib.Path, markdown: str) -> list[DocCase]:
     return _DocPageParser(page).parse(markdown)
 
 
-def _describe_diag(d: diag.AnyDiag) -> str:
+def _describe_diag(d: diag.Diag) -> str:
     return f"{d.kind.name}: {d}"
 
 
@@ -562,8 +562,6 @@ def _relative_mod_path_from_error(err: BaseException, tmp_path: pathlib.Path) ->
     match err:
         case diag.CompilationError():
             span = err.diags[0].span
-        case errors.UserError():
-            span = err.span
         case _:
             return None
     if span is None:

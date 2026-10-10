@@ -11,12 +11,9 @@ import pathlib
 import string
 import types
 from collections.abc import Hashable, Mapping, Sequence
-from typing import TYPE_CHECKING, Final, NoReturn, Optional, Protocol, Self, overload
+from typing import Final, NoReturn, Optional, Protocol, Self, overload
 
 from leech import src
-
-if TYPE_CHECKING:
-    from leech import errors
 
 
 class Level(enum.IntEnum):
@@ -195,10 +192,6 @@ class Diag:
         return self.msg.text()
 
 
-type AnyDiag = Diag | errors.UserError
-"""A diagnostic, as a catalogue ``Diag`` or as a ``UserError`` not yet moved to the catalogue."""
-
-
 _KEY: Final = object()
 """Guards ``ReportProof``'s constructor, so only ``Diags`` creates proofs."""
 
@@ -213,9 +206,9 @@ class ReportProof:
 
     __slots__ = ("diag",)
 
-    diag: Final[AnyDiag]
+    diag: Final[Diag]
 
-    def __init__(self, key: object, diag: AnyDiag) -> None:
+    def __init__(self, key: object, diag: Diag) -> None:
         assert key is _KEY, "only Diags can create a ReportProof"
         self.diag = diag
 
@@ -237,9 +230,9 @@ class CompilationError(Exception):
     order.
     """
 
-    diags: Final[tuple[AnyDiag, ...]]
+    diags: Final[tuple[Diag, ...]]
 
-    def __init__(self, diags: Sequence[AnyDiag]) -> None:
+    def __init__(self, diags: Sequence[Diag]) -> None:
         assert any(d.level == ERROR for d in diags), "a failed compilation has an error"
         super().__init__("compilation failed")
         self.diags = tuple(diags)
@@ -265,7 +258,7 @@ class Diags:
     separately loaded copies of a file are duplicates too.
     """
 
-    _diags: Final[list[AnyDiag]]
+    _diags: Final[list[Diag]]
     #: Each distinct diagnostic's key, mapped to its proof if it is an error.
     _seen: Final[dict[Hashable, Optional[ReportProof]]]
     _first_error: Optional[ReportProof]
@@ -286,7 +279,7 @@ class Diags:
         self._file_ranks.setdefault(path.resolve(), len(self._file_ranks))
 
     @overload
-    def error(self, err: AnyDiag, /) -> ReportProof:
+    def error(self, err: Diag, /) -> ReportProof:
         pass
 
     @overload
@@ -297,7 +290,7 @@ class Diags:
 
     def error(
         self,
-        err: AnyDiag | DiagKind,
+        err: Diag | DiagKind,
         span: Optional[src.SrcSpan] = None,
         /,
         **args: DiagArgValue,
@@ -315,7 +308,7 @@ class Diags:
         return reported
 
     @overload
-    def raise_error(self, err: AnyDiag, /) -> NoReturn:
+    def raise_error(self, err: Diag, /) -> NoReturn:
         pass
 
     @overload
@@ -326,7 +319,7 @@ class Diags:
 
     def raise_error(
         self,
-        err: AnyDiag | DiagKind,
+        err: Diag | DiagKind,
         span: Optional[src.SrcSpan] = None,
         /,
         **args: DiagArgValue,
@@ -335,7 +328,7 @@ class Diags:
         raise ReportedError(self.error(_built(err, span, args)))
 
     @overload
-    def warn(self, err: AnyDiag, /) -> None:
+    def warn(self, err: Diag, /) -> None:
         pass
 
     @overload
@@ -344,7 +337,7 @@ class Diags:
 
     def warn(
         self,
-        err: AnyDiag | DiagKind,
+        err: Diag | DiagKind,
         span: Optional[src.SrcSpan] = None,
         /,
         **args: DiagArgValue,
@@ -355,7 +348,28 @@ class Diags:
         assert err.level == WARNING, f"not a warning: {err!r}"
         self._record(err)
 
-    def _record(self, err: AnyDiag) -> Optional[ReportProof]:
+    @overload
+    def note(self, err: Diag, /) -> None:
+        pass
+
+    @overload
+    def note(self, kind: DiagKind, span: Optional[src.SrcSpan], /, **args: DiagArgValue) -> None:
+        pass
+
+    def note(
+        self,
+        err: Diag | DiagKind,
+        span: Optional[src.SrcSpan] = None,
+        /,
+        **args: DiagArgValue,
+    ) -> None:
+        """Record a note that stands on its own, given as ``error`` takes an error, unless it
+        duplicates an earlier diagnostic."""
+        err = _built(err, span, args)
+        assert err.level == NOTE, f"not a note: {err!r}"
+        self._record(err)
+
+    def _record(self, err: Diag) -> Optional[ReportProof]:
         """Record ``err`` unless it duplicates an earlier diagnostic, returning the proof of
         ``err`` or of the earlier diagnostic if it is an error."""
         key = _key(err)
@@ -370,11 +384,11 @@ class Diags:
         self._diags.append(err)
         return reported
 
-    def all(self) -> tuple[AnyDiag, ...]:
+    def all(self) -> tuple[Diag, ...]:
         """Every distinct diagnostic, in emission order."""
         return tuple(self._diags)
 
-    def sorted(self) -> tuple[AnyDiag, ...]:
+    def sorted(self) -> tuple[Diag, ...]:
         """Every distinct diagnostic, in source order.
 
         Diagnostics are ordered by their primary span's file in file order, then by its
@@ -384,7 +398,7 @@ class Diags:
         """
         return tuple(sorted(self._diags, key=self._source_order_key))
 
-    def _source_order_key(self, err: AnyDiag) -> tuple[int, int, str, int]:
+    def _source_order_key(self, err: Diag) -> tuple[int, int, str, int]:
         span = err.span
         if span is None:
             return (1, 0, "", 0)
@@ -407,32 +421,24 @@ class Diags:
 
 
 def _built(
-    err: AnyDiag | DiagKind, span: Optional[src.SrcSpan], args: Mapping[str, DiagArgValue]
-) -> AnyDiag:
+    err: Diag | DiagKind, span: Optional[src.SrcSpan], args: Mapping[str, DiagArgValue]
+) -> Diag:
     if isinstance(err, DiagKind):
         return Diag.new(err, span, **args)
     assert span is None and not args, "a built diagnostic takes no other arguments"
     return err
 
 
-def _key(err: AnyDiag) -> Hashable:
-    match err:
-        case Diag():
-            return (
-                err.kind,
-                err.level,
-                err.msg.text(),
-                _location(err.span),
-                _opt_text(err.primary_label),
-                *((_location(label.span), label.msg.text()) for label in err.labels),
-                *((note.msg.text(), _location(note.span)) for note in err.notes),
-            )
-        case _:
-            return (type(err), *(_message_key(m) for m in (err.message, *err.extra)))
-
-
-def _message_key(message: errors.Message) -> Hashable:
-    return (message.level, message.message, _location(message.span))
+def _key(err: Diag) -> Hashable:
+    return (
+        err.kind,
+        err.level,
+        err.msg.text(),
+        _location(err.span),
+        _opt_text(err.primary_label),
+        *((_location(label.span), label.msg.text()) for label in err.labels),
+        *((note.msg.text(), _location(note.span)) for note in err.notes),
+    )
 
 
 def _opt_text(msg: Optional[Msg]) -> Optional[str]:

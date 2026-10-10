@@ -76,7 +76,7 @@ def test_errors_in_root_and_imported_modules_follow_load_order(compiler):
     assert paths == [compiler.workspace / "main.leech", compiler.workspace / "a.leech"]
 
 
-def opt_path(err: diag.AnyDiag) -> pathlib.Path:
+def opt_path(err: diag.Diag) -> pathlib.Path:
     span = err.span
     assert span is not None
     return span.file.path

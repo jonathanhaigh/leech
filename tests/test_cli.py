@@ -13,7 +13,7 @@ import tempfile
 
 import pytest
 
-from leech import diag, diag_kinds, errors, program, session, target, toolchain
+from leech import diag, diag_kinds, program, session, target, toolchain
 from leech.cli import leech as leech_cli
 from tests import harness
 
@@ -423,10 +423,10 @@ def test_program_reports_its_own_warnings(tmp_path):
     program.Program(warning_path, entry=False).check(warned).llvm_ir()
     program.Program(clean_path, entry=False).check(clean).llvm_ir()
 
-    assert warned.diags.level == errors.WARNING
+    assert warned.diags.level == diag.WARNING
     assert [d.kind for d in warned.diags.all()] == [diag_kinds.UNREACHABLE_CODE]
     assert clean.diags.all() == ()
-    assert clean.diags.level == errors.NOTE
+    assert clean.diags.level == diag.NOTE
 
 
 def test_compilation_error_carries_earlier_warnings(tmp_path):
@@ -445,7 +445,7 @@ def test_compilation_error_carries_earlier_warnings(tmp_path):
         diag_kinds.RETURN_TYPE_MISMATCH,
     )
 
-    assert compilation.diags.level == errors.ERROR
+    assert compilation.diags.level == diag.ERROR
     assert compilation.diags.sorted() == exc_info.value.diags
 
 

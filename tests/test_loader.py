@@ -191,7 +191,6 @@ def test_root_name_must_match_its_location(tmp_path, rel_path, name):
 
     err = exc_info.value.reported.diag
     assert err.kind is diag_kinds.MODULE_LOCATION_MISMATCH
-    assert isinstance(err, diag.Diag)
     assert err.msg.args["name"] == name
 
 

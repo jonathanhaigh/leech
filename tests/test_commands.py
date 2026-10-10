@@ -112,16 +112,17 @@ def test_build_failure_is_a_diagnostic_not_a_crash(tmp_path, src, cc, expected):
     assert _ICE not in proc.stderr
 
 
-def test_unwritable_build_output_is_a_diagnostic_not_a_crash(tmp_path):
+def test_unwritable_build_output_is_a_diagnostic_not_a_crash(tmp_path, monkeypatch, capsys):
     root = write(tmp_path / "app.leech", _HELLO)
     out = tmp_path / "out"
     out.mkdir()
+    monkeypatch.setattr(sys, "argv", ["leech", "build", str(root), "-o", str(out)])
 
-    proc = run_tool("leech", "build", root, "-o", out, cwd=tmp_path)
+    with pytest.raises(SystemExit) as exc_info:
+        leech_cli.main()
 
-    assert proc.returncode == 1
-    assert proc.stderr == f"ERROR: cannot write build output: {out} is a directory\n"
-    assert _ICE not in proc.stderr
+    assert exc_info.value.code == 1
+    assert capsys.readouterr().err == f"ERROR: cannot write build output: {out} is a directory\n"
 
 
 def test_run_renders_build_diagnostics_once(tmp_path, monkeypatch, capsys):

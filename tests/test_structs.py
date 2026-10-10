@@ -295,6 +295,22 @@ def test_typ_of_brace_expr_invalid(compiler):
     assert exc_info.value.kinds == (diag_kinds.NON_STRUCT_OR_ARRAY_LITERAL,)
 
 
+def test_positional_value_in_struct_expr(compiler):
+    src = """
+    struct T { a: i32 }
+    pub fn main() i32 {
+        let t = T {1i32};
+        return 0;
+    }
+    """
+    with pytest.raises(diag.CompilationError) as exc_info:
+        compiler.compile(src)
+    assert exc_info.value.kinds == (diag_kinds.POSITIONAL_VALUE_IN_STRUCT_EXPRESSION,)
+    err = exc_info.value.diags[0]
+    assert '"T"' in str(err)
+    harness.assert_span_at(err.span, src, "1i32")
+
+
 def test_missing_field_in_struct_expr(compiler):
     src = """
     struct T {
