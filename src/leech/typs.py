@@ -82,7 +82,8 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
     Comptime parameters in either argument are unification variables. This differs
     from ``match_typ_args``, whose parameters are only variables on its
     ``declared`` side. Bindings must remain finite, so an equation such as
-    ``T = Box[T]`` does not establish an overlap.
+    ``T = Box[T]`` does not establish an overlap. Poison overlaps every type, binding
+    nothing.
     """
     bindings: dict[ComptimeParamTyp, Typ] = {}
 
@@ -106,7 +107,7 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
     def unify(left: Typ, right: Typ) -> bool:
         left = resolve(left)
         right = resolve(right)
-        if left is right:
+        if left is right or left.report_proof() is not None or right.report_proof() is not None:
             return True
         if isinstance(left, ComptimeParamTyp):
             return bind(left, right)
@@ -248,7 +249,10 @@ def resolve_explicit_comptime_args(
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
 ) -> tuple[Typ, ...]:
-    """Resolve and bounds-check an item's explicitly supplied comptime arguments."""
+    """Resolve and bounds-check an item's explicitly supplied comptime arguments.
+
+    An argument that fails to resolve is poison, and the others are still resolved.
+    """
     if not comptime_params:
         if args_ast:
             e.ctx.diags.raise_error(diag_kinds.UNEXPECTED_COMPTIME_ARGUMENT, span, item=item_name)
@@ -264,11 +268,20 @@ def resolve_explicit_comptime_args(
             expected=len(comptime_params),
         )
     comptime_args = tuple(
-        resolve_comptime_arg(param, arg_ast, e)
+        _resolve_comptime_arg_or_poison(param, arg_ast, e)
         for param, arg_ast in zip(comptime_params, args_ast, strict=True)
     )
     check_comptime_arg_bounds(comptime_params, comptime_args, e, span)
     return comptime_args
+
+
+def _resolve_comptime_arg_or_poison(
+    param: ComptimeParamTyp, arg_ast: ast.ComptimeArg, e: ir_env.Env
+) -> Typ:
+    try:
+        return resolve_comptime_arg(param, arg_ast, e)
+    except diag.ReportedError as err:
+        return PoisonTyp(err.reported)
 
 
 def apply_generic_typ(
@@ -290,9 +303,14 @@ def check_comptime_arg_bounds(
     e: ir_env.Env,
     span: Optional[src.SrcSpan],
 ) -> None:
-    """Raise if a comptime argument violates its corresponding parameter's bounds."""
+    """Raise if a comptime argument violates its corresponding parameter's bounds.
+
+    A poisoned argument is skipped.
+    """
     typ_param_bindings: dict[ComptimeParamTyp, Typ] = {}
     for param, arg in zip(comptime_params, comptime_args, strict=True):
+        if arg.report_proof() is not None:
+            continue
         arg_value_typ = None
         if isinstance(arg, ValueParamTyp | ComptimeValueTyp):
             arg_value_typ = arg.value_typ
@@ -363,8 +381,8 @@ class Typ(abc.ABC):
     ) -> None:
         """Infer parameter bindings structurally from ``actual``.
 
-        Shape mismatches are ignored and the first binding wins. The base implementation
-        is a no-op because it contains no parameters.
+        Shape mismatches are ignored, the first binding wins, and poison binds nothing. The
+        base implementation is a no-op because it contains no parameters.
         """
 
     def components(self) -> Iterable[Typ]:
@@ -395,7 +413,44 @@ class Typ(abc.ABC):
         return self.name
 
     def report_proof(self) -> Optional[diag.ReportProof]:
-        """Return ``None``: a type records no errors reported about it."""
+        """Return the proof of the error that poisoned this type, if it is built from poison.
+
+        Code tests for poison with this method, never by comparing with a particular
+        ``PoisonTyp``.
+        """
+        for component in self.components():
+            reported = component.report_proof()
+            if reported is not None:
+                return reported
+        return None
+
+    def reachable_poison_proof(self) -> Optional[diag.ReportProof]:
+        """Return the proof of the error behind poison reachable from this type, if there is
+        any.
+
+        Unlike ``report_proof``, this also looks through struct fields and union payloads. A
+        struct or union whose members fail to resolve counts as poison, with the proof of that
+        failure.
+        """
+        seen: set[Typ] = set()
+        pending: list[Typ] = [self]
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            if isinstance(current, PoisonTyp):
+                return current.reported
+            pending.extend(current.components())
+            try:
+                if isinstance(current, StructTyp):
+                    pending.extend(field.typ for field in current.fields.values())
+                elif isinstance(current, UnionTyp):
+                    pending.extend(
+                        typ for variant in current.variants for typ in variant.payload_typs
+                    )
+            except diag.ReportedError as err:
+                return err.reported
         return None
 
     @property
@@ -421,6 +476,15 @@ class Typ(abc.ABC):
                     Typ.from_ast(typ_ast.pointee_typ, e),
                     Mutability.from_ast(typ_ast.mut),
                 )
+
+    @staticmethod
+    def from_ast_or_poison(typ_ast: ast.TypKind, e: ir_env.Env) -> TypKind:
+        """Resolve a parsed type expression in ``e`` as ``from_ast`` does, or return poison
+        if it fails."""
+        try:
+            return Typ.from_ast(typ_ast, e)
+        except diag.ReportedError as err:
+            return PoisonTyp(err.reported)
 
     @staticmethod
     def _basic_typ_from_ast(typ_ast: ast.BasicTyp, e: ir_env.Env) -> TypKind:
@@ -756,7 +820,8 @@ class ComptimeParamTyp(Typ):
 
     @override
     def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
-        bindings.setdefault(self, actual)
+        if actual.report_proof() is None:
+            bindings.setdefault(self, actual)
 
     @override
     def free_comptime_params(self) -> Iterator[ComptimeParamTyp]:
@@ -980,8 +1045,8 @@ class StructField:
     @property
     @compilation.unit
     def typ(self) -> TypKind:
-        """The field's type."""
-        return Typ.from_ast(self.ast.typ, self._env)
+        """The field's type, which is poison if it fails to resolve."""
+        return Typ.from_ast_or_poison(self.ast.typ, self._env)
 
     @property
     @compilation.unit
@@ -1088,14 +1153,15 @@ class NominalTypTemplate[InstanceT: StructTyp | UnionTyp](GenericTypTemplate):
             already reaches another way: a non-generic declaration's
             zero-argument module instance, and a generic declaration's
             opaque validation instance. Ignored when the instance exists,
-            since only the request that constructs it can be recorded.
+            since only the request that constructs it can be recorded, and for a poisoned
+            instance, which is never generated.
         """
         instance = self._instances.get(comptime_args)
         if instance is None:
             instance = self._new_instance(comptime_args)
             assert comptime_args not in self._instances, "instance creation re-entered itself"
             self._instances[comptime_args] = instance
-            if record_request:
+            if record_request and instance.report_proof() is None:
                 self._record_request(instance)
         return instance
 
@@ -1250,8 +1316,10 @@ class StructTyp(Typ):
 
     @compilation.unit
     def check(self) -> None:
-        for field in self.fields.values():
-            _ = field.typ
+        # A poisoned field fails the check, since the struct can't be laid out.
+        field_typs = [field.typ for field in self.fields.values()]
+        for typ in field_typs:
+            raise_if_poisoned(typ)
 
     def field_at(self, index: int) -> StructField:
         """Return the field at declaration-order ``index``."""
@@ -1261,7 +1329,7 @@ class StructTyp(Typ):
         self, container_name: str
     ) -> Iterator[tuple[TypLayoutHopKind, NominalLayoutTyp]]:
         for field_ast in self.ast.fields:
-            contained = _by_value_nominal(Typ.from_ast(field_ast.typ, self._env))
+            contained = _by_value_nominal(Typ.from_ast_or_poison(field_ast.typ, self._env))
             if contained is None:
                 continue
             yield (
@@ -1314,8 +1382,11 @@ class UnionVariantTemplate:
     @property
     @compilation.unit
     def payload_typs(self) -> tuple[TypKind, ...]:
-        """The payload types over the declaration's own comptime parameters."""
-        return tuple(Typ.from_ast(typ_ast, self._param_env) for typ_ast in self.ast.payload_typs)
+        """The payload types over the declaration's own comptime parameters, each poison if
+        it fails to resolve."""
+        return tuple(
+            Typ.from_ast_or_poison(typ_ast, self._param_env) for typ_ast in self.ast.payload_typs
+        )
 
 
 class UnionVariant:
@@ -1361,8 +1432,11 @@ class UnionVariant:
     @property
     @compilation.unit
     def payload_typs(self) -> tuple[TypKind, ...]:
-        """The variant's payload types, substituted for this instance's arguments."""
-        return tuple(Typ.from_ast(typ_ast, self._env) for typ_ast in self.ast.payload_typs)
+        """The variant's payload types, substituted for this instance's arguments, each poison
+        if it fails to resolve."""
+        return tuple(
+            Typ.from_ast_or_poison(typ_ast, self._env) for typ_ast in self.ast.payload_typs
+        )
 
 
 class UnionTypTemplate(NominalTypTemplate["UnionTyp"]):
@@ -1512,8 +1586,10 @@ class UnionTyp(Typ):
 
     @compilation.unit
     def check(self) -> None:
-        for variant in self.variants:
-            _ = variant.payload_typs
+        # A poisoned payload fails the check, since the union can't be laid out.
+        payload_typs = [typ for variant in self.variants for typ in variant.payload_typs]
+        for typ in payload_typs:
+            raise_if_poisoned(typ)
 
     def variant_at(self, index: int) -> UnionVariant:
         """Return the variant at declaration-order ``index``."""
@@ -1539,7 +1615,7 @@ class UnionTyp(Typ):
     ) -> Iterator[tuple[TypLayoutHopKind, NominalLayoutTyp]]:
         for variant_ast in self.template.ast.variants:
             for index, typ_ast in enumerate(variant_ast.payload_typs):
-                contained = _by_value_nominal(Typ.from_ast(typ_ast, self._env))
+                contained = _by_value_nominal(Typ.from_ast_or_poison(typ_ast, self._env))
                 if contained is None:
                     continue
                 yield (
@@ -1779,6 +1855,41 @@ class NeverTyp(InternedTyp):
         return True
 
 
+class PoisonTyp(InternedTyp):
+    """Poison: the type of something whose checking failed with a reported error.
+
+    It is interned per proof. It coerces to and from
+    every type, so that nothing more is reported about it, and a diagnostic that refers to it
+    is dropped.
+    """
+
+    reported: Final[diag.ReportProof]
+
+    def __init__(self, reported: diag.ReportProof) -> None:
+        self.reported = reported
+
+    @property
+    @override
+    def name(self) -> str:
+        return "{poison}"
+
+    @override
+    def coerces_to(self, target_typ: Typ) -> bool:
+        return True
+
+    @override
+    def report_proof(self) -> Optional[diag.ReportProof]:
+        return self.reported
+
+
+def raise_if_poisoned(typ: Typ) -> None:
+    """Raise ``diag.ReportedError`` with the proof of the error that poisoned ``typ``, if it
+    is poisoned."""
+    reported = typ.report_proof()
+    if reported is not None:
+        raise diag.ReportedError(reported)
+
+
 type NominalLayoutTyp = StructTyp | UnionTyp
 """A nominal type whose declaration can hold another type by value."""
 
@@ -1921,6 +2032,7 @@ type TypKind = (
     | EnumBackingTyp
     | VoidTyp
     | NeverTyp
+    | PoisonTyp
 )
 """Every instantiable Typ implementation used by the compiler."""
 

@@ -263,8 +263,40 @@ def test_msg_text_renders_types_with_diag_str():
     assert diag.Msg(diag.MsgKind("got {n}"), {"n": 3}).text() == "got 3"
 
 
-def test_types_have_no_report_proof():
+def test_an_unpoisoned_type_has_no_report_proof():
     assert typs.I32.report_proof() is None
+
+
+def test_a_diagnostic_about_poison_is_dropped_and_answered_with_its_proof(tmp_path):
+    diags = diag.Diags()
+    reported = diags.error(_error("cc"))
+    poison = typs.PtrTyp(typs.PoisonTyp(reported), typs.CONST)
+    about_poison = diag.MsgKind("of type {typ}")
+
+    cascades = [
+        diag.Diag.new(diag_kinds.NON_ARRAY_INDEX, None, typ=poison),
+        _error("cc2").with_label(about_poison, _span(tmp_path / "a.leech"), typ=poison),
+        _error("cc3").with_note(about_poison, typ=poison),
+    ]
+    for cascade in cascades:
+        assert diags.error(cascade) is reported
+    with pytest.raises(diag.ReportedError) as exc_info:
+        diags.raise_error(cascades[0])
+    diags.warn(_warning(None).with_note(about_poison, typ=poison))
+
+    assert exc_info.value.reported is reported
+    assert len(diags.all()) == 1
+
+
+def test_a_diagnostic_about_poison_is_answered_with_its_proof_while_speculating():
+    diags = diag.Diags()
+    reported = diags.error(_error("cc"))
+    cascade = diag.Diag.new(diag_kinds.NON_ARRAY_INDEX, None, typ=typs.PoisonTyp(reported))
+
+    with diags.speculating():
+        assert diags.error(cascade) is reported
+
+    assert diags.dropped_count == 0
 
 
 def test_diag_new_takes_the_kind_level_and_adds_labels_and_notes_in_order(tmp_path):

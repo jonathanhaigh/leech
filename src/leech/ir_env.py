@@ -370,6 +370,9 @@ class Env:
             args = typs.resolve_explicit_comptime_args(
                 item.name, item.comptime_params, seg.comptime_args, self, seg.span
             )
+            # A trait application can't be used without all of its arguments.
+            for arg in args:
+                typs.raise_if_poisoned(arg)
             return ir_traits.TraitApplication(item, args)
 
         if isinstance(item, ir_traits.ImplFnSelection):

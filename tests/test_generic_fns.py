@@ -1006,7 +1006,7 @@ def test_typ_arg_given_for_value_param_is_rejected(compiler):
     src = """
     fn f[value N: usize]() usize { return N; }
     pub fn main() i32 {
-        let _ = f[i32]();
+        let x = f[i32]();
         return 0;
     }
     """
@@ -1020,7 +1020,7 @@ def test_value_arg_given_for_typ_param_is_rejected(compiler):
     src = """
     fn f[T](x: T) T { return x; }
     pub fn main() i32 {
-        let _ = f[4](9);
+        let x = f[4](9);
         return 0;
     }
     """
@@ -1033,7 +1033,7 @@ def test_wrong_typ_value_arg_is_rejected(compiler):
     src = """
     fn f[value N: usize]() usize { return N; }
     pub fn main() i32 {
-        let _ = f[true]();
+        let x = f[true]();
         return 0;
     }
     """
@@ -1106,7 +1106,7 @@ def test_out_of_range_value_arg_is_rejected(compiler):
     src = """
     fn f[value N: u8]() u8 { return N; }
     pub fn main() i32 {
-        let _ = f[300]();
+        let x = f[300]();
         return 0;
     }
     """
@@ -1119,7 +1119,7 @@ def test_int_lit_against_bool_value_param_is_rejected(compiler):
     src = """
     fn f[value B: bool]() bool { return B; }
     pub fn main() i32 {
-        let _ = f[4]();
+        let x = f[4]();
         return 0;
     }
     """

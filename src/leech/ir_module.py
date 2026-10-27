@@ -132,13 +132,15 @@ class FnSymbol[FnAstT_co: ast.FnDecl](abc.ABC):
         pass
 
     def _instance(self, args: tuple[typs.Typ, ...]) -> FnInstance:
-        """Return the instance for ``args``, constructing and requesting it the first time."""
+        """Return the instance for ``args``, constructing it the first time and requesting it
+        unless an argument is poisoned."""
         instance = self._instances.get(args)
         if instance is None:
             instance = FnInstance(self, args)
             assert args not in self._instances, "instance creation re-entered itself"
             self._instances[args] = instance
-            self.ctx.record_fn_request(instance)
+            if all(arg.report_proof() is None for arg in args):
+                self.ctx.record_fn_request(instance)
         return instance
 
 
@@ -246,10 +248,10 @@ class ParsedFnSymbol[FnAstT_co: ast.FnDecl](FnSymbol[FnAstT_co]):
             # struct fields, ...) it stays unnameable, the same as "void".
             ret_typ_env = self.env.new_child()
             ret_typ_env.add_container("never", typs.NEVER)
-            ret_typ = typs.Typ.from_ast(self.ast.ret_typ, ret_typ_env)
+            ret_typ = typs.Typ.from_ast_or_poison(self.ast.ret_typ, ret_typ_env)
 
         param_typs: list[typs.Typ] = [
-            typs.Typ.from_ast(param_ast.typ, self.env) for param_ast in self.ast.params
+            typs.Typ.from_ast_or_poison(param_ast.typ, self.env) for param_ast in self.ast.params
         ]
         if self.ast.receiver is not None:
             assert self.recv_typ is not None
@@ -1054,6 +1056,7 @@ class Mod:
             )
 
         typ = typs.Typ.from_ast(impl_typ_ast, impl_env)
+        typs.raise_if_poisoned(typ)
         if not isinstance(typ, typs.StructTyp | typs.UnionTyp):
             self.ctx.diags.raise_error(
                 diag_kinds.UNSUPPORTED_IMPL_TYPE, impl_typ_ast.span, typ=impl_typ_ast.diag_str()
@@ -1128,6 +1131,7 @@ class Mod:
         trait_application = impl_env.resolve_trait(trait_typ_ast.path)
 
         self_typ = typs.Typ.from_ast(opt_util.opt_unwrap(impl_ast.for_typ), impl_env)
+        typs.raise_if_poisoned(self_typ)
 
         impl = ir_traits.Impl(
             impl_ast,

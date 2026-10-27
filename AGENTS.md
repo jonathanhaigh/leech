@@ -67,6 +67,11 @@ dispatching on a small closed set of cases. Give an empty body, such as an `@ove
 an abstract method, a `pass` statement on its own line rather than `...`. The exception is a
 `Protocol` member that returns a value, which the type checker accepts only with `...`.
 
+Report a user error to the compilation's `diag.Diags` with a kind from `diag_kinds`. In
+`TypCheck`, report it with `_report_and_poison` or `_report_and_fail` and carry on, giving
+whatever failed the poison type, rather than raising, so that one check reports every
+independent error.
+
 ## Testing Guidelines
 
 Pytest is configured with strict `xfail` handling. Name files `test_<feature>.py` and

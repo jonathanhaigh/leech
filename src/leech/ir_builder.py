@@ -64,6 +64,12 @@ def _pattern_binds_anything(pattern_ast: ast.PatternKind) -> bool:
             return False
 
 
+def _assert_poison_free[T: typs.Typ](typ: T) -> T:
+    reported = typ.reachable_poison_proof()
+    assert reported is None, f"poison reachable from {typ.name}: {reported.diag}"
+    return typ
+
+
 class CfgBuilder:
     """Lower one function body or module initializer to a control-flow graph.
 
@@ -103,6 +109,8 @@ class CfgBuilder:
         self._ctx = ctx
         self._typ_check_results = typ_check_results
         self._comptime_arg_mapping = opt_util.opt_or_default(comptime_arg_mapping, {})
+        for comptime_arg in self._comptime_arg_mapping.values():
+            _assert_poison_free(comptime_arg)
         self.cfg = ir_values.Cfg()
         self._generate_bb_name = naming.VarNamer()
         # Reserve the "entry"/"exit" basenames so a later `add_bb` call
@@ -117,7 +125,8 @@ class CfgBuilder:
         """Return ``decl``'s recorded local pointer type for this instance."""
         local_typ = self._typ_check_results.local_typ(decl)
         return asserts.checked_cast(
-            local_typ.substitute_typ_params(self._comptime_arg_mapping), typs.PtrTyp
+            _assert_poison_free(local_typ.substitute_typ_params(self._comptime_arg_mapping)),
+            typs.PtrTyp,
         )
 
     def _local_alloca(self, decl: resolve.LocalDecl, ast_node: ast.Ast) -> ir_values.Value:
@@ -241,7 +250,7 @@ class CfgBuilder:
         if recorded is None:
             return
 
-        recorded = recorded.substitute_typ_params(self._comptime_arg_mapping)
+        recorded = _assert_poison_free(recorded.substitute_typ_params(self._comptime_arg_mapping))
         if ctx == _ExprContext.VALUE:
             # Lowering discovers divergence structurally, so e.g. `g() + 1i32`
             # can legitimately lower to `never` where the checker recorded i32.
@@ -873,14 +882,16 @@ class CfgBuilder:
         substituted before selecting the concrete instance.
         """
         concrete_comptime_args = tuple(
-            typ_arg.substitute_typ_params(self._comptime_arg_mapping) for typ_arg in applied.args
+            _assert_poison_free(typ_arg.substitute_typ_params(self._comptime_arg_mapping))
+            for typ_arg in applied.args
         )
         return applied.fn.instantiate(concrete_comptime_args).ref
 
     def _selection_ref(self, selection: ir_traits.ImplFnSelection) -> ir_module.FnRef:
         """Instantiate an impl-function selection for this concrete body."""
         args = tuple(
-            arg.substitute_typ_params(self._comptime_arg_mapping) for arg in selection.impl_args
+            _assert_poison_free(arg.substitute_typ_params(self._comptime_arg_mapping))
+            for arg in selection.impl_args
         )
         return selection.fn.instantiate(args).ref
 

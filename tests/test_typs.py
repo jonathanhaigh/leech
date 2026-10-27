@@ -486,6 +486,50 @@ def test_is_concrete_means_having_no_free_comptime_params(compiler):
     assert typs.ComptimeValueTyp(typs.USIZE, 3).is_concrete()
 
 
+def _proof(program: str) -> diag.ReportProof:
+    return diag.Diags().error(diag_kinds.MISSING_C_COMPILER, None, program=program)
+
+
+def test_poison_is_interned_per_proof():
+    first = _proof("a")
+    second = _proof("b")
+
+    assert typs.PoisonTyp(first) is typs.PoisonTyp(first)
+    assert typs.PoisonTyp(first) is not typs.PoisonTyp(second)
+
+
+def test_a_typ_built_from_poison_has_its_proof():
+    reported = _proof("a")
+    poison = typs.PoisonTyp(reported)
+
+    assert poison.report_proof() is reported
+    assert typs.PtrTyp(typs.ArrayTyp.of_length(poison, 2), typs.CONST).report_proof() is reported
+    assert typs.FnTyp(typs.I32, (typs.BOOL, poison)).report_proof() is reported
+    assert typs.FnTyp(typs.I32, (typs.BOOL,)).report_proof() is None
+
+
+def test_poison_coerces_to_every_typ():
+    poison = typs.PoisonTyp(_proof("a"))
+
+    assert poison.coerces_to(typs.I32)
+    assert poison.coerces_to(typs.PtrTyp(typs.BOOL, typs.MUT))
+
+
+def test_poison_binds_nothing_and_overlaps_every_typ(compiler):
+    mod = compiler.parse("fn f[T](x: T) {}")
+    (fn,) = mod.defns
+    assert isinstance(fn, ast.FnDefn)
+    t = typs.TypParamTyp(fn, fn.comptime_params[0].ident.name)
+    poison = typs.PoisonTyp(_proof("a"))
+    bindings: dict[typs.ComptimeParamTyp, typs.Typ] = {}
+
+    typs.PtrTyp(t, typs.CONST).infer_typ_args(typs.PtrTyp(poison, typs.CONST), bindings)
+
+    assert bindings == {}
+    _assert_typs_overlap_symmetric(poison, typs.I32, True)
+    _assert_typs_overlap_symmetric(typs.PtrTyp(poison, typs.CONST), typs.BOOL, True)
+
+
 def _assert_typs_overlap_symmetric(left: typs.Typ, right: typs.Typ, expected: bool) -> None:
     assert typs.typs_overlap(left, right) is expected
     assert typs.typs_overlap(right, left) is expected

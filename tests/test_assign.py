@@ -300,9 +300,7 @@ def test_assign_wrong_typ_to_struct_field(compiler):
     assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TYPE_MISMATCH,)
 
 
-def test_assign_to_const_reported_before_typ_mismatch(compiler):
-    # Both wrong at once: the place being const is reported first, since
-    # it's a problem with the assignment itself rather than the value.
+def test_assign_to_const_with_a_typ_mismatch_reports_both(compiler):
     src = """
     pub fn main() i32 {
         let x = 1u8;
@@ -312,7 +310,10 @@ def test_assign_to_const_reported_before_typ_mismatch(compiler):
     """
     with pytest.raises(diag.CompilationError) as exc_info:
         compiler.compile(src)
-    assert exc_info.value.kinds == (diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,)
+    assert exc_info.value.kinds == (
+        diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE,
+        diag_kinds.ASSIGNMENT_TYPE_MISMATCH,
+    )
 
 
 def test_assign_through_explicit_const_ptr_param(compiler):

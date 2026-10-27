@@ -139,29 +139,25 @@ def test_checking_reports_every_declaration_kind(compiler, src, kinds):
 
 
 def test_discovery_reports_each_failing_instance_and_continues(compiler):
-    # Only loaded, so checking the declarations doesn't find these errors first. B[i32]
-    # is requested only by h[i32]'s signature, and h[i32]'s own body fails too.
+    # Only loaded, so checking the declarations doesn't find these errors first. A[i32] is
+    # requested by f's signature, and f fails too, since poison is reachable from its
+    # parameter's type. g lowers, but the instance h[i32] it requests fails.
     mod = compiler.load(
         """
         struct A[T] { x: MissingA }
-        struct B[T] { x: MissingB }
-        fn h[T](b: *B[T]) i32 { return true; }
+        fn h[T]() i32 { return true; }
         pub fn f(a: *A[i32]) i32 { return 0; }
-        pub fn g(b: *B[i32]) i32 { return h[i32](b); }
+        pub fn g() i32 { return h[i32](); }
         """
     )
 
     result = mono.discover(mod.ctx)
 
     found = mod.ctx.diags.sorted()
-    assert [d.kind for d in found] == [
-        diag_kinds.UNKNOWN_NAME,
-        diag_kinds.UNKNOWN_NAME,
-        diag_kinds.RETURN_TYPE_MISMATCH,
-    ]
-    assert ["MissingA" in str(d) for d in found[:2]] == [True, False]
+    assert [d.kind for d in found] == [diag_kinds.UNKNOWN_NAME, diag_kinds.RETURN_TYPE_MISMATCH]
+    assert "MissingA" in str(found[0])
     assert result.struct_instances == ()
-    assert _main_instance_names(result) == ["main::f", "main::g"]
+    assert _main_instance_names(result) == ["main::g"]
 
 
 def _main_instance_names(result: mono.MonoResult) -> list[str]:

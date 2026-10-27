@@ -139,7 +139,7 @@ Non-goals:
 
 | Question | Decision |
 | --- | --- |
-| Recovery granularity | Expression-level poison (`typs.ErrorTyp`), plus memoized failure of each analysis unit |
+| Recovery granularity | Expression-level poison (`typs.PoisonTyp`), plus memoized failure of each analysis unit |
 | Diagnostic representation | Immutable `Diag` values built from a catalogue of `DiagKind` entries. Not exceptions |
 | Catalogue form | A Python module of constant `DiagKind` entries with `str.format` templates |
 | Proof of reporting | Reporting an error returns a `ReportProof`. Poison and unit failure require one |
@@ -390,14 +390,14 @@ where it is made. A diagnostic without labels or notes is reported in one call, 
 `ctx.diags.raise_error(kinds.UNKNOWN_NAME, span, item_kind=..., name=...)`. One with labels
 or notes is built with `diag.Diag.new(kinds.X, span, ...)` and its `with_*` methods, and then
 passed in. `raise_error` is the usual way to report an error that ends the current
-computation. `TypCheck._error` wraps `error` for the type checker. `error` and `warn` both record a
-diagnostic as follows. The sink:
+computation. `TypCheck._report_and_poison` wraps `error` for the type checker. `error` and
+`warn` both record a diagnostic as follows. The sink:
 
 1. Applies the `WarningPolicy` (`-w`, `-Werror`, `-Wno-<name>`, ...) to get the effective
    level, and drops a diagnostic that the policy disables.
-2. **Suppresses cascades.** If any argument's `report_proof()` is not `None`, the
-   diagnostic is dropped, and `error` returns that argument's proof. This is the safety net
-   behind the explicit poison rules below.
+2. **Suppresses cascades.** If any argument of its message, labels or notes has a
+   `report_proof()` that is not `None`, the diagnostic is dropped, and `error` returns that
+   argument's proof. This is the safety net behind the explicit poison rules below.
 3. **Deduplicates structurally.** The key is the kind, the rendered arguments, and every
    span as (resolved path, start, end), as `build._Diags` keys today. A duplicate is not
    stored again, and `error` returns the earlier diagnostic's proof.
@@ -460,9 +460,11 @@ block as speculative, and nests. While it is active, the sink records nothing ne
 
 - Reporting an error raises `diag.SpeculativeError` instead of recording it. That exception
   carries no proof and is not a `ReportedError`, so recovery code (`Ctx.recovering`, and
-  poison after #116) never intercepts it, and the speculative computation unwinds to the code
-  that began speculating. An error that duplicates one already recorded is not new: it
-  returns, or raises `ReportedError` with, the recorded error's proof as usual.
+  `TypCheck` turning a `ReportedError` into poison) never intercepts it, and the speculative
+  computation unwinds to the code that began speculating. An error that duplicates one
+  already recorded is not new: it returns, or raises `ReportedError` with, the recorded
+  error's proof as usual. Nor is an error about poison, which is answered with the poison's
+  proof.
 - A warning or note is dropped, and the computation continues, since a warning does not
   invalidate its result.
 
@@ -501,21 +503,24 @@ Both inference probes, `TypCheck._infer_comptime_args` (function calls) and
 `TypCheck._variant_union_typ` (union-variant constructors), share one helper,
 `TypCheck._probe_arg_typs(declared_typs, arg_asts, e) -> bindings`. It runs inside
 `TypCheck._speculating()`, which suppresses lowering facts and speculates. For each argument
-(skipping unsuffixed literals, as today), it checks the argument, catching `SpeculativeError`
-and `ReportedError`. An argument that fails, or whose type is poison, contributes no
-inference information. Then:
+(skipping unsuffixed literals, as today), it checks the argument, catching `SpeculativeError`.
+An argument that fails contributes no inference information. A poisoned argument binds each
+parameter its declared type names, that no other argument binds, to poison, so the call
+reports nothing more about it. Then:
 
-- If every comptime parameter is bound, the authoritative pass proceeds as today. It checks
-  the arguments against the substituted parameter types and reports their real errors and
-  warnings.
-- If a parameter is unbound, every probed argument is first checked again authoritatively,
-  which reports what the probe dropped: a failed argument's real error and every argument's
-  warnings. Each is checked against its declared type with the bindings found so far
-  substituted, if they settle every parameter it names, and otherwise without an expected
-  type (skipping an unsuffixed literal, which needs one). An argument that failed only for
-  want of an expected type, such as `3000000000 + 0` where `T` is `i64`, then succeeds. If an
-  argument has an error, the call or constructor has poison type; before poison exists
-  (#116), the first error's `ReportedError` propagates instead. Otherwise
+- If every comptime parameter is bound and the arguments satisfy their bounds, the
+  authoritative pass proceeds as today. It checks the arguments against the substituted
+  parameter types and reports their real errors and warnings.
+- Otherwise every probed argument is first checked again authoritatively, which reports
+  what the probe dropped: a failed argument's real error and every argument's warnings. Each
+  is checked against its declared type with the bindings found so far substituted, if they
+  settle every parameter it names, and otherwise without an expected type (skipping an
+  unsuffixed literal, which needs one). Each argument adds to the bindings for the arguments
+  after it, a poisoned one binding to poison. An argument that failed only for want of an
+  expected type, such as `3000000000 + 0` where `T` is `i64`, then succeeds. The call or
+  constructor has poison type. If an argument violated a bound, the proof is the bound
+  error's. If checking the arguments reported an error or found poison, the proof is the
+  first such, since that error explains the failure. Otherwise
   `uninferable-comptime-argument` is reported as today.
 
 This fixes #72 (the probe's false overflow is never reported) and #73 (the probe's warning
@@ -685,63 +690,91 @@ re-entering the cycle later from another unit reports nothing either.
 
 ### Poison and expression-level recovery
 
-`typs.ErrorTyp` is the poison type. It is interned per proof
-(`typs.ErrorTyp(reported)`), with `name` `"{error}"`, which is never rendered
-because the sink drops diagnostics that reference it. It can only be obtained through
-`typs.error_typ(reported: ReportProof)`, so poison always follows a reported error and
-records *which* error. `Typ.report_proof()` returns the proof of the first poison
-component found, for `ErrorTyp` and for any type built from it (pointers, arrays,
+`typs.PoisonTyp` is the poison type. It is interned per proof
+(`typs.PoisonTyp(reported: ReportProof)`), with `name` `"{poison}"`, which is never
+rendered because the sink drops diagnostics that reference it. Since it can only be made
+from a proof, poison always follows a reported error and records *which* error. `Typ.report_proof()` returns the proof of the first poison
+component found, for `PoisonTyp` and for any type built from it (pointers, arrays,
 instances with a poisoned argument), and `None` otherwise. Code tests for poison with
-`report_proof() is not None`, never by comparing with a particular `ErrorTyp`. This
-lets a layout query fail its unit with the *component's* proof, and lets a probe treat a
-poisoned argument as one that failed.
+`report_proof() is not None`, never by comparing with a particular `PoisonTyp`. This
+lets a probe treat a poisoned argument as one that failed.
 
-`TypCheck` reports most errors with `self._error(kind, span, **args) -> typs.Typ`, which
-emits the error and returns poison as the expression's type. It raises only when the
-current unit has no meaningful way to continue. Rules for continuing:
+`TypCheck` reports most errors with `self._report_and_poison(kind, span, **args)`, which
+emits the error and returns poison as the expression's type, or with
+`self._report_and_fail(...)`, which returns the proof, where the expression keeps a
+meaningful type. It continues after every error, and records the proof of each error it
+reports and of all poison reachable from a type it records, through components, struct
+fields and union payloads (`Typ.reachable_poison_proof`). Once the body is checked, the
+check fails with the first of them, so a body with an error, or one that uses a type with a
+poisoned member, even through a pointer, is never lowered. Two fallbacks keep
+an unconverted raise site from ending the body: `_check_expr` turns a `ReportedError` into
+poison for that expression, and `_check_block_expr` skips a statement that raises one.
+
+Where an error leaves an expression with no type to expect, such as an argument of a
+poisoned callee, the expression is checked against poison, and an unsuffixed integer literal
+expected to have a poisoned type has that type. Checking it without an expected type would
+instead default a literal to `i32` and could report a false overflow. Rules for continuing:
 
 - **Names:** an unresolved variable, path, type or method has poison type. A `let` whose
   initializer or declared type fails binds its name with poison type, so later uses are
-  silent.
+  silent. So does a `let` whose initializer is `void`, after reporting it.
 - **Operators:** if either operand is poison, the result is poison, without operand checks.
   Otherwise an invalid operand is reported once, and the result has the operator's usual
   result type where it is known regardless of the operands (`bool` for comparisons and
   logic), and poison otherwise.
 - **Coercion:** poison coerces to and from every type. Expected-type mismatches involving
   poison are never reported.
-- **Calls:** if the callee is poison, every argument is still checked without an expected
-  type, and the result is poison. A wrong arity is reported once. Every argument is still
-  checked: matched arguments against their parameter types, extra arguments without one.
-  The call's result type is the callee's return type. Failed comptime-argument inference
-  makes the result poison.
+- **Calls:** if the callee is poison, or fails to resolve, every argument is still checked,
+  against poison, and the result is poison. A wrong arity is reported once. Every argument
+  is still checked: matched arguments against their parameter types, and extra arguments
+  against the arity error's poison. The call's result type is the callee's return type. Failed
+  comptime-argument inference makes the result poison, as
+  [Speculative checking](#speculative-checking) describes.
 - **Comptime arguments:** `typs.check_comptime_arg_bounds` and comptime-argument kind and
   type checks skip any poisoned argument. An explicit comptime argument that fails to
-  resolve becomes poison. An instance with a poisoned argument is itself poisoned and is
-  never requested for monomorphization.
+  resolve becomes poison, and the others are still resolved. An instance with a poisoned
+  argument is itself poisoned and is never requested for monomorphization. A trait
+  application or impl target with a poisoned argument is rejected with its proof instead,
+  since it is useless without the argument, and an impl for a poisoned type would overlap
+  every impl of its template.
 - **Struct, union and array literals:** every field or element expression is checked even
-  after an error in another field. A literal whose type failed to resolve has poison type,
-  and its fields are checked without expected types.
+  after an error in another field, or in the struct's own declaration. A value with no
+  field to expect, because it is positional or names an unknown field, is checked against
+  poison. A missing field is
+  reported only if every value names a known field, since a misnamed value is probably the
+  missing field, as rustc's `check_expr_struct_fields` does. A literal whose type failed to
+  resolve has poison type, and its values are checked against it.
 - **Field access and indexing:** on a poisoned base, the result is poison. An unknown field
   is reported, and the result is poison.
+- **Patterns:** a pattern with an error still binds its names: the payload of a pattern that
+  fails is checked against poison, and a name an or-pattern alternative may not bind is
+  bound to poison. A `match` with a pattern error, or a poisoned scrutinee, still checks
+  every arm's body, but skips exhaustiveness and unreachable-arm analysis.
 - **Control flow:** a poisoned `if` or `while` condition is not reported as non-`bool`.
-  `if`/`match` branches whose peer type involves poison have a poisoned type. A poisoned
-  `match` scrutinee still checks every arm's body, with pattern bindings poisoned, but
-  skips exhaustiveness and unreachable-arm analysis.
+  `if`/`match` branches whose peer type involves poison have a poisoned type. A `break` or
+  `continue` outside a loop, or with an unknown label, is reported and has no target.
 - **Returns:** a poisoned returned value, or a poisoned block value, is not compared with
-  the return type. The missing-return check is skipped when the block's type is poison.
-- **Statements:** a statement whose check raises `ReportedError` is skipped, and checking
-  continues with the next statement. This is the fallback for a raise site that has not
-  been converted to poison yet.
+  the return type. The missing-return check is skipped when the block's type is poison. A
+  `return` outside a function checks its value against poison.
 
-Lowering, compile-time evaluation and code generation never see poison. A unit with any
-error is never lowered, and the phase boundary below stops the compilation before code
-generation. Every place outside `typcheck.py` and `typs.py` that receives a type asserts
-that it is not poison.
+Lowering, compile-time evaluation and code generation never see poison, not even in a
+struct field reached through a pointer. A unit with any error is never lowered, and the
+phase boundary below stops the compilation before code generation. `ir_builder.CfgBuilder`
+asserts that no poison is reachable from its comptime arguments, from any type it reads
+from the check results, or from the comptime arguments of any function it instantiates,
+after substituting its own. `ll_typs.ll_typ` asserts that it is never given poison. The cost
+is that a body that uses a type with a poisoned member reports no `unreachable-code`
+warnings, and nor does a generic instance that only such bodies request, because discovery
+never lowers them. That loses only warnings, in a program that already has an error, and in
+exchange the interpreter and code generation never have to consider poison.
 
 The same rules apply to declarations: an unresolvable field type, payload type, parameter
-type or return type is reported once and becomes poison, so the struct or function stays
-usable by its dependents. Anything whose *layout* is needed (sizes, `size_of`, infinite-size
-validation) fails its unit instead when a component is poison.
+type or return type is reported once and becomes poison (`Typ.from_ast_or_poison`), so the
+struct or function stays usable by its dependents while they are checked. A struct or union
+instance's `check` fails with a poisoned member's proof, so discovery leaves it out, and a
+body that uses the type fails its check, as above, so `__size_of` never evaluates one at
+compile time. Infinite-size validation ignores a poisoned member, which holds nothing by
+value.
 
 ### Phase boundary: no code generation with errors
 
@@ -1043,11 +1076,11 @@ the exact diagnostic identity.
 
 ## Risks and open questions
 
-- **Poison coverage is the biggest risk.** Every `TypCheck` path must handle `ErrorTyp`.
+- **Poison coverage is the biggest risk.** Every `TypCheck` path must handle `PoisonTyp`.
   Mitigations: sink-level suppression of any diagnostic referencing poison; the
-  statement-level `ReportedError` fallback; asserts that lowering never sees poison; and a test
-  that injects an undefined name into each expression position of a corpus of test programs
-  and asserts that exactly one error is reported.
+  expression- and statement-level `ReportedError` fallbacks; asserts that lowering never sees
+  poison; and a test that injects an undefined name into each expression position of a corpus
+  of test programs and asserts that exactly one error is reported.
 - **Arguments are not statically typed.** basedpyright can't check `**args` against a
   template. Runtime asserts plus the catalogue test catch mismatches when a diagnostic is
   built. A suite-wide test hook records which kinds were emitted, and fails if a catalogue
@@ -1087,7 +1120,7 @@ Existing issues were rescoped, and #114–#122 filed, as follows.
 | #113 | Report every user error before code generation | Force every declaration unit in checking. Discovery is part of checking, with per-request recovery. Phase boundary. `leech check` without codegen. `LlvmVerificationError` becomes `diag.InternalError` | #93 (best after #114) |
 | #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationError`, message-style normalization, `DiagArg` on types, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
 | #72 + #73 | Speculative-probe diagnostics | `Ctx.speculating()`: errors unwind unreported as `SpeculativeError`, warnings are dropped, and forced units that dropped anything aren't memoized. A shared probe helper for function calls and union-variant constructors. Probe failures contribute no inference | #93, #114 |
-| #116 | Poison type and expression-level error recovery | `typs.ErrorTyp`, `error_typ(reported)`, `TypCheck._error`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
+| #116 | Poison type and expression-level error recovery | `typs.PoisonTyp(reported)`, `TypCheck._report_and_poison`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
 | #117 | Limit reported errors with `-fmax-errors` | Cap with withheld-count note, on `leech` | #114 |
 | #118 | Render diagnostics in the rustc layout | `diag_text.py`: header, location, full-span underlines, labels, multi-line spans, notes, summary, `-fdiagnostics-color` | #115 |
 | #119 | Explain diagnostics with `leech explain` | `diag_docs/*.md`, `leech explain`, doc-tested examples, shrinking allowlist | #115 |

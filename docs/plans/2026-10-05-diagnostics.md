@@ -432,33 +432,35 @@ correctly; a probe never reports, loses or duplicates a diagnostic.
 `ir_builder.py`, `comptime.py`, `codegen.py`, `diag.py`; tests in new
 `tests/test_poison.py` plus updates across feature tests.
 
-- `typs.ErrorTyp`, interned per proof, and `typs.error_typ(reported)`.
+- `typs.PoisonTyp(reported)`, interned per proof.
   `report_proof()` on `Typ` and its compound subclasses (first poisoned component's
   proof). `coerces_to`, `unify`, `infer_typ_args` treat poison as compatible with
   everything and binding nothing. `check_comptime_arg_bounds` and comptime-argument kind and
   value-type checks skip poisoned arguments; instances with poisoned arguments are never
   recorded as monomorphization requests.
 - `Diags.error`/`warn` drop any diagnostic with an argument whose `report_proof()` is not
-  `None`; `error` returns that proof (asserting it is not void).
-- `TypCheck._error(kind, span, **args) -> typs.Typ` emits and returns poison. Convert raise
-  sites in `typcheck.py` to it following the design's rules, by construct: names and `let`;
-  operators; coercions and returns; calls and comptime-argument inference; literals; field
-  access and indexing; `if`/`while`/`match` (exhaustiveness and unreachable-arm analysis
-  skipped on a poisoned scrutinee). `_check_block_expr` catches `ReportedError` per statement.
+  `None`; `error` returns that proof.
+- `TypCheck._report_and_poison(kind, span, **args) -> typs.Typ` emits and returns poison.
+  Convert raise sites in `typcheck.py` to it following the design's rules, by construct:
+  names and `let`; operators; coercions and returns; calls and comptime-argument inference;
+  literals; field access and indexing; `if`/`while`/`match` (exhaustiveness and
+  unreachable-arm analysis skipped on a poisoned scrutinee). `_check_block_expr` catches
+  `ReportedError` per statement.
 - Declarations: unresolvable field, payload, parameter and return types become poison with
   one diagnostic (`Typ.from_ast` gains a reporting variant used by declaration units).
-  Layout queries on a poisoned component fail their unit with the component's proof.
-- Assert no `ErrorTyp` reaches `ir_builder`, `comptime` or `codegen` (`asserts` helper
-  `assert_not_poisoned`).
+  A body that uses a type with poison reachable from it, such as through a struct field,
+  fails its check with that poison's proof.
+- Assert no poison is reachable from any type `ir_builder` reads, so none reaches `comptime`
+  or `codegen`.
 - Tests: #20's acceptance example (two undefined variables: two errors, nothing else);
   `let c: i32 = a + true` after a poisoned `a` reports nothing; two bad arguments in one
   call report two errors; a struct literal with two bad fields reports two errors; a
   poisoned `match` scrutinee reports no exhaustiveness error; a function with an unknown
   parameter type reports once and its callers report nothing about that parameter; an
   explicit undefined comptime argument and an inferred poisoned one report nothing about
-  bounds; poison produced inside a discarded probe never reaches a recorded fact; a layout
-  query over a poisoned field fails with that field's proof when other unrelated errors
-  exist.
+  bounds; every poison type, including any made while probing, carries the proof of a
+  recorded error; a layout query over a poisoned field fails with that field's proof when
+  other unrelated errors exist.
   **Poison-injection test:** for each expression position in a fixed corpus of valid
   programs, replace one expression with an undefined name and assert exactly one
   diagnostic (`unknown-name`) is reported.
@@ -560,7 +562,7 @@ codegen path observes poison.
   user guide's getting-started troubleshooting section, if it exists by then.
 - Update `AGENTS.md` (in #115, extended by #116 and #119) with a short diagnostics convention: add
   a `DiagKind` to `diag_kinds.py` following the message style; report with the sink rather
-  than raising; in `TypCheck`, report with `_error` and continue with poison; add an
+  than raising; in `TypCheck`, report with `_report_and_poison` and continue with poison; add an
   explanation in `diag_docs/` or an allowlist entry; tests assert full kind lists.
 
 ## Issue tracking

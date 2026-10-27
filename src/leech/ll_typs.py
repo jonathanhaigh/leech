@@ -82,6 +82,8 @@ def ll_typ(ctx: ll.Context, typ: typs.TypKind) -> ll.Type:
             raise AssertionError("a comptime value has no LLVM type representation")
         case typs.EnumBackingTyp():
             raise AssertionError("an unresolved enum backing type has no LLVM representation")
+        case typs.PoisonTyp():
+            raise AssertionError("poison has no LLVM representation")
     assert_never(typ)
 
 
