@@ -18,7 +18,7 @@ def test_panic_usable_with_no_import(compiler):
     compiler.check_signal(
         main_src,
         expected_signal=signal.SIGABRT,
-        stderr_prefix="boom\n",
+        stderr="boom\n",
     )
 
 
@@ -42,7 +42,7 @@ def test_assert_false_panics(compiler):
     compiler.check_signal(
         main_src,
         expected_signal=signal.SIGABRT,
-        stderr_prefix="assertion failed\n",
+        stderr="assertion failed\n",
     )
 
 
@@ -70,7 +70,7 @@ def test_own_panic_shadows_prelude_panic_within_its_own_module(compiler):
     compiler.check_signal(
         program,
         expected_signal=signal.SIGABRT,
-        stderr_prefix="from a\n",
+        stderr="from a\n",
     )
 
 
@@ -93,7 +93,7 @@ def test_synthesized_check_uses_real_panic_even_when_shadowed(compiler):
     compiler.check_signal(
         main_src,
         expected_signal=signal.SIGABRT,
-        stderr_prefix="integer overflow\n",
+        stderr="integer overflow\n",
     )
 
 

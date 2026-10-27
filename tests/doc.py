@@ -141,7 +141,7 @@ class DocCase:
             compiler.check_signal(
                 self.program,
                 expected_signal=signal.Signals(-self.expected_exit),
-                stderr_prefix=self.expected_output,
+                stderr=self.expected_output,
                 diags=diags,
             )
         else:
@@ -289,6 +289,7 @@ class _CaseBuilder:
     page: pathlib.Path
     test_id: str
     srcs: _SrcFencesByFile = dataclasses.field(default_factory=dict)
+    root_file: Optional[str] = None
     root_options: Optional[_RootOptions] = None
     output: Optional[_ResultFence] = None
     diag: Optional[_ResultFence] = None
@@ -301,7 +302,7 @@ class _CaseBuilder:
         root_options = self._options_for_src(loc, file, metadata)
         self.srcs[file] = SrcFence._from_src(loc, file, token.content)
         if root_options is not None:
-            assert self.root_options is None
+            self.root_file = file
             self.root_options = root_options
 
     def _validate_src_metadata(self, loc: FenceLoc, metadata: _FenceMetadata) -> None:
@@ -325,7 +326,17 @@ class _CaseBuilder:
     def _options_for_src(
         self, loc: FenceLoc, file: str, metadata: _FenceMetadata
     ) -> Optional[_RootOptions]:
-        if file == "main.leech":
+        if "mode" in metadata:
+            if self.root_file is not None:
+                raise DocCollectionError(
+                    loc,
+                    f"test {self.test_id!r} already has a root fence, {self.root_file!r}; "
+                    "only the root has mode=",
+                )
+            if "/" in file:
+                raise DocCollectionError(
+                    loc, f"the root must not be in a subdirectory, got {file!r}"
+                )
             return self._root_options_from_metadata(loc, metadata)
         invalid = metadata.keys() - {"test", "file"}
         if invalid:
@@ -339,9 +350,7 @@ class _CaseBuilder:
     def _root_options_from_metadata(loc: FenceLoc, metadata: _FenceMetadata) -> _RootOptions:
         mode = metadata.get("mode")
         if mode not in {"run", "compile", "error"}:
-            raise DocCollectionError(
-                loc, "main.leech requires mode=run, mode=compile, or mode=error"
-            )
+            raise DocCollectionError(loc, "mode= must be run, compile, or error")
         allowed = {
             "run": {"test", "file", "mode", "exit", "warning"},
             "compile": {"test", "file", "mode", "warning"},
@@ -383,7 +392,7 @@ class _CaseBuilder:
         expects_warning = options.warning_name is not None
         self._validate_result_fences(root, options.mode, expects_warning)
         expected_exit = options.exit_status(root.loc)
-        expected_output = self._expected_output(root, expected_exit)
+        expected_output = self._expected_output()
         return DocCase(
             test_id=self.test_id,
             loc=root.loc,
@@ -397,22 +406,19 @@ class _CaseBuilder:
         )
 
     def _root_src(self) -> SrcFence:
-        root = self.srcs.get("main.leech")
-        line = min((src.loc.line for src in self.srcs.values()), default=1)
-        if root is None:
+        if self.root_file is None:
+            line = min((src.loc.line for src in self.srcs.values()), default=1)
             raise DocCollectionError(
                 FenceLoc(self.page, line),
-                f"test {self.test_id!r} has no main.leech root fence",
+                f"test {self.test_id!r} has no root fence; mark its root with mode=",
             )
-        return root
+        return self.srcs[self.root_file]
 
     def _validate_case_shape(self, root: SrcFence, options: _RootOptions) -> None:
         if options.mode == "error" and len(self.srcs) != 1:
-            raise DocCollectionError(root.loc, "mode=error is limited to a single main.leech file")
+            raise DocCollectionError(root.loc, "mode=error is limited to a single file")
         if options.warning_name is not None and len(self.srcs) != 1:
-            raise DocCollectionError(
-                root.loc, "warning examples are limited to a single main.leech file"
-            )
+            raise DocCollectionError(root.loc, "warning examples are limited to a single file")
 
     def _validate_result_fences(self, root: SrcFence, mode: str, expects_warning: bool) -> None:
         if self.output is not None and mode != "run":
@@ -423,27 +429,17 @@ class _CaseBuilder:
         if self.diag is None and needs_diag:
             raise DocCollectionError(root.loc, "error= and warning= require a diagnostic= fence")
 
-    def _expected_output(self, root: SrcFence, expected_exit: int) -> str:
+    def _expected_output(self) -> str:
+        """Return the exact expected stdout, or stderr for an aborting program."""
         if self.output is None:
-            expected_output = ""
-        elif self.output.newline_no:
-            if not self.output.content.endswith("\n"):
-                raise DocCollectionError(
-                    self.output.loc, "newline=no requires a structural final newline"
-                )
-            expected_output = self.output.content[:-1]
-        else:
-            expected_output = self.output.content
-        if expected_exit < 0:
-            if self.output is None or not expected_output:
-                raise DocCollectionError(
-                    root.loc, "exit=SIGABRT requires a nonempty output= prefix"
-                )
-            if self.output.newline_no:
-                raise DocCollectionError(
-                    self.output.loc, "newline=no is not allowed with exit=SIGABRT"
-                )
-        return expected_output
+            return ""
+        if not self.output.newline_no:
+            return self.output.content
+        if not self.output.content.endswith("\n"):
+            raise DocCollectionError(
+                self.output.loc, "newline=no requires a structural final newline"
+            )
+        return self.output.content[:-1]
 
     def _diag_excerpt(self) -> Optional[str]:
         if self.diag is None:

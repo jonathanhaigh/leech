@@ -364,18 +364,18 @@ class CompilerHarness:
         program: str | TestProgram,
         *,
         expected_signal: signal.Signals,
-        stderr_prefix: str,
         stdout: str = "",
+        stderr: str = "",
         diags: Optional[diag.Diags] = None,
     ) -> None:
-        """Assert a signal exit, exact stdout, and the stable prefix of LLVM's stderr."""
+        """Assert a signal exit and exact streams, defaulting to empty streams."""
         result = self.run(program, diags=diags)
         assert result.stdout == stdout, (
             f"unexpected stdout: expected {stdout!r}, got {result.stdout!r}; "
             f"result: {result!r}; workspace: {self.workspace}"
         )
-        assert result.stderr.startswith(stderr_prefix), (
-            f"unexpected stderr prefix: expected {stderr_prefix!r}, got {result.stderr!r}; "
+        assert result.stderr == stderr, (
+            f"unexpected stderr: expected {stderr!r}, got {result.stderr!r}; "
             f"result: {result!r}; workspace: {self.workspace}"
         )
         expected_returncode = -expected_signal.value

@@ -306,7 +306,7 @@ def test_run_returns_separate_streams_and_status(compiler: harness.CompilerHarne
     result = compiler.run('pub fn main() i32 { panic("failed"); }')
 
     assert result.stdout == ""
-    assert result.stderr.startswith("failed\n")
+    assert result.stderr == "failed\n"
     assert result.returncode == -signal.SIGABRT
 
 
@@ -314,12 +314,21 @@ def test_check_uses_exact_expectations(compiler: harness.CompilerHarness):
     compiler.check("pub fn main() i32 { 7 }", exit_status=7)
 
 
-def test_check_signal_accepts_stable_stderr_prefix(compiler: harness.CompilerHarness):
+def test_check_signal_uses_exact_expectations(compiler: harness.CompilerHarness):
     compiler.check_signal(
         'pub fn main() i32 { panic("failed"); }',
         expected_signal=signal.SIGABRT,
-        stderr_prefix="failed\n",
+        stderr="failed\n",
     )
+
+
+def test_check_signal_rejects_extra_stderr(compiler: harness.CompilerHarness):
+    with pytest.raises(AssertionError, match="unexpected stderr"):
+        compiler.check_signal(
+            'pub fn main() i32 { panic("failed"); }',
+            expected_signal=signal.SIGABRT,
+            stderr="fail",
+        )
 
 
 def test_run_automatically_links_standard_library(compiler: harness.CompilerHarness):

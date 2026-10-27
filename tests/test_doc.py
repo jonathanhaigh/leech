@@ -22,15 +22,15 @@ def test_parse_single_and_multifile_cases():
     cases = parse_doc_page(
         """Before.
 
-```leech test=hello file=main.leech mode=run exit=7
-import helper;
-pub fn main() i32 { return helper::answer(); }
+```leech test=hello file=helper.leech
+pub fn answer() i32 { return 7; }
 ```
 
 Between the files.
 
-```leech test=hello file=helper.leech
-pub fn answer() i32 { return 7; }
+```leech test=hello file=hello.leech mode=run exit=7
+import helper;
+fn main() i32 { return helper::answer(); }
 ```
 
 ```text output=hello
@@ -45,13 +45,13 @@ pub fn answer() i32 { return 1; }
 
     assert [case.test_id for case in cases] == ["hello", "library"]
     hello = cases[0]
-    assert hello.loc == doc.FenceLoc(_PAGE, 3)
+    assert hello.loc == doc.FenceLoc(_PAGE, 9)
     assert hello.mode == "run"
     assert hello.expected_exit == 7
     assert hello.expected_output == "hello\n"
     assert (hello.program.root.name, hello.program.root.path) == (
-        "main",
-        pathlib.Path("main.leech"),
+        "hello",
+        pathlib.Path("hello.leech"),
     )
     assert [(mod.name, mod.path) for mod in hello.program.mods] == [
         ("helper", pathlib.Path("helper.leech"))
@@ -71,6 +71,37 @@ hello
     )
 
     assert case.expected_output == "hello"
+
+
+@pytest.mark.parametrize(("newline", "expected"), (("", "boom\n"), (" newline=no", "boom")))
+def test_parse_exact_abort_output(newline, expected):
+    (case,) = parse_doc_page(
+        f"""```leech test=abort file=main.leech mode=run exit=SIGABRT
+pub fn main() i32 {{ panic("boom"); }}
+```
+```text output=abort{newline}
+boom
+```
+"""
+    )
+
+    assert case.expected_exit < 0
+    assert case.expected_output == expected
+
+
+def test_parse_main_leech_without_mode_as_module():
+    (case,) = parse_doc_page(
+        """```leech test=x file=app.leech mode=compile
+import main;
+```
+```leech test=x file=main.leech
+pub fn f() {}
+```
+"""
+    )
+
+    assert case.program.root.name == "app"
+    assert [mod.name for mod in case.program.mods] == ["main"]
 
 
 def test_parse_expected_error_and_warning():
@@ -145,7 +176,43 @@ fn g() {}
         ),
         (
             "```leech test=x file=helper.leech\nfn f() {}\n```\n",
-            "has no main.leech root",
+            "has no root fence; mark its root with mode=",
+        ),
+        (
+            """```leech test=x file=main.leech mode=compile
+fn f() {}
+```
+```leech test=x file=other.leech mode=compile
+fn g() {}
+```
+""",
+            "already has a root fence, 'main.leech'",
+        ),
+        (
+            "```leech test=x file=pkg/main.leech mode=compile\nfn f() {}\n```\n",
+            "the root must not be in a subdirectory",
+        ),
+        (
+            "```leech test=x file=main.leech mode=bogus\nfn f() {}\n```\n",
+            "mode= must be run, compile, or error",
+        ),
+        (
+            "```leech test=x file=if.leech mode=compile\nfn f() {}\n```\n",
+            "reserved final module name segment",
+        ),
+        (
+            "```leech test=x file=std.leech mode=compile\nfn f() {}\n```\n",
+            "bundled standard library",
+        ),
+        (
+            """```leech test=x file=main.leech mode=compile
+fn f() {}
+```
+```leech test=x file=helper.leech exit=1
+fn g() {}
+```
+""",
+            "metadata not allowed on a module fence: exit",
         ),
         (
             "```text output=x\nhello\n```\n",
@@ -300,10 +367,6 @@ second
             "```leech test=x file=main.leech mode=run exit=256\nfn main() {}\n```\n",
             "exit status must be",
         ),
-        (
-            "```leech test=x file=main.leech mode=run exit=SIGABRT\nfn main() {}\n```\n",
-            "requires a nonempty output= prefix",
-        ),
     ),
 )
 def test_rejects_invalid_fence_contract(markdown, message):
@@ -382,6 +445,30 @@ pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=run-warning
 unreachable return statement
+```
+""",
+        """```leech test=hello file=hello.leech mode=run
+import std::io;
+fn main() i32 { io::println("hello"); return 0; }
+```
+```text output=hello
+hello
+```
+""",
+        """```leech test=absolute file=greeter.leech mode=run
+import std::io;
+import text::greeting;
+fn main() i32 { io::println(greeting::message()); return 0; }
+```
+```leech test=absolute file=text/greeting.leech
+import text::style;
+pub fn message() *u8 { return style::styled(); }
+```
+```leech test=absolute file=text/style.leech
+pub fn styled() *u8 { return "styled"; }
+```
+```text output=absolute
+styled
 ```
 """,
         """```leech test=nested-compile file=main.leech mode=compile
@@ -478,6 +565,30 @@ pub fn main() i32 { return 2; }
 ```
 """,
             "unexpected exit status: expected 0, got 2",
+        ),
+        (
+            """```leech test=abort-prefix file=main.leech mode=run exit=SIGABRT
+pub fn main() i32 { panic("boom"); }
+```
+```text output=abort-prefix newline=no
+bo
+```
+""",
+            "unexpected stderr: expected 'bo', got 'boom\\n'",
+        ),
+        (
+            """```leech test=abort-silent file=main.leech mode=run exit=SIGABRT
+pub fn main() i32 { panic("boom"); }
+```
+""",
+            "unexpected stderr: expected '', got 'boom\\n'",
+        ),
+        (
+            """```leech test=no-main file=main.leech mode=run
+pub fn answer() i32 { return 0; }
+```
+""",
+            "missing-main-function",
         ),
     ),
 )
