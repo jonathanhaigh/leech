@@ -11,6 +11,8 @@ already know a systems language such as C, C++, Rust or Zig.
 
 - [Getting started](getting-started.md) installs `leech` and builds complete programs with
   it.
+- [Leech at a glance](language-at-a-glance.md) compares Leech with Rust, Zig, C, C++ and
+  Swift.
 - [Language tour](tour/index.md) introduces Leech's syntax and features (in progress).
 
 The guide describes Leech as it is implemented today, on its one supported target, x86-64
