@@ -36,6 +36,8 @@ Standard-library sources are under `src/leech/std/`. Tests mirror language featu
 - `uv run reuse lint` verifies license metadata.
 
 Tests that execute generated programs link them natively, so they require `cc` on `PATH`.
+Pytest also collects and runs the Leech fences in `README.md` and `docs/guide/**/*.md`; the
+annotation contract is summarized in `docs/guide/index.md` and implemented in `tests/doc.py`.
 
 ## Coding Style & Naming Conventions
 
