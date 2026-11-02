@@ -16,11 +16,11 @@ and you may want to skim [Leech at a glance](../language-at-a-glance.md) first.
    enums, `match` and tagged unions.
 3. [Data and pointers](03-data-and-pointers.md): structs, arrays, pointers, mutability and
    methods.
+4. [Modules and the standard library](04-modules-and-stdlib.md): packages, imports,
+   visibility, `extern`, the prelude, `std::io` and `std::mem`.
 
-The remaining chapters are being written:
+The remaining chapter is being written:
 
-4. Modules and the standard library: imports, visibility, the prelude, `std::io` and
-   `std::mem`.
 5. Generics, traits and compile-time evaluation.
 
 Return to the [user guide](../index.md).
