@@ -13,7 +13,7 @@ already know a systems language such as C, C++, Rust or Zig.
   it.
 - [Leech at a glance](language-at-a-glance.md) compares Leech with Rust, Zig, C, C++ and
   Swift.
-- [Language tour](tour/index.md) introduces Leech's syntax and features (in progress).
+- [Language tour](tour/index.md) introduces Leech's syntax and features.
 
 The guide describes Leech as it is implemented today, on its one supported target, x86-64
 Linux. Where an important feature is missing or limited, the text links the GitHub issue

@@ -12,5 +12,6 @@ The language, the `leech` command and the small standard library are under activ
 development and not ready for production use.
 
 - [Install Leech and build your first program](docs/guide/getting-started.md)
+- [See how Leech compares with Rust, Zig, C and Swift](docs/guide/language-at-a-glance.md)
 - [Browse the user guide](docs/guide/index.md)
-- [Read the language tour](docs/guide/tour/index.md) (in progress)
+- [Read the language tour](docs/guide/tour/index.md)

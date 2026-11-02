@@ -18,9 +18,7 @@ and you may want to skim [Leech at a glance](../language-at-a-glance.md) first.
    methods.
 4. [Modules and the standard library](04-modules-and-stdlib.md): packages, imports,
    visibility, `extern`, the prelude, `std::io` and `std::mem`.
-
-The remaining chapter is being written:
-
-5. Generics, traits and compile-time evaluation.
+5. [Generics, traits and compile-time evaluation](05-generics-traits-comptime.md): type
+   and value parameters, traits and impls, compile-time evaluation and compiler builtins.
 
 Return to the [user guide](../index.md).
