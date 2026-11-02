@@ -12,10 +12,11 @@ and you may want to skim [Leech at a glance](../language-at-a-glance.md) first.
 
 1. [Basics](01-basics.md): `main` and the exit status, functions, integer and boolean
    types, variables and conversions.
+2. [Control flow](02-control-flow.md): blocks, `if`, `while`, labeled loops, `never`,
+   enums, `match` and tagged unions.
 
 The remaining chapters are being written:
 
-2. Control flow: blocks, `if`, `while`, labeled loops, `match`, enums and tagged unions.
 3. Data and pointers: structs, arrays, pointers and methods.
 4. Modules and the standard library: imports, visibility, the prelude, `std::io` and
    `std::mem`.
