@@ -14,10 +14,11 @@ and you may want to skim [Leech at a glance](../language-at-a-glance.md) first.
    types, variables and conversions.
 2. [Control flow](02-control-flow.md): blocks, `if`, `while`, labeled loops, `never`,
    enums, `match` and tagged unions.
+3. [Data and pointers](03-data-and-pointers.md): structs, arrays, pointers, mutability and
+   methods.
 
 The remaining chapters are being written:
 
-3. Data and pointers: structs, arrays, pointers and methods.
 4. Modules and the standard library: imports, visibility, the prelude, `std::io` and
    `std::mem`.
 5. Generics, traits and compile-time evaluation.
