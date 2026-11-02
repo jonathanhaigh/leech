@@ -23,6 +23,9 @@ module changes. A quickstart written against the manual pipeline (6d60ff8, on th
 branch `issue-23-quickstart-docs`) is superseded by this revision; its navigation pages are
 reusable, but its getting-started page and smoke test are not.
 
+While writing the modules chapter, error and warning examples stopped being limited to a
+single file: showing access to another module's private item needs two.
+
 ## Outcome and audience
 
 A systems programmer should be able to find the documentation from `README.md`, install
@@ -214,7 +217,8 @@ spaces or shell quoting. The contract is deliberately small:
   `newline=no` rule, and stdout must be empty. The source must demonstrate intentional abort.
   A second output fence is an error.
 - `mode=error` requires `error=<diagnostic name>` on the root and exactly one `text`
-  fence with `diagnostic=ID`. It is a single-file case: no helper module fences.
+  fence with `diagnostic=ID`. It may have helper module fences, so that an example can
+  show an error that needs two modules, such as using another module's private item.
   Remove the fence's one structural final newline from the diagnostic excerpt, require
   one nonempty line, and assert it occurs in the primary diagnostic message. The
   compilation must report exactly one diagnostic, of the named kind. The name is a
@@ -223,7 +227,7 @@ spaces or shell quoting. The contract is deliberately small:
   the salient message without coupling the guide to source-path formatting, caret placement,
   labels, or notes. A wrong kind, an additional diagnostic, or a successful compile fails.
 - By default `run` and `compile` require **no diagnostics**. To demonstrate a warning, a
-  **single-file** case in either mode may put `warning=<diagnostic name>` on its root and
+  case in either mode may put `warning=<diagnostic name>` on its root and
   exactly one `text diagnostic=ID` fence. Require exactly one diagnostic, a warning of that
   kind with the stated primary-message excerpt. Collection validates that the name is the
   current name of a warning kind. Each case collects its diagnostics in its own

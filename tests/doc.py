@@ -387,7 +387,6 @@ class _CaseBuilder:
         root = self._root_src()
         options = self.root_options
         assert options is not None
-        self._validate_case_shape(root, options)
         diag_kind = options.diag_kind(root.loc)
         expects_warning = options.warning_name is not None
         self._validate_result_fences(root, options.mode, expects_warning)
@@ -413,12 +412,6 @@ class _CaseBuilder:
                 f"test {self.test_id!r} has no root fence; mark its root with mode=",
             )
         return self.srcs[self.root_file]
-
-    def _validate_case_shape(self, root: SrcFence, options: _RootOptions) -> None:
-        if options.mode == "error" and len(self.srcs) != 1:
-            raise DocCollectionError(root.loc, "mode=error is limited to a single file")
-        if options.warning_name is not None and len(self.srcs) != 1:
-            raise DocCollectionError(root.loc, "warning examples are limited to a single file")
 
     def _validate_result_fences(self, root: SrcFence, mode: str, expects_warning: bool) -> None:
         if self.output is not None and mode != "run":

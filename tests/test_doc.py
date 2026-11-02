@@ -471,6 +471,28 @@ pub fn styled() *u8 { return "styled"; }
 styled
 ```
 """,
+        """```leech test=private file=main.leech mode=error error=private-item-access
+import helper;
+pub fn main() i32 { return helper::secret(); }
+```
+```leech test=private file=helper.leech
+fn secret() i32 { return 7; }
+```
+```text diagnostic=private
+cannot access private function "secret"
+```
+""",
+        """```leech test=helper-warning file=main.leech mode=compile warning=unreachable-code
+import helper;
+pub fn main() i32 { return helper::answer(); }
+```
+```leech test=helper-warning file=helper.leech
+pub fn answer() i32 { return 1; return 2; }
+```
+```text diagnostic=helper-warning
+unreachable return statement
+```
+""",
         """```leech test=nested-compile file=main.leech mode=compile
 import pkg::a;
 pub fn main() i32 { return a::answer(); }
