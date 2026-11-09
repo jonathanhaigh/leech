@@ -122,8 +122,13 @@ pub fn rule() {
 }
 ```
 
+`leech check notice.leech` reports an error in `text/banner.leech`, though the output
+does not yet name the file:
+
 ```text diagnostic=relative-import
-cannot find module "style"
+ERROR: cannot find module "style"
+2| import style;
+----------^
 ```
 
 ## Visibility
@@ -150,8 +155,16 @@ fn combination() i32 {
 }
 ```
 
+`leech check vault.leech` reports the error in `vault.leech`, and a note pointing at
+the declaration in `secrets.leech`:
+
 ```text diagnostic=private
-cannot access private function "combination"
+ERROR: cannot access private function "combination"
+4|     return secrets::combination();
+-----------------------^
+NOTE: "combination" defined here
+1| fn combination() i32 {
+---^
 ```
 
 `main` itself need not be `pub`.
@@ -172,8 +185,9 @@ fn main() i32 {
 ```
 
 Leech does not check that the declaration matches the C function, so a wrong signature is
-undefined behavior. An `extern fn` is always public, and the C library is linked into every
-program. Leech has no C integer types such as `int` yet
+undefined behavior. An `extern fn` is always public for now, so a module cannot keep its C
+declarations to itself ([#130](https://github.com/jonathanhaigh/leech/issues/130)). The C
+library is linked into every program. Leech has no C integer types such as `int` yet
 ([#33](https://github.com/jonathanhaigh/leech/issues/33)); use the Leech type of the same
 width, `i32` for `int` on x86-64 Linux.
 
@@ -185,6 +199,10 @@ module without an import. It provides two functions:
 - `panic(message: *u8) never` writes `message` and a newline to standard error, then
   aborts the program.
 - `assert(condition: bool)` panics with `assertion failed` if `condition` is false.
+
+Its C declarations of `write`, `strlen` and `abort` are also visible everywhere, until
+`extern` functions can be private
+([#130](https://github.com/jonathanhaigh/leech/issues/130)).
 
 The prelude does not yet provide `Option` or `Result`
 ([#88](https://github.com/jonathanhaigh/leech/issues/88)). A module path starting with

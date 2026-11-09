@@ -208,7 +208,7 @@ fn main() i32 {
 
 A `match` must be *exhaustive*: some arm must match every possible value. For integers that
 usually means a final `_` or `let` arm. A `match` that misses a value is an error, and a
-note in the diagnostic names a pattern it misses, here `Light::Green`:
+note names a pattern it misses:
 
 ```leech test=non-exhaustive file=lights.leech mode=error error=non-exhaustive-match
 enum Light { Red, Amber, Green }
@@ -225,8 +225,13 @@ fn main() i32 {
 }
 ```
 
+`leech check lights.leech` reports:
+
 ```text diagnostic=non-exhaustive
-"match" is not exhaustive
+ERROR: "match" is not exhaustive
+ 4|     match (light) {
+--------^
+NOTE: uncovered pattern "Light::Green"
 ```
 
 An arm that can never be reached, because earlier arms match everything it would, is a
@@ -246,8 +251,13 @@ fn main() i32 {
 }
 ```
 
+`leech run unreachable.leech` prints this warning, then runs the program, which
+exits with status 1:
+
 ```text diagnostic=unreachable-arm
-unreachable match arm
+WARNING: unreachable match arm
+ 5|         1 => 2,
+------------^
 ```
 
 Patterns cannot yet have guards, ranges or struct fields

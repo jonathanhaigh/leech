@@ -69,8 +69,12 @@ fn main() i32 {
 }
 ```
 
+`leech check readonly.leech` reports:
+
 ```text diagnostic=immutable-field
-cannot assign to an immutable place
+ERROR: cannot assign to an immutable place
+ 8|     account.id = 2;
+--------^
 ```
 
 ## Arrays
@@ -185,8 +189,12 @@ fn main() i32 {
 }
 ```
 
+`leech check setter.leech` reports:
+
 ```text diagnostic=pointer-mutability
-argument 1 in call to variable "reset" has type "*i32", expected "*mut i32"
+ERROR: argument 1 in call to variable "reset" has type "*i32", expected "*mut i32"
+7|     reset(&count);
+-------------^
 ```
 
 Reaching through a pointer always needs `.*`. A shorter `->` spelling for fields and

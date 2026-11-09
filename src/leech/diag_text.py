@@ -6,13 +6,22 @@
 
 import sys
 from collections.abc import Sequence
-from typing import Optional
+from typing import Optional, TextIO
 
 from leech import asserts, diag, src
 
 
 class TextRenderer:
-    """Renders diagnostics as plain text, with a source excerpt, to stderr."""
+    """Renders diagnostics as plain text, with a source excerpt, to ``stream``, or to stderr
+    if no stream is given."""
+
+    def __init__(self, stream: Optional[TextIO] = None) -> None:
+        self._stream = stream
+
+    @property
+    def _out(self) -> TextIO:
+        # sys.stderr is looked up on each use, so a replaced stderr is honored.
+        return self._stream if self._stream is not None else sys.stderr
 
     def display_diags(self, diags: Sequence[diag.Diag]) -> None:
         """Render each diagnostic in order."""
@@ -43,7 +52,7 @@ class TextRenderer:
             self._display_message(diag.NOTE, note.msg.text(), note.span)
 
     def _display_message(self, level: diag.Level, text: str, span: Optional[src.SrcSpan]) -> None:
-        print(f"{level.name}: {text}", file=sys.stderr)
+        print(f"{level.name}: {text}", file=self._out)
         if span is not None:
             line_num_width = len(str(len(span.file.lines)))
             self._display_line(span, line_num_width)
@@ -52,8 +61,8 @@ class TextRenderer:
     def _display_line(self, span: src.SrcSpan, line_num_width) -> None:
         asserts.assert_gt(span.start_line, 0)
         line = span.file.lines[span.start_line - 1]
-        print(f"{span.start_line:{line_num_width}d}| {line}", file=sys.stderr)
+        print(f"{span.start_line:{line_num_width}d}| {line}", file=self._out)
 
     def _display_col_pos(self, span: src.SrcSpan, line_num_width) -> None:
         prefix = "-" * (span.start_col + line_num_width + 1)
-        print(f"{prefix}^", file=sys.stderr)
+        print(f"{prefix}^", file=self._out)

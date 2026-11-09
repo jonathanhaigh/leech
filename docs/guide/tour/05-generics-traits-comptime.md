@@ -189,8 +189,12 @@ fn main() i32 {
 }
 ```
 
+`leech check bounds.leech` reports:
+
 ```text diagnostic=unsatisfied-bound
-type "bool" does not implement trait "Score"
+ERROR: type "bool" does not implement trait "Score", required by bound on type parameter "T"
+16|     double_score(true)
+--------^
 ```
 
 Trait methods are resolved when the program compiles; there are no trait objects or
@@ -276,11 +280,17 @@ fn main() i32 {
 }
 ```
 
+`leech check overflow.leech` reports the addition that overflowed, inside `fibonacci`,
+and a note gives the reason:
+
 ```text diagnostic=comptime-overflow
-compile-time evaluation panicked
+ERROR: compile-time evaluation panicked
+ 6|         let next = a + b;
+-----------------------^
+NOTE: panic message: "integer overflow"
 ```
 
-A note in the diagnostic gives the reason, `integer overflow`. Compile-time code cannot
+Compile-time code cannot
 call `extern` functions, allocate from the heap with `std::mem`
 ([#5](https://github.com/jonathanhaigh/leech/issues/5)) or cast pointers
 ([#6](https://github.com/jonathanhaigh/leech/issues/6)).

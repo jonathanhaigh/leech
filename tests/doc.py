@@ -4,7 +4,9 @@
 
 """Collection and execution of tested Leech examples in public Markdown."""
 
+import contextlib
 import dataclasses
+import io
 import pathlib
 import shutil
 import signal
@@ -16,7 +18,7 @@ import markdown_it
 import markdown_it.token
 import pytest
 
-from leech import diag, diag_kinds
+from leech import diag, diag_kinds, diag_text
 from tests import harness
 
 _SRC_KEYS: Final = frozenset({"test", "file", "mode", "exit", "error", "warning"})
@@ -114,7 +116,7 @@ class DocCase:
     expected_output: str
     expected_exit: int
     diag_kind: Optional[diag.DiagKind]
-    diag_excerpt: Optional[str]
+    expected_diag_text: Optional[str]
     expects_warning: bool
 
     def execute(self, tmp_path: pathlib.Path) -> None:
@@ -129,10 +131,10 @@ class DocCase:
         diags = diag.Diags()
         if self.mode == "run":
             self._execute_run(compiler, diags)
-            self._check_emitted_diags(diags.all())
+            self._check_emitted_diags(diags.all(), compiler.workspace)
         elif self.mode == "compile":
             compiler.compile(self.program, diags=diags)
-            self._check_emitted_diags(diags.all())
+            self._check_emitted_diags(diags.all(), compiler.workspace)
         else:
             self._execute_expected_error(compiler, diags)
 
@@ -162,45 +164,55 @@ class DocCase:
             f"{self.loc.page}:{self.loc.line}: test={self.test_id}{mod_text}: {detail}"
         )
 
-    def _check_emitted_diags(self, emitted: tuple[diag.Diag, ...]) -> None:
+    def _check_emitted_diags(self, emitted: tuple[diag.Diag, ...], workspace: pathlib.Path) -> None:
         if self.expects_warning:
-            self._check_emitted_warning(emitted)
+            self._check_emitted_warning(emitted, workspace)
         elif emitted:
             raise AssertionError(f"unexpected emitted diagnostics: {emitted!r}")
 
-    def _check_emitted_warning(self, emitted: tuple[diag.Diag, ...]) -> None:
+    def _check_emitted_warning(
+        self, emitted: tuple[diag.Diag, ...], workspace: pathlib.Path
+    ) -> None:
         assert self.diag_kind is not None
-        assert self.diag_excerpt is not None
         if len(emitted) != 1:
             raise AssertionError(f"expected one warning, got {len(emitted)} diagnostics")
         warning = emitted[0]
         if warning.kind is not self.diag_kind:
             raise AssertionError(f"expected warning {self.diag_kind.name}, got {warning.kind.name}")
-        if self.diag_excerpt not in str(warning):
-            raise AssertionError(
-                f"warning message does not contain {self.diag_excerpt!r}: {str(warning)!r}"
-            )
+        self._check_diag_text(emitted, workspace)
 
     def _execute_expected_error(self, compiler: harness.CompilerHarness, diags: diag.Diags) -> None:
         assert self.diag_kind is not None
         try:
             compiler.compile(self.program, diags=diags)
         except diag.CompilationError as failed:
-            self._check_expected_error(failed)
+            self._check_expected_error(failed, compiler.workspace)
             return
         raise AssertionError(f"expected {self.diag_kind.name}, but compilation succeeded")
 
-    def _check_expected_error(self, failed: diag.CompilationError) -> None:
+    def _check_expected_error(self, failed: diag.CompilationError, workspace: pathlib.Path) -> None:
         assert self.diag_kind is not None
-        assert self.diag_excerpt is not None
         if failed.kinds != (self.diag_kind,):
             names = ", ".join(kind.name for kind in failed.kinds)
             raise AssertionError(f"expected only {self.diag_kind.name}, got {names}") from failed
-        (err,) = failed.diags
-        if self.diag_excerpt not in str(err):
+        self._check_diag_text(failed.diags, workspace)
+
+    def _check_diag_text(self, diags: tuple[diag.Diag, ...], workspace: pathlib.Path) -> None:
+        """Check that ``diags`` render exactly as the expected text, as the CLI prints them.
+
+        They are rendered from ``workspace``, where the example's files are, as a reader runs
+        ``leech check`` from the example's directory. Any path the renderer shows relative to
+        the working directory is then the example's own ``file=`` path.
+        """
+        assert self.expected_diag_text is not None
+        rendered = io.StringIO()
+        with contextlib.chdir(workspace):
+            diag_text.TextRenderer(rendered).display_diags(diags)
+        if rendered.getvalue() != self.expected_diag_text:
             raise AssertionError(
-                f"error message does not contain {self.diag_excerpt!r}: {str(err)!r}"
-            ) from failed
+                f"expected diagnostic output {self.expected_diag_text!r}, "
+                f"got {rendered.getvalue()!r}"
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -233,11 +245,11 @@ class _ResultFence:
             raise DocCollectionError(loc, "newline=no is not allowed on a diagnostic fence")
         return cls(kind, token.content, loc, newline_no)
 
-    def diag_excerpt(self) -> str:
-        excerpt = self.content.removesuffix("\n")
-        if not excerpt or "\n" in excerpt or "\r" in excerpt:
-            raise DocCollectionError(self.loc, "diagnostic excerpt must contain one nonempty line")
-        return excerpt
+    def expected_diag_text(self) -> str:
+        """Return the exact diagnostic output, as the CLI prints it to stderr."""
+        if not self.content.strip():
+            raise DocCollectionError(self.loc, "diagnostic fence must not be empty")
+        return self.content
 
 
 @dataclasses.dataclass(frozen=True)
@@ -400,7 +412,7 @@ class _CaseBuilder:
             expected_output=expected_output,
             expected_exit=expected_exit,
             diag_kind=diag_kind,
-            diag_excerpt=self._diag_excerpt(),
+            expected_diag_text=self._expected_diag_text(),
             expects_warning=expects_warning,
         )
 
@@ -434,10 +446,10 @@ class _CaseBuilder:
             )
         return self.output.content[:-1]
 
-    def _diag_excerpt(self) -> Optional[str]:
+    def _expected_diag_text(self) -> Optional[str]:
         if self.diag is None:
             return None
-        return self.diag.diag_excerpt()
+        return self.diag.expected_diag_text()
 
     def _program(self, root: SrcFence) -> harness.TestProgram:
         srcs = tuple(self.srcs.values())

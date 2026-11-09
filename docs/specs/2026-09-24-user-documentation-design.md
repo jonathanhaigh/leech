@@ -26,6 +26,12 @@ reusable, but its getting-started page and smoke test are not.
 While writing the modules chapter, error and warning examples stopped being limited to a
 single file: showing access to another module's private item needs two.
 
+After reviewing the rendered guide, the owner found one-line message excerpts confusing:
+a reader could not see where an error pointed, or a note that the prose described. A
+diagnostic fence now holds the complete text the compiler prints to stderr, and each
+example names the command that prints it. When the rendering changes (#118, #119, #120),
+the guide's examples fail and are updated with it.
+
 ## Outcome and audience
 
 A systems programmer should be able to find the documentation from `README.md`, install
@@ -219,17 +225,23 @@ spaces or shell quoting. The contract is deliberately small:
 - `mode=error` requires `error=<diagnostic name>` on the root and exactly one `text`
   fence with `diagnostic=ID`. It may have helper module fences, so that an example can
   show an error that needs two modules, such as using another module's private item.
-  Remove the fence's one structural final newline from the diagnostic excerpt, require
-  one nonempty line, and assert it occurs in the primary diagnostic message. The
-  compilation must report exactly one diagnostic, of the named kind. The name is a
+  The fence holds the complete diagnostic output, including its structural final newline:
+  exactly what `leech check` prints to stderr, with the message, source lines, carets and
+  notes. The collector renders the case's diagnostics with the CLI's renderer, from the
+  directory holding the case's files, and compares the text exactly. Rendering from there
+  matches a reader running `leech check` beside the example, so once diagnostics show
+  paths relative to the working directory (#118), they show the example's `file=` paths
+  rather than a temporary directory. The compilation must report exactly one diagnostic, of the named
+  kind. The name is a
   diagnostic kind's current catalogue name, such as `let-type-mismatch`; collection
-  rejects unknown names, former names (aliases), and kinds that are not errors. This tests
-  the salient message without coupling the guide to source-path formatting, caret placement,
-  labels, or notes. A wrong kind, an additional diagnostic, or a successful compile fails.
+  rejects unknown names, former names (aliases), and kinds that are not errors. Showing
+  the whole output lets the reader see what the error points at; it couples the guide to
+  the diagnostic layout, so a layout change updates every example. A wrong kind, an
+  additional diagnostic, different text, or a successful compile fails.
 - By default `run` and `compile` require **no diagnostics**. To demonstrate a warning, a
   case in either mode may put `warning=<diagnostic name>` on its root and
   exactly one `text diagnostic=ID` fence. Require exactly one diagnostic, a warning of that
-  kind with the stated primary-message excerpt. Collection validates that the name is the
+  kind whose complete output is the fence's text. Collection validates that the name is the
   current name of a warning kind. Each case collects its diagnostics in its own
   `diag.Diags`, so examples cannot affect one another or ordinary tests.
 - Reject orphan output/diagnostic fences, missing roots, mixed modes, invalid exit values,
@@ -316,5 +328,6 @@ These are presentation precedents; none determines Leech semantics.
 The main risks are drift in the untested command fences, brittle metadata parsing, and
 accidental claims of portability or memory safety. Executing the primary command fence,
 strict collection validation, the CLI's own tests, and explicit target/ownership language
-address these. Diagnostic rendering is still changing (#118, #119, #120), so the guide quotes
-only primary-message excerpts.
+address these. Diagnostic rendering is still changing (#118, #119, #120). The guide shows
+complete diagnostic output anyway, because excerpts confused readers; the tests catch each
+change, and the examples are updated with it.

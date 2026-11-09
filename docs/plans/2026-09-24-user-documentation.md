@@ -91,8 +91,8 @@ updating them; its `getting-started.md` and `tests/test_doc_build.py` are replac
   (`leech build hello.leech` then `./hello`). Add an untested `leech run hello.leech`
   fence. The several-modules section is a collected `mode=run` case with a sibling helper
   and, if it reads naturally, a nested `text/` helper; its build command is an untested
-  fence. The errors section has a `mode=error` case with a one-line excerpt and describes
-  the rendered layout in prose, linking #118. The under-the-hood section's commands are
+  fence. The errors section has a `mode=error` case showing the complete diagnostic output
+  and explains how to read it, linking #118. The under-the-hood section's commands are
   untested. Link #107, #110, and #118 where the text meets those limits.
 - **Tour index.** A placeholder listing the planned chapters, linking back to the guide
   index, until Task 4 fills it.
@@ -128,7 +128,7 @@ Every chapter uses current syntax from `src/leech/leech.lark`, standard-library 
 and the closest feature tests. Each has at least one complete tested program, links back
 to the guide index and onward to the next chapter, and links notable gaps to real open
 issues. Use `mode=run` as the normal teaching path, `mode=compile` for non-executed
-declarations, and `mode=error` with a verified message excerpt for a useful failure.
+declarations, and `mode=error` with the complete, verified diagnostic output for a useful failure.
 Name roots after what they do (`counter.leech`), not `main.leech`. Do not put unimplemented
 syntax in a `leech` fence. Fill in `docs/guide/tour/index.md` as chapters land.
 

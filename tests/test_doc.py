@@ -357,11 +357,10 @@ invalid
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=x
-first
-second
+
 ```
 """,
-            "one nonempty line",
+            "diagnostic fence must not be empty",
         ),
         (
             "```leech test=x file=main.leech mode=run exit=256\nfn main() {}\n```\n",
@@ -411,14 +410,21 @@ pub fn answer() i32 { return 7; }
 pub fn main() i32 { return true; }
 ```
 ```text diagnostic=error
-return expression has type
+ERROR: return expression has type "bool" in function "main" that returns "i32"
+1| pub fn main() i32 { return true; }
+------------------------------^
+NOTE: return type specified here
+1| pub fn main() i32 { return true; }
+-----------------^
 ```
 """,
         """```leech test=warning file=main.leech mode=compile warning=unreachable-code
 pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=warning
-unreachable return statement
+WARNING: unreachable return statement
+1| pub fn main() i32 { return 1; return 2; }
+---------------------------------^
 ```
 """,
         """```leech test=abort file=main.leech mode=run exit=SIGABRT
@@ -444,7 +450,9 @@ pub fn answer() i32 { return 10; }
 pub fn main() i32 { return 1; return 2; }
 ```
 ```text diagnostic=run-warning
-unreachable return statement
+WARNING: unreachable return statement
+1| pub fn main() i32 { return 1; return 2; }
+---------------------------------^
 ```
 """,
         """```leech test=hello file=hello.leech mode=run
@@ -479,7 +487,12 @@ pub fn main() i32 { return helper::secret(); }
 fn secret() i32 { return 7; }
 ```
 ```text diagnostic=private
-cannot access private function "secret"
+ERROR: cannot access private function "secret"
+2| pub fn main() i32 { return helper::secret(); }
+--------------------------------------^
+NOTE: "secret" defined here
+1| fn secret() i32 { return 7; }
+---^
 ```
 """,
         """```leech test=helper-warning file=main.leech mode=compile warning=unreachable-code
@@ -490,7 +503,9 @@ pub fn main() i32 { return helper::answer(); }
 pub fn answer() i32 { return 1; return 2; }
 ```
 ```text diagnostic=helper-warning
-unreachable return statement
+WARNING: unreachable return statement
+1| pub fn answer() i32 { return 1; return 2; }
+-----------------------------------^
 ```
 """,
         """```leech test=nested-compile file=main.leech mode=compile
@@ -509,6 +524,31 @@ pub fn answer() i32 { return 10; }
 )
 def test_execute_valid_case(tmp_path, markdown):
     (case,) = parse_doc_page(markdown)
+
+    case.execute(tmp_path)
+
+
+def test_diagnostics_render_from_the_example_directory(tmp_path, monkeypatch):
+    def display_relative_paths(renderer, diags):
+        for d in diags:
+            assert d.span is not None
+            path = d.span.file.path.resolve().relative_to(pathlib.Path.cwd().resolve())
+            print(path, file=renderer._out)
+
+    monkeypatch.setattr(doc.diag_text.TextRenderer, "display_diags", display_relative_paths)
+    (case,) = parse_doc_page(
+        """```leech test=nested file=main.leech mode=error error=return-type-mismatch
+import pkg::helper;
+pub fn main() i32 { return helper::answer(); }
+```
+```leech test=nested file=pkg/helper.leech
+pub fn answer() i32 { return true; }
+```
+```text diagnostic=nested
+pkg/helper.leech
+```
+"""
+    )
 
     case.execute(tmp_path)
 
@@ -548,7 +588,17 @@ pub fn main() i32 { return true; }
 different message
 ```
 """,
-            "error message does not contain",
+            "expected diagnostic output 'different message\\n', got 'ERROR: return",
+        ),
+        (
+            """```leech test=message-only file=main.leech mode=error error=return-type-mismatch
+pub fn main() i32 { return true; }
+```
+```text diagnostic=message-only
+ERROR: return expression has type "bool" in function "main" that returns "i32"
+```
+""",
+            "expected diagnostic output 'ERROR: return expression has type",
         ),
         (
             "```leech test=wrong-warning file=main.leech mode=compile "
@@ -568,7 +618,7 @@ different message
             "```text diagnostic=wrong-warning-message\n"
             "different message\n"
             "```\n",
-            "warning message does not contain",
+            "expected diagnostic output 'different message\\n', got 'WARNING: unreachable",
         ),
         (
             """```leech test=wrong-output file=main.leech mode=run

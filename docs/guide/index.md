@@ -53,10 +53,10 @@ hello
   for an aborting program. No output fence means no output. Add `newline=no` when the
   output does not end with a newline.
 - `mode=error error=NAME` names the expected diagnostic, such as
-  `error=let-type-mismatch`, and a following `text diagnostic=ID` fence holds one line of
-  its message. A `run` or `compile` example may instead show a warning with
-  `warning=NAME` and a `diagnostic=` fence. Either way, the program must report exactly
-  that one diagnostic.
+  `error=let-type-mismatch`, and a following `text diagnostic=ID` fence holds exactly what
+  the compiler prints to stderr for it, notes and source lines included. A `run` or
+  `compile` example may instead show a warning with `warning=NAME` and a `diagnostic=`
+  fence. Either way, the program must report exactly that one diagnostic.
 
 `tests/doc.py` implements and documents the complete contract. Use a `text` fence or
 inline code for anything that should not be tested, such as syntax that is not yet

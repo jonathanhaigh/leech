@@ -9,7 +9,9 @@ SPDX-License-Identifier: MPL-2.0
 After this chapter you can write functions over integers and booleans, bind and update
 variables, and predict when Leech converts a value from one type to another. Each example
 is a complete program, to save under the name shown. Run the working examples with
-`leech run`; the examples of errors fail, and `leech check` shows their diagnostics.
+`leech run`. An example of an error is followed by everything `leech check` prints for it,
+which [Getting started](../getting-started.md#finding-errors)
+explains how to read.
 
 ## `main` and the exit status
 
@@ -106,8 +108,18 @@ fn main() i32 {
 }
 ```
 
+`leech check operands.leech` reports:
+
 ```text diagnostic=operand-types
-left and right operands of "+" have incompatible types
+ERROR: left and right operands of "+" have incompatible types
+4|     let sum = small + large;
+-----------------------^
+NOTE: left operand has type "i8"
+4|     let sum = small + large;
+-----------------^
+NOTE: right operand has type "i16"
+4|     let sum = small + large;
+-------------------------^
 ```
 
 ## Variables
@@ -138,8 +150,12 @@ fn main() i32 {
 }
 ```
 
+`leech check immutable.leech` reports:
+
 ```text diagnostic=immutable
-cannot assign to an immutable place
+ERROR: cannot assign to an immutable place
+3|     count = count + 1;
+-------^
 ```
 
 A name declared in an inner block may hide one from an outer block, but redeclaring a name
@@ -186,8 +202,12 @@ fn main() i32 {
 }
 ```
 
+`leech check half.leech` reports:
+
 ```text diagnostic=narrowing
-argument 1 in call to variable "half" has type "i64", expected "i32"
+ERROR: argument 1 in call to variable "half" has type "i64", expected "i32"
+7|     return half(big);
+-------------------^
 ```
 
 Leech has no cast operator for integers yet. A mutable pointer may also convert to a

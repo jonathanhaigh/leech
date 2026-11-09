@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import dataclasses
+import io
 import pathlib
 from typing import Optional
 
@@ -393,6 +394,17 @@ def test_text_renderer_shows_a_diags_labels_and_notes_as_notes(tmp_path, capsys)
         'NOTE: "s" defined here\n'
         f"{excerpt}---^\n"
     )
+
+
+def test_text_renderer_writes_to_a_given_stream(capsys):
+    stream = io.StringIO()
+
+    diag_text.TextRenderer(stream).display_diags(
+        [diag.Diag.new(_ARG_KIND, None, name="f", typ="i32")]
+    )
+
+    assert stream.getvalue() == 'ERROR: cannot use "f" of type "i32"\n'
+    assert capsys.readouterr().err == ""
 
 
 def test_error_and_warn_can_build_the_diagnostic(tmp_path):

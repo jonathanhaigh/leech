@@ -162,17 +162,24 @@ fn main() i32 {
 }
 ```
 
-it reports an error and exits with status 1:
+`leech check answer.leech` exits with status 1 and prints this to standard error:
 
 ```text diagnostic=type-error
-cannot initialize "answer" of type "i32" with a value of type "bool"
+ERROR: cannot initialize "answer" of type "i32" with a value of type "bool"
+2|     let answer: i32 = true;
+-------------------------^
+NOTE: declared with type "i32" here
+2|     let answer: i32 = true;
+-------------------^
 ```
 
-Each diagnostic starts with its level and message, such as `ERROR:`, followed by the
-source line with a marker under the code at fault. Notes, such as where a variable's type
-was declared, follow in the same form. This layout will change as diagnostics improve
-([#118](https://github.com/jonathanhaigh/leech/issues/118)). `leech build` and `leech run`
-report the same diagnostics, and a build that fails writes nothing.
+Each diagnostic starts with its level and message, followed by its line number and source
+line, and a `^` under the code at fault: here, the value `true`. Each note that follows has
+the same form; this one points at the declared type, `i32`. The output does not yet name
+the file or underline the whole of the code at fault; a clearer layout is planned
+([#118](https://github.com/jonathanhaigh/leech/issues/118)), and the guide's examples
+will change with it. `leech build` and `leech run` report the same diagnostics, and a build
+that fails writes nothing.
 
 ## Under the hood
 
