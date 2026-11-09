@@ -82,7 +82,8 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
     Comptime parameters in either argument are unification variables. This differs
     from ``match_typ_args``, whose parameters are only variables on its
     ``declared`` side. Bindings must remain finite, so an equation such as
-    ``T = Box[T]`` does not establish an overlap.
+    ``T = Box[T]`` does not establish an overlap. Poison overlaps every type, binding
+    nothing.
     """
     bindings: dict[ComptimeParamTyp, Typ] = {}
 
@@ -106,7 +107,7 @@ def typs_overlap(a: Typ, b: Typ) -> bool:
     def unify(left: Typ, right: Typ) -> bool:
         left = resolve(left)
         right = resolve(right)
-        if left is right:
+        if left is right or left.report_proof() is not None or right.report_proof() is not None:
             return True
         if isinstance(left, ComptimeParamTyp):
             return bind(left, right)
@@ -363,8 +364,8 @@ class Typ(abc.ABC):
     ) -> None:
         """Infer parameter bindings structurally from ``actual``.
 
-        Shape mismatches are ignored and the first binding wins. The base implementation
-        is a no-op because it contains no parameters.
+        Shape mismatches are ignored, the first binding wins, and poison binds nothing. The
+        base implementation is a no-op because it contains no parameters.
         """
 
     def components(self) -> Iterable[Typ]:
@@ -395,7 +396,15 @@ class Typ(abc.ABC):
         return self.name
 
     def report_proof(self) -> Optional[diag.ReportProof]:
-        """Return ``None``: a type records no errors reported about it."""
+        """Return the proof of the error that poisoned this type, if it is built from poison.
+
+        Code tests for poison with this method, never by comparing with a particular
+        ``PoisonTyp``.
+        """
+        for component in self.components():
+            reported = component.report_proof()
+            if reported is not None:
+                return reported
         return None
 
     @property
@@ -756,7 +765,8 @@ class ComptimeParamTyp(Typ):
 
     @override
     def infer_typ_args(self, actual: Typ, bindings: dict[ComptimeParamTyp, Typ]) -> None:
-        bindings.setdefault(self, actual)
+        if actual.report_proof() is None:
+            bindings.setdefault(self, actual)
 
     @override
     def free_comptime_params(self) -> Iterator[ComptimeParamTyp]:
@@ -1779,6 +1789,32 @@ class NeverTyp(InternedTyp):
         return True
 
 
+class PoisonTyp(InternedTyp):
+    """Poison: the type of something whose checking failed with a reported error.
+
+    It is interned per proof. It coerces to and from every type, so that nothing more is
+    reported about it, and a diagnostic that refers to it is dropped.
+    """
+
+    reported: Final[diag.ReportProof]
+
+    def __init__(self, reported: diag.ReportProof) -> None:
+        self.reported = reported
+
+    @property
+    @override
+    def name(self) -> str:
+        return "{poison}"
+
+    @override
+    def coerces_to(self, target_typ: Typ) -> bool:
+        return True
+
+    @override
+    def report_proof(self) -> Optional[diag.ReportProof]:
+        return self.reported
+
+
 type NominalLayoutTyp = StructTyp | UnionTyp
 """A nominal type whose declaration can hold another type by value."""
 
@@ -1921,6 +1957,7 @@ type TypKind = (
     | EnumBackingTyp
     | VoidTyp
     | NeverTyp
+    | PoisonTyp
 )
 """Every instantiable Typ implementation used by the compiler."""
 

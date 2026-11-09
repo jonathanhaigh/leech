@@ -432,14 +432,14 @@ correctly; a probe never reports, loses or duplicates a diagnostic.
 `ir_builder.py`, `comptime.py`, `codegen.py`, `diag.py`; tests in new
 `tests/test_poison.py` plus updates across feature tests.
 
-- `typs.ErrorTyp`, interned per proof, and `typs.error_typ(reported)`.
+- `typs.PoisonTyp(reported)`, interned per proof.
   `report_proof()` on `Typ` and its compound subclasses (first poisoned component's
   proof). `coerces_to`, `unify`, `infer_typ_args` treat poison as compatible with
   everything and binding nothing. `check_comptime_arg_bounds` and comptime-argument kind and
   value-type checks skip poisoned arguments; instances with poisoned arguments are never
   recorded as monomorphization requests.
 - `Diags.error`/`warn` drop any diagnostic with an argument whose `report_proof()` is not
-  `None`; `error` returns that proof (asserting it is not void).
+  `None`; `error` returns that proof.
 - `TypCheck._error(kind, span, **args) -> typs.Typ` emits and returns poison. Convert raise
   sites in `typcheck.py` to it following the design's rules, by construct: names and `let`;
   operators; coercions and returns; calls and comptime-argument inference; literals; field
@@ -448,7 +448,7 @@ correctly; a probe never reports, loses or duplicates a diagnostic.
 - Declarations: unresolvable field, payload, parameter and return types become poison with
   one diagnostic (`Typ.from_ast` gains a reporting variant used by declaration units).
   Layout queries on a poisoned component fail their unit with the component's proof.
-- Assert no `ErrorTyp` reaches `ir_builder`, `comptime` or `codegen` (`asserts` helper
+- Assert no `PoisonTyp` reaches `ir_builder`, `comptime` or `codegen` (`asserts` helper
   `assert_not_poisoned`).
 - Tests: #20's acceptance example (two undefined variables: two errors, nothing else);
   `let c: i32 = a + true` after a poisoned `a` reports nothing; two bad arguments in one

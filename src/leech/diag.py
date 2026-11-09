@@ -269,6 +269,9 @@ class Diags:
     source locations. Source files are compared by resolved path, so diagnostics from
     separately loaded copies of a file are duplicates too.
 
+    A diagnostic with an argument whose ``report_proof`` is not ``None`` is a cascade from
+    an error already reported, so it is dropped, and an error is answered with that proof.
+
     While speculating, nothing new is recorded: a new error raises ``SpeculativeError``
     instead, and a new warning or note is dropped. A duplicate of a recorded diagnostic is
     handled as usual, since it reports nothing new.
@@ -318,9 +321,9 @@ class Diags:
         """Record an error unless it duplicates an earlier diagnostic.
 
         The error is a diagnostic, or is built from a kind, a primary span and the kind's
-        message arguments, as ``Diag.new`` builds one. Returns its proof, or the proof of the
-        earlier diagnostic it duplicates. While speculating, a new error raises
-        ``SpeculativeError`` instead.
+        message arguments, as ``Diag.new`` builds one. Returns its proof, the proof of the
+        earlier diagnostic it duplicates, or the proof of the error it cascades from. While
+        speculating, a new error raises ``SpeculativeError`` instead.
         """
         err = _built(err, span, args)
         assert err.level == ERROR, f"not an error: {err!r}"
@@ -364,7 +367,7 @@ class Diags:
         **args: DiagArgValue,
     ) -> None:
         """Record a warning, given as ``error`` takes an error, unless it duplicates an earlier
-        diagnostic."""
+        diagnostic or cascades from an error."""
         err = _built(err, span, args)
         assert err.level == WARNING, f"not a warning: {err!r}"
         self._record(err)
@@ -385,7 +388,7 @@ class Diags:
         **args: DiagArgValue,
     ) -> None:
         """Record a note that stands on its own, given as ``error`` takes an error, unless it
-        duplicates an earlier diagnostic."""
+        duplicates an earlier diagnostic or cascades from an error."""
         err = _built(err, span, args)
         assert err.level == NOTE, f"not a note: {err!r}"
         self._record(err)
@@ -409,12 +412,16 @@ class Diags:
         return self._dropped_count
 
     def _record(self, err: Diag) -> Optional[ReportProof]:
-        """Record ``err`` unless it duplicates an earlier diagnostic, returning the proof of
-        ``err`` or of the earlier diagnostic if it is an error.
+        """Record ``err`` unless it duplicates an earlier diagnostic or cascades from an error,
+        returning the proof of ``err``, of the earlier diagnostic or of the error it cascades
+        from, if it is an error.
 
         While speculating, a new ``err`` is dropped instead, raising ``SpeculativeError`` if
         it is an error.
         """
+        cascaded_from = _cascaded_from(err)
+        if cascaded_from is not None:
+            return cascaded_from if err.level >= ERROR else None
         key = _key(err)
         if key in self._seen:
             return self._seen[key]
@@ -475,6 +482,19 @@ def _built(
         return Diag.new(err, span, **args)
     assert span is None and not args, "a built diagnostic takes no other arguments"
     return err
+
+
+def _cascaded_from(err: Diag) -> Optional[ReportProof]:
+    msgs = [err.msg, *(label.msg for label in err.labels), *(note.msg for note in err.notes)]
+    if err.primary_label is not None:
+        msgs.append(err.primary_label)
+    for msg in msgs:
+        for value in msg.args.values():
+            if not isinstance(value, str | int):
+                reported = value.report_proof()
+                if reported is not None:
+                    return reported
+    return None
 
 
 def _key(err: Diag) -> Hashable:

@@ -139,7 +139,7 @@ Non-goals:
 
 | Question | Decision |
 | --- | --- |
-| Recovery granularity | Expression-level poison (`typs.ErrorTyp`), plus memoized failure of each analysis unit |
+| Recovery granularity | Expression-level poison (`typs.PoisonTyp`), plus memoized failure of each analysis unit |
 | Diagnostic representation | Immutable `Diag` values built from a catalogue of `DiagKind` entries. Not exceptions |
 | Catalogue form | A Python module of constant `DiagKind` entries with `str.format` templates |
 | Proof of reporting | Reporting an error returns a `ReportProof`. Poison and unit failure require one |
@@ -395,9 +395,9 @@ diagnostic as follows. The sink:
 
 1. Applies the `WarningPolicy` (`-w`, `-Werror`, `-Wno-<name>`, ...) to get the effective
    level, and drops a diagnostic that the policy disables.
-2. **Suppresses cascades.** If any argument's `report_proof()` is not `None`, the
-   diagnostic is dropped, and `error` returns that argument's proof. This is the safety net
-   behind the explicit poison rules below.
+2. **Suppresses cascades.** If any argument of its message, labels or notes has a
+   `report_proof()` that is not `None`, the diagnostic is dropped, and `error` returns that
+   argument's proof. This is the safety net behind the explicit poison rules below.
 3. **Deduplicates structurally.** The key is the kind, the rendered arguments, and every
    span as (resolved path, start, end), as `build._Diags` keys today. A duplicate is not
    stored again, and `error` returns the earlier diagnostic's proof.
@@ -462,7 +462,8 @@ block as speculative, and nests. While it is active, the sink records nothing ne
   carries no proof and is not a `ReportedError`, so recovery code (`Ctx.recovering`, and
   poison after #116) never intercepts it, and the speculative computation unwinds to the code
   that began speculating. An error that duplicates one already recorded is not new: it
-  returns, or raises `ReportedError` with, the recorded error's proof as usual.
+  returns, or raises `ReportedError` with, the recorded error's proof as usual. Nor is an
+  error about poison, which is answered with the poison's proof.
 - A warning or note is dropped, and the computation continues, since a warning does not
   invalidate its result.
 
@@ -685,14 +686,14 @@ re-entering the cycle later from another unit reports nothing either.
 
 ### Poison and expression-level recovery
 
-`typs.ErrorTyp` is the poison type. It is interned per proof
-(`typs.ErrorTyp(reported)`), with `name` `"{error}"`, which is never rendered
-because the sink drops diagnostics that reference it. It can only be obtained through
-`typs.error_typ(reported: ReportProof)`, so poison always follows a reported error and
-records *which* error. `Typ.report_proof()` returns the proof of the first poison
-component found, for `ErrorTyp` and for any type built from it (pointers, arrays,
-instances with a poisoned argument), and `None` otherwise. Code tests for poison with
-`report_proof() is not None`, never by comparing with a particular `ErrorTyp`. This
+`typs.PoisonTyp` is the poison type. It is interned per proof
+(`typs.PoisonTyp(reported: ReportProof)`), with `name` `"{poison}"`, which is never
+rendered because the sink drops diagnostics that reference it. Since it can only be made
+from a proof, poison always follows a reported error and records *which* error.
+`Typ.report_proof()` returns the proof of the first poison component found, for
+`PoisonTyp` and for any type built from it (pointers, arrays, instances with a poisoned
+argument), and `None` otherwise. Code tests for poison with `report_proof() is not None`,
+never by comparing with a particular `PoisonTyp`. This
 lets a layout query fail its unit with the *component's* proof, and lets a probe treat a
 poisoned argument as one that failed.
 
@@ -1043,7 +1044,7 @@ the exact diagnostic identity.
 
 ## Risks and open questions
 
-- **Poison coverage is the biggest risk.** Every `TypCheck` path must handle `ErrorTyp`.
+- **Poison coverage is the biggest risk.** Every `TypCheck` path must handle `PoisonTyp`.
   Mitigations: sink-level suppression of any diagnostic referencing poison; the
   statement-level `ReportedError` fallback; asserts that lowering never sees poison; and a test
   that injects an undefined name into each expression position of a corpus of test programs
@@ -1087,7 +1088,7 @@ Existing issues were rescoped, and #114–#122 filed, as follows.
 | #113 | Report every user error before code generation | Force every declaration unit in checking. Discovery is part of checking, with per-request recovery. Phase boundary. `leech check` without codegen. `LlvmVerificationError` becomes `diag.InternalError` | #93 (best after #114) |
 | #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationError`, message-style normalization, `DiagArg` on types, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
 | #72 + #73 | Speculative-probe diagnostics | `Ctx.speculating()`: errors unwind unreported as `SpeculativeError`, warnings are dropped, and forced units that dropped anything aren't memoized. A shared probe helper for function calls and union-variant constructors. Probe failures contribute no inference | #93, #114 |
-| #116 | Poison type and expression-level error recovery | `typs.ErrorTyp`, `error_typ(reported)`, `TypCheck._error`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
+| #116 | Poison type and expression-level error recovery | `typs.PoisonTyp(reported)`, `TypCheck._error`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
 | #117 | Limit reported errors with `-fmax-errors` | Cap with withheld-count note, on `leech` | #114 |
 | #118 | Render diagnostics in the rustc layout | `diag_text.py`: header, location, full-span underlines, labels, multi-line spans, notes, summary, `-fdiagnostics-color` | #115 |
 | #119 | Explain diagnostics with `leech explain` | `diag_docs/*.md`, `leech explain`, doc-tested examples, shrinking allowlist | #115 |
