@@ -84,12 +84,33 @@ message's arguments (`msg.args`) instead. A full run fails if some diagnostic ki
 note in `diag_kinds` is never reported to a `diag.Diags` in the test process; diagnostics
 reported only in a `leech` subprocess don't count, so give each kind an in-process test.
 
+## Documentation
+
+`README.md` and `docs/guide/` are the user documentation. They describe Leech as it is
+implemented, so keep them in sync in the same change as the code:
+
+- A change to syntax, semantics, the standard library, the `leech` command, or a
+  diagnostic's text updates every page that describes it. Search the guide for the
+  feature's keywords and diagnostic names: tests check only the tested examples, not prose,
+  tables, or untested `bash` fences.
+- A new user-visible feature gets a place in the guide, usually in a tour chapter, with a
+  tested example.
+- Work that resolves an issue linked from the guide rewrites the text that describes the
+  limitation. Search `README.md` and `docs/guide/` for `issues/N`, and check the "What Leech
+  does not have yet" list in `docs/guide/language-at-a-glance.md`. A new issue for a
+  limitation the guide describes is linked from that text.
+- Unlike other tests, guide examples compare program output and diagnostic output exactly,
+  so rewording a message or changing the diagnostic layout fails them. Update the fence
+  from the `got` text in the failure, and check that the prose around it still matches.
+- Syntax that is not implemented yet goes in a `text` fence, never a `leech` fence.
+
 ## Review Guidelines
 
 When reviewing changes, inspect every added or changed docstring and comment against the
 guidance above. Flag unnecessary non-public or override docstrings, repetition, caller
 lists, cross-references, redundant `:param:`/`:return:` fields, narration of visible code,
-and details coupled to other items.
+and details coupled to other items. Check that a change to user-visible behavior updates
+the user documentation as described under Documentation.
 
 ## Commit & Pull Request Guidelines
 
