@@ -440,11 +440,12 @@ correctly; a probe never reports, loses or duplicates a diagnostic.
   recorded as monomorphization requests.
 - `Diags.error`/`warn` drop any diagnostic with an argument whose `report_proof()` is not
   `None`; `error` returns that proof.
-- `TypCheck._error(kind, span, **args) -> typs.Typ` emits and returns poison. Convert raise
-  sites in `typcheck.py` to it following the design's rules, by construct: names and `let`;
-  operators; coercions and returns; calls and comptime-argument inference; literals; field
-  access and indexing; `if`/`while`/`match` (exhaustiveness and unreachable-arm analysis
-  skipped on a poisoned scrutinee). `_check_block_expr` catches `ReportedError` per statement.
+- `TypCheck._report_and_poison(kind, span, **args) -> typs.Typ` emits and returns poison.
+  Convert raise sites in `typcheck.py` to it following the design's rules, by construct:
+  names and `let`; operators; coercions and returns; calls and comptime-argument inference;
+  literals; field access and indexing; `if`/`while`/`match` (exhaustiveness and
+  unreachable-arm analysis skipped on a poisoned scrutinee). `_check_block_expr` catches
+  `ReportedError` per statement.
 - Declarations: unresolvable field, payload, parameter and return types become poison with
   one diagnostic (`Typ.from_ast` gains a reporting variant used by declaration units).
   Layout queries on a poisoned component fail their unit with the component's proof.
@@ -560,7 +561,7 @@ codegen path observes poison.
   user guide's getting-started troubleshooting section, if it exists by then.
 - Update `AGENTS.md` (in #115, extended by #116 and #119) with a short diagnostics convention: add
   a `DiagKind` to `diag_kinds.py` following the message style; report with the sink rather
-  than raising; in `TypCheck`, report with `_error` and continue with poison; add an
+  than raising; in `TypCheck`, report with `_report_and_poison` and continue with poison; add an
   explanation in `diag_docs/` or an allowlist entry; tests assert full kind lists.
 
 ## Issue tracking

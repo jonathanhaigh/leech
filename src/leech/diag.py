@@ -325,7 +325,7 @@ class Diags:
         earlier diagnostic it duplicates, or the proof of the error it cascades from. While
         speculating, a new error raises ``SpeculativeError`` instead.
         """
-        err = _built(err, span, args)
+        err = as_diag(err, span, args)
         assert err.level == ERROR, f"not an error: {err!r}"
         reported = self._record(err)
         assert reported is not None
@@ -349,7 +349,7 @@ class Diags:
         **args: DiagArgValue,
     ) -> NoReturn:
         """Record an error as ``error`` does, then raise ``ReportedError`` with its proof."""
-        raise ReportedError(self.error(_built(err, span, args)))
+        raise ReportedError(self.error(as_diag(err, span, args)))
 
     @overload
     def warn(self, err: Diag, /) -> None:
@@ -368,7 +368,7 @@ class Diags:
     ) -> None:
         """Record a warning, given as ``error`` takes an error, unless it duplicates an earlier
         diagnostic or cascades from an error."""
-        err = _built(err, span, args)
+        err = as_diag(err, span, args)
         assert err.level == WARNING, f"not a warning: {err!r}"
         self._record(err)
 
@@ -389,7 +389,7 @@ class Diags:
     ) -> None:
         """Record a note that stands on its own, given as ``error`` takes an error, unless it
         duplicates an earlier diagnostic or cascades from an error."""
-        err = _built(err, span, args)
+        err = as_diag(err, span, args)
         assert err.level == NOTE, f"not a note: {err!r}"
         self._record(err)
 
@@ -475,9 +475,11 @@ class Diags:
         return self._first_error
 
 
-def _built(
+def as_diag(
     err: Diag | DiagKind, span: Optional[src.SrcSpan], args: Mapping[str, DiagArgValue]
 ) -> Diag:
+    """Return the diagnostic ``err``, or build one from the kind ``err``, ``span`` and
+    ``args`` as ``Diag.new`` does, for a method that, like ``Diags.error``, accepts either."""
     if isinstance(err, DiagKind):
         return Diag.new(err, span, **args)
     assert span is None and not args, "a built diagnostic takes no other arguments"

@@ -390,8 +390,8 @@ where it is made. A diagnostic without labels or notes is reported in one call, 
 `ctx.diags.raise_error(kinds.UNKNOWN_NAME, span, item_kind=..., name=...)`. One with labels
 or notes is built with `diag.Diag.new(kinds.X, span, ...)` and its `with_*` methods, and then
 passed in. `raise_error` is the usual way to report an error that ends the current
-computation. `TypCheck._error` wraps `error` for the type checker. `error` and `warn` both record a
-diagnostic as follows. The sink:
+computation. `TypCheck._report_and_poison` wraps `error` for the type checker. `error` and
+`warn` both record a diagnostic as follows. The sink:
 
 1. Applies the `WarningPolicy` (`-w`, `-Werror`, `-Wno-<name>`, ...) to get the effective
    level, and drops a diagnostic that the policy disables.
@@ -460,8 +460,8 @@ block as speculative, and nests. While it is active, the sink records nothing ne
 
 - Reporting an error raises `diag.SpeculativeError` instead of recording it. That exception
   carries no proof and is not a `ReportedError`, so recovery code (`Ctx.recovering`, and
-  poison after #116) never intercepts it, and the speculative computation unwinds to the code
-  that began speculating. An error that duplicates one already recorded is not new: it
+  `TypCheck` turning a `ReportedError` into poison) never intercepts it, and the speculative
+  computation unwinds to the code that began speculating. An error that duplicates one already recorded is not new: it
   returns, or raises `ReportedError` with, the recorded error's proof as usual. Nor is an
   error about poison, which is answered with the poison's proof.
 - A warning or note is dropped, and the computation continues, since a warning does not
@@ -697,13 +697,25 @@ never by comparing with a particular `PoisonTyp`. This
 lets a layout query fail its unit with the *component's* proof, and lets a probe treat a
 poisoned argument as one that failed.
 
-`TypCheck` reports most errors with `self._error(kind, span, **args) -> typs.Typ`, which
-emits the error and returns poison as the expression's type. It raises only when the
-current unit has no meaningful way to continue. Rules for continuing:
+`TypCheck` reports most errors with `self._report_and_poison(kind, span, **args)`, which
+emits the error and returns poison as the expression's type, or with
+`self._report_and_fail(...)`, which returns the proof, where the expression keeps a
+meaningful type. It continues after every error, and records the proof of each error it
+reports and of all poison in a type it records. Once the body is checked, the check fails
+with the first of them, so a body with an error is never lowered. Two fallbacks keep an
+unconverted raise site from ending the body: `_check_expr` turns a `ReportedError` into
+poison for that expression, and `_check_block_expr` skips a statement that raises one,
+taking it to diverge, as a failed `return` would have, so that no missing return is
+reported.
+
+Where an error leaves an expression with no type to expect, such as an argument of a
+poisoned callee, the expression is checked against poison, and an unsuffixed integer literal
+expected to have a poisoned type has that type. Checking it without an expected type would
+instead default a literal to `i32` and could report a false overflow. Rules for continuing:
 
 - **Names:** an unresolved variable, path, type or method has poison type. A `let` whose
   initializer or declared type fails binds its name with poison type, so later uses are
-  silent.
+  silent. So does a `let` whose initializer is `void`, after reporting it.
 - **Operators:** if either operand is poison, the result is poison, without operand checks.
   Otherwise an invalid operand is reported once, and the result has the operator's usual
   result type where it is known regardless of the operands (`bool` for comparisons and
@@ -730,9 +742,6 @@ current unit has no meaningful way to continue. Rules for continuing:
   skips exhaustiveness and unreachable-arm analysis.
 - **Returns:** a poisoned returned value, or a poisoned block value, is not compared with
   the return type. The missing-return check is skipped when the block's type is poison.
-- **Statements:** a statement whose check raises `ReportedError` is skipped, and checking
-  continues with the next statement. This is the fallback for a raise site that has not
-  been converted to poison yet.
 
 Lowering, compile-time evaluation and code generation never see poison. A unit with any
 error is never lowered, and the phase boundary below stops the compilation before code
@@ -1046,7 +1055,7 @@ the exact diagnostic identity.
 
 - **Poison coverage is the biggest risk.** Every `TypCheck` path must handle `PoisonTyp`.
   Mitigations: sink-level suppression of any diagnostic referencing poison; the
-  statement-level `ReportedError` fallback; asserts that lowering never sees poison; and a test
+  expression- and statement-level `ReportedError` fallbacks; asserts that lowering never sees poison; and a test
   that injects an undefined name into each expression position of a corpus of test programs
   and asserts that exactly one error is reported.
 - **Arguments are not statically typed.** basedpyright can't check `**args` against a
@@ -1088,7 +1097,7 @@ Existing issues were rescoped, and #114–#122 filed, as follows.
 | #113 | Report every user error before code generation | Force every declaration unit in checking. Discovery is part of checking, with per-request recovery. Phase boundary. `leech check` without codegen. `LlvmVerificationError` becomes `diag.InternalError` | #93 (best after #114) |
 | #115 | Replace `UserError` classes with a diagnostic catalogue | `diag_kinds.py`, `Diag`/`Msg`/`Label`/`Note`, `CompilationError`, message-style normalization, `DiagArg` on types, tests rewritten to full-list assertions, documentation fences by name, delete `errors.py` | #93 |
 | #72 + #73 | Speculative-probe diagnostics | `Ctx.speculating()`: errors unwind unreported as `SpeculativeError`, warnings are dropped, and forced units that dropped anything aren't memoized. A shared probe helper for function calls and union-variant constructors. Probe failures contribute no inference | #93, #114 |
-| #116 | Poison type and expression-level error recovery | `typs.PoisonTyp(reported)`, `TypCheck._error`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
+| #116 | Poison type and expression-level error recovery | `typs.PoisonTyp(reported)`, `TypCheck._report_and_poison`, poison rules, suppression of diagnostics that reference poison, declaration-level poison, poison-injection test. Closes #20 together with #114 | #114, #115 |
 | #117 | Limit reported errors with `-fmax-errors` | Cap with withheld-count note, on `leech` | #114 |
 | #118 | Render diagnostics in the rustc layout | `diag_text.py`: header, location, full-span underlines, labels, multi-line spans, notes, summary, `-fdiagnostics-color` | #115 |
 | #119 | Explain diagnostics with `leech explain` | `diag_docs/*.md`, `leech explain`, doc-tested examples, shrinking allowlist | #115 |

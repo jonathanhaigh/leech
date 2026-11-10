@@ -12,7 +12,7 @@ to lowering.
 
 import contextlib
 from collections.abc import Iterator, Mapping, Sequence
-from typing import TYPE_CHECKING, Final, NoReturn, Optional
+from typing import TYPE_CHECKING, Final, NoReturn, Optional, overload
 
 from leech import (
     asserts,
@@ -93,7 +93,11 @@ def _struct_field(typ: typs.Typ, name: str) -> Optional[typs.StructField]:
 
 
 class TypCheck:
-    """Type-check a function body or module-variable initializer."""
+    """Type-check a function body or module-variable initializer.
+
+    Checking continues after an error, giving whatever failed poison type, and the check
+    fails at the end with the first error it reported or found poison from.
+    """
 
     results: Final[check_results.TypCheckResults]
     _ctx: Final[compilation.Ctx]
@@ -102,6 +106,9 @@ class TypCheck:
     _fn_name: Optional[str]
     #: Enclosing while loops' labels and own AST nodes, innermost last.
     _loop_labels: Final[list[tuple[Optional[str], ast.WhileExpr]]]
+    #: The proof of each error the check has reported or found poison from, in order, with
+    #: repeats.
+    _failures: Final[list[diag.ReportProof]]
 
     def __init__(self, ctx: compilation.Ctx) -> None:
         self.results = check_results.TypCheckResults()
@@ -110,6 +117,68 @@ class TypCheck:
         self._ret_typ_span = None
         self._fn_name = None
         self._loop_labels = []
+        self._failures = []
+
+    def _fail(self, reported: diag.ReportProof) -> diag.ReportProof:
+        """Make the check fail with ``reported`` once it finishes, and return ``reported``."""
+        self._failures.append(reported)
+        return reported
+
+    def _fail_and_poison(self, reported: diag.ReportProof) -> typs.PoisonTyp:
+        """Make the check fail with ``reported`` as ``_fail`` does, and return poison for it."""
+        return typs.PoisonTyp(self._fail(reported))
+
+    def _fail_if_poisoned(self, typ: typs.Typ) -> None:
+        """Fail the check if ``typ`` is poisoned, since lowering never handles poison."""
+        reported = typ.report_proof()
+        if reported is not None:
+            self._fail(reported)
+
+    @overload
+    def _report_and_fail(self, err: diag.Diag, /) -> diag.ReportProof:
+        pass
+
+    @overload
+    def _report_and_fail(
+        self, kind: diag.DiagKind, span: Optional[src.SrcSpan], /, **args: diag.DiagArgValue
+    ) -> diag.ReportProof:
+        pass
+
+    def _report_and_fail(
+        self,
+        err: diag.Diag | diag.DiagKind,
+        span: Optional[src.SrcSpan] = None,
+        /,
+        **args: diag.DiagArgValue,
+    ) -> diag.ReportProof:
+        """Report an error, given as ``diag.Diags.error`` takes one, failing the check, and
+        return its proof."""
+        return self._fail(self._ctx.diags.error(diag.as_diag(err, span, args)))
+
+    @overload
+    def _report_and_poison(self, err: diag.Diag, /) -> typs.PoisonTyp:
+        pass
+
+    @overload
+    def _report_and_poison(
+        self, kind: diag.DiagKind, span: Optional[src.SrcSpan], /, **args: diag.DiagArgValue
+    ) -> typs.PoisonTyp:
+        pass
+
+    def _report_and_poison(
+        self,
+        err: diag.Diag | diag.DiagKind,
+        span: Optional[src.SrcSpan] = None,
+        /,
+        **args: diag.DiagArgValue,
+    ) -> typs.PoisonTyp:
+        """Report an error as ``_report_and_fail`` does, and return poison for it."""
+        return typs.PoisonTyp(self._report_and_fail(diag.as_diag(err, span, args)))
+
+    def _finish(self) -> check_results.TypCheckResults:
+        if self._failures:
+            raise diag.ReportedError(self._failures[0])
+        return self.results
 
     @contextlib.contextmanager
     def _speculating(self) -> Iterator[None]:
@@ -156,7 +225,7 @@ class TypCheck:
         e: ir_env.Env,
     ) -> None:
         """Check the arguments ``_probe_arg_typs`` probed, without speculating, so that what
-        it dropped is reported, raising the first error.
+        it dropped is reported, raising ``diag.ReportedError`` for the first poisoned argument.
 
         Each argument is checked against its declared type if ``bindings`` settle every
         parameter of ``comptime_params`` in it, and otherwise without an expected type,
@@ -166,7 +235,9 @@ class TypCheck:
             expected_typ = _settled_typ(declared_typ, comptime_params, bindings)
             if expected_typ is None and _is_flexible_int_lit(arg_ast):
                 continue
-            self._check_expr(arg_ast, e, expected_typ)
+            reported = self._check_expr(arg_ast, e, expected_typ).report_proof()
+            if reported is not None:
+                raise diag.ReportedError(reported)
 
     def check_fn(
         self,
@@ -185,7 +256,7 @@ class TypCheck:
             assert param.ast is not None
             param_typ = typs.PtrTyp(param.typ, typs.CONST)
             self.results._set_local_typ(param.ast, param_typ)
-            e.add_var(param.ast.name.name, param.ast)
+            e.add_var(param.ast.name.name, param.ast, param.ast.name.span)
         block_typ = self._check_expr(fn_ast.block, e, ret_typ)
         ret_ast = opt_util.opt_or_default(fn_ast.block.expr, fn_ast.block)
 
@@ -202,7 +273,7 @@ class TypCheck:
             # A missing return concerns the whole function.
             self._raise_ret_typ_error(diag_kinds.MISSING_RETURN, fn_ast.span)
 
-        return self.results
+        return self._finish()
 
     def check_var_initializer(
         self, defn_ast: ast.VarDefn, e: ir_env.Env
@@ -213,12 +284,18 @@ class TypCheck:
         self._fn_name = None
         e = e.new_child()
         self._check_let_initializer(defn_ast.let_stmt, e)
-        return self.results
+        return self._finish()
 
     def _check_expr(
         self, expr_ast: ast.ExprKind, e: ir_env.Env, expected_typ: Optional[typs.Typ]
     ) -> typs.Typ:
-        typ = self._check_expr_inner(expr_ast, e, expected_typ)
+        """Return an expression's checked type, which is poison if checking it raised
+        ``diag.ReportedError``."""
+        try:
+            typ = self._check_expr_inner(expr_ast, e, expected_typ)
+        except diag.ReportedError as err:
+            typ = typs.PoisonTyp(err.reported)
+        self._fail_if_poisoned(typ)
         self.results._set_expr_typ(expr_ast, typ)
         return typ
 
@@ -245,6 +322,8 @@ class TypCheck:
                 return typs.CSTR
             case ast.IntLit():
                 typ = self._infer_int_lit_typ(expr_ast, expected_typ)
+                if not isinstance(typ, typs.IntTyp):
+                    return typ
                 if not typ.fits(expr_ast.value):
                     self._ctx.diags.raise_error(
                         diag_kinds.INTEGER_LITERAL_OVERFLOW,
@@ -273,7 +352,13 @@ class TypCheck:
         e = e.new_child()
         diverged = False
         for stmt_ast in block_ast.stmts:
-            if self._check_stmt(stmt_ast, e):
+            try:
+                if self._check_stmt(stmt_ast, e):
+                    diverged = True
+            except diag.ReportedError as err:
+                self._fail(err.reported)
+                # It may have diverged, as a failed return would have, and a missing return
+                # isn't worth reporting with an error already reported.
                 diverged = True
         if block_ast.expr is None:
             return typs.NEVER if diverged else typs.VOID
@@ -336,7 +421,6 @@ class TypCheck:
     ) -> typs.Typ:
         scrutinee_typ = self._check_expr(match_ast.scrutinee, e, None)
         self.results._set_match_scrutinee_typ(match_ast, scrutinee_typ)
-        space = self._match_constructor_space(scrutinee_typ, e)
 
         arm_envs: dict[int, ir_env.Env] = {}
         arm_patterns: list[patterns.PatternKind] = []
@@ -376,6 +460,19 @@ class TypCheck:
                     .with_label(diag_kinds.MATCH_ARM_TYP, arm_ast.body.span, typ=arm_typ)
                 )
 
+        if scrutinee_typ.report_proof() is None:
+            self._check_match_coverage(match_ast, arm_patterns, scrutinee_typ, e)
+        return result_typ
+
+    def _check_match_coverage(
+        self,
+        match_ast: ast.MatchExpr,
+        arm_patterns: list[patterns.PatternKind],
+        scrutinee_typ: typs.Typ,
+        e: ir_env.Env,
+    ) -> None:
+        """Check a match's exhaustiveness and unreachable arms, and record its plan."""
+        space = self._match_constructor_space(scrutinee_typ, e)
         plan = patterns.build_match_plan(arm_patterns, space)
         reachable_arms = set(plan.reachable_arms)
         for i, arm_ast in enumerate(match_ast.arms):
@@ -387,8 +484,6 @@ class TypCheck:
                 d = d.with_note(diag_kinds.UNCOVERED_PATTERN, pattern=witness.render())
             self._ctx.diags.raise_error(d)
         self.results._set_match_plan(match_ast, plan)
-
-        return result_typ
 
     def _check_while_expr(self, while_ast: ast.WhileExpr, e: ir_env.Env) -> typs.Typ:
         cond_typ = self._check_expr(while_ast.condition, e, None)
@@ -445,7 +540,7 @@ class TypCheck:
             self._ctx.diags.raise_error(
                 diag_kinds.RESERVED_NAME, pat.ident.span, name=pat.ident.name
             )
-        e.add_var(pat.ident.name, pat)
+        e.add_var(pat.ident.name, pat, pat.ident.span)
         return patterns.WildcardPattern()
 
     def _check_int_lit_pattern(
@@ -455,6 +550,7 @@ class TypCheck:
             pat.lit,
             column_typ if isinstance(column_typ, typs.IntTyp) else None,
         )
+        assert isinstance(lit_typ, typs.IntTyp)
         value = -pat.lit.value if pat.negative else pat.lit.value
         if not lit_typ.fits(value):
             self._ctx.diags.raise_error(
@@ -964,6 +1060,8 @@ class TypCheck:
     ) -> typs.Typ:
         if isinstance(op_ast.operand, ast.IntLit):
             typ = self._infer_int_lit_typ(op_ast.operand, expected_typ)
+            if not isinstance(typ, typs.IntTyp):
+                return typ
             if typ.signage != signage.SIGNED:
                 self._raise_unary_operand_typ_error(op_ast, typ, "a signed integer type")
             value = -op_ast.operand.value
@@ -1299,7 +1397,7 @@ class TypCheck:
         return typs.PtrTyp(value_typ, self._place_mut(expr_ast, e))
 
     def _place_mut(self, expr_ast: ast.ExprKind, e: ir_env.Env) -> typs.Mutability:
-        """Return the mutability of ``expr_ast``'s place."""
+        """Return the mutability of ``expr_ast``'s place, whose type must not be poisoned."""
         match expr_ast:
             case ast.VarExpr():
                 # Local to avoid the ir_module import cycle.
@@ -1442,21 +1540,29 @@ class TypCheck:
         place_typ = typs.PtrTyp(bound_typ, mut)
         self.results._set_local_typ(let_ast, place_typ)
         if reserved.is_reserved(let_ast.ident.name):
-            self._ctx.diags.raise_error(
+            self._report_and_fail(
                 diag_kinds.RESERVED_NAME, let_ast.ident.span, name=let_ast.ident.name
             )
-        e.add_var(let_ast.ident.name, let_ast)
+        e.add_var(let_ast.ident.name, let_ast, let_ast.ident.span)
         return expr_typ == typs.NEVER
 
     def _check_let_initializer(
         self, let_ast: ast.LetStmt, e: ir_env.Env
     ) -> tuple[typs.Typ, Optional[typs.Typ]]:
-        """Return a ``let`` initializer's checked and optional declared types."""
+        """Return a ``let`` initializer's checked and optional declared types.
+
+        A declared type that fails to resolve is poison, and so is a ``void`` initializer.
+        """
         declared_typ_ast = let_ast.typ
-        declared_typ = opt_util.opt_map(declared_typ_ast, lambda t: typs.Typ.from_ast(t, e))
+        declared_typ = None
+        if declared_typ_ast is not None:
+            try:
+                declared_typ = typs.Typ.from_ast(declared_typ_ast, e)
+            except diag.ReportedError as err:
+                declared_typ = self._fail_and_poison(err.reported)
         expr_typ = self._check_expr(let_ast.expr, e, declared_typ)
         if expr_typ == typs.VOID:
-            self._ctx.diags.raise_error(diag_kinds.VOID_INITIALIZER, let_ast.expr.span)
+            expr_typ = self._report_and_poison(diag_kinds.VOID_INITIALIZER, let_ast.expr.span)
         if declared_typ_ast is None:
             return expr_typ, None
 
@@ -1464,7 +1570,7 @@ class TypCheck:
         self.results._set_let_declared_typ(let_ast, declared_typ)
         coercion = self._record_coercion(let_ast.expr, expr_typ, declared_typ)
         if isinstance(coercion, check_results.Invalid):
-            self._ctx.diags.raise_error(
+            self._report_and_fail(
                 diag.Diag.new(
                     diag_kinds.LET_TYPE_MISMATCH,
                     let_ast.expr.span,
@@ -1477,10 +1583,9 @@ class TypCheck:
 
     def _check_assignment_stmt(self, ass_ast: ast.AssignmentStmt, e: ir_env.Env) -> bool:
         place_typ = self._check_expr(ass_ast.place, e, None)
-        place_mut = self._place_mut(ass_ast.place, e)
         expr_typ = self._check_expr(ass_ast.expr, e, place_typ)
 
-        if place_mut == typs.CONST:
+        if place_typ.report_proof() is None and self._place_mut(ass_ast.place, e) == typs.CONST:
             self._ctx.diags.raise_error(
                 diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE, ass_ast.place.span
             )
@@ -1497,22 +1602,33 @@ class TypCheck:
             )
         return place_typ == typs.NEVER or expr_typ == typs.NEVER
 
-    def _infer_int_lit_typ(
-        self, lit_ast: ast.IntLit, expected_typ: Optional[typs.Typ]
-    ) -> typs.IntTyp:
-        """Use a literal's suffix, an expected integer type, or finally ``i32``."""
+    def _infer_int_lit_typ(self, lit_ast: ast.IntLit, expected_typ: Optional[typs.Typ]) -> typs.Typ:
+        """Use a literal's suffix, an expected integer type, or finally ``i32``.
+
+        An unsuffixed literal expected to have a poisoned type has that type.
+        """
         if lit_ast.explicit_width is not None:
             assert lit_ast.explicit_signage is not None
             return typs.IntTyp(lit_ast.explicit_width, lit_ast.explicit_signage)
         if isinstance(expected_typ, typs.IntTyp):
+            return expected_typ
+        if expected_typ is not None and expected_typ.report_proof() is not None:
             return expected_typ
         return typs.I32
 
     def _record_coercion(
         self, node: ast.Ast, value_typ: typs.Typ, target: typs.Typ
     ) -> Optional[check_results.Coercion]:
-        """Decide and record how ``node`` converts from ``value_typ`` to ``target``."""
+        """Decide and record how ``node`` converts from ``value_typ`` to ``target``.
+
+        Poison converts to and from every type, recorded as needing no conversion, though
+        the check fails, so it is never lowered.
+        """
         if value_typ == target:
+            coercion = None
+        elif value_typ.report_proof() is not None or target.report_proof() is not None:
+            self._fail_if_poisoned(value_typ)
+            self._fail_if_poisoned(target)
             coercion = None
         elif value_typ == typs.NEVER:
             coercion = check_results.NeverDiverge(target)
