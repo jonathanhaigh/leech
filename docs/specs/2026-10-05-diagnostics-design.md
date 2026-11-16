@@ -732,16 +732,21 @@ instead default a literal to `i32` and could report a false overflow. Rules for 
   resolve becomes poison. An instance with a poisoned argument is itself poisoned and is
   never requested for monomorphization.
 - **Struct, union and array literals:** every field or element expression is checked even
-  after an error in another field. A literal whose type failed to resolve has poison type,
-  and its fields are checked without expected types.
-- **Field access and indexing:** on a poisoned base, the result is poison. An unknown field
-  is reported, and the result is poison.
+  after an error in another field. A value with no field to expect, because it is
+  positional or names an unknown field, is checked against poison. A missing field is
+  reported only if every value names a known field, since a misnamed value is probably the
+  missing field, as rustc's `check_expr_struct_fields` does. A literal whose type failed to
+  resolve has poison type, and its values are checked against it.
+- **Field access, indexing and dereferencing:** on a poisoned base, the result is poison.
+  An unknown field is reported, and the result is poison.
 - **Control flow:** a poisoned `if` or `while` condition is not reported as non-`bool`.
   `if`/`match` branches whose peer type involves poison have a poisoned type. A poisoned
   `match` scrutinee still checks every arm's body, with pattern bindings poisoned, but
-  skips exhaustiveness and unreachable-arm analysis.
+  skips exhaustiveness and unreachable-arm analysis. A `break` or `continue` outside a
+  loop, or with an unknown label, is reported and has no target.
 - **Returns:** a poisoned returned value, or a poisoned block value, is not compared with
-  the return type. The missing-return check is skipped when the block's type is poison.
+  the return type. The missing-return check is skipped when the block's type is poison. A
+  `return` outside a function checks its value against poison.
 
 Lowering, compile-time evaluation and code generation never see poison. A unit with any
 error is never lowered, and the phase boundary below stops the compilation before code

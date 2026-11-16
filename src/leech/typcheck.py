@@ -266,12 +266,12 @@ class TypCheck:
             # never-typed early return, which skips coercion entirely.
             coercion = self._record_coercion(ret_ast, block_typ, ret_typ)
             if isinstance(coercion, check_results.Invalid):
-                self._raise_ret_typ_error(
+                self._report_ret_typ_error(
                     diag_kinds.RETURN_TYPE_MISMATCH, ret_ast.span, given_typ=block_typ
                 )
         elif ret_typ != typs.VOID:
             # A missing return concerns the whole function.
-            self._raise_ret_typ_error(diag_kinds.MISSING_RETURN, fn_ast.span)
+            self._report_ret_typ_error(diag_kinds.MISSING_RETURN, fn_ast.span)
 
         return self._finish()
 
@@ -325,7 +325,7 @@ class TypCheck:
                 if not isinstance(typ, typs.IntTyp):
                     return typ
                 if not typ.fits(expr_ast.value):
-                    self._ctx.diags.raise_error(
+                    self._report_and_fail(
                         diag_kinds.INTEGER_LITERAL_OVERFLOW,
                         expr_ast.span,
                         value=expr_ast.value,
@@ -370,7 +370,7 @@ class TypCheck:
         cond_typ = self._check_expr(if_ast.condition, e, None)
         cond_coercion = self._record_coercion(if_ast.condition, cond_typ, typs.BOOL)
         if isinstance(cond_coercion, check_results.Invalid):
-            self._ctx.diags.raise_error(
+            self._report_and_fail(
                 diag_kinds.IF_CONDITION_TYPE_MISMATCH,
                 if_ast.condition.span,
                 expr=if_ast.condition.diag_str(),
@@ -380,7 +380,7 @@ class TypCheck:
         if if_ast.els is None:
             then_typ = self._check_expr(if_ast.then, e, expected_typ)
             if then_typ != typs.NEVER and then_typ != typs.VOID:
-                self._ctx.diags.raise_error(
+                self._report_and_fail(
                     diag_kinds.IF_WITHOUT_ELSE_TYPE_MISMATCH, if_ast.then.span, typ=then_typ
                 )
             return typs.VOID
@@ -404,7 +404,7 @@ class TypCheck:
             els_typ = self._check_expr(els_ast, e, els_hint)
 
         if then_typ != typs.NEVER and els_typ != typs.NEVER and then_typ != els_typ:
-            self._ctx.diags.raise_error(
+            return self._report_and_poison(
                 diag.Diag.new(diag_kinds.CONFLICTING_BRANCH_TYPES, if_ast.span)
                 .with_label(diag_kinds.IF_TYP, if_ast.then.span, typ=then_typ)
                 .with_label(diag_kinds.ELSE_TYP, els_ast.span, typ=els_typ)
@@ -454,7 +454,7 @@ class TypCheck:
                 result_typ = arm_typ
                 result_span = arm_ast.body.span
             elif arm_typ != result_typ:
-                self._ctx.diags.raise_error(
+                result_typ = self._report_and_poison(
                     diag.Diag.new(diag_kinds.CONFLICTING_MATCH_ARM_TYPES, match_ast.span)
                     .with_label(diag_kinds.MATCH_ARM_TYP, result_span, typ=result_typ)
                     .with_label(diag_kinds.MATCH_ARM_TYP, arm_ast.body.span, typ=arm_typ)
@@ -482,14 +482,14 @@ class TypCheck:
             d = diag.Diag.new(diag_kinds.NON_EXHAUSTIVE_MATCH, match_ast.span)
             for witness in plan.missing:
                 d = d.with_note(diag_kinds.UNCOVERED_PATTERN, pattern=witness.render())
-            self._ctx.diags.raise_error(d)
+            self._report_and_fail(d)
         self.results._set_match_plan(match_ast, plan)
 
     def _check_while_expr(self, while_ast: ast.WhileExpr, e: ir_env.Env) -> typs.Typ:
         cond_typ = self._check_expr(while_ast.condition, e, None)
         cond_coercion = self._record_coercion(while_ast.condition, cond_typ, typs.BOOL)
         if isinstance(cond_coercion, check_results.Invalid):
-            self._ctx.diags.raise_error(
+            self._report_and_fail(
                 diag_kinds.WHILE_CONDITION_TYPE_MISMATCH,
                 while_ast.condition.span,
                 expr=while_ast.condition.diag_str(),
@@ -497,7 +497,7 @@ class TypCheck:
             )
 
         if while_ast.label is not None and reserved.is_reserved(while_ast.label.name):
-            self._ctx.diags.raise_error(
+            self._report_and_fail(
                 diag_kinds.RESERVED_NAME, while_ast.label.span, name=while_ast.label.name
             )
         self._loop_labels.append((opt_util.opt_map(while_ast.label, lambda x: x.name), while_ast))
@@ -506,7 +506,7 @@ class TypCheck:
         finally:
             self._loop_labels.pop()
         if block_typ not in (typs.NEVER, typs.VOID):
-            self._ctx.diags.raise_error(
+            self._report_and_fail(
                 diag_kinds.WHILE_BODY_TYPE_MISMATCH, while_ast.block.span, typ=block_typ
             )
 
@@ -972,10 +972,16 @@ class TypCheck:
                 rhs_hint = _resolve_peer_typ([lhs_typ])
             rhs_typ = self._check_expr(op_ast.rhs, e, rhs_hint)
 
+        for operand_typ in (lhs_typ, rhs_typ):
+            poisoned_by = operand_typ.report_proof()
+            if poisoned_by is not None:
+                return self._fail_and_poison(poisoned_by)
+
+        failure = None
         if lhs_typ != typs.NEVER and not isinstance(lhs_typ, typs.IntTyp):
-            self._raise_bin_operand_typ_error(op_ast, "left", lhs_typ, "an integer type")
-        if lhs_typ != typs.NEVER and rhs_typ != typs.NEVER and lhs_typ != rhs_typ:
-            self._ctx.diags.raise_error(
+            failure = self._report_bin_operand_typ_error(op_ast, "left", lhs_typ, "an integer type")
+        elif lhs_typ != typs.NEVER and rhs_typ != typs.NEVER and lhs_typ != rhs_typ:
+            failure = self._report_and_fail(
                 diag.Diag.new(diag_kinds.CONFLICTING_OPERAND_TYPES, op_ast.op.span, op=op)
                 .with_label(diag_kinds.LEFT_OPERAND_TYP, op_ast.lhs.span, typ=lhs_typ)
                 .with_label(diag_kinds.RIGHT_OPERAND_TYP, op_ast.rhs.span, typ=rhs_typ)
@@ -985,6 +991,8 @@ class TypCheck:
             case "<" | "<=" | "==" | "!=" | ">=" | ">":
                 return typs.BOOL
             case "+" | "-" | "*" | "/":
+                if failure is not None:
+                    return typs.PoisonTyp(failure)
                 return lhs_typ if lhs_typ != typs.NEVER else rhs_typ
 
     def _check_logic_bin_op_expr(self, op_ast: ast.BinOpExpr, e: ir_env.Env) -> typs.Typ:
@@ -992,25 +1000,30 @@ class TypCheck:
         lhs_typ = self._check_expr(op_ast.lhs, e, None)
         lhs_coercion = self._record_coercion(op_ast.lhs, lhs_typ, typs.BOOL)
         if isinstance(lhs_coercion, check_results.Invalid):
-            self._raise_bin_operand_typ_error(op_ast, "left", lhs_typ, typs.BOOL)
+            self._report_bin_operand_typ_error(op_ast, "left", lhs_typ, typs.BOOL)
 
         rhs_typ = self._check_expr(op_ast.rhs, e, None)
         rhs_coercion = self._record_coercion(op_ast.rhs, rhs_typ, typs.BOOL)
         if isinstance(rhs_coercion, check_results.Invalid):
-            self._raise_bin_operand_typ_error(op_ast, "right", rhs_typ, typs.BOOL)
+            self._report_bin_operand_typ_error(op_ast, "right", rhs_typ, typs.BOOL)
+
+        for operand_typ in (lhs_typ, rhs_typ):
+            poisoned_by = operand_typ.report_proof()
+            if poisoned_by is not None:
+                return self._fail_and_poison(poisoned_by)
         return typs.BOOL
 
-    def _raise_bin_operand_typ_error(
+    def _report_bin_operand_typ_error(
         self,
         op_ast: ast.BinOpExpr,
         side: str,
         given_typ: typs.Typ,
         expected_typ: diag.DiagArgValue,
-    ) -> NoReturn:
+    ) -> diag.ReportProof:
         operand = op_ast.lhs
         if side == "right":
             operand = op_ast.rhs
-        self._ctx.diags.raise_error(
+        return self._report_and_fail(
             diag.Diag.new(
                 diag_kinds.BINARY_OPERAND_TYPE_MISMATCH,
                 operand.span,
@@ -1021,10 +1034,10 @@ class TypCheck:
             ).with_label(diag_kinds.OP_HERE, op_ast.op.span, op=op_ast.op.name)
         )
 
-    def _raise_unary_operand_typ_error(
+    def _report_unary_operand_typ_error(
         self, op_ast: ast.UnaryOpExpr, given_typ: typs.Typ, expected_typ: diag.DiagArgValue
-    ) -> NoReturn:
-        self._ctx.diags.raise_error(
+    ) -> diag.ReportProof:
+        return self._report_and_fail(
             diag.Diag.new(
                 diag_kinds.UNARY_OPERAND_TYPE_MISMATCH,
                 op_ast.operand.span,
@@ -1052,7 +1065,11 @@ class TypCheck:
         operand_typ = self._check_expr(op_ast.operand, e, None)
         coercion = self._record_coercion(op_ast.operand, operand_typ, typs.BOOL)
         if isinstance(coercion, check_results.Invalid):
-            self._raise_unary_operand_typ_error(op_ast, operand_typ, typs.BOOL)
+            self._report_unary_operand_typ_error(op_ast, operand_typ, typs.BOOL)
+
+        poisoned_by = operand_typ.report_proof()
+        if poisoned_by is not None:
+            return self._fail_and_poison(poisoned_by)
         return typs.BOOL
 
     def _check_neg_expr(
@@ -1063,10 +1080,12 @@ class TypCheck:
             if not isinstance(typ, typs.IntTyp):
                 return typ
             if typ.signage != signage.SIGNED:
-                self._raise_unary_operand_typ_error(op_ast, typ, "a signed integer type")
+                return typs.PoisonTyp(
+                    self._report_unary_operand_typ_error(op_ast, typ, "a signed integer type")
+                )
             value = -op_ast.operand.value
             if not typ.fits(value):
-                self._ctx.diags.raise_error(
+                self._report_and_fail(
                     diag_kinds.INTEGER_LITERAL_OVERFLOW, op_ast.span, value=value, typ=typ
                 )
             self.results._set_folded_int_lit(op_ast, typ, value)
@@ -1077,7 +1096,9 @@ class TypCheck:
         if operand_typ != typs.NEVER and (
             not isinstance(operand_typ, typs.IntTyp) or operand_typ.signage != signage.SIGNED
         ):
-            self._raise_unary_operand_typ_error(op_ast, operand_typ, "a signed integer type")
+            return typs.PoisonTyp(
+                self._report_unary_operand_typ_error(op_ast, operand_typ, "a signed integer type")
+            )
         return operand_typ
 
     def _resolve_var(self, var_ast: ast.VarExpr, e: ir_env.Env) -> resolve.VarTarget:
@@ -1204,20 +1225,25 @@ class TypCheck:
 
     def _check_array_access_expr(self, aa_expr: ast.ArrayAccessExpr, e: ir_env.Env) -> typs.Typ:
         arr_typ = self._check_expr(aa_expr.array, e, None)
-        if not isinstance(arr_typ, typs.ArrayTyp):
-            self._ctx.diags.raise_error(diag_kinds.NON_ARRAY_INDEX, aa_expr.array.span, typ=arr_typ)
+        if isinstance(arr_typ, typs.ArrayTyp):
+            element_typ = arr_typ.element_typ
+        else:
+            element_typ = self._report_and_poison(
+                diag_kinds.NON_ARRAY_INDEX, aa_expr.array.span, typ=arr_typ
+            )
 
         index_typ = self._check_expr(aa_expr.index, e, typs.USIZE)
         index_coercion = self._record_coercion(aa_expr.index, index_typ, typs.USIZE)
         if isinstance(index_coercion, check_results.Invalid):
-            self._ctx.diags.raise_error(
-                diag_kinds.INDEX_TYPE_MISMATCH, aa_expr.index.span, typ=index_typ
-            )
+            self._report_and_fail(diag_kinds.INDEX_TYPE_MISMATCH, aa_expr.index.span, typ=index_typ)
 
-        return arr_typ.element_typ
+        return element_typ
 
     def _check_brace_expr(self, brace_expr: ast.BraceExpr, e: ir_env.Env) -> typs.Typ:
-        typ = typs.Typ.from_ast(brace_expr.typ, e)
+        try:
+            typ = typs.Typ.from_ast(brace_expr.typ, e)
+        except diag.ReportedError as err:
+            typ = self._fail_and_poison(err.reported)
         match typ:
             case typs.ArrayTyp():
                 self.results._set_brace_expr_typ(brace_expr, typ)
@@ -1227,53 +1253,77 @@ class TypCheck:
                 return self._check_struct_lit_expr(brace_expr, typ, e)
             case _:
                 # Brace expressions reject every other current or future type.
-                self._ctx.diags.raise_error(
+                result_typ = self._report_and_poison(
                     diag_kinds.NON_STRUCT_OR_ARRAY_LITERAL, brace_expr.typ.span, typ=typ
                 )
+                for element in brace_expr.elements:
+                    self._check_element_against_poison(element, result_typ.reported, e)
+                return result_typ
+
+    def _check_element_against_poison(
+        self, element: ast.BraceElement, reported: diag.ReportProof, e: ir_env.Env
+    ) -> None:
+        """Check a brace literal element's value where an error left no type to expect, so
+        that errors in the value are still reported."""
+        value = element.value if isinstance(element, ast.StructFieldExpr) else element
+        self._check_expr(value, e, typs.PoisonTyp(reported))
 
     def _check_struct_lit_expr(
         self, brace_expr: ast.BraceExpr, struct_typ: typs.StructTyp, e: ir_env.Env
     ) -> typs.Typ:
         field_value_asts: dict[str, ast.ExprKind] = {}
         field_value_typs: dict[str, typs.Typ] = {}
+        # A value given without naming a known field may be the missing one, so missing
+        # fields are reported only if every value names one.
+        unnamed_value = False
         for element in brace_expr.elements:
             if not isinstance(element, ast.StructFieldExpr):
-                self._ctx.diags.raise_error(
+                reported = self._report_and_fail(
                     diag_kinds.POSITIONAL_VALUE_IN_STRUCT_EXPRESSION,
                     element.span,
                     struct_typ=struct_typ,
                 )
+                self._check_element_against_poison(element, reported, e)
+                unnamed_value = True
+                continue
             name = element.ident.name
             field = struct_typ.fields.get(name)
             if field is None:
-                self._raise_unknown_field(struct_typ, name, element.ident.span)
+                reported = self._report_unknown_field(struct_typ, name, element.ident.span)
+                self._check_element_against_poison(element, reported, e)
+                unnamed_value = True
+                continue
             self.results._set_struct_field_index(element, field.index)
             if not field.is_accessible_from(brace_expr.span.file):
-                self._raise_private_field(struct_typ, field, element.ident.span)
+                self._report_private_field(struct_typ, field, element.ident.span)
             if name in field_value_asts:
-                self._ctx.diags.raise_error(
+                self._report_and_fail(
                     diag.Diag.new(
                         diag_kinds.DUPLICATE_STRUCT_FIELD_VALUE, element.ident.span, field=name
                     ).with_label(diag_kinds.PREVIOUS_VALUE_HERE, field_value_asts[name].span)
                 )
+                self._check_expr(element.value, e, field.typ)
+                continue
             field_value_asts[name] = element.value
             field_value_typs[name] = self._check_expr(element.value, e, field.typ)
 
         for field in struct_typ.fields.values():
             if field.name not in field_value_asts:
-                self._ctx.diags.raise_error(
-                    diag.Diag.new(
-                        diag_kinds.MISSING_STRUCT_FIELD,
-                        brace_expr.span,
-                        field=field.name,
-                        struct_typ=struct_typ,
-                    ).with_label(diag_kinds.DEFINED_HERE, field.ast.span, name=field.name)
-                )
+                if not unnamed_value:
+                    self._report_and_fail(
+                        diag.Diag.new(
+                            diag_kinds.MISSING_STRUCT_FIELD,
+                            brace_expr.span,
+                            field=field.name,
+                            struct_typ=struct_typ,
+                        ).with_label(diag_kinds.DEFINED_HERE, field.ast.span, name=field.name)
+                    )
+                continue
             value_ast = field_value_asts[field.name]
             value_typ = field_value_typs[field.name]
             coercion = self._record_coercion(value_ast, value_typ, field.typ)
             if isinstance(coercion, check_results.Invalid):
-                self._ctx.diags.raise_error(
+                self._report_and_fail(
                     diag.Diag.new(
                         diag_kinds.STRUCT_FIELD_TYPE_MISMATCH,
                         value_ast.span,
@@ -1292,21 +1342,22 @@ class TypCheck:
         elements: list[ast.ExprKind] = []
         for element in brace_expr.elements:
             if isinstance(element, ast.StructFieldExpr):
-                self._ctx.diags.raise_error(
+                self._report_and_fail(
                     diag_kinds.NAMED_FIELD_IN_ARRAY_LITERAL, element.span, field=element.ident.name
                 )
-            elements.append(element)
+                elements.append(element.value)
+            else:
+                elements.append(element)
 
         if not isinstance(arr_typ.length, typs.ComptimeValueTyp):
-            self._ctx.diags.raise_error(diag_kinds.GENERIC_ARRAY_LITERAL_LENGTH, brace_expr.span)
-        expected_len = arr_typ.length_value
-        if len(elements) != expected_len:
-            self._ctx.diags.raise_error(
+            self._report_and_fail(diag_kinds.GENERIC_ARRAY_LITERAL_LENGTH, brace_expr.span)
+        elif len(elements) != arr_typ.length_value:
+            self._report_and_fail(
                 diag_kinds.ARRAY_ELEMENT_COUNT_MISMATCH,
                 brace_expr.span,
                 array_typ=arr_typ,
                 given=len(elements),
-                expected=expected_len,
+                expected=arr_typ.length_value,
             )
 
         elt_typ = arr_typ.element_typ
@@ -1314,7 +1365,7 @@ class TypCheck:
             elt_typ_i = self._check_expr(elt_ast, e, elt_typ)
             coercion = self._record_coercion(elt_ast, elt_typ_i, elt_typ)
             if isinstance(coercion, check_results.Invalid):
-                self._ctx.diags.raise_error(
+                self._report_and_fail(
                     diag_kinds.ARRAY_ELEMENT_TYPE_MISMATCH,
                     elt_ast.span,
                     index=i,
@@ -1327,32 +1378,34 @@ class TypCheck:
     def _check_field_access_expr(self, fa_expr: ast.FieldAccessExpr, e: ir_env.Env) -> typs.Typ:
         struct_typ = self._check_expr(fa_expr.value, e, None)
         if not isinstance(struct_typ, typs.StructTyp):
-            self._ctx.diags.raise_error(
+            return self._report_and_poison(
                 diag_kinds.NON_STRUCT_FIELD_ACCESS, fa_expr.value.span, typ=struct_typ
             )
 
         field_name = fa_expr.field.name
         field = struct_typ.fields.get(field_name)
         if field is None:
-            self._raise_unknown_field(struct_typ, field_name, fa_expr.field.span)
+            return typs.PoisonTyp(
+                self._report_unknown_field(struct_typ, field_name, fa_expr.field.span)
+            )
         self.results._set_struct_field_index(fa_expr, field.index)
         if not field.is_accessible_from(fa_expr.span.file):
-            self._raise_private_field(struct_typ, field, fa_expr.field.span)
+            self._report_private_field(struct_typ, field, fa_expr.field.span)
         return field.typ
 
-    def _raise_unknown_field(
+    def _report_unknown_field(
         self, struct_typ: typs.StructTyp, name: str, span: src.SrcSpan
-    ) -> NoReturn:
-        self._ctx.diags.raise_error(
+    ) -> diag.ReportProof:
+        return self._report_and_fail(
             diag.Diag.new(
                 diag_kinds.UNKNOWN_STRUCT_FIELD, span, struct_typ=struct_typ, field=name
             ).with_label(diag_kinds.DEFINED_HERE, struct_typ.span, name=struct_typ.name)
         )
 
-    def _raise_private_field(
+    def _report_private_field(
         self, struct_typ: typs.StructTyp, field: typs.StructField, span: src.SrcSpan
-    ) -> NoReturn:
-        self._ctx.diags.raise_error(
+    ) -> None:
+        self._report_and_fail(
             diag.Diag.new(
                 diag_kinds.PRIVATE_FIELD_ACCESS, span, field=field.name, struct_typ=struct_typ
             ).with_label(diag_kinds.DEFINED_HERE, field.ast.span, name=field.name)
@@ -1361,7 +1414,7 @@ class TypCheck:
     def _check_deref_expr(self, d_expr: ast.DerefExpr, e: ir_env.Env) -> typs.Typ:
         ptr_typ = self._check_expr(d_expr.ptr, e, None)
         if not isinstance(ptr_typ, typs.PtrTyp) or isinstance(ptr_typ.pointee_typ, typs.FnTyp):
-            self._ctx.diags.raise_error(
+            return self._report_and_poison(
                 diag_kinds.NON_POINTER_DEREFERENCE, d_expr.ptr.span, typ=ptr_typ
             )
         return ptr_typ.pointee_typ
@@ -1374,7 +1427,8 @@ class TypCheck:
     def _check_place_inner(self, expr_ast: ast.ExprKind, e: ir_env.Env) -> typs.PtrTyp:
         """Return the pointer type produced by taking ``expr_ast``'s address.
 
-        Real places retain their mutability; other values use a const temporary.
+        Real places retain their mutability; other values use a const temporary, as does
+        poison.
         """
         if isinstance(expr_ast, ast.VarExpr):
             # Local to avoid the ir_module import cycle.
@@ -1394,6 +1448,8 @@ class TypCheck:
                 return var.typ
 
         value_typ = self._check_expr(expr_ast, e, None)
+        if value_typ.report_proof() is not None:
+            return typs.PtrTyp(value_typ, typs.CONST)
         return typs.PtrTyp(value_typ, self._place_mut(expr_ast, e))
 
     def _place_mut(self, expr_ast: ast.ExprKind, e: ir_env.Env) -> typs.Mutability:
@@ -1432,9 +1488,9 @@ class TypCheck:
                     return self._place_mut(expr_ast.value, e)
                 return typs.CONST
             case ast.DerefExpr():
-                # _check_place already ran _check_expr on this same DerefExpr
-                # before calling here, which only succeeds (via
-                # _check_deref_expr) if .ptr is a PtrTyp.
+                # This DerefExpr's type was checked before calling here and
+                # isn't poisoned, which (via _check_deref_expr) means .ptr is
+                # a PtrTyp.
                 ptr_typ = self._check_expr(expr_ast.ptr, e, None)
                 return asserts.checked_cast(ptr_typ, typs.PtrTyp).mut
             case _:
@@ -1462,7 +1518,10 @@ class TypCheck:
 
     def _check_ret_stmt(self, ret_ast: ast.RetStmt, e: ir_env.Env) -> None:
         if self._ret_typ is None:
-            self._ctx.diags.raise_error(diag_kinds.RETURN_OUTSIDE_FUNCTION, ret_ast.span)
+            poison = self._report_and_poison(diag_kinds.RETURN_OUTSIDE_FUNCTION, ret_ast.span)
+            if ret_ast.expr is not None:
+                self._check_expr(ret_ast.expr, e, poison)
+            return
         ret_typ = self._ret_typ
 
         if ret_ast.expr is not None:
@@ -1472,17 +1531,17 @@ class TypCheck:
             # return, which skips coercion entirely.
             coercion = self._record_coercion(ret_ast.expr, expr_typ, ret_typ)
             if isinstance(coercion, check_results.Invalid):
-                self._raise_ret_typ_error(
+                self._report_ret_typ_error(
                     diag_kinds.RETURN_TYPE_MISMATCH, ret_ast.expr.span, given_typ=expr_typ
                 )
             return
 
         if ret_typ != typs.VOID:
-            self._raise_ret_typ_error(diag_kinds.MISSING_RETURN_VALUE, ret_ast.span)
+            self._report_ret_typ_error(diag_kinds.MISSING_RETURN_VALUE, ret_ast.span)
 
-    def _raise_ret_typ_error(
+    def _report_ret_typ_error(
         self, kind: diag.DiagKind, span: src.SrcSpan, /, **args: diag.DiagArgValue
-    ) -> NoReturn:
+    ) -> None:
         """Report an error about the function's return type, which is labelled if written."""
         d = diag.Diag.new(
             kind,
@@ -1491,7 +1550,7 @@ class TypCheck:
             ret_typ=opt_util.opt_unwrap(self._ret_typ),
             **args,
         )
-        self._ctx.diags.raise_error(d.with_label(diag_kinds.RET_TYP_HERE, self._ret_typ_span))
+        self._report_and_fail(d.with_label(diag_kinds.RET_TYP_HERE, self._ret_typ_span))
 
     def _raise_uninferable(
         self,
@@ -1512,26 +1571,31 @@ class TypCheck:
 
     def _check_break_stmt(self, break_ast: ast.BreakStmt) -> None:
         if not self._loop_labels:
-            self._ctx.diags.raise_error(diag_kinds.BREAK_OUTSIDE_LOOP, break_ast.span)
+            self._report_and_fail(diag_kinds.BREAK_OUTSIDE_LOOP, break_ast.span)
+            return
         target = self._resolve_loop_label(break_ast.label)
-        self.results.resolutions.set_loop_target(break_ast, target)
+        if target is not None:
+            self.results.resolutions.set_loop_target(break_ast, target)
 
     def _check_continue_stmt(self, continue_ast: ast.ContinueStmt) -> None:
         if not self._loop_labels:
-            self._ctx.diags.raise_error(diag_kinds.CONTINUE_OUTSIDE_LOOP, continue_ast.span)
+            self._report_and_fail(diag_kinds.CONTINUE_OUTSIDE_LOOP, continue_ast.span)
+            return
         target = self._resolve_loop_label(continue_ast.label)
-        self.results.resolutions.set_loop_target(continue_ast, target)
+        if target is not None:
+            self.results.resolutions.set_loop_target(continue_ast, target)
 
-    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> ast.WhileExpr:
+    def _resolve_loop_label(self, label: Optional[ast.Ident]) -> Optional[ast.WhileExpr]:
         """Return the while loop a ``break``/``continue`` label names, or the
-        innermost enclosing one if ``label`` is ``None``.
+        innermost enclosing one if ``label`` is ``None``, reporting an unknown label.
         """
         if label is None:
             return self._loop_labels[-1][1]
         for loop_label, while_ast in reversed(self._loop_labels):
             if loop_label == label.name:
                 return while_ast
-        self._ctx.diags.raise_error(diag_kinds.UNKNOWN_LOOP_LABEL, label.span, label=label.name)
+        self._report_and_fail(diag_kinds.UNKNOWN_LOOP_LABEL, label.span, label=label.name)
+        return None
 
     def _check_let_stmt(self, let_ast: ast.LetStmt, e: ir_env.Env) -> bool:
         expr_typ, declared_typ = self._check_let_initializer(let_ast, e)
@@ -1586,13 +1650,11 @@ class TypCheck:
         expr_typ = self._check_expr(ass_ast.expr, e, place_typ)
 
         if place_typ.report_proof() is None and self._place_mut(ass_ast.place, e) == typs.CONST:
-            self._ctx.diags.raise_error(
-                diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE, ass_ast.place.span
-            )
+            self._report_and_fail(diag_kinds.ASSIGNMENT_TO_IMMUTABLE_PLACE, ass_ast.place.span)
 
         coercion = self._record_coercion(ass_ast.expr, expr_typ, place_typ)
         if isinstance(coercion, check_results.Invalid):
-            self._ctx.diags.raise_error(
+            self._report_and_fail(
                 diag.Diag.new(
                     diag_kinds.ASSIGNMENT_TYPE_MISMATCH,
                     ass_ast.expr.span,

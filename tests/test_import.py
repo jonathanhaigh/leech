@@ -440,7 +440,7 @@ def test_import_private_struct_field_write(compiler):
     """
     a_src = """
     pub struct T {
-        priv_val: i32,
+        mut priv_val: i32,
     }
 
     pub fn make() T {
